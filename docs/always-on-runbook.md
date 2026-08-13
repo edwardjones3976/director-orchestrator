@@ -1,0 +1,49 @@
+# Always-On Windows Runbook
+
+This is the first deployment target. The host is a Windows desktop running Linux containers in Docker Desktop. Slack connects outbound through Socket Mode, so no router port-forward or public webhook is required.
+
+## One-time host setup
+
+1. Install Docker Desktop and Git for Windows.
+2. In Docker Desktop, enable **Start Docker Desktop when you sign in** and use the WSL 2 engine.
+3. In Windows power settings, disable sleep and hibernation while plugged in. Screen-off is fine.
+4. Clone the private repository and run `scripts/windows-bootstrap.ps1` from PowerShell.
+5. Initialize n8n at `http://localhost:5678`, import `n8n/workflows/director-intake.json`, inspect it, and activate it.
+6. Add credentials to `.env` one provider at a time. Never place them in source control or Slack.
+7. Restart the stack with `docker compose up -d`.
+
+## Startup and recovery behavior
+
+- Every service uses `restart: unless-stopped`.
+- SQLite task state and n8n/PostgreSQL data live in named Docker volumes.
+- On orchestrator startup, queued, planning, running, and reviewing tasks are reloaded.
+- A recorded provider run is polled or reviewed again; it is not blindly redispatched.
+- Slack events are deduplicated locally and again by a unique source-event key in SQLite.
+- Tasks waiting for an owner decision remain paused after restart.
+
+## Daily check
+
+```powershell
+docker compose ps
+docker compose logs --tail 100 orchestrator slackbot
+```
+
+Healthy means the orchestrator is `healthy`, Slackbot and n8n are `running`, and `http://localhost:8080/health` returns `"ok": true`.
+
+## Backup
+
+Before upgrades, stop new tasks and back up the three named volumes: `director-data`, `n8n-data`, and `n8n-db-data`. Store backups encrypted. Test a restore before treating the machine as production infrastructure.
+
+## Safe update
+
+1. Keep `ALLOW_PAID_RUNS=false` during the update.
+2. Back up volumes.
+3. Pull the reviewed repository branch.
+4. Run `docker compose build --pull` and `docker compose up -d`.
+5. Check health and run the dry-run Slack smoke test.
+6. Re-enable paid runs only after the dry-run behaves as expected.
+
+## Host outage
+
+Provider-side background runs may continue while the desktop is offline. When the host returns, recorded Cursor, Gemini, and Perplexity run IDs are polled again. Claude Routine sessions require their completion callback or manual completion report. Never create a second work order merely because the host rebooted; first inspect the original task ID.
+

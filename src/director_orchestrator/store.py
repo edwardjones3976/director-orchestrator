@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .models import TaskRecord, TaskStatus
+
+
+class TaskStore:
+    def __init__(self, path: str):
+        self.path = path
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY,
+                    source_event_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    record_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+    def create(self, record: TaskRecord) -> tuple[TaskRecord, bool]:
+        with self._lock, self._connect() as connection:
+            existing = connection.execute(
+                "SELECT record_json FROM tasks WHERE source_event_id = ?",
+                (record.intake.source_event_id,),
+            ).fetchone()
+            if existing:
+                return TaskRecord.model_validate_json(existing["record_json"]), False
+            connection.execute(
+                "INSERT INTO tasks(task_id, source_event_id, status, record_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    record.task_id,
+                    record.intake.source_event_id,
+                    record.status.value,
+                    record.model_dump_json(),
+                    record.created_at.isoformat(),
+                    record.updated_at.isoformat(),
+                ),
+            )
+            return record, True
+
+    def get(self, task_id: str) -> TaskRecord | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT record_json FROM tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            return TaskRecord.model_validate_json(row["record_json"]) if row else None
+
+    def list_recoverable(self) -> list[TaskRecord]:
+        recoverable = {
+            TaskStatus.QUEUED.value,
+            TaskStatus.PLANNING.value,
+            TaskStatus.RUNNING.value,
+            TaskStatus.REVIEWING.value,
+        }
+        placeholders = ",".join("?" for _ in recoverable)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT record_json FROM tasks WHERE status IN ({placeholders})",
+                tuple(sorted(recoverable)),
+            ).fetchall()
+        return [TaskRecord.model_validate_json(row["record_json"]) for row in rows]
+
+    def save(self, record: TaskRecord) -> TaskRecord:
+        record.updated_at = datetime.now(timezone.utc)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE tasks SET status = ?, record_json = ?, updated_at = ? WHERE task_id = ?",
+                (
+                    record.status.value,
+                    record.model_dump_json(),
+                    record.updated_at.isoformat(),
+                    record.task_id,
+                ),
+            )
+        return record
+
+    def set_status(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        *,
+        message: str | None = None,
+        error: str | None = None,
+    ) -> TaskRecord:
+        record = self.get(task_id)
+        if record is None:
+            raise KeyError(task_id)
+        record.status = status
+        if message is not None:
+            record.message = message
+        if error is not None:
+            record.error = error
+        return self.save(record)
