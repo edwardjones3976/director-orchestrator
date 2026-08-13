@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import httpx
+
+from .config import Settings
+from .models import Assignment, ProviderName, ProviderRun
+
+
+class ProviderError(RuntimeError):
+    pass
+
+
+class ProviderAdapter:
+    name: ProviderName
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        raise NotImplementedError
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        raise NotImplementedError
+
+    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
+        raise ProviderError(f"{self.name} follow-up is not configured")
+
+
+class CursorAdapter(ProviderAdapter):
+    name = ProviderName.CURSOR
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.settings.cursor_api_key}", "Content-Type": "application/json"}
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        body: dict[str, Any] = {
+            "name": f"Director task {assignment.sequence}",
+            "prompt": {"text": f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"},
+            "workOnCurrentBranch": False,
+            "autoCreatePR": True,
+            "skipReviewerRequest": False,
+        }
+        if assignment.repository:
+            body["repos"] = [{"url": assignment.repository, "startingRef": assignment.starting_ref}]
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(f"{self.settings.cursor_api_base}/v1/agents", headers=self.headers, json=body)
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["run"]["id"],
+            session_id=payload["agent"]["id"],
+            status=payload["run"]["status"],
+            url=payload["agent"].get("url"),
+            raw=payload,
+        )
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.get(
+                f"{self.settings.cursor_api_base}/v1/agents/{run.session_id}/runs/{run.run_id}",
+                headers=self.headers,
+            )
+            response.raise_for_status()
+        payload = response.json()
+        return run.model_copy(update={"status": payload["status"], "result": payload.get("result"), "raw": payload})
+
+    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{self.settings.cursor_api_base}/v1/agents/{run.session_id}/runs",
+                headers=self.headers,
+                json={"prompt": {"text": prompt}},
+            )
+            response.raise_for_status()
+        payload = response.json()["run"]
+        return ProviderRun(provider=self.name, run_id=payload["id"], session_id=run.session_id, status=payload["status"], url=run.url, raw=payload)
+
+
+class ClaudeAdapter(ProviderAdapter):
+    name = ProviderName.CLAUDE
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        headers = {
+            "Authorization": f"Bearer {self.settings.claude_routine_token}",
+            "anthropic-beta": self.settings.claude_routine_beta,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        text = json.dumps({
+            "assignment": assignment.model_dump(mode="json"),
+            "context": context,
+            "completion_requirement": "Post the completion report to the originating Slack thread until a callback is configured.",
+        })
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(self.settings.claude_routine_url, headers=headers, json={"text": text})
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["claude_code_session_id"],
+            session_id=payload["claude_code_session_id"],
+            status="WAITING_CALLBACK",
+            url=payload.get("claude_code_session_url"),
+            raw=payload,
+        )
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        return run
+
+
+class GeminiAdapter(ProviderAdapter):
+    name = ProviderName.GEMINI
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"x-goog-api-key": self.settings.gemini_api_key, "Content-Type": "application/json"}
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        prompt = f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"
+        body = {
+            "agent": self.settings.gemini_agent,
+            "input": [{"type": "text", "text": prompt}],
+            "environment": {"type": "remote"},
+            "background": True,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["id"],
+            session_id=payload.get("environment_id"),
+            status=payload.get("status", "in_progress"),
+            raw=payload,
+        )
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.get(f"{self.settings.gemini_api_base}/interactions/{run.run_id}", headers=self.headers)
+            response.raise_for_status()
+        payload = response.json()
+        return run.model_copy(update={"status": payload.get("status", run.status), "result": payload.get("output_text"), "raw": payload})
+
+    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
+        body = {
+            "agent": self.settings.gemini_agent,
+            "previous_interaction_id": run.run_id,
+            "environment": run.session_id,
+            "input": [{"type": "text", "text": prompt}],
+            "background": True,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(provider=self.name, run_id=payload["id"], session_id=payload.get("environment_id", run.session_id), status=payload.get("status", "in_progress"), raw=payload)
+
+
+class PerplexityAdapter(ProviderAdapter):
+    name = ProviderName.PERPLEXITY
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.settings.perplexity_api_key}", "Content-Type": "application/json"}
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        body = {
+            "preset": self.settings.perplexity_preset,
+            "input": f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}",
+            "tools": [{"type": "web_search"}],
+            "background": True,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(f"{self.settings.perplexity_api_base}/v1/agent", headers=self.headers, json=body)
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(provider=self.name, run_id=payload["id"], status=payload.get("status", "queued"), raw=payload)
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.get(f"{self.settings.perplexity_api_base}/v1/agent/{run.run_id}", headers=self.headers)
+            response.raise_for_status()
+        payload = response.json()
+        result = payload.get("output_text")
+        if not result:
+            chunks = []
+            for item in payload.get("output", []):
+                for content in item.get("content", []) if isinstance(item, dict) else []:
+                    if isinstance(content.get("text"), str):
+                        chunks.append(content["text"])
+            result = "".join(chunks) or None
+        return run.model_copy(update={"status": payload.get("status", run.status), "result": result, "raw": payload})
+
+    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
+        body = {"preset": self.settings.perplexity_preset, "previous_response_id": run.run_id, "input": prompt, "background": True}
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(f"{self.settings.perplexity_api_base}/v1/agent", headers=self.headers, json=body)
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(provider=self.name, run_id=payload["id"], status=payload.get("status", "queued"), raw=payload)
+
+
+def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]:
+    return {
+        ProviderName.CURSOR: CursorAdapter(settings),
+        ProviderName.CLAUDE: ClaudeAdapter(settings),
+        ProviderName.GEMINI: GeminiAdapter(settings),
+        ProviderName.PERPLEXITY: PerplexityAdapter(settings),
+    }
+

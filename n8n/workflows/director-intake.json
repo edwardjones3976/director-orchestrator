@@ -1,0 +1,99 @@
+{
+  "name": "Director Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "director-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "0fca19c7-95f7-47fb-9e82-d5cc4b34ce60",
+      "name": "Slack Gateway Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "director-intake"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORCHESTRATOR_BASE_URL + '/v1/intake' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.ORCHESTRATOR_SHARED_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.body ?? $json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "ea748cff-0cee-4dd0-8ac8-d39d53d02fe5",
+      "name": "Create Director Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "76b4ea4d-a9ef-41fb-ad73-20f3555abcf4",
+      "name": "Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [520, 0]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Slack Gateway Webhook": {
+      "main": [
+        [
+          {
+            "node": "Create Director Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Director Task": {
+      "main": [
+        [
+          {
+            "node": "Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1eef317d-721e-4543-a499-7955f3a276ba",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
+

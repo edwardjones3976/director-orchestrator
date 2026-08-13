@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import asyncio
+import time
+from collections import defaultdict
+
+import httpx
+
+from .config import Settings
+from .director import OpenAIDirector
+from .models import ProviderName, ReviewVerdict, TaskRecord, TaskStatus
+from .policy import enforce_plan, preview_plan
+from .providers import ProviderError, ProviderRun, provider_registry
+from .store import TaskStore
+
+
+class SlackNotifier:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    async def post(self, record: TaskRecord, message: str, *, approvable: bool = False) -> None:
+        if not self.settings.slack_bot_token:
+            return
+        body = {"channel": record.intake.channel_id, "thread_ts": record.intake.thread_ts, "text": message}
+        if approvable:
+            body["blocks"] = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": message[:2_900]}},
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "action_id": "director_approve",
+                            "text": {"type": "plain_text", "text": "Approve this task"},
+                            "style": "primary",
+                            "value": record.task_id,
+                            "confirm": {
+                                "title": {"type": "plain_text", "text": "Approve gated actions?"},
+                                "text": {"type": "mrkdwn", "text": "This resumes the bounded plan. It does not approve merge, deployment, deletion, purchases, or new access beyond the listed task."},
+                                "confirm": {"type": "plain_text", "text": "Approve"},
+                                "deny": {"type": "plain_text", "text": "Cancel"},
+                            },
+                        }
+                    ],
+                },
+            ]
+        headers = {"Authorization": f"Bearer {self.settings.slack_bot_token}", "Content-Type": "application/json; charset=utf-8"}
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post("https://slack.com/api/chat.postMessage", headers=headers, json=body)
+            response.raise_for_status()
+            payload = response.json()
+            if not payload.get("ok"):
+                raise RuntimeError(f"Slack post failed: {payload.get('error', 'unknown_error')}")
+
+
+class OrchestrationEngine:
+    def __init__(self, settings: Settings, store: TaskStore):
+        self.settings = settings
+        self.store = store
+        self.director = OpenAIDirector(settings)
+        self.providers = provider_registry(settings)
+        self.notifier = SlackNotifier(settings)
+        self._task_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    async def run(self, task_id: str) -> None:
+        async with self._task_locks[task_id]:
+            await self._run_locked(task_id)
+
+    async def _run_locked(self, task_id: str) -> None:
+        record = self.store.get(task_id)
+        if record is None:
+            return
+        try:
+            if record.status == TaskStatus.DONE:
+                return
+            if not self.settings.allow_paid_runs:
+                record.plan = preview_plan(record.intake.text, self.settings)
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = "Dry-run plan created. Live provider execution remains disabled."
+                self.store.save(record)
+                await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\nDry-run plan created; no paid provider was called. Suggested first specialist: `{record.plan.assignments[0].agent.value}`. Enable live execution only after credentials and spend limits are verified.")
+                return
+
+            if not self.settings.openai_api_key:
+                self.store.set_status(task_id, TaskStatus.BLOCKED, message="OPENAI_API_KEY is not configured")
+                await self.notifier.post(record, f"*{task_id} — BLOCKED*\nThe Director API credential is not configured.")
+                return
+
+            if record.plan is None:
+                record.status = TaskStatus.PLANNING
+                self.store.save(record)
+                plan = await self.director.plan(record)
+                record.plan = enforce_plan(plan, record.intake.text, self.settings)
+            if record.plan.owner_question or (record.plan.approval_required and not record.owner_approved):
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = record.plan.owner_question or "; ".join(record.plan.approval_reasons)
+                self.store.save(record)
+                await self.notifier.post(
+                    record,
+                    f"*{task_id} — OWNER DECISION REQUIRED*\n{record.message}",
+                    approvable=bool(record.plan.approval_required and not record.plan.owner_question),
+                )
+                return
+
+            assignments = sorted(record.plan.assignments, key=lambda item: item.sequence)
+            while record.next_assignment_index < len(assignments):
+                assignment = assignments[record.next_assignment_index]
+                if assignment.agent == ProviderName.OWNER:
+                    record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                    record.message = assignment.task
+                    self.store.save(record)
+                    await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{assignment.task}")
+                    return
+                if assignment.requires_approval and not record.owner_approved:
+                    record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                    record.message = "Assignment requires owner approval"
+                    self.store.save(record)
+                    await self.notifier.post(
+                        record,
+                        f"*{task_id} — OWNER DECISION REQUIRED*\nAssignment {assignment.sequence} requires your approval.",
+                        approvable=True,
+                    )
+                    return
+                accepted = await self._execute_assignment(record, assignment)
+                record = self.store.get(task_id) or record
+                if record.status in {TaskStatus.OWNER_DECISION_REQUIRED, TaskStatus.FAILED, TaskStatus.BLOCKED}:
+                    return
+                if not accepted:
+                    return
+                record.next_assignment_index += 1
+                record.revision_count = 0
+                record.review = None
+                self.store.save(record)
+
+            record.status = TaskStatus.DONE
+            record.message = "All assignments passed Director review."
+            self.store.save(record)
+            await self.notifier.post(record, f"*{task_id} — DONE*\nAll assignments passed the configured acceptance review. Review branches and pull requests before merging.")
+        except Exception as exc:
+            failed = self.store.get(task_id) or record
+            failed.status = TaskStatus.FAILED
+            failed.error = f"{type(exc).__name__}: {exc}"
+            self.store.save(failed)
+            await self.notifier.post(failed, f"*{task_id} — FAILED*\n{failed.error}")
+
+    async def _execute_assignment(self, record: TaskRecord, assignment) -> bool:
+        readiness = self.settings.readiness()
+        if not readiness.get(assignment.agent.value, False):
+            record.status = TaskStatus.BLOCKED
+            record.message = f"{assignment.agent.value} credential is not configured"
+            self.store.save(record)
+            await self.notifier.post(record, f"*{record.task_id} — BLOCKED*\n`{assignment.agent.value}` is not configured.")
+            return False
+
+        adapter = self.providers[assignment.agent]
+        existing_runs = [
+            item
+            for item in record.provider_runs
+            if item.assignment_sequence == assignment.sequence
+        ]
+        if existing_runs:
+            run = existing_runs[-1]
+        else:
+            if len(record.provider_runs) >= record.plan.max_hops:
+                raise ProviderError("Maximum agent hops reached")
+            record.status = TaskStatus.RUNNING
+            self.store.save(record)
+            run = await adapter.dispatch(assignment, context=f"Task ID: {record.task_id}; Slack thread: {record.intake.thread_ts}")
+            run.assignment_sequence = assignment.sequence
+            record.provider_runs.append(run)
+            self.store.save(record)
+            await self.notifier.post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
+
+        run = await self._wait(adapter, run)
+        run_index = next(index for index in range(len(record.provider_runs) - 1, -1, -1) if record.provider_runs[index].run_id == run.run_id)
+        record.provider_runs[run_index] = run
+        if not run.result:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = f"{assignment.agent.value} requires manual completion verification"
+            self.store.save(record)
+            await self.notifier.post(record, f"*{record.task_id} — OWNER DECISION REQUIRED*\nThe `{assignment.agent.value}` run must be reviewed at its provider session before the loop can continue." + (f" [Open run]({run.url})" if run.url else ""))
+            return False
+
+        record.status = TaskStatus.REVIEWING
+        self.store.save(record)
+        decision = await self.director.review(record, run.result)
+        record.review = decision
+        self.store.save(record)
+        if decision.verdict == ReviewVerdict.ACCEPT:
+            return True
+        if decision.verdict == ReviewVerdict.REVISE and record.revision_count < record.plan.max_revisions:
+            if len(record.provider_runs) >= record.plan.max_hops:
+                raise ProviderError("Maximum agent hops reached before revision")
+            record.revision_count += 1
+            revised = await adapter.revise(run, decision.revision_prompt or "Address the failed acceptance checks and report new evidence.")
+            revised.assignment_sequence = assignment.sequence
+            record.provider_runs.append(revised)
+            self.store.save(record)
+            revised = await self._wait(adapter, revised)
+            record.provider_runs[-1] = revised
+            self.store.save(record)
+            if not revised.result:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = "Revision completed without retrievable evidence"
+                self.store.save(record)
+                return False
+            final_decision = await self.director.review(record, revised.result)
+            record.review = final_decision
+            if final_decision.verdict == ReviewVerdict.ACCEPT:
+                self.store.save(record)
+                return True
+            decision = final_decision
+        record.status = TaskStatus.OWNER_DECISION_REQUIRED if decision.verdict == ReviewVerdict.OWNER else TaskStatus.FAILED
+        record.message = decision.owner_question or decision.summary
+        self.store.save(record)
+        return False
+
+    async def _wait(self, adapter, run: ProviderRun) -> ProviderRun:
+        if run.status == "WAITING_CALLBACK":
+            return run
+        terminal = {"FINISHED", "ERROR", "CANCELLED", "EXPIRED", "completed", "failed", "cancelled", "incomplete"}
+        deadline = time.monotonic() + self.settings.provider_timeout_seconds
+        current = run
+        while current.status not in terminal:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"{current.provider.value} run timed out")
+            await asyncio.sleep(self.settings.provider_poll_seconds)
+            current = await adapter.poll(current)
+        if current.status in {"ERROR", "CANCELLED", "EXPIRED", "failed", "cancelled", "incomplete"}:
+            raise ProviderError(f"{current.provider.value} ended with status {current.status}")
+        return current
