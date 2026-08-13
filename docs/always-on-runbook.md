@@ -7,9 +7,9 @@ This is the first deployment target. The host is a Windows desktop running Linux
 1. Install Docker Desktop and Git for Windows.
 2. In Docker Desktop, enable **Start Docker Desktop when you sign in** and use the WSL 2 engine.
 3. In Windows power settings, disable sleep and hibernation while plugged in. Screen-off is fine.
-4. Clone the private repository and run `scripts/windows-bootstrap.ps1` from PowerShell.
+4. Clone the private repository and run `scripts/windows-bootstrap.ps1` from PowerShell. The script securely prompts for the Slack `xapp-` and `xoxb-` tokens when they are not already present; input is hidden and the generated `.env` ACL is restricted to the current Windows account, SYSTEM, and local Administrators.
 5. Initialize n8n at `http://localhost:5678`, import `n8n/workflows/director-intake.json`, inspect it, and activate it.
-6. Add credentials to `.env` one provider at a time. Never place them in source control or Slack.
+6. Add provider credentials to `.env` one at a time. Never place them in source control or Slack. Rotate any credential that was exposed in a message after the replacement has been installed locally and verified.
 7. Restart the stack with `docker compose up -d`.
 
 ## Startup and recovery behavior
@@ -46,4 +46,3 @@ Before upgrades, stop new tasks and back up the three named volumes: `director-d
 ## Host outage
 
 Provider-side background runs may continue while the desktop is offline. When the host returns, recorded Cursor, Gemini, and Perplexity run IDs are polled again. Claude Routine sessions require their completion callback or manual completion report. Never create a second work order merely because the host rebooted; first inspect the original task ID.
-
