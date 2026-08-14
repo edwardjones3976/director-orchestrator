@@ -1,23 +1,8 @@
 from __future__ import annotations
 
-import os
-import shutil
-import tempfile
 import unittest
-from pathlib import Path
 
-# main.py constructs a TaskStore at import time from SQLITE_PATH, whose default
-# is /data/director.sqlite3. Redirect it before the import so the suite never
-# depends on /data existing or being writable.
-_TEMP_DIR = tempfile.mkdtemp()
-os.environ["SQLITE_PATH"] = str(Path(_TEMP_DIR) / "tasks.sqlite3")
-
-from director_orchestrator.main import owner_identity_matches  # noqa: E402
-
-
-def tearDownModule() -> None:
-    # ignore_errors: on Windows the SQLite handle may still be open at teardown.
-    shutil.rmtree(_TEMP_DIR, ignore_errors=True)
+from director_orchestrator.approvals import owner_identity_matches
 
 
 class OwnerIdentityTests(unittest.TestCase):

@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import hmac
+
 from .models import Assignment, OwnerApproval, TaskRecord
 
 
 class StaleApproval(ValueError):
     pass
+
+
+def owner_identity_matches(provided: str, configured: str) -> bool:
+    """Constant-time owner check that fails closed when no owner is configured.
+
+    hmac.compare_digest("", "") is True, so an unset SLACK_OWNER_USER_ID would
+    otherwise let any caller approve gated assignments by sending an empty
+    owner_user_id. require_auth fails closed the same way on a missing secret.
+    """
+    if not configured or not provided:
+        return False
+    return hmac.compare_digest(provided, configured)
 
 
 def pending_assignment(record: TaskRecord) -> Assignment | None:
