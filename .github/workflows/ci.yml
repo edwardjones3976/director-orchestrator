@@ -84,3 +84,24 @@ jobs:
             exit 1
           fi
           echo "No secret-bearing files are committed."
+
+  recovery-probe:
+    name: Cross-process recovery probe
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+      SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Recover persisted work without redispatch
+        shell: bash
+        run: |
+          database="${RUNNER_TEMP}/director-recovery-ci.sqlite3"
+          python scripts/recovery_probe.py seed --database "$database"
+          python scripts/recovery_probe.py resume --database "$database"
+          python scripts/recovery_probe.py resume --database "$database"
