@@ -9,6 +9,8 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - Deterministic approval gates that model output cannot remove.
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
 - An OpenAI Director planner/reviewer using Structured Outputs.
+- Claude-first routing that treats the owner's Claude Pro 20x account as the primary coding and general workhorse while keeping subscription/API boundaries explicit.
+- A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
 - A local n8n deployment and an importable intake workflow.
 - A reusable Slack app manifest and a Claude routine prompt.
 - Dry-run previews for testing without provider spending.
@@ -25,6 +27,7 @@ Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-se
 6. Results are reviewed against acceptance checks. Revision loops are capped.
 7. Slack receives the terminal state or a narrowly scoped owner decision request. Approval-gated plans include a confirm button; ambiguity requires a written `/director approve DIR-… <clarification>` response.
 8. In-progress tasks resume after an orchestrator restart without redispatching an already-recorded provider run.
+9. When live execution is enabled, the usage monitor prompts each configured provider no more often than the configured interval and persists its latest status.
 
 ## Windows desktop quick start
 
@@ -77,6 +80,21 @@ Add credentials one provider at a time. Verify each adapter independently before
 5. `ALLOW_PAID_RUNS=true`, followed by a low-risk test task.
 
 ChatGPT Plus, Claude Pro, Cursor Pro, Gemini subscriptions, and Perplexity Pro do not necessarily include API usage. Claude Code Routine triggers are the exception represented here: they use the routine-specific URL and token supplied by Claude's routine UI.
+
+## Periodic provider usage checks
+
+`USAGE_CHECK_ENABLED=true` schedules a short, tool-free availability prompt for each configured provider. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; the dry-run default prevents every model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously.
+
+The monitor stores provider-returned token metadata in SQLite and posts a concise status summary to `#project-director`. A model reply is an availability signal, not authoritative proof of an account or subscription balance. Cursor documents plan usage in its dashboard, and other providers may likewise expose authoritative quota only in their account consoles.
+
+Authenticated operator endpoints:
+
+```text
+GET  /v1/usage-checks/latest
+POST /v1/usage-checks/run
+```
+
+The manual POST respects both safety switches and returns `409` while paid execution or periodic checks are disabled.
 
 ## Cloud hosting later
 
