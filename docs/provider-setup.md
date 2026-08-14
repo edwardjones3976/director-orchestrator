@@ -1,12 +1,31 @@
 # Provider Setup Matrix
 
+## Shared periodic usage-check behavior
+
+The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt. The prompt forbids browsing, tools, repository inspection, edits, branches, pull requests, and project work. The monitor records provider-returned token metadata when available and sends only a bounded status summary to Slack.
+
+These probes consume provider usage. They are disabled by the global paid-run gate and cannot execute while `ALLOW_PAID_RUNS=false`. The default interval is 360 minutes and the enforced minimum is 15 minutes. Account dashboards, not model prose, remain authoritative for plan balances and billing.
+
 Configure one provider at a time and leave `ALLOW_PAID_RUNS=false` until every intended adapter has passed a credential/readiness check. Subscription access and API billing are separate unless the provider explicitly says otherwise.
+
+## Owner account and routing context
+
+- **Claude Pro 20x is the primary workhorse.** Route coding implementation, repository-scale reasoning, code/document review, and Claude-strong analysis there first when its routine is configured and healthy.
+- **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
+- **Cursor, Gemini, and Perplexity are comparable paid individual tiers.** Their API or agent consumption must still be verified independently from the consumer subscription.
+
+Practical operating patterns:
+
+1. **Claude-first coding lane:** Claude implements and tests; OpenAI reviews the acceptance evidence; the owner approves any gated action.
+2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
+3. **Specialist lane:** Perplexity gathers current sources, Gemini validates a prototype or browser/sandbox behavior, and Claude integrates the findings.
+4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
 
 | Role | Supported bridge in this package | Required values | Completion path |
 | --- | --- | --- | --- |
 | Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
-| Coding | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
-| Claude specialist | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
+| Primary coding/workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
+| Coding overflow/second pass | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
 | Sandbox/prototype | Gemini Antigravity Managed Agent | `GEMINI_API_KEY` | Poll background Interaction |
 | Current research | Perplexity Agent API | `PERPLEXITY_API_KEY` | Poll background response |
 
@@ -33,4 +52,3 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Claude Cowork scheduled tasks: https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork
 - Gemini Managed Agents: https://ai.google.dev/gemini-api/docs/managed-agents-quickstart
 - Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart
-
