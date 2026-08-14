@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches:
+      - main
       - "agent/**"
       - "codex/**"
 
@@ -20,6 +21,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     env:
       PYTHONPATH: src
+      SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
