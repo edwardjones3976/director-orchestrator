@@ -65,6 +65,7 @@ def _gated_plan() -> DirectorPlan:
                 agent=ProviderName.CURSOR,
                 task="First gated step",
                 acceptance=["Evidence exists"],
+                repository="example/demo",
                 requires_approval=True,
             ),
             Assignment(
@@ -72,6 +73,7 @@ def _gated_plan() -> DirectorPlan:
                 agent=ProviderName.CURSOR,
                 task="Second gated step",
                 acceptance=["Evidence exists"],
+                repository="example/demo",
                 requires_approval=True,
             ),
         ],
@@ -90,6 +92,9 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
             max_agent_hops=4,
             provider_poll_seconds=0,
             provider_timeout_seconds=1,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
             sqlite_path=str(Path(directory) / "tasks.sqlite3"),
         )
         store.create(record)
