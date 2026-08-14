@@ -10,22 +10,37 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from . import __version__
 from .config import Settings
 from .engine import OrchestrationEngine
-from .models import ClaudeCallback, OwnerApproval, ProviderName, SlackIntake, TaskRecord, TaskStatus
+from .models import (
+    ClaudeCallback,
+    OwnerApproval,
+    ProviderName,
+    SlackIntake,
+    TaskRecord,
+    TaskStatus,
+    UsageCheckRecord,
+)
 from .store import TaskStore
+from .usage import UsageMonitor
 
 
 settings = Settings()
 store = TaskStore(settings.sqlite_path)
 engine = OrchestrationEngine(settings, store)
+usage_monitor = UsageMonitor(settings, store)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     recovery_tasks = [asyncio.create_task(engine.run(record.task_id)) for record in store.list_recoverable()]
-    yield
-    for task in recovery_tasks:
-        if not task.done():
-            task.cancel()
+    monitor_task = asyncio.create_task(usage_monitor.run_forever())
+    tasks = [*recovery_tasks, monitor_task]
+    try:
+        yield
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 app = FastAPI(title="Director Orchestrator", version=__version__, lifespan=lifespan)
@@ -45,7 +60,27 @@ def health() -> dict:
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": settings.readiness(),
+        "usage_monitor": usage_monitor.health(),
     }
+
+
+@app.get(
+    "/v1/usage-checks/latest",
+    response_model=list[UsageCheckRecord],
+    dependencies=[Depends(require_auth)],
+)
+def latest_usage_checks() -> list[UsageCheckRecord]:
+    return store.latest_usage_checks()
+
+
+@app.post("/v1/usage-checks/run", status_code=202, dependencies=[Depends(require_auth)])
+def run_usage_checks(background: BackgroundTasks) -> dict[str, str]:
+    if not settings.usage_check_enabled:
+        raise HTTPException(status_code=409, detail="Periodic usage checks are disabled")
+    if not settings.allow_paid_runs:
+        raise HTTPException(status_code=409, detail="Paid provider execution is disabled")
+    background.add_task(usage_monitor.run_once, True)
+    return {"status": "accepted"}
 
 
 @app.post("/v1/intake", response_model=TaskRecord, status_code=202, dependencies=[Depends(require_auth)])

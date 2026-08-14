@@ -31,6 +31,10 @@ class ProviderName(StrEnum):
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
     OWNER = "owner"
+    # The Director's own runtime. Never a plan assignment target: it is absent from
+    # provider_registry() and from the available_agents list sent to the Director,
+    # and exists only to label the OpenAI usage-check probe in usage.py.
+    OPENAI = "openai"
 
 
 class ReviewVerdict(StrEnum):
@@ -38,6 +42,13 @@ class ReviewVerdict(StrEnum):
     REVISE = "revise"
     OWNER = "owner"
     FAIL = "fail"
+
+
+class UsageCheckStatus(StrEnum):
+    OK = "ok"
+    PROMPTED = "prompted"
+    ERROR = "error"
+    SKIPPED = "skipped"
 
 
 class SlackIntake(BaseModel):
@@ -102,6 +113,21 @@ class ProviderRun(BaseModel):
     url: str | None = None
     result: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class UsageCheckRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cycle_id: str = Field(min_length=1, max_length=64)
+    provider: str = Field(min_length=1, max_length=64)
+    status: UsageCheckStatus
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    response_text: str | None = Field(default=None, max_length=2_000)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    raw_usage: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = Field(default=None, max_length=2_000)
 
 
 class TaskRecord(BaseModel):

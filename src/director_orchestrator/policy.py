@@ -52,10 +52,10 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         provider = ProviderName.PERPLEXITY
     elif any(word in lowered for word in ("prototype", "browser", "visual", "alternate implementation")):
         provider = ProviderName.GEMINI
-    elif any(word in lowered for word in ("review", "document", "presentation", "analysis")):
-        provider = ProviderName.CLAUDE
-    else:
+    elif any(word in lowered for word in ("cursor", "background agent", "independent coding pass", "second coding pass")):
         provider = ProviderName.CURSOR
+    else:
+        provider = ProviderName.CLAUDE
 
     project = "unspecified"
     match = re.search(r"(?im)^\s*project\s*:\s*(.+)$", text)
@@ -83,4 +83,3 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         owner_question=None,
     )
     return enforce_plan(plan, text, settings)
-

@@ -27,6 +27,21 @@ class PolicyTests(unittest.TestCase):
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
 
+    def test_dry_run_uses_claude_as_default_workhorse(self):
+        plan = preview_plan("Project: demo\nImplement and test a bounded API change", self.settings)
+        self.assertEqual(plan.assignments[0].agent.value, "claude")
+
+    def test_dry_run_can_request_cursor_second_pass_explicitly(self):
+        plan = preview_plan("Project: demo\nRun an independent coding pass in Cursor", self.settings)
+        self.assertEqual(plan.assignments[0].agent.value, "cursor")
+
+    def test_primary_team_is_openai_claude_cursor(self):
+        self.assertEqual(self.settings.primary_team, ("openai", "claude", "cursor"))
+        strategy = self.settings.provider_strategy()
+        self.assertTrue(all(strategy[name]["team"] == "primary" for name in self.settings.primary_team))
+        self.assertEqual(strategy["gemini"]["team"], "supplemental")
+        self.assertEqual(strategy["perplexity"]["team"], "supplemental")
+
 
 class StoreTests(unittest.TestCase):
     def test_source_event_is_idempotent(self):

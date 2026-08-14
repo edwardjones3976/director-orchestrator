@@ -19,6 +19,11 @@ def _float(name: str, default: float) -> float:
     return float(os.getenv(name, str(default)))
 
 
+def _csv(name: str, default: str) -> tuple[str, ...]:
+    value = os.getenv(name, default)
+    return tuple(item.strip().lower() for item in value.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = os.getenv("APP_ENV", "local")
@@ -32,6 +37,27 @@ class Settings:
     provider_poll_seconds: int = _int("PROVIDER_POLL_SECONDS", 15)
     provider_timeout_seconds: int = _int("PROVIDER_TIMEOUT_SECONDS", 3600)
     sqlite_path: str = os.getenv("SQLITE_PATH", "/data/director.sqlite3")
+
+    usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
+    usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)
+    usage_check_initial_delay_seconds: int = _int("USAGE_CHECK_INITIAL_DELAY_SECONDS", 60)
+    usage_check_provider_delay_seconds: int = _int("USAGE_CHECK_PROVIDER_DELAY_SECONDS", 5)
+    usage_check_timeout_seconds: int = _int("USAGE_CHECK_TIMEOUT_SECONDS", 300)
+    usage_check_max_output_tokens: int = _int("USAGE_CHECK_MAX_OUTPUT_TOKENS", 96)
+    usage_check_providers: tuple[str, ...] = _csv(
+        "USAGE_CHECK_PROVIDERS", "openai,claude,cursor"
+    )
+
+    primary_team: tuple[str, ...] = _csv("PRIMARY_TEAM", "openai,claude,cursor")
+    primary_workhorse: str = os.getenv("PRIMARY_WORKHORSE", "claude").strip().lower()
+    claude_account_context: str = os.getenv("CLAUDE_ACCOUNT_CONTEXT", "Claude Pro 20x")
+    openai_account_context: str = os.getenv(
+        "OPENAI_ACCOUNT_CONTEXT", "ChatGPT Plus; OpenAI API usage is billed separately"
+    )
+    other_provider_account_context: str = os.getenv(
+        "OTHER_PROVIDER_ACCOUNT_CONTEXT",
+        "Comparable paid individual tiers; API billing and quotas must be verified separately",
+    )
 
     slack_app_token: str = os.getenv("SLACK_APP_TOKEN", "")
     slack_bot_token: str = os.getenv("SLACK_BOT_TOKEN", "")
@@ -57,10 +83,11 @@ class Settings:
         "GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta"
     )
     gemini_agent: str = os.getenv("GEMINI_AGENT", "antigravity-preview-05-2026")
+    gemini_api_revision: str = os.getenv("GEMINI_API_REVISION", "2026-05-20")
 
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
     perplexity_api_base: str = os.getenv("PERPLEXITY_API_BASE", "https://api.perplexity.ai")
-    perplexity_preset: str = os.getenv("PERPLEXITY_PRESET", "low")
+    perplexity_preset: str = os.getenv("PERPLEXITY_PRESET", "fast-search")
 
     def readiness(self) -> dict[str, bool]:
         return {
@@ -72,3 +99,51 @@ class Settings:
             "perplexity": bool(self.perplexity_api_key),
         }
 
+    def usage_check_readiness(self) -> dict[str, bool]:
+        readiness = self.readiness()
+        return {
+            "openai": readiness["openai_director"],
+            "cursor": readiness["cursor"],
+            "claude": readiness["claude"],
+            "gemini": readiness["gemini"],
+            "perplexity": readiness["perplexity"],
+        }
+
+    def provider_strategy(self) -> dict[str, dict[str, object]]:
+        return {
+            "claude": {
+                "team": "primary",
+                "priority": "primary_workhorse",
+                "account_context": self.claude_account_context,
+                "strengths": [
+                    "coding implementation",
+                    "repository-scale reasoning",
+                    "code and document review",
+                    "long-form analysis",
+                ],
+            },
+            "openai": {
+                "team": "primary",
+                "priority": "director_planning_and_acceptance_review",
+                "account_context": self.openai_account_context,
+                "strengths": ["orchestration", "planning", "structured acceptance review"],
+            },
+            "cursor": {
+                "team": "primary",
+                "priority": "primary_repository_teammate_and_independent_second_pass",
+                "account_context": self.other_provider_account_context,
+                "strengths": ["isolated repository execution", "parallel implementation", "draft pull requests"],
+            },
+            "gemini": {
+                "team": "supplemental",
+                "priority": "optional_sandbox_and_prototype_specialist",
+                "account_context": self.other_provider_account_context,
+                "strengths": ["sandbox execution", "visual/browser validation", "alternate prototypes"],
+            },
+            "perplexity": {
+                "team": "supplemental",
+                "priority": "optional_current_research_specialist",
+                "account_context": self.other_provider_account_context,
+                "strengths": ["current web research", "source gathering", "fact verification"],
+            },
+        }
