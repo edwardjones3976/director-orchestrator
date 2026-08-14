@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -130,6 +130,18 @@ class UsageCheckRecord(BaseModel):
     error: str | None = Field(default=None, max_length=2_000)
 
 
+class AssignmentOutcome(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assignment_sequence: int = Field(ge=1, le=20)
+    provider: ProviderName
+    run_id: str = Field(min_length=1, max_length=255)
+    result: str = Field(min_length=1, max_length=50_000)
+    review_summary: str = Field(min_length=1, max_length=10_000)
+    evidence: list[str] = Field(default_factory=list, max_length=30)
+    unresolved_question: str | None = Field(default=None, max_length=2_000)
+
+
 class TaskRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -138,6 +150,7 @@ class TaskRecord(BaseModel):
     intake: SlackIntake
     plan: DirectorPlan | None = None
     provider_runs: list[ProviderRun] = Field(default_factory=list)
+    assignment_outcomes: list[AssignmentOutcome] = Field(default_factory=list)
     review: ReviewDecision | None = None
     next_assignment_index: int = Field(default=0, ge=0, le=20)
     revision_count: int = 0
@@ -154,6 +167,9 @@ class OwnerApproval(BaseModel):
 
 
 class ClaudeCallback(BaseModel):
-    status: str
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str = Field(min_length=1, max_length=255)
+    status: Literal["completed", "failed", "cancelled"]
     result: str = Field(min_length=1, max_length=50_000)
-    session_url: str | None = None
+    session_url: str | None = Field(default=None, max_length=2_000)

@@ -77,7 +77,9 @@ Add credentials one provider at a time. Verify each adapter independently before
 2. At least one specialist credential.
 3. A repository URL and starting branch in the work order.
 4. Provider-side spending limits.
-5. `ALLOW_PAID_RUNS=true`, followed by a low-risk test task.
+5. Exact `PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, and `ALLOWED_STARTING_REFS` values for this deployment profile.
+6. A separate `CLAUDE_CALLBACK_SECRET` installed in both the orchestrator and the trusted Claude callback sender when callbacks are enabled.
+7. `ALLOW_PAID_RUNS=true`, followed by a low-risk test task.
 
 ChatGPT Plus, Claude Pro, Cursor Pro, Gemini subscriptions, and Perplexity Pro do not necessarily include API usage. Claude Code Routine triggers are the exception represented here: they use the routine-specific URL and token supplied by Claude's routine UI.
 
@@ -95,6 +97,14 @@ POST /v1/usage-checks/run
 ```
 
 The manual POST respects both safety switches and the 15-minute minimum; it returns `409` while paid execution or periodic checks are disabled.
+
+## Execution profiles and handoffs
+
+Live plans fail closed unless their project is listed in `PROJECT_ALLOWLIST`. Every explicit repository and starting ref must match `REPOSITORY_ALLOWLIST` and `ALLOWED_STARTING_REFS`; Cursor assignments must always name a repository so they cannot fall back to an account-level default. Use separate deployments and databases when projects require different repositories, credentials, budgets, or Slack destinations.
+
+After OpenAI accepts an assignment, the orchestrator persists a bounded outcome containing its result, review summary, and evidence. Later assignments receive prior accepted outcomes and their declared `depends_on` results inside a marked untrusted-data envelope. Missing, forward, or unknown dependencies block execution rather than being ignored.
+
+Claude completion callbacks use `CLAUDE_CALLBACK_SECRET`, not the general orchestrator bearer secret. A callback must identify the exact pending Claude `run_id`; duplicate identical callbacks are idempotent and conflicting results are rejected.
 
 ## Cloud hosting later
 
