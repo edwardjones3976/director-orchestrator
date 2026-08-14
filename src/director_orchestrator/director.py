@@ -71,6 +71,12 @@ class OpenAIDirector:
         return model.model_validate(json.loads(_output_text(response.json())))
 
     async def plan(self, record: TaskRecord) -> DirectorPlan:
+        readiness = self.settings.readiness()
+        available_specialists = [
+            name
+            for name in ("claude", "cursor", "gemini", "perplexity")
+            if readiness.get(name, False)
+        ]
         request = {
             "owner_objective": record.intake.text,
             "hard_limits": {
@@ -78,8 +84,15 @@ class OpenAIDirector:
                 "max_revisions": self.settings.max_revisions,
                 "max_task_budget_usd": self.settings.max_task_budget_usd,
             },
-            "available_agents": ["cursor", "claude", "gemini", "perplexity", "owner"],
-            "required_rule": "Use owner for ambiguity or approval-gated actions.",
+            "available_agents": [*available_specialists, "owner"],
+            "provider_strategy": self.settings.provider_strategy(),
+            "routing_rules": [
+                "Use Claude as the primary coding and general workhorse when configured.",
+                "Use Cursor for coding overflow, independent second passes, or repository automation that benefits from its cloud-agent workflow.",
+                "Use Gemini for sandboxed prototypes and visual or browser validation.",
+                "Use Perplexity for current research and source gathering.",
+                "Use owner for ambiguity, unavailable specialists, quota exhaustion, or approval-gated actions.",
+            ],
         }
         return await self._structured(json.dumps(request), DirectorPlan, "director_plan")
 
