@@ -5,7 +5,7 @@ from dataclasses import replace
 from unittest.mock import patch
 
 from director_orchestrator.config import Settings
-from director_orchestrator.providers import GeminiAdapter, PerplexityAdapter
+from director_orchestrator.providers import CursorAdapter, GeminiAdapter, PerplexityAdapter
 
 
 class FakeResponse:
@@ -33,7 +33,11 @@ class RecordingAsyncClient:
         return None
 
     async def post(self, url: str, *, headers: dict, json: dict) -> FakeResponse:
-        self.calls.append({"url": url, "headers": headers, "json": json})
+        self.calls.append({"method": "POST", "url": url, "headers": headers, "json": json})
+        return FakeResponse(self.responses.pop(0))
+
+    async def get(self, url: str, *, headers: dict) -> FakeResponse:
+        self.calls.append({"method": "GET", "url": url, "headers": headers})
         return FakeResponse(self.responses.pop(0))
 
 
@@ -41,6 +45,25 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         RecordingAsyncClient.calls = []
         RecordingAsyncClient.responses = []
+
+    async def test_cursor_usage_check_reads_models_instead_of_launching_an_agent(self):
+        # A usage probe must never launch a paid cloud agent: POST /v1/agents
+        # was observed hanging past its 60s timeout on every probe, and a
+        # successful launch would burn an agent run per check. The credential
+        # is proven by an authenticated read.
+        settings = replace(Settings(), cursor_api_key="test-cursor")
+        RecordingAsyncClient.responses = [
+            {"items": [{"id": "default"}, {"id": "composer-2.5"}]}
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await CursorAdapter(settings).usage_check("probe")
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(request["method"], "GET")
+        self.assertTrue(request["url"].endswith("/v1/models"))
+        self.assertEqual(run.status, "FINISHED")
+        self.assertIn("2 models", run.result)
 
     async def test_gemini_usage_check_uses_current_interactions_contract(self):
         settings = replace(
