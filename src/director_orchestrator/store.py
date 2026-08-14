@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import TaskRecord, TaskStatus
+from .models import TaskRecord, TaskStatus, UsageCheckRecord
 
 
 class TaskStore:
@@ -33,6 +33,21 @@ class TaskStore:
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS usage_checks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cycle_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    record_json TEXT NOT NULL,
+                    checked_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_usage_checks_provider_time ON usage_checks(provider, checked_at DESC)"
             )
 
     def create(self, record: TaskRecord) -> tuple[TaskRecord, bool]:
@@ -109,3 +124,43 @@ class TaskStore:
         if error is not None:
             record.error = error
         return self.save(record)
+
+    def add_usage_check(self, record: UsageCheckRecord) -> UsageCheckRecord:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO usage_checks(cycle_id, provider, status, record_json, checked_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    record.cycle_id,
+                    record.provider,
+                    record.status.value,
+                    record.model_dump_json(),
+                    record.checked_at.isoformat(),
+                ),
+            )
+        return record
+
+    def latest_usage_check(self, provider: str) -> UsageCheckRecord | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT record_json FROM usage_checks WHERE provider = ? ORDER BY checked_at DESC, id DESC LIMIT 1",
+                (provider,),
+            ).fetchone()
+        return UsageCheckRecord.model_validate_json(row["record_json"]) if row else None
+
+    def latest_usage_checks(self) -> list[UsageCheckRecord]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT record_json
+                FROM usage_checks AS current
+                WHERE current.id = (
+                    SELECT latest.id
+                    FROM usage_checks AS latest
+                    WHERE latest.provider = current.provider
+                    ORDER BY latest.checked_at DESC, latest.id DESC
+                    LIMIT 1
+                )
+                ORDER BY provider
+                """
+            ).fetchall()
+        return [UsageCheckRecord.model_validate_json(row["record_json"]) for row in rows]
