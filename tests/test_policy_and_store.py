@@ -35,6 +35,13 @@ class PolicyTests(unittest.TestCase):
         plan = preview_plan("Project: demo\nRun an independent coding pass in Cursor", self.settings)
         self.assertEqual(plan.assignments[0].agent.value, "cursor")
 
+    def test_primary_team_is_openai_claude_cursor(self):
+        self.assertEqual(self.settings.primary_team, ("openai", "claude", "cursor"))
+        strategy = self.settings.provider_strategy()
+        self.assertTrue(all(strategy[name]["team"] == "primary" for name in self.settings.primary_team))
+        self.assertEqual(strategy["gemini"]["team"], "supplemental")
+        self.assertEqual(strategy["perplexity"]["team"], "supplemental")
+
 
 class StoreTests(unittest.TestCase):
     def test_source_event_is_idempotent(self):
