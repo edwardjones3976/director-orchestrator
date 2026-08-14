@@ -52,6 +52,18 @@ def require_auth(authorization: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def owner_identity_matches(provided: str, configured: str) -> bool:
+    """Constant-time owner check that fails closed when no owner is configured.
+
+    hmac.compare_digest("", "") is True, so an unset SLACK_OWNER_USER_ID would
+    otherwise let any caller approve gated assignments by sending an empty
+    owner_user_id. require_auth fails closed the same way on a missing secret.
+    """
+    if not configured or not provided:
+        return False
+    return hmac.compare_digest(provided, configured)
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -103,7 +115,7 @@ def get_task(task_id: str) -> TaskRecord:
 
 @app.post("/v1/tasks/{task_id}/approve", response_model=TaskRecord, dependencies=[Depends(require_auth)])
 def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) -> TaskRecord:
-    if not hmac.compare_digest(approval.owner_user_id, settings.slack_owner_user_id):
+    if not owner_identity_matches(approval.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     record = get_task(task_id)
     if record.status != TaskStatus.OWNER_DECISION_REQUIRED:
