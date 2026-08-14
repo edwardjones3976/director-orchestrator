@@ -45,7 +45,7 @@ class SlackNotifier:
                             "value": record.task_id,
                             "confirm": {
                                 "title": {"type": "plain_text", "text": "Approve gated actions?"},
-                                "text": {"type": "mrkdwn", "text": "This resumes the bounded plan. It does not approve merge, deployment, deletion, purchases, or new access beyond the listed task."},
+                                "text": {"type": "mrkdwn", "text": "This approves only the assignment shown above. Every later gated assignment asks again. It does not approve merge, deployment, deletion, purchases, or new access beyond it."},
                                 "confirm": {"type": "plain_text", "text": "Approve"},
                                 "deny": {"type": "plain_text", "text": "Cancel"},
                             },
@@ -127,9 +127,9 @@ class OrchestrationEngine:
                     self.store.save(record)
                     await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{assignment.task}")
                     return
-                if assignment.requires_approval and not record.owner_approved:
+                if assignment.requires_approval and assignment.sequence not in record.approved_assignments:
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
-                    record.message = "Assignment requires owner approval"
+                    record.message = f"Assignment {assignment.sequence} requires owner approval"
                     self.store.save(record)
                     await self.notifier.post(
                         record,

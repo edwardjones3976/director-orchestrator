@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+
+from director_orchestrator.config import Settings
+from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.models import (
+    Assignment,
+    DirectorPlan,
+    ProviderName,
+    ProviderRun,
+    ReviewDecision,
+    ReviewVerdict,
+    RiskLevel,
+    SlackIntake,
+    TaskRecord,
+    TaskStatus,
+)
+from director_orchestrator.store import TaskStore
+
+
+class AcceptingDirector:
+    async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+        return ReviewDecision(
+            verdict=ReviewVerdict.ACCEPT,
+            summary="Acceptance evidence is present.",
+            evidence=[result],
+        )
+
+
+class RecordingAdapter:
+    def __init__(self):
+        self.dispatched: list[int] = []
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        self.dispatched.append(assignment.sequence)
+        return ProviderRun(
+            provider=ProviderName.CURSOR,
+            run_id=f"run-{assignment.sequence}",
+            session_id=f"agent-{assignment.sequence}",
+            status="FINISHED",
+            result=f"Evidence for assignment {assignment.sequence}",
+        )
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        return run
+
+
+def _gated_plan() -> DirectorPlan:
+    """Two gated assignments, as enforce_plan produces when any gate fires."""
+    return DirectorPlan(
+        project="demo",
+        normalized_outcome="ship two gated steps",
+        risk_level=RiskLevel.HIGH,
+        approval_required=True,
+        approval_reasons=["merge or protected-branch change"],
+        max_hops=4,
+        max_revisions=0,
+        assignments=[
+            Assignment(
+                sequence=1,
+                agent=ProviderName.CURSOR,
+                task="First gated step",
+                acceptance=["Evidence exists"],
+                requires_approval=True,
+            ),
+            Assignment(
+                sequence=2,
+                agent=ProviderName.CURSOR,
+                task="Second gated step",
+                acceptance=["Evidence exists"],
+                requires_approval=True,
+            ),
+        ],
+        final_acceptance=["Both assignments accepted"],
+    )
+
+
+class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
+    def _engine(self, directory: str, record: TaskRecord):
+        store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+        settings = replace(
+            Settings(),
+            allow_paid_runs=True,
+            openai_api_key="test-openai",
+            cursor_api_key="test-cursor",
+            max_agent_hops=4,
+            provider_poll_seconds=0,
+            provider_timeout_seconds=1,
+            sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+        )
+        store.create(record)
+        engine = OrchestrationEngine(settings, store)
+        adapter = RecordingAdapter()
+        engine.providers[ProviderName.CURSOR] = adapter
+        engine.director = AcceptingDirector()
+        return store, engine, adapter
+
+    def _record(self, approved: list[int]) -> TaskRecord:
+        return TaskRecord(
+            task_id="DIR-SCOPE",
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id="evt-scope",
+                channel_id="C123",
+                thread_ts="123.45",
+                user_id="U123",
+                text="DIRECTOR Project: demo Outcome: ship two gated steps",
+            ),
+            plan=_gated_plan(),
+            owner_approved=True,
+            approved_assignments=list(approved),
+        )
+
+    async def test_approving_one_assignment_does_not_clear_the_next(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            store, engine, adapter = self._engine(directory, self._record([1]))
+            await engine.run("DIR-SCOPE")
+
+            record = store.get("DIR-SCOPE")
+            # Assignment 1 was approved and ran; assignment 2 must stop and ask.
+            self.assertEqual(adapter.dispatched, [1])
+            self.assertEqual(record.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(record.next_assignment_index, 1)
+            self.assertIn("2", record.message)
+
+    async def test_approving_each_assignment_completes_the_plan(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            store, engine, adapter = self._engine(directory, self._record([1, 2]))
+            await engine.run("DIR-SCOPE")
+
+            record = store.get("DIR-SCOPE")
+            self.assertEqual(adapter.dispatched, [1, 2])
+            self.assertEqual(record.status, TaskStatus.DONE)
+
+    async def test_unapproved_first_assignment_never_dispatches(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            store, engine, adapter = self._engine(directory, self._record([]))
+            await engine.run("DIR-SCOPE")
+
+            record = store.get("DIR-SCOPE")
+            self.assertEqual(adapter.dispatched, [])
+            self.assertEqual(record.status, TaskStatus.OWNER_DECISION_REQUIRED)
+
+
+if __name__ == "__main__":
+    unittest.main()

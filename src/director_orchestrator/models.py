@@ -154,7 +154,13 @@ class TaskRecord(BaseModel):
     review: ReviewDecision | None = None
     next_assignment_index: int = Field(default=0, ge=0, le=20)
     revision_count: int = 0
+    # Approval that the plan as a whole may proceed. Does not by itself clear
+    # any individual gated assignment -- see approved_assignments.
     owner_approved: bool = False
+    # Sequence numbers of assignments the owner has explicitly approved. Each
+    # gated assignment must appear here before it runs, so one approval cannot
+    # silently clear every remaining gated assignment in the plan.
+    approved_assignments: list[int] = Field(default_factory=list)
     message: str | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -142,8 +142,18 @@ def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) 
         record.next_assignment_index = 0
         record.provider_runs = []
         record.owner_approved = False
+        # The plan is rebuilt from the clarified text, so sequence numbers from
+        # the discarded plan must not carry over.
+        record.approved_assignments = []
     else:
         record.owner_approved = True
+        # Scope the approval to the assignment the owner was actually shown.
+        # Without this, one click clears every remaining gated assignment,
+        # because enforce_plan marks them all requires_approval together.
+        if record.next_assignment_index < len(assignments):
+            pending = assignments[record.next_assignment_index]
+            if pending.sequence not in record.approved_assignments:
+                record.approved_assignments.append(pending.sequence)
     record.status = TaskStatus.QUEUED
     record.message = approval.note
     store.save(record)
