@@ -44,3 +44,64 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose --env-file .env.example config --quiet
       - run: docker compose --env-file .env.example build orchestrator
+
+  secret-hygiene:
+    name: Secret hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a secret added and then deleted before the branch tip
+          # still sits in the commits the pull request introduces.
+          fetch-depth: 0
+
+      # This repo has already had one credential exposure. Fail loudly if a real
+      # .env, a database, or a virtualenv is ever committed, rather than relying
+      # on .gitignore being correct at the moment someone runs `git add`.
+      - name: Assert no secret-bearing files are committed
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        run: |
+          set -euo pipefail
+
+          # Anchored to a path segment rather than the worktree root, so nested
+          # paths like services/api/.env and tools/.venv/pyvenv.cfg are caught.
+          forbidden='(^|/)(\.env(\..+)?|[^/]+\.(db|sqlite3))$|(^|/)\.venv/'
+          allowed='(^|/)\.env\.example$'
+
+          candidates=$(git ls-files)
+          if [ -n "$BASE_SHA" ]; then
+            added=$(git log --diff-filter=A --name-only --pretty=format: "$BASE_SHA..HEAD")
+            candidates=$(printf '%s\n%s\n' "$candidates" "$added")
+          fi
+
+          offenders=$(printf '%s\n' "$candidates" | sed '/^$/d' | sort -u \
+            | grep -E "$forbidden" | grep -vE "$allowed" || true)
+
+          if [ -n "$offenders" ]; then
+            echo "::error::Secret-bearing or generated files are committed:"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "No secret-bearing files are committed."
+
+  recovery-probe:
+    name: Cross-process recovery probe
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+      SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Recover persisted work without redispatch
+        shell: bash
+        run: |
+          database="${RUNNER_TEMP}/director-recovery-ci.sqlite3"
+          python scripts/recovery_probe.py seed --database "$database"
+          python scripts/recovery_probe.py resume --database "$database"
+          python scripts/recovery_probe.py resume --database "$database"
