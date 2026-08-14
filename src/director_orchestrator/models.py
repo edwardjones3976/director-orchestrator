@@ -154,7 +154,13 @@ class TaskRecord(BaseModel):
     review: ReviewDecision | None = None
     next_assignment_index: int = Field(default=0, ge=0, le=20)
     revision_count: int = 0
+    # Approval that the plan as a whole may proceed. Does not by itself clear
+    # any individual gated assignment -- see approved_assignments.
     owner_approved: bool = False
+    # Sequence numbers of assignments the owner has explicitly approved. Each
+    # gated assignment must appear here before it runs, so one approval cannot
+    # silently clear every remaining gated assignment in the plan.
+    approved_assignments: list[int] = Field(default_factory=list)
     message: str | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -164,6 +170,11 @@ class TaskRecord(BaseModel):
 class OwnerApproval(BaseModel):
     owner_user_id: str
     note: str = Field(default="Approved", max_length=2_000)
+    # The assignment the owner was actually shown. Slack approval buttons persist
+    # in the channel, so an old button must not approve whatever assignment
+    # happens to be pending now. None means "whatever is pending", which is only
+    # safe for an approval the owner types fresh, such as the slash command.
+    assignment_sequence: int | None = Field(default=None, ge=1, le=20)
 
 
 class ClaudeCallback(BaseModel):

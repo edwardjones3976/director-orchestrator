@@ -27,11 +27,21 @@ class SlackNotifier:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def post(self, record: TaskRecord, message: str, *, approvable: bool = False) -> None:
+    async def post(
+        self,
+        record: TaskRecord,
+        message: str,
+        *,
+        approvable: bool = False,
+        approval_sequence: int | None = None,
+    ) -> None:
         if not self.settings.slack_bot_token:
             return
         body = {"channel": record.intake.channel_id, "thread_ts": record.intake.thread_ts, "text": message}
         if approvable:
+            # Carry the assignment this button was rendered for, so a button left
+            # sitting in the channel cannot approve a later gated assignment.
+            value = record.task_id if approval_sequence is None else f"{record.task_id}|{approval_sequence}"
             body["blocks"] = [
                 {"type": "section", "text": {"type": "mrkdwn", "text": message[:2_900]}},
                 {
@@ -42,10 +52,10 @@ class SlackNotifier:
                             "action_id": "director_approve",
                             "text": {"type": "plain_text", "text": "Approve this task"},
                             "style": "primary",
-                            "value": record.task_id,
+                            "value": value,
                             "confirm": {
                                 "title": {"type": "plain_text", "text": "Approve gated actions?"},
-                                "text": {"type": "mrkdwn", "text": "This resumes the bounded plan. It does not approve merge, deployment, deletion, purchases, or new access beyond the listed task."},
+                                "text": {"type": "mrkdwn", "text": "This approves only the assignment shown above. Every later gated assignment asks again. It does not approve merge, deployment, deletion, purchases, or new access beyond it."},
                                 "confirm": {"type": "plain_text", "text": "Approve"},
                                 "deny": {"type": "plain_text", "text": "Cancel"},
                             },
@@ -127,14 +137,16 @@ class OrchestrationEngine:
                     self.store.save(record)
                     await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{assignment.task}")
                     return
-                if assignment.requires_approval and not record.owner_approved:
+                if assignment.requires_approval and assignment.sequence not in record.approved_assignments:
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
-                    record.message = "Assignment requires owner approval"
+                    record.message = f"Assignment {assignment.sequence} requires owner approval"
                     self.store.save(record)
                     await self.notifier.post(
                         record,
-                        f"*{task_id} — OWNER DECISION REQUIRED*\nAssignment {assignment.sequence} requires your approval.",
+                        f"*{task_id} — OWNER DECISION REQUIRED*\nAssignment {assignment.sequence} requires your approval.\n"
+                        f"`{assignment.agent.value}` — {assignment.task[:1_500]}",
                         approvable=True,
+                        approval_sequence=assignment.sequence,
                     )
                     return
                 accepted = await self._execute_assignment(record, assignment)

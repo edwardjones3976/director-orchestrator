@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 
 from . import __version__
+from .approvals import StaleApproval, apply_owner_approval
 from .callbacks import CallbackConflict, apply_claude_callback, bearer_matches
 from .config import Settings
 from .engine import OrchestrationEngine
@@ -142,8 +143,14 @@ def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) 
         record.next_assignment_index = 0
         record.provider_runs = []
         record.owner_approved = False
+        # The plan is rebuilt from the clarified text, so sequence numbers from
+        # the discarded plan must not carry over.
+        record.approved_assignments = []
     else:
-        record.owner_approved = True
+        try:
+            apply_owner_approval(record, approval)
+        except StaleApproval as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     record.status = TaskStatus.QUEUED
     record.message = approval.note
     store.save(record)

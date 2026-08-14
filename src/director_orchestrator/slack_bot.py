@@ -145,14 +145,21 @@ def approval_button_handler(ack, body, client):
     ack()
     user_id = body.get("user", {}).get("id")
     channel_id = body.get("channel", {}).get("id")
-    task_id = body.get("actions", [{}])[0].get("value", "")
+    # The button value is "<task_id>" for a plan-level approval, or
+    # "<task_id>|<assignment_sequence>" for an assignment the owner was shown.
+    # Sending the sequence back lets the orchestrator reject a stale button.
+    raw_value = body.get("actions", [{}])[0].get("value", "")
+    task_id, _, raw_sequence = raw_value.partition("|")
+    payload = {"owner_user_id": user_id, "note": "Approved from Slack"}
+    if raw_sequence.isdigit():
+        payload["assignment_sequence"] = int(raw_sequence)
     if user_id != settings.slack_owner_user_id or channel_id != settings.slack_channel_id:
         return
     try:
         response = httpx.post(
             f"{settings.orchestrator_base_url}/v1/tasks/{task_id}/approve",
             headers={"Authorization": f"Bearer {settings.shared_secret}"},
-            json={"owner_user_id": user_id, "note": "Approved from Slack"},
+            json=payload,
             timeout=20,
         )
         response.raise_for_status()
