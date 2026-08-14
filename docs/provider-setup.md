@@ -10,24 +10,26 @@ Configure one provider at a time and leave `ALLOW_PAID_RUNS=false` until every i
 
 ## Owner account and routing context
 
+- **The primary team is OpenAI, Claude, and Cursor.** These receive the routine periodic checks and should cover planning, implementation, review, and repository execution.
 - **Claude Pro 20x is the primary workhorse.** Route coding implementation, repository-scale reasoning, code/document review, and Claude-strong analysis there first when its routine is configured and healthy.
 - **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
-- **Cursor, Gemini, and Perplexity are comparable paid individual tiers.** Their API or agent consumption must still be verified independently from the consumer subscription.
+- **Cursor is the third primary teammate.** Use it for repository automation, coding overflow, and independent implementation or review passes.
+- **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from the consumer subscription, and they are not included in the default periodic-check list.
 
 Practical operating patterns:
 
 1. **Claude-first coding lane:** Claude implements and tests; OpenAI reviews the acceptance evidence; the owner approves any gated action.
 2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
-3. **Specialist lane:** Perplexity gathers current sources, Gemini validates a prototype or browser/sandbox behavior, and Claude integrates the findings.
+3. **Optional specialist lane:** when materially useful, Perplexity gathers current sources, Gemini validates a prototype or browser/sandbox behavior, and the primary team integrates the findings.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
 
 | Role | Supported bridge in this package | Required values | Completion path |
 | --- | --- | --- | --- |
-| Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
-| Primary coding/workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
-| Coding overflow/second pass | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
-| Sandbox/prototype | Gemini Antigravity Managed Agent | `GEMINI_API_KEY` | Poll background Interaction |
-| Current research | Perplexity Agent API | `PERPLEXITY_API_KEY` | Poll background response |
+| Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
+| Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
+| Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
+| Supplemental — sandbox/prototype | Gemini Antigravity Managed Agent | `GEMINI_API_KEY` | Poll background Interaction |
+| Supplemental — current research | Perplexity Agent API | `PERPLEXITY_API_KEY` | Poll background response |
 
 ## Important Claude Cowork boundary
 
