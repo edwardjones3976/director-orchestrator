@@ -40,6 +40,13 @@ class ReviewVerdict(StrEnum):
     FAIL = "fail"
 
 
+class UsageCheckStatus(StrEnum):
+    OK = "ok"
+    PROMPTED = "prompted"
+    ERROR = "error"
+    SKIPPED = "skipped"
+
+
 class SlackIntake(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -102,6 +109,21 @@ class ProviderRun(BaseModel):
     url: str | None = None
     result: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class UsageCheckRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cycle_id: str = Field(min_length=1, max_length=64)
+    provider: str = Field(min_length=1, max_length=64)
+    status: UsageCheckStatus
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    response_text: str | None = Field(default=None, max_length=2_000)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    raw_usage: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = Field(default=None, max_length=2_000)
 
 
 class TaskRecord(BaseModel):
