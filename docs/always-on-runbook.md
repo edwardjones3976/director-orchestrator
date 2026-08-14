@@ -44,6 +44,14 @@ The health response also includes `usage_monitor`. Its `latest` list shows the m
 
 To pause the checks without disabling ordinary approved work, set `USAGE_CHECK_ENABLED=false` and restart `orchestrator`. To request one bounded cycle ahead of the normal six-hour cadence, call `POST /v1/usage-checks/run` with the local bearer secret. The endpoint still refuses to run unless both `USAGE_CHECK_ENABLED` and `ALLOW_PAID_RUNS` are true, and it never bypasses the 15-minute per-provider minimum.
 
+## Scheduled recovery soak
+
+The repository runs a bounded recovery probe every six hours and supports manual runs from GitHub Actions. Each scheduled job performs 12 independent cycles. Every cycle starts three separate Python processes against the same temporary SQLite database: one seeds an in-progress task with a recorded terminal provider result, one recovers and accepts it, and one verifies that a second recovery is an idempotent no-op.
+
+The probe fails if persisted state disappears, the assignment advances more than once, an extra provider run or outcome appears, or the engine attempts to redispatch or poll the recorded terminal run. It uses deterministic fake provider and Director components, does not load repository secrets, and makes no paid model calls.
+
+This distributed schedule is more useful for regression detection than one CI job sleeping for 24 hours: it exercises fresh GitHub runners at four points each day and leaves a separate pass/fail record for each observation. It is still not a substitute for observing the actual Windows host across sleep, Docker restart, network loss, or a real provider callback. Before production use, also run a shorter supervised host recovery drill with paid execution disabled.
+
 ## Backup
 
 Before upgrades, stop new tasks and back up the three named volumes: `director-data`, `n8n-data`, and `n8n-db-data`. Store backups encrypted. Test a restore before treating the machine as production infrastructure.

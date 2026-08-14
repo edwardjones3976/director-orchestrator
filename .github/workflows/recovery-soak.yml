@@ -1,0 +1,60 @@
+name: Recovery soak
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: Cross-process recovery cycles to run
+        required: false
+        default: "12"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recovery-soak
+  cancel-in-progress: false
+
+jobs:
+  recovery:
+    name: Persisted recovery and no-redispatch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: src
+      SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Run bounded cross-process recovery cycles
+        env:
+          REQUESTED_CYCLES: ${{ inputs.cycles }}
+        shell: bash
+        run: |
+          cycles="${REQUESTED_CYCLES:-12}"
+          if ! [[ "$cycles" =~ ^[0-9]+$ ]] || [ "$cycles" -lt 1 ] || [ "$cycles" -gt 100 ]; then
+            echo "::error::cycles must be an integer from 1 through 100"
+            exit 2
+          fi
+
+          for cycle in $(seq 1 "$cycles"); do
+            database="${RUNNER_TEMP}/director-recovery-${cycle}.sqlite3"
+            python scripts/recovery_probe.py seed --database "$database"
+            python scripts/recovery_probe.py resume --database "$database"
+            python scripts/recovery_probe.py resume --database "$database"
+          done
+
+          {
+            echo "## Recovery soak"
+            echo
+            echo "- Cross-process cycles: $cycles"
+            echo "- Process starts: $((cycles * 3))"
+            echo "- Paid providers contacted: 0"
+            echo "- Result: persisted terminal runs recovered exactly once without redispatch"
+          } >> "$GITHUB_STEP_SUMMARY"
