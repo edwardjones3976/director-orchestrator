@@ -24,7 +24,6 @@ jobs:
     timeout-minutes: 15
     env:
       PYTHONPATH: src
-      SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,6 +34,7 @@ jobs:
       - name: Run bounded cross-process recovery cycles
         env:
           REQUESTED_CYCLES: ${{ inputs.cycles }}
+          SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3
         shell: bash
         run: |
           cycles="${REQUESTED_CYCLES:-12}"
