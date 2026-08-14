@@ -170,6 +170,11 @@ class TaskRecord(BaseModel):
 class OwnerApproval(BaseModel):
     owner_user_id: str
     note: str = Field(default="Approved", max_length=2_000)
+    # The assignment the owner was actually shown. Slack approval buttons persist
+    # in the channel, so an old button must not approve whatever assignment
+    # happens to be pending now. None means "whatever is pending", which is only
+    # safe for an approval the owner types fresh, such as the slash command.
+    assignment_sequence: int | None = Field(default=None, ge=1, le=20)
 
 
 class ClaudeCallback(BaseModel):
