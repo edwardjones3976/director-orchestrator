@@ -12,10 +12,43 @@ function New-RandomSecret {
     return [Convert]::ToBase64String($bytes).Replace("+", "-").Replace("/", "_").TrimEnd("=")
 }
 
+function Assert-SecretShape {
+    param(
+        [AllowEmptyString()][string]$Value,
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [AllowEmptyString()][string]$RequiredPrefix,
+        [AllowEmptyString()][string]$ForbiddenPrefix,
+        [AllowEmptyString()][string]$ForbiddenMessage,
+        [switch]$Optional
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        if ($Optional) {
+            return $null
+        }
+        throw "A value for $Prompt is required."
+    }
+
+    # Checked before RequiredPrefix so the specific message wins: an Anthropic
+    # console key also starts with "sk-", so it would otherwise pass as OpenAI.
+    if ($ForbiddenPrefix -and $Value.StartsWith($ForbiddenPrefix, [StringComparison]::Ordinal)) {
+        throw $ForbiddenMessage
+    }
+
+    if ($RequiredPrefix -and -not $Value.StartsWith($RequiredPrefix, [StringComparison]::Ordinal)) {
+        throw "The supplied value for $Prompt does not begin with $RequiredPrefix."
+    }
+
+    return $Value
+}
+
 function Read-ValidatedSecret {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
-        [Parameter(Mandatory = $true)][string]$RequiredPrefix
+        [string]$RequiredPrefix,
+        [string]$ForbiddenPrefix,
+        [string]$ForbiddenMessage,
+        [switch]$Optional
     )
 
     $secureValue = Read-Host $Prompt -AsSecureString
@@ -27,11 +60,8 @@ function Read-ValidatedSecret {
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($valuePointer)
     }
 
-    if (-not $plainValue.StartsWith($RequiredPrefix, [StringComparison]::Ordinal)) {
-        throw "The supplied value for $Prompt does not begin with $RequiredPrefix."
-    }
-
-    return $plainValue
+    return Assert-SecretShape -Value $plainValue -Prompt $Prompt -RequiredPrefix $RequiredPrefix `
+        -ForbiddenPrefix $ForbiddenPrefix -ForbiddenMessage $ForbiddenMessage -Optional:$Optional
 }
 
 function Set-DotEnvValue {
@@ -42,7 +72,10 @@ function Set-DotEnvValue {
     )
 
     $escapedName = [Regex]::Escape($Name)
-    return [Regex]::Replace($Text, "(?m)^${escapedName}=.*$", "${Name}=${Value}")
+    # "$" is a substitution marker in a Regex replacement string, so a credential
+    # containing one would be silently corrupted. "$$" emits a literal "$".
+    $escapedValue = $Value.Replace('$', '$$')
+    return [Regex]::Replace($Text, "(?m)^${escapedName}=.*$", "${Name}=${escapedValue}")
 }
 
 $envText = Get-Content ".env" -Raw
@@ -62,6 +95,58 @@ if ($envText -match '(?m)^SLACK_BOT_TOKEN=\s*$') {
     $slackBotToken = Read-ValidatedSecret -Prompt "Paste the Slack bot token (input hidden)" -RequiredPrefix "xoxb-"
     $envText = Set-DotEnvValue -Text $envText -Name "SLACK_BOT_TOKEN" -Value $slackBotToken
     $slackBotToken = $null
+}
+
+# Provider credentials. Each is optional here so the dry-run bootstrap still
+# completes without them; press Enter to skip and the slot stays empty, which
+# readiness() reports as not configured.
+
+if ($envText -match '(?m)^OPENAI_API_KEY=\s*$') {
+    $openAiKey = Read-ValidatedSecret `
+        -Prompt "Paste the OpenAI API key for the Director, from platform.openai.com (input hidden, Enter to skip)" `
+        -RequiredPrefix "sk-" `
+        -ForbiddenPrefix "sk-ant-" `
+        -ForbiddenMessage "That is an Anthropic key. This slot is the OpenAI Director credential and is sent to api.openai.com; get it from platform.openai.com instead." `
+        -Optional
+    if ($openAiKey) {
+        $envText = Set-DotEnvValue -Text $envText -Name "OPENAI_API_KEY" -Value $openAiKey
+        $openAiKey = $null
+    }
+}
+
+# Not a secret: the fire endpoint URL is shown alongside the token in the same
+# modal, and carries only the routine id.
+if ($envText -match '(?m)^CLAUDE_ROUTINE_URL=\s*$') {
+    $claudeRoutineUrl = (Read-Host "Paste the Claude routine fire URL from claude.ai/code/routines (Enter to skip)").Trim()
+    if ($claudeRoutineUrl) {
+        if ($claudeRoutineUrl -notmatch '/routines/[^/]+/fire$') {
+            throw "The Claude routine URL should end with /routines/<trig_...>/fire. Copy it from the API trigger modal."
+        }
+        $envText = Set-DotEnvValue -Text $envText -Name "CLAUDE_ROUTINE_URL" -Value $claudeRoutineUrl
+    }
+}
+
+if ($envText -match '(?m)^CLAUDE_ROUTINE_TOKEN=\s*$') {
+    $claudeRoutineToken = Read-ValidatedSecret `
+        -Prompt "Paste the Claude routine token from the same API trigger modal (input hidden, Enter to skip)" `
+        -RequiredPrefix "sk-ant-oat01-" `
+        -ForbiddenMessage "" `
+        -Optional
+    if ($claudeRoutineToken) {
+        $envText = Set-DotEnvValue -Text $envText -Name "CLAUDE_ROUTINE_TOKEN" -Value $claudeRoutineToken
+        $claudeRoutineToken = $null
+    }
+}
+
+# No documented prefix to validate against, so this one is accepted as typed.
+if ($envText -match '(?m)^CURSOR_API_KEY=\s*$') {
+    $cursorKey = Read-ValidatedSecret `
+        -Prompt "Paste the Cursor API key (input hidden, Enter to skip)" `
+        -Optional
+    if ($cursorKey) {
+        $envText = Set-DotEnvValue -Text $envText -Name "CURSOR_API_KEY" -Value $cursorKey
+        $cursorKey = $null
+    }
 }
 
 Set-Content ".env" $envText -Encoding UTF8
