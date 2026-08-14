@@ -31,6 +31,10 @@ class ProviderName(StrEnum):
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
     OWNER = "owner"
+    # The Director's own runtime. Never a plan assignment target: it is absent from
+    # provider_registry() and from the available_agents list sent to the Director,
+    # and exists only to label the OpenAI usage-check probe in usage.py.
+    OPENAI = "openai"
 
 
 class ReviewVerdict(StrEnum):

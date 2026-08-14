@@ -148,7 +148,7 @@ class UsageMonitor:
             response.raise_for_status()
         payload = response.json()
         return ProviderRun(
-            provider=ProviderName.OWNER,
+            provider=ProviderName.OPENAI,
             run_id=payload["id"],
             status=payload.get("status", "completed"),
             result=_output_text(payload),
