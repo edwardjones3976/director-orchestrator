@@ -30,6 +30,20 @@ docker compose logs --tail 100 orchestrator slackbot
 
 Healthy means the orchestrator is `healthy`, Slackbot and n8n are `running`, and `http://localhost:8080/health` returns `"ok": true`.
 
+The health response also includes `usage_monitor`. Its `latest` list shows the most recent bounded check for each provider without exposing model replies or credentials. Periodic checks remain dormant while `ALLOW_PAID_RUNS=false`.
+
+## Periodic usage-check operation
+
+- Default cadence: once every six hours per configured provider.
+- Minimum enforced cadence: 15 minutes, even if the environment is misconfigured lower.
+- Provider checks run sequentially with a delay between them.
+- A restart does not immediately reprompt a provider that was checked within the interval.
+- Token counts are recorded only when returned by the provider.
+- Claude Routine can confirm prompt acceptance but requires its configured completion callback for final usage metadata.
+- Model-reported quota is advisory; use each provider dashboard for authoritative subscription or billing balance.
+
+To pause the checks without disabling ordinary approved work, set `USAGE_CHECK_ENABLED=false` and restart `orchestrator`. To force one bounded cycle, call `POST /v1/usage-checks/run` with the local bearer secret; this still refuses to run unless both `USAGE_CHECK_ENABLED` and `ALLOW_PAID_RUNS` are true.
+
 ## Backup
 
 Before upgrades, stop new tasks and back up the three named volumes: `director-data`, `n8n-data`, and `n8n-db-data`. Store backups encrypted. Test a restore before treating the machine as production infrastructure.
