@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from urllib.parse import urlparse
 
 from .config import Settings
 from .models import Assignment, DirectorPlan, ProviderName, RiskLevel
@@ -20,6 +21,67 @@ _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 def deterministic_approval_reasons(text: str) -> list[str]:
     return [label for label, pattern in _GATES if pattern.search(text)]
+
+
+def canonical_repository(value: str) -> str:
+    candidate = value.strip().rstrip("/")
+    parsed = urlparse(candidate)
+    if parsed.scheme and parsed.netloc:
+        if parsed.netloc.lower() != "github.com":
+            return candidate.lower()
+        candidate = parsed.path.strip("/")
+    if candidate.lower().startswith("github.com/"):
+        candidate = candidate[len("github.com/") :]
+    if candidate.lower().endswith(".git"):
+        candidate = candidate[:-4]
+    return candidate.strip("/").lower()
+
+
+def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]:
+    errors: set[str] = set()
+    allowed_projects = {item.strip().lower() for item in settings.project_allowlist}
+    project = plan.project.strip().lower()
+    if not allowed_projects:
+        errors.add("project allowlist is not configured")
+    elif project not in allowed_projects:
+        errors.add(f"project is not allowlisted: {plan.project}")
+
+    sequences = [item.sequence for item in plan.assignments]
+    sequence_set = set(sequences)
+    if len(sequence_set) != len(sequences):
+        errors.add("assignment sequences must be unique")
+
+    allowed_repositories = {
+        canonical_repository(item) for item in settings.repository_allowlist
+    }
+    allowed_refs = set(settings.allowed_starting_refs)
+    for assignment in plan.assignments:
+        if assignment.agent == ProviderName.CURSOR and not assignment.repository:
+            errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
+        if assignment.repository:
+            repository = canonical_repository(assignment.repository)
+            if not allowed_repositories:
+                errors.add("repository allowlist is not configured")
+            elif repository not in allowed_repositories:
+                errors.add(
+                    f"assignment {assignment.sequence}: repository is not allowlisted: {repository}"
+                )
+            if not allowed_refs:
+                errors.add("starting-ref allowlist is not configured")
+            elif assignment.starting_ref not in allowed_refs:
+                errors.add(
+                    f"assignment {assignment.sequence}: starting ref is not allowlisted: {assignment.starting_ref}"
+                )
+        for dependency in assignment.depends_on:
+            if dependency not in sequence_set:
+                errors.add(
+                    f"assignment {assignment.sequence}: dependency {dependency} does not exist"
+                )
+            elif dependency >= assignment.sequence:
+                errors.add(
+                    f"assignment {assignment.sequence}: dependency {dependency} must be an earlier assignment"
+                )
+    return sorted(errors)
 
 
 def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> DirectorPlan:

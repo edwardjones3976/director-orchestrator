@@ -8,6 +8,15 @@ These probes consume provider usage and are opt-in through `USAGE_CHECK_ENABLED=
 
 Configure one provider at a time and leave `ALLOW_PAID_RUNS=false` until every intended adapter has passed a credential/readiness check. Subscription access and API billing are separate unless the provider explicitly says otherwise.
 
+Before enabling live execution, configure an exact deployment profile:
+
+- `PROJECT_ALLOWLIST`: case-insensitive project names accepted by this deployment.
+- `REPOSITORY_ALLOWLIST`: exact GitHub `owner/repository` targets; GitHub HTTPS URLs normalize to this form.
+- `ALLOWED_STARTING_REFS`: case-sensitive starting branches or refs.
+- `CLAUDE_CALLBACK_SECRET`: a dedicated callback bearer secret, stored only by the orchestrator and trusted callback sender.
+
+An absent project allowlist blocks every live plan. Cursor cannot use an implicit dashboard repository, and model output or owner approval cannot widen these target lists.
+
 ## Owner account and routing context
 
 - **The primary team is OpenAI, Claude, and Cursor.** These receive the routine periodic checks and should cover planning, implementation, review, and repository execution.

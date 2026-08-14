@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 
 from . import __version__
+from .callbacks import CallbackConflict, apply_claude_callback, bearer_matches
 from .config import Settings
 from .engine import OrchestrationEngine
 from .models import (
@@ -52,6 +53,13 @@ def require_auth(authorization: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def require_claude_callback_auth(
+    authorization: str | None = Header(default=None),
+) -> None:
+    if not bearer_matches(settings.claude_callback_secret, authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 def owner_identity_matches(provided: str, configured: str) -> bool:
     """Constant-time owner check that fails closed when no owner is configured.
 
@@ -72,6 +80,7 @@ def health() -> dict:
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": settings.readiness(),
+        "execution_profile": settings.execution_profile_readiness(),
         "usage_monitor": usage_monitor.health(),
     }
 
@@ -142,16 +151,19 @@ def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) 
     return record
 
 
-@app.post("/v1/callbacks/claude/{task_id}", response_model=TaskRecord, dependencies=[Depends(require_auth)])
+@app.post(
+    "/v1/callbacks/claude/{task_id}",
+    response_model=TaskRecord,
+    dependencies=[Depends(require_claude_callback_auth)],
+)
 def claude_callback(task_id: str, callback: ClaudeCallback, background: BackgroundTasks) -> TaskRecord:
     record = get_task(task_id)
-    matching = [run for run in record.provider_runs if run.provider.value == "claude"]
-    if not matching:
-        raise HTTPException(status_code=409, detail="No Claude run is awaiting a callback")
-    matching[-1].status = callback.status
-    matching[-1].result = callback.result
-    matching[-1].url = callback.session_url or matching[-1].url
-    record.status = TaskStatus.REVIEWING
+    try:
+        changed = apply_claude_callback(record, callback)
+    except CallbackConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not changed:
+        return record
     stored = store.save(record)
     background.add_task(engine.run, task_id)
     return stored

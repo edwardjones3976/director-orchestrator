@@ -17,4 +17,4 @@ Required behavior:
 7. Return a concise completion report containing status, files changed, tests, pull-request URL if any, unresolved risks, and whether owner approval is required.
 8. If the work order is ambiguous or requests a gated action, stop with `OWNER_DECISION_REQUIRED`.
 
-The routine API returns only the session URL to the orchestrator. Until a signed callback endpoint is configured, also post the completion report to the originating Slack thread named in the payload.
+The routine API returns only the session URL to the orchestrator. When the trusted callback sender is configured, it must POST the exact `run_id`, terminal `status`, bounded `result`, and optional `session_url` to `/v1/callbacks/claude/{task_id}` using the separately stored `CLAUDE_CALLBACK_SECRET` bearer token. Never place that secret in a model prompt or completion report. Until the authenticated callback sender is configured, also post the completion report to the originating Slack thread named in the payload.
