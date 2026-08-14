@@ -1,11 +1,6 @@
 name: Recovery soak
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/recovery-soak.yml"
-      - "scripts/recovery_probe.py"
-      - "src/director_orchestrator/**"
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
