@@ -9,7 +9,7 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - Deterministic approval gates that model output cannot remove.
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
 - An OpenAI Director planner/reviewer using Structured Outputs.
-- Claude-first routing that treats the owner's Claude Pro 20x account as the primary coding and general workhorse while keeping subscription/API boundaries explicit.
+- A primary OpenAI–Claude–Cursor team, with Claude Pro 20x as the coding/general workhorse and Gemini/Perplexity retained as optional specialists.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
 - A local n8n deployment and an importable intake workflow.
 - A reusable Slack app manifest and a Claude routine prompt.
@@ -83,7 +83,7 @@ ChatGPT Plus, Claude Pro, Cursor Pro, Gemini subscriptions, and Perplexity Pro d
 
 ## Periodic provider usage checks
 
-`USAGE_CHECK_ENABLED=true` schedules a short, tool-free availability prompt for each configured provider. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; the dry-run default prevents every model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously.
+`USAGE_CHECK_ENABLED=true` schedules a short, tool-free availability prompt for the configured check list. The default list is the primary team: OpenAI, Claude, and Cursor. Gemini and Perplexity can be added explicitly when their supplemental lanes should also be monitored. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; the dry-run default prevents every model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously.
 
 The monitor stores provider-returned token metadata in SQLite and posts a concise status summary to `#project-director`. A model reply is an availability signal, not authoritative proof of an account or subscription balance. Cursor documents plan usage in its dashboard, and other providers may likewise expose authoritative quota only in their account consoles.
 
