@@ -33,6 +33,15 @@ class DeploymentContractTests(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("FROM python:3.12-slim@sha256:", dockerfile)
 
+    def test_pull_requests_have_cross_platform_ci(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("ubuntu-latest", workflow)
+        self.assertIn("windows-latest", workflow)
+        self.assertIn("python -m unittest discover -s tests -v", workflow)
+        self.assertIn("docker compose --env-file .env.example config --quiet", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

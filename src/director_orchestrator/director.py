@@ -84,6 +84,15 @@ class OpenAIDirector:
                 "max_revisions": self.settings.max_revisions,
                 "max_task_budget_usd": self.settings.max_task_budget_usd,
             },
+            "execution_profile": {
+                "allowed_projects": list(self.settings.project_allowlist),
+                "allowed_repositories": list(self.settings.repository_allowlist),
+                "allowed_starting_refs": list(self.settings.allowed_starting_refs),
+                "instruction": (
+                    "Use only these exact execution targets. If the required project, repository, "
+                    "or starting ref is absent, assign the owner and ask one narrow question."
+                ),
+            },
             "available_agents": [*available_specialists, "owner"],
             "primary_team": list(self.settings.primary_team),
             "supplemental_specialists": ["gemini", "perplexity"],
