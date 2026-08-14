@@ -85,12 +85,14 @@ class OpenAIDirector:
                 "max_task_budget_usd": self.settings.max_task_budget_usd,
             },
             "available_agents": [*available_specialists, "owner"],
+            "primary_team": list(self.settings.primary_team),
+            "supplemental_specialists": ["gemini", "perplexity"],
             "provider_strategy": self.settings.provider_strategy(),
             "routing_rules": [
+                "Treat OpenAI, Claude, and Cursor as the primary team.",
                 "Use Claude as the primary coding and general workhorse when configured.",
-                "Use Cursor for coding overflow, independent second passes, or repository automation that benefits from its cloud-agent workflow.",
-                "Use Gemini for sandboxed prototypes and visual or browser validation.",
-                "Use Perplexity for current research and source gathering.",
+                "Use Cursor as the other primary repository teammate for coding overflow, independent second passes, and cloud-agent automation.",
+                "Use Gemini or Perplexity only as supplemental specialists when their distinct sandbox, validation, research, or sourcing strengths materially help.",
                 "Use owner for ambiguity, unavailable specialists, quota exhaustion, or approval-gated actions.",
             ],
         }
