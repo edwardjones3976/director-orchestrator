@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 
 from . import __version__
-from .approvals import StaleApproval, apply_owner_approval
+from .approvals import StaleApproval, apply_owner_approval, owner_identity_matches
 from .callbacks import CallbackConflict, apply_claude_callback, bearer_matches
 from .config import Settings
 from .engine import OrchestrationEngine
@@ -59,18 +59,6 @@ def require_claude_callback_auth(
 ) -> None:
     if not bearer_matches(settings.claude_callback_secret, authorization):
         raise HTTPException(status_code=401, detail="Unauthorized")
-
-
-def owner_identity_matches(provided: str, configured: str) -> bool:
-    """Constant-time owner check that fails closed when no owner is configured.
-
-    hmac.compare_digest("", "") is True, so an unset SLACK_OWNER_USER_ID would
-    otherwise let any caller approve gated assignments by sending an empty
-    owner_user_id. require_auth fails closed the same way on a missing secret.
-    """
-    if not configured or not provided:
-        return False
-    return hmac.compare_digest(provided, configured)
 
 
 @app.get("/health")
