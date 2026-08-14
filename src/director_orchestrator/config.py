@@ -24,6 +24,11 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
     return tuple(item.strip().lower() for item in value.split(",") if item.strip())
 
 
+def _csv_exact(name: str, default: str) -> tuple[str, ...]:
+    value = os.getenv(name, default)
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = os.getenv("APP_ENV", "local")
@@ -37,6 +42,9 @@ class Settings:
     provider_poll_seconds: int = _int("PROVIDER_POLL_SECONDS", 15)
     provider_timeout_seconds: int = _int("PROVIDER_TIMEOUT_SECONDS", 3600)
     sqlite_path: str = os.getenv("SQLITE_PATH", "/data/director.sqlite3")
+    project_allowlist: tuple[str, ...] = _csv("PROJECT_ALLOWLIST", "")
+    repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
+    allowed_starting_refs: tuple[str, ...] = _csv_exact("ALLOWED_STARTING_REFS", "main")
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
     usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)
@@ -74,6 +82,7 @@ class Settings:
 
     claude_routine_url: str = os.getenv("CLAUDE_ROUTINE_URL", "")
     claude_routine_token: str = os.getenv("CLAUDE_ROUTINE_TOKEN", "")
+    claude_callback_secret: str = os.getenv("CLAUDE_CALLBACK_SECRET", "")
     claude_routine_beta: str = os.getenv(
         "CLAUDE_ROUTINE_BETA", "experimental-cc-routine-2026-04-01"
     )
@@ -107,6 +116,14 @@ class Settings:
             "claude": readiness["claude"],
             "gemini": readiness["gemini"],
             "perplexity": readiness["perplexity"],
+        }
+
+    def execution_profile_readiness(self) -> dict[str, bool]:
+        return {
+            "projects_configured": bool(self.project_allowlist),
+            "repositories_configured": bool(self.repository_allowlist),
+            "starting_refs_configured": bool(self.allowed_starting_refs),
+            "claude_callback_configured": bool(self.claude_callback_secret),
         }
 
     def provider_strategy(self) -> dict[str, dict[str, object]]:

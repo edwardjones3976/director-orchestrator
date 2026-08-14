@@ -6,8 +6,20 @@ from dataclasses import replace
 from pathlib import Path
 
 from director_orchestrator.config import Settings
-from director_orchestrator.models import SlackIntake, TaskRecord, TaskStatus
-from director_orchestrator.policy import deterministic_approval_reasons, preview_plan
+from director_orchestrator.models import (
+    Assignment,
+    DirectorPlan,
+    ProviderName,
+    RiskLevel,
+    SlackIntake,
+    TaskRecord,
+    TaskStatus,
+)
+from director_orchestrator.policy import (
+    deterministic_approval_reasons,
+    execution_policy_errors,
+    preview_plan,
+)
 from director_orchestrator.store import TaskStore
 
 
@@ -41,6 +53,70 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(all(strategy[name]["team"] == "primary" for name in self.settings.primary_team))
         self.assertEqual(strategy["gemini"]["team"], "supplemental")
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
+
+    def test_execution_targets_and_dependencies_are_strictly_allowlisted(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("project uppercut",),
+            repository_allowlist=("edwardjones3976/project-uppercut",),
+            allowed_starting_refs=("main", "release/first-bell"),
+        )
+        plan = DirectorPlan(
+            project="Project Uppercut",
+            normalized_outcome="Implement and independently review a bounded change",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=2,
+            max_revisions=1,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.CLAUDE,
+                    task="Implement",
+                    acceptance=["Tests pass"],
+                    repository="https://github.com/edwardjones3976/Project-Uppercut.git",
+                    starting_ref="main",
+                ),
+                Assignment(
+                    sequence=2,
+                    agent=ProviderName.CURSOR,
+                    task="Review",
+                    acceptance=["Evidence reviewed"],
+                    repository="edwardjones3976/Project-Uppercut",
+                    starting_ref="release/first-bell",
+                    depends_on=[1],
+                ),
+            ],
+            final_acceptance=["Both assignments accepted"],
+        )
+
+        self.assertEqual(execution_policy_errors(plan, settings), [])
+
+        unsafe = plan.model_copy(
+            update={
+                "project": "Unlisted",
+                "assignments": [
+                    plan.assignments[0].model_copy(
+                        update={"repository": "other/private-repo", "starting_ref": "develop"}
+                    ),
+                    plan.assignments[1].model_copy(update={"depends_on": [3]}),
+                ],
+            }
+        )
+        errors = execution_policy_errors(unsafe, settings)
+        self.assertTrue(any("project is not allowlisted" in item for item in errors))
+        self.assertTrue(any("repository is not allowlisted" in item for item in errors))
+        self.assertTrue(any("starting ref is not allowlisted" in item for item in errors))
+        self.assertTrue(any("dependency 3 does not exist" in item for item in errors))
+
+    def test_cursor_cannot_fall_back_to_an_implicit_repository(self):
+        settings = replace(self.settings, project_allowlist=("demo",))
+        plan = preview_plan("Project: demo\nRun an independent coding pass in Cursor", settings)
+
+        self.assertIn(
+            "assignment 1: Cursor requires an explicit repository",
+            execution_policy_errors(plan, settings),
+        )
 
 
 class StoreTests(unittest.TestCase):
