@@ -23,6 +23,21 @@ jobs:
       PYTHONPATH: src
     steps:
       - uses: actions/checkout@v4
+      - name: Parse PowerShell scripts
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/windows-uppercut-live-validation.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
