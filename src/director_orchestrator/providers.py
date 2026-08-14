@@ -28,6 +28,9 @@ class ProviderAdapter:
     async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
         raise ProviderError(f"{self.name} follow-up is not configured")
 
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        raise ProviderError(f"{self.name} usage check is not configured")
+
 
 class CursorAdapter(ProviderAdapter):
     name = ProviderName.CURSOR
@@ -80,6 +83,31 @@ class CursorAdapter(ProviderAdapter):
         payload = response.json()["run"]
         return ProviderRun(provider=self.name, run_id=payload["id"], session_id=run.session_id, status=payload["status"], url=run.url, raw=payload)
 
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        body = {
+            "name": "Director periodic usage check",
+            "prompt": {"text": prompt},
+            "workOnCurrentBranch": False,
+            "autoCreatePR": False,
+            "skipReviewerRequest": True,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{self.settings.cursor_api_base}/v1/agents",
+                headers=self.headers,
+                json=body,
+            )
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["run"]["id"],
+            session_id=payload["agent"]["id"],
+            status=payload["run"]["status"],
+            url=payload["agent"].get("url"),
+            raw=payload,
+        )
+
 
 class ClaudeAdapter(ProviderAdapter):
     name = ProviderName.CLAUDE
@@ -111,6 +139,32 @@ class ClaudeAdapter(ProviderAdapter):
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         return run
+
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        headers = {
+            "Authorization": f"Bearer {self.settings.claude_routine_token}",
+            "anthropic-beta": self.settings.claude_routine_beta,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                self.settings.claude_routine_url,
+                headers=headers,
+                json={"text": prompt},
+            )
+            response.raise_for_status()
+        payload = response.json()
+        session_id = payload["claude_code_session_id"]
+        return ProviderRun(
+            provider=self.name,
+            run_id=session_id,
+            session_id=session_id,
+            status="prompted",
+            url=payload.get("claude_code_session_url"),
+            result="Claude Routine accepted the usage-check prompt; usage metadata requires its completion callback.",
+            raw=payload,
+        )
 
 
 class GeminiAdapter(ProviderAdapter):
@@ -161,6 +215,29 @@ class GeminiAdapter(ProviderAdapter):
         payload = response.json()
         return ProviderRun(provider=self.name, run_id=payload["id"], session_id=payload.get("environment_id", run.session_id), status=payload.get("status", "in_progress"), raw=payload)
 
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        body = {
+            "agent": self.settings.gemini_agent,
+            "input": prompt,
+            "environment": "remote",
+            "background": True,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{self.settings.gemini_api_base}/interactions",
+                headers=self.headers,
+                json=body,
+            )
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["id"],
+            session_id=payload.get("environment_id"),
+            status=payload.get("status", "in_progress"),
+            raw=payload,
+        )
+
 
 class PerplexityAdapter(ProviderAdapter):
     name = ProviderName.PERPLEXITY
@@ -205,6 +282,29 @@ class PerplexityAdapter(ProviderAdapter):
         payload = response.json()
         return ProviderRun(provider=self.name, run_id=payload["id"], status=payload.get("status", "queued"), raw=payload)
 
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        body = {
+            "preset": self.settings.perplexity_preset,
+            "input": prompt,
+            "max_output_tokens": self.settings.usage_check_max_output_tokens,
+            "tools": [],
+            "background": True,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{self.settings.perplexity_api_base}/v1/agent",
+                headers=self.headers,
+                json=body,
+            )
+            response.raise_for_status()
+        payload = response.json()
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["id"],
+            status=payload.get("status", "queued"),
+            raw=payload,
+        )
+
 
 def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]:
     return {
@@ -213,4 +313,3 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
         ProviderName.GEMINI: GeminiAdapter(settings),
         ProviderName.PERPLEXITY: PerplexityAdapter(settings),
     }
-
