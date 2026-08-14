@@ -13,6 +13,7 @@ class DeploymentContractTests(unittest.TestCase):
         workflow = json.loads(
             (ROOT / "n8n" / "workflows" / "director-intake.json").read_text(encoding="utf-8")
         )
+        self.assertEqual(workflow["id"], "directorIntake")
         request_node = next(node for node in workflow["nodes"] if node["name"] == "Create Director Task")
         headers = request_node["parameters"]["headerParameters"]["parameters"]
         authorization = next(item["value"] for item in headers if item["name"] == "Authorization")
@@ -35,12 +36,23 @@ class DeploymentContractTests(unittest.TestCase):
 
     def test_pull_requests_have_cross_platform_ci(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        recovery = (ROOT / ".github" / "workflows" / "recovery-soak.yml").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("pull_request:", workflow)
         self.assertIn("ubuntu-latest", workflow)
         self.assertIn("windows-latest", workflow)
         self.assertIn("python -m unittest discover -s tests -v", workflow)
         self.assertIn("docker compose --env-file .env.example config --quiet", workflow)
+        self.assertNotIn(
+            "PYTHONPATH: src\n      SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3",
+            workflow,
+        )
+        self.assertNotIn(
+            "PYTHONPATH: src\n      SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3",
+            recovery,
+        )
 
 
 if __name__ == "__main__":
