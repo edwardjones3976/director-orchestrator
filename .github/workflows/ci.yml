@@ -49,17 +49,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: a secret added and then deleted before the branch tip
+          # still sits in the commits the pull request introduces.
+          fetch-depth: 0
 
       # This repo has already had one credential exposure. Fail loudly if a real
       # .env, a database, or a virtualenv is ever committed, rather than relying
       # on .gitignore being correct at the moment someone runs `git add`.
-      - name: Assert no secret-bearing files are tracked
+      - name: Assert no secret-bearing files are committed
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         run: |
-          tracked=$(git ls-files -- '.env' '.env.*' '*.db' '*.sqlite3' '.venv/**' \
-            | grep -v '^\.env\.example$' || true)
-          if [ -n "$tracked" ]; then
-            echo "::error::Secret-bearing or generated files are tracked in git:"
-            echo "$tracked"
+          set -euo pipefail
+
+          # Anchored to a path segment rather than the worktree root, so nested
+          # paths like services/api/.env and tools/.venv/pyvenv.cfg are caught.
+          forbidden='(^|/)(\.env(\..+)?|[^/]+\.(db|sqlite3))$|(^|/)\.venv/'
+          allowed='(^|/)\.env\.example$'
+
+          candidates=$(git ls-files)
+          if [ -n "$BASE_SHA" ]; then
+            added=$(git log --diff-filter=A --name-only --pretty=format: "$BASE_SHA..HEAD")
+            candidates=$(printf '%s\n%s\n' "$candidates" "$added")
+          fi
+
+          offenders=$(printf '%s\n' "$candidates" | sed '/^$/d' | sort -u \
+            | grep -E "$forbidden" | grep -vE "$allowed" || true)
+
+          if [ -n "$offenders" ]; then
+            echo "::error::Secret-bearing or generated files are committed:"
+            echo "$offenders"
             exit 1
           fi
-          echo "No secret-bearing files are tracked."
+          echo "No secret-bearing files are committed."
