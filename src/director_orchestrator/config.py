@@ -45,9 +45,10 @@ class Settings:
     usage_check_timeout_seconds: int = _int("USAGE_CHECK_TIMEOUT_SECONDS", 300)
     usage_check_max_output_tokens: int = _int("USAGE_CHECK_MAX_OUTPUT_TOKENS", 96)
     usage_check_providers: tuple[str, ...] = _csv(
-        "USAGE_CHECK_PROVIDERS", "openai,cursor,claude,gemini,perplexity"
+        "USAGE_CHECK_PROVIDERS", "openai,claude,cursor"
     )
 
+    primary_team: tuple[str, ...] = _csv("PRIMARY_TEAM", "openai,claude,cursor")
     primary_workhorse: str = os.getenv("PRIMARY_WORKHORSE", "claude").strip().lower()
     claude_account_context: str = os.getenv("CLAUDE_ACCOUNT_CONTEXT", "Claude Pro 20x")
     openai_account_context: str = os.getenv(
@@ -110,6 +111,7 @@ class Settings:
     def provider_strategy(self) -> dict[str, dict[str, object]]:
         return {
             "claude": {
+                "team": "primary",
                 "priority": "primary_workhorse",
                 "account_context": self.claude_account_context,
                 "strengths": [
@@ -120,22 +122,26 @@ class Settings:
                 ],
             },
             "openai": {
+                "team": "primary",
                 "priority": "director_planning_and_acceptance_review",
                 "account_context": self.openai_account_context,
                 "strengths": ["orchestration", "planning", "structured acceptance review"],
             },
             "cursor": {
-                "priority": "coding_overflow_and_independent_second_pass",
+                "team": "primary",
+                "priority": "primary_repository_teammate_and_independent_second_pass",
                 "account_context": self.other_provider_account_context,
                 "strengths": ["isolated repository execution", "parallel implementation", "draft pull requests"],
             },
             "gemini": {
-                "priority": "sandbox_and_prototype_specialist",
+                "team": "supplemental",
+                "priority": "optional_sandbox_and_prototype_specialist",
                 "account_context": self.other_provider_account_context,
                 "strengths": ["sandbox execution", "visual/browser validation", "alternate prototypes"],
             },
             "perplexity": {
-                "priority": "current_research_specialist",
+                "team": "supplemental",
+                "priority": "optional_current_research_specialist",
                 "account_context": self.other_provider_account_context,
                 "strengths": ["current web research", "source gathering", "fact verification"],
             },
