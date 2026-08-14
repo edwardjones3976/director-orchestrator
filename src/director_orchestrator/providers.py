@@ -84,27 +84,24 @@ class CursorAdapter(ProviderAdapter):
         return ProviderRun(provider=self.name, run_id=payload["id"], session_id=run.session_id, status=payload["status"], url=run.url, raw=payload)
 
     async def usage_check(self, prompt: str) -> ProviderRun:
-        body = {
-            "name": "Director periodic usage check",
-            "prompt": {"text": prompt},
-            "workOnCurrentBranch": False,
-            "autoCreatePR": False,
-            "skipReviewerRequest": True,
-        }
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.settings.cursor_api_base}/v1/agents",
+        # An authenticated read, not an agent launch. Verified live 2026-08-14:
+        # GET /v1/models answers 200 in ~0.5s with this credential, while
+        # POST /v1/agents hangs past 60s regardless of body and would burn a
+        # paid cloud agent per probe even when it works. Availability only
+        # needs proof the credential is accepted.
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                f"{self.settings.cursor_api_base}/v1/models",
                 headers=self.headers,
-                json=body,
             )
             response.raise_for_status()
         payload = response.json()
+        models = payload.get("items", [])
         return ProviderRun(
             provider=self.name,
-            run_id=payload["run"]["id"],
-            session_id=payload["agent"]["id"],
-            status=payload["run"]["status"],
-            url=payload["agent"].get("url"),
+            run_id="usage-check-models",
+            status="FINISHED",
+            result=f"Cursor API credential accepted; {len(models)} models listed. QUOTA=UNAVAILABLE",
             raw=payload,
         )
 
