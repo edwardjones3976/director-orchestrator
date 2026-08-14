@@ -83,7 +83,7 @@ ChatGPT Plus, Claude Pro, Cursor Pro, Gemini subscriptions, and Perplexity Pro d
 
 ## Periodic provider usage checks
 
-`USAGE_CHECK_ENABLED=true` schedules a short, tool-free availability prompt for the configured check list. The default list is the primary team: OpenAI, Claude, and Cursor. Gemini and Perplexity can be added explicitly when their supplemental lanes should also be monitored. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; the dry-run default prevents every model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously.
+Periodic prompts are opt-in. After provider-side spend limits are configured, set `USAGE_CHECK_ENABLED=true` to schedule a short availability prompt that instructs the provider not to use tools or perform project work. The default list is the primary team: OpenAI, Claude, and Cursor. Gemini and Perplexity can be added explicitly when their supplemental lanes should also be monitored. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; either switch being false prevents every monitor-initiated model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously and an unbypassable 15-minute per-provider minimum.
 
 The monitor stores provider-returned token metadata in SQLite and posts a concise status summary to `#project-director`. A model reply is an availability signal, not authoritative proof of an account or subscription balance. Cursor documents plan usage in its dashboard, and other providers may likewise expose authoritative quota only in their account consoles.
 
@@ -94,7 +94,7 @@ GET  /v1/usage-checks/latest
 POST /v1/usage-checks/run
 ```
 
-The manual POST respects both safety switches and returns `409` while paid execution or periodic checks are disabled.
+The manual POST respects both safety switches and the 15-minute minimum; it returns `409` while paid execution or periodic checks are disabled.
 
 ## Cloud hosting later
 
@@ -115,8 +115,12 @@ After the shared Director system passes its smoke test, create a separate Projec
 
 ## Local validation
 
-```bash
-PYTHONPATH=src python -m unittest discover -s tests -v
-python -m json.tool n8n/workflows/director-intake.json > /dev/null
-docker compose config
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m json.tool n8n\workflows\director-intake.json > $null
+$env:DIRECTOR_ENV_FILE = ".env.example"
+docker compose --env-file .env.example config --quiet
 ```

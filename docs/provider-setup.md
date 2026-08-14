@@ -2,9 +2,9 @@
 
 ## Shared periodic usage-check behavior
 
-The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt. The prompt forbids browsing, tools, repository inspection, edits, branches, pull requests, and project work. The monitor records provider-returned token metadata when available and sends only a bounded status summary to Slack.
+The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt. The prompt instructs the provider not to browse, call tools, inspect repositories, edit files, create branches or pull requests, or perform project work. This is an instruction rather than a provider-side sandbox for agent products such as Cursor and Gemini, so provider-side spend limits remain required. The monitor records provider-returned token metadata when available and sends only a bounded status summary to Slack.
 
-These probes consume provider usage. They are disabled by the global paid-run gate and cannot execute while `ALLOW_PAID_RUNS=false`. The default interval is 360 minutes and the enforced minimum is 15 minutes. Account dashboards, not model prose, remain authoritative for plan balances and billing.
+These probes consume provider usage and are opt-in through `USAGE_CHECK_ENABLED=true`. They are also disabled by the global paid-run gate and cannot execute while `ALLOW_PAID_RUNS=false`. The default interval is 360 minutes and the enforced minimum is 15 minutes, including manual runs. Account dashboards, not model prose, remain authoritative for plan balances and billing.
 
 Configure one provider at a time and leave `ALLOW_PAID_RUNS=false` until every intended adapter has passed a credential/readiness check. Subscription access and API billing are separate unless the provider explicitly says otherwise.
 
@@ -29,7 +29,7 @@ Practical operating patterns:
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
 | Supplemental — sandbox/prototype | Gemini Antigravity Managed Agent | `GEMINI_API_KEY` | Poll background Interaction |
-| Supplemental — current research | Perplexity Agent API | `PERPLEXITY_API_KEY` | Poll background response |
+| Supplemental — current research | Perplexity Agent API | `PERPLEXITY_API_KEY` | Synchronous response |
 
 ## Important Claude Cowork boundary
 

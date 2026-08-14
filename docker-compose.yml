@@ -4,7 +4,7 @@ services:
   orchestrator:
     build: .
     restart: unless-stopped
-    env_file: .env
+    env_file: ${DIRECTOR_ENV_FILE:-.env}
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -20,7 +20,7 @@ services:
     build: .
     restart: unless-stopped
     command: ["python", "-m", "director_orchestrator.slack_bot"]
-    env_file: .env
+    env_file: ${DIRECTOR_ENV_FILE:-.env}
     depends_on:
       orchestrator:
         condition: service_healthy
@@ -28,7 +28,7 @@ services:
         condition: service_started
 
   n8n-db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
     restart: unless-stopped
     environment:
       POSTGRES_USER: n8n
@@ -43,7 +43,7 @@ services:
       retries: 10
 
   n8n:
-    image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:latest}
+    image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:latest@sha256:d91033b4fac2f7b75c5c4007e10824c66147f7d7a3cccb488720e97452ee7dc7}
     restart: unless-stopped
     ports:
       - "127.0.0.1:5678:5678"
@@ -61,10 +61,8 @@ services:
       N8N_SECURE_COOKIE: "false"
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
       GENERIC_TIMEZONE: ${TZ:-America/Los_Angeles}
-      ORCHESTRATOR_BASE_URL: http://orchestrator:8080
-      ORCHESTRATOR_SHARED_SECRET: ${ORCHESTRATOR_SHARED_SECRET}
     depends_on:
       n8n-db:
         condition: service_healthy

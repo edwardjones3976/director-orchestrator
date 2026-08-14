@@ -28,10 +28,20 @@ TERMINAL_STATUSES = {
     "failed",
     "cancelled",
     "incomplete",
+    "requires_action",
     "prompted",
 }
-FAILED_STATUSES = {"ERROR", "CANCELLED", "EXPIRED", "failed", "cancelled", "incomplete"}
+FAILED_STATUSES = {
+    "ERROR",
+    "CANCELLED",
+    "EXPIRED",
+    "failed",
+    "cancelled",
+    "incomplete",
+    "requires_action",
+}
 SUPPORTED_PROVIDERS = {"openai", "cursor", "claude", "gemini", "perplexity"}
+MINIMUM_INTERVAL = timedelta(minutes=15)
 
 
 def _output_text(payload: dict[str, Any]) -> str | None:
@@ -100,13 +110,23 @@ class UsageMonitor:
 
     @property
     def interval(self) -> timedelta:
-        return timedelta(minutes=max(15, self.settings.usage_check_interval_minutes))
+        return max(
+            MINIMUM_INTERVAL,
+            timedelta(minutes=self.settings.usage_check_interval_minutes),
+        )
+
+    @property
+    def providers(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(self.settings.usage_check_providers))
+
+    @property
+    def unsupported_providers(self) -> tuple[str, ...]:
+        return tuple(provider for provider in self.providers if provider not in SUPPORTED_PROVIDERS)
 
     def _is_due(self, provider: str, now: datetime, force: bool) -> bool:
-        if force:
-            return True
         latest = self.store.latest_usage_check(provider)
-        return latest is None or now - latest.checked_at >= self.interval
+        required_interval = MINIMUM_INTERVAL if force else self.interval
+        return latest is None or now - latest.checked_at >= required_interval
 
     async def _openai_usage_check(self) -> ProviderRun:
         headers = {
@@ -211,8 +231,9 @@ class UsageMonitor:
             readiness = self.settings.usage_check_readiness()
             now = datetime.now(timezone.utc)
             records: list[UsageCheckRecord] = []
-            for index, provider in enumerate(self.settings.usage_check_providers):
-                if provider not in SUPPORTED_PROVIDERS or not self._is_due(provider, now, force):
+            providers = tuple(provider for provider in self.providers if provider in SUPPORTED_PROVIDERS)
+            for index, provider in enumerate(providers):
+                if not self._is_due(provider, now, force):
                     continue
                 if not readiness.get(provider, False):
                     record = UsageCheckRecord(
@@ -234,7 +255,7 @@ class UsageMonitor:
                         )
                 self.store.add_usage_check(record)
                 records.append(record)
-                if index < len(self.settings.usage_check_providers) - 1:
+                if index < len(providers) - 1:
                     await asyncio.sleep(max(0, min(self.settings.usage_check_provider_delay_seconds, 60)))
             await self._post_summary(records)
             return records
@@ -252,7 +273,8 @@ class UsageMonitor:
             "enabled": self.settings.usage_check_enabled,
             "paid_run_gate_open": self.settings.allow_paid_runs,
             "interval_minutes": max(15, self.settings.usage_check_interval_minutes),
-            "providers": list(self.settings.usage_check_providers),
+            "providers": list(self.providers),
+            "unsupported_providers": list(self.unsupported_providers),
             "latest": [
                 {
                     "provider": record.provider,

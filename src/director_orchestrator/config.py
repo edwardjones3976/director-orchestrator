@@ -38,7 +38,7 @@ class Settings:
     provider_timeout_seconds: int = _int("PROVIDER_TIMEOUT_SECONDS", 3600)
     sqlite_path: str = os.getenv("SQLITE_PATH", "/data/director.sqlite3")
 
-    usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", True)
+    usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
     usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)
     usage_check_initial_delay_seconds: int = _int("USAGE_CHECK_INITIAL_DELAY_SECONDS", 60)
     usage_check_provider_delay_seconds: int = _int("USAGE_CHECK_PROVIDER_DELAY_SECONDS", 5)
@@ -83,10 +83,11 @@ class Settings:
         "GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta"
     )
     gemini_agent: str = os.getenv("GEMINI_AGENT", "antigravity-preview-05-2026")
+    gemini_api_revision: str = os.getenv("GEMINI_API_REVISION", "2026-05-20")
 
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
     perplexity_api_base: str = os.getenv("PERPLEXITY_API_BASE", "https://api.perplexity.ai")
-    perplexity_preset: str = os.getenv("PERPLEXITY_PRESET", "low")
+    perplexity_preset: str = os.getenv("PERPLEXITY_PRESET", "fast-search")
 
     def readiness(self) -> dict[str, bool]:
         return {

@@ -96,6 +96,52 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(latest)
             self.assertEqual(latest.total_tokens, 20)
 
+    async def test_forced_run_still_enforces_fifteen_minute_minimum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulCursorProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("cursor",),
+                cursor_api_key="test-cursor",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.CURSOR: adapter})
+
+            first = await monitor.run_once(force=True)
+            second = await monitor.run_once(force=True)
+
+            self.assertEqual(len(first), 1)
+            self.assertEqual(second, [])
+            self.assertEqual(adapter.calls, 1)
+
+    async def test_provider_list_is_deduplicated_and_unknown_names_are_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulCursorProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("cursor", "unknown", "cursor"),
+                cursor_api_key="test-cursor",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.CURSOR: adapter})
+
+            records = await monitor.run_once()
+
+            self.assertEqual([record.provider for record in records], ["cursor"])
+            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(monitor.health()["providers"], ["cursor", "unknown"])
+            self.assertEqual(monitor.health()["unsupported_providers"], ["unknown"])
+
     async def test_unconfigured_provider_is_recorded_as_skipped(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))

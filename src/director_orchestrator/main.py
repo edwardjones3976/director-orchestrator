@@ -33,10 +33,14 @@ usage_monitor = UsageMonitor(settings, store)
 async def lifespan(_: FastAPI):
     recovery_tasks = [asyncio.create_task(engine.run(record.task_id)) for record in store.list_recoverable()]
     monitor_task = asyncio.create_task(usage_monitor.run_forever())
-    yield
-    for task in [*recovery_tasks, monitor_task]:
-        if not task.done():
-            task.cancel()
+    tasks = [*recovery_tasks, monitor_task]
+    try:
+        yield
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 app = FastAPI(title="Director Orchestrator", version=__version__, lifespan=lifespan)

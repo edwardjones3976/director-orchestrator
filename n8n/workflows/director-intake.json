@@ -18,13 +18,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.ORCHESTRATOR_BASE_URL + '/v1/intake' }}",
+        "url": "http://orchestrator:8080/v1/intake",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "={{ 'Bearer ' + $env.ORCHESTRATOR_SHARED_SECRET }}"
+              "value": "={{ $json.headers.authorization }}"
             },
             {
               "name": "Content-Type",

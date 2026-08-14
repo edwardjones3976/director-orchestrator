@@ -30,7 +30,7 @@ docker compose logs --tail 100 orchestrator slackbot
 
 Healthy means the orchestrator is `healthy`, Slackbot and n8n are `running`, and `http://localhost:8080/health` returns `"ok": true`.
 
-The health response also includes `usage_monitor`. Its `latest` list shows the most recent bounded check for each provider without exposing model replies or credentials. Periodic checks remain dormant while `ALLOW_PAID_RUNS=false`.
+The health response also includes `usage_monitor`. Its `latest` list shows the most recent bounded check for each provider without exposing model replies or credentials. Periodic checks remain dormant unless both `USAGE_CHECK_ENABLED=true` and `ALLOW_PAID_RUNS=true`.
 
 ## Periodic usage-check operation
 
@@ -42,7 +42,7 @@ The health response also includes `usage_monitor`. Its `latest` list shows the m
 - Claude Routine can confirm prompt acceptance but requires its configured completion callback for final usage metadata.
 - Model-reported quota is advisory; use each provider dashboard for authoritative subscription or billing balance.
 
-To pause the checks without disabling ordinary approved work, set `USAGE_CHECK_ENABLED=false` and restart `orchestrator`. To force one bounded cycle, call `POST /v1/usage-checks/run` with the local bearer secret; this still refuses to run unless both `USAGE_CHECK_ENABLED` and `ALLOW_PAID_RUNS` are true.
+To pause the checks without disabling ordinary approved work, set `USAGE_CHECK_ENABLED=false` and restart `orchestrator`. To request one bounded cycle ahead of the normal six-hour cadence, call `POST /v1/usage-checks/run` with the local bearer secret. The endpoint still refuses to run unless both `USAGE_CHECK_ENABLED` and `ALLOW_PAID_RUNS` are true, and it never bypasses the 15-minute per-provider minimum.
 
 ## Backup
 
@@ -59,4 +59,4 @@ Before upgrades, stop new tasks and back up the three named volumes: `director-d
 
 ## Host outage
 
-Provider-side background runs may continue while the desktop is offline. When the host returns, recorded Cursor, Gemini, and Perplexity run IDs are polled again. Claude Routine sessions require their completion callback or manual completion report. Never create a second work order merely because the host rebooted; first inspect the original task ID.
+Provider-side background runs may continue while the desktop is offline. When the host returns, recorded Cursor and Gemini run IDs are polled again; Perplexity Agent API calls return synchronously. Claude Routine sessions require their completion callback or manual completion report. Never create a second work order merely because the host rebooted; first inspect the original task ID.

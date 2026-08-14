@@ -49,6 +49,8 @@ $envText = Get-Content ".env" -Raw
 $envText = $envText -replace 'ORCHESTRATOR_SHARED_SECRET=REPLACE_WITH_RANDOM_SECRET', ("ORCHESTRATOR_SHARED_SECRET=" + (New-RandomSecret))
 $envText = $envText -replace 'N8N_ENCRYPTION_KEY=REPLACE_WITH_RANDOM_SECRET', ("N8N_ENCRYPTION_KEY=" + (New-RandomSecret))
 $envText = $envText -replace 'N8N_POSTGRES_PASSWORD=REPLACE_WITH_RANDOM_SECRET', ("N8N_POSTGRES_PASSWORD=" + (New-RandomSecret))
+$envText = Set-DotEnvValue -Text $envText -Name "ALLOW_PAID_RUNS" -Value "false"
+$envText = Set-DotEnvValue -Text $envText -Name "USAGE_CHECK_ENABLED" -Value "false"
 
 if ($envText -match '(?m)^SLACK_APP_TOKEN=\s*$') {
     $slackAppToken = Read-ValidatedSecret -Prompt "Paste the Slack app-level token (input hidden)" -RequiredPrefix "xapp-"
@@ -72,7 +74,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 docker compose config | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker Compose configuration validation failed."
+}
+
 docker compose up -d --build
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker Compose failed to start the Director services."
+}
 
 Write-Host "Director Orchestrator started in dry-run mode."
 Write-Host "Open http://localhost:5678 to initialize n8n, then import n8n/workflows/director-intake.json."
