@@ -87,7 +87,7 @@ jobs:
           # Anchored to a path segment rather than the worktree root, so nested
           # paths like services/api/.env and tools/.venv/pyvenv.cfg are caught.
           forbidden='(^|/)(\.env(\..+)?|[^/]+\.(db|sqlite3))$|(^|/)\.venv/'
-          allowed='(^|/)\.env(\.[^/]+)?\.example
+          allowed='(^|/)\.env(\.[^/]+)?\.example$'
 
           candidates=$(git ls-files)
           if [ -n "$BASE_SHA" ]; then
