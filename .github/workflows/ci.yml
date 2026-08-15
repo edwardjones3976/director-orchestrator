@@ -58,6 +58,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose --env-file .env.example config --quiet
+      - name: Validate isolated Project Uppercut profile
+        env:
+          DIRECTOR_ENV_FILE: .env.uppercut.example
+          DIRECTOR_COMPOSE_PROJECT_NAME: project-uppercut-director-ci
+        run: docker compose --env-file .env.uppercut.example config --quiet
       - run: docker compose --env-file .env.example build orchestrator
 
   secret-hygiene:
@@ -82,7 +87,46 @@ jobs:
           # Anchored to a path segment rather than the worktree root, so nested
           # paths like services/api/.env and tools/.venv/pyvenv.cfg are caught.
           forbidden='(^|/)(\.env(\..+)?|[^/]+\.(db|sqlite3))$|(^|/)\.venv/'
-          allowed='(^|/)\.env\.example$'
+          allowed='(^|/)\.env(\.[^/]+)?\.example
+
+          candidates=$(git ls-files)
+          if [ -n "$BASE_SHA" ]; then
+            added=$(git log --diff-filter=A --name-only --pretty=format: "$BASE_SHA..HEAD")
+            candidates=$(printf '%s\n%s\n' "$candidates" "$added")
+          fi
+
+          offenders=$(printf '%s\n' "$candidates" | sed '/^$/d' | sort -u \
+            | grep -E "$forbidden" | grep -vE "$allowed" || true)
+
+          if [ -n "$offenders" ]; then
+            echo "::error::Secret-bearing or generated files are committed:"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "No secret-bearing files are committed."
+
+  recovery-probe:
+    name: Cross-process recovery probe
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Recover persisted work without redispatch
+        env:
+          SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3
+        shell: bash
+        run: |
+          database="${RUNNER_TEMP}/director-recovery-ci.sqlite3"
+          python scripts/recovery_probe.py seed --database "$database"
+          python scripts/recovery_probe.py resume --database "$database"
+          python scripts/recovery_probe.py resume --database "$database"
+
 
           candidates=$(git ls-files)
           if [ -n "$BASE_SHA" ]; then
