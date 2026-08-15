@@ -1,4 +1,4 @@
-name: director-orchestrator
+name: ${DIRECTOR_COMPOSE_PROJECT_NAME:-director-orchestrator}
 
 services:
   orchestrator:
@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     env_file: ${DIRECTOR_ENV_FILE:-.env}
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${DIRECTOR_HOST_PORT:-8080}:8080"
     volumes:
       - director-data:/data
     healthcheck:
@@ -46,7 +46,7 @@ services:
     image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:latest@sha256:d91033b4fac2f7b75c5c4007e10824c66147f7d7a3cccb488720e97452ee7dc7}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5678:5678"
+      - "127.0.0.1:${N8N_HOST_PORT:-5678}:5678"
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: n8n-db
@@ -73,4 +73,3 @@ volumes:
   director-data:
   n8n-data:
   n8n-db-data:
-
