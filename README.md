@@ -121,7 +121,7 @@ Do not expose the local n8n editor or orchestrator port directly to the internet
 
 ## Project Uppercut reiteration
 
-Project Uppercut runs as a separate Compose project using `.env.uppercut`, dedicated ports, volumes, task state, Slack routing, budgets, and callback secrets. The supervised Windows script never edits the primary `.env`. See [the Uppercut runbook](docs/project-uppercut-reiteration.md) and [the framework transition plan](docs/framework-transition-plan.md).
+Project Uppercut runs as a separate Compose project using `.env.uppercut`, dedicated ports, volumes, task state, Slack routing, budgets, and callback secrets. The supervised Windows script never edits the primary `.env`. See [the Uppercut runbook](docs/project-uppercut-reiteration.md). The broader LangGraph migration is planned separately in [PR #18](https://github.com/edwardjones3976/director-orchestrator/pull/18) so this remediation stays focused.
 
 ## Local validation
 

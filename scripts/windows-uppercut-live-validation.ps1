@@ -48,6 +48,20 @@ function Set-DotEnvValue {
     return $Text.TrimEnd() + [Environment]::NewLine + "${Name}=${Value}" + [Environment]::NewLine
 }
 
+function Write-ProfileSwitches {
+    param(
+        [Parameter(Mandatory = $true)][bool]$PaidRuns,
+        [Parameter(Mandatory = $true)][bool]$UsageChecks
+    )
+
+    $text = Get-Content $profilePath -Raw
+    $text = Set-DotEnvValue -Text $text -Name "ALLOW_PAID_RUNS" -Value $(if ($PaidRuns) { "true" } else { "false" })
+    $text = Set-DotEnvValue -Text $text -Name "USAGE_CHECK_ENABLED" -Value $(if ($UsageChecks) { "true" } else { "false" })
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText((Join-Path (Get-Location) $profilePath), $text, $utf8NoBom)
+    $text = $null
+}
+
 function Assert-Configured {
     param(
         [Parameter(Mandatory = $true)][hashtable]$Values,
@@ -120,6 +134,10 @@ if ($SeedProviderCredentialsFromPrimaryEnv) {
     Write-Host "Provider credentials were copied locally from .env to $profilePath; values were not displayed."
 }
 
+if ($EnablePaidRuns -and $SkipProviderChecks) {
+    throw "-SkipProviderChecks cannot be combined with -EnablePaidRuns. Provider readiness is a required paid-run gate."
+}
+
 $profile = [ordered]@{
     APP_ENV = "project-uppercut"
     DIRECTOR_COMPOSE_PROJECT_NAME = "project-uppercut-director"
@@ -134,8 +152,10 @@ $profile = [ordered]@{
     PRIMARY_WORKHORSE = "claude"
     USAGE_CHECK_PROVIDERS = "openai,claude,cursor"
     USAGE_CHECK_INTERVAL_MINUTES = "360"
-    ALLOW_PAID_RUNS = $(if ($EnablePaidRuns) { "true" } else { "false" })
-    USAGE_CHECK_ENABLED = $(if ($EnablePaidRuns) { "true" } else { "false" })
+    # Every invocation stages the profile closed. The paid switches are written
+    # only after the isolated store is proved empty.
+    ALLOW_PAID_RUNS = "false"
+    USAGE_CHECK_ENABLED = "false"
 }
 foreach ($entry in $profile.GetEnumerator()) {
     $profileText = Set-DotEnvValue -Text $profileText -Name $entry.Key -Value $entry.Value
@@ -172,47 +192,77 @@ Write-Host "Using isolated profile $profilePath, Compose project $composeProject
 docker compose --project-name $composeProject --env-file $profilePath config --quiet
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose configuration validation failed." }
 
-docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
-if ($LASTEXITCODE -ne 0) { throw "Docker Compose failed to start the Project Uppercut Director." }
+docker compose --project-name $composeProject --env-file $profilePath build orchestrator
+if ($LASTEXITCODE -ne 0) { throw "Unable to build the isolated Project Uppercut Director image." }
 
-$health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
-Assert-Ready -Health $health
-Write-Host "Project Uppercut Director is ready; the primary Director deployment was not modified."
+# Inspect the isolated volume before starting the service. Starting FastAPI first
+# would schedule recoverable work in its lifespan hook and erase this preflight.
+$recoverableOutput = @(
+    docker compose --project-name $composeProject --env-file $profilePath run --rm --no-deps -T --entrypoint python orchestrator -c "from director_orchestrator.config import Settings; from director_orchestrator.store import TaskStore; print(len(TaskStore(Settings().sqlite_path).list_recoverable()))"
+)
+if ($LASTEXITCODE -ne 0) { throw "Unable to inspect the isolated task store." }
+$recoverableLine = @($recoverableOutput | Where-Object { $_ -match '^\d+$' } | Select-Object -Last 1)
+if ($recoverableLine.Count -ne 1) { throw "The isolated task-store preflight returned an unreadable result." }
+if ([int]$recoverableLine[0] -ne 0) {
+    throw "The isolated task store contains recoverable work. Paid execution remains disabled; resolve or archive it explicitly."
+}
+Write-Host "Isolated task store contains no recoverable work."
 
 if (-not $EnablePaidRuns) {
-    Write-Host "Paid execution remains disabled for this isolated profile."
-    exit 0
-}
-if ($SkipProviderChecks) {
-    Write-Host "Paid execution and scheduled checks are enabled; immediate checks were skipped."
+    docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
+    if ($LASTEXITCODE -ne 0) { throw "Docker Compose failed to start the Project Uppercut Director." }
+    $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
+    Assert-Ready -Health $health
+    Write-Host "Project Uppercut Director is ready with paid execution disabled; the primary deployment was not modified."
     exit 0
 }
 
-$startedAt = [DateTimeOffset]::UtcNow
+Write-ProfileSwitches -PaidRuns $true -UsageChecks $true
+$values = Read-DotEnv -Path $profilePath
 $headers = @{ Authorization = "Bearer $($values['ORCHESTRATOR_SHARED_SECRET'])" }
 $baseUrl = "http://127.0.0.1:${hostPort}"
-Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/run" -Method Post -Headers $headers -TimeoutSec 30 | Out-Null
-Write-Host "Bounded checks accepted. Waiting for OpenAI, Claude, and Cursor..."
 
-$deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
-$records = @()
-do {
-    Start-Sleep -Seconds 5
-    $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30)
-    $records = @($latest | Where-Object {
-        $_.provider -in @("openai", "claude", "cursor") -and
-        [DateTimeOffset]::Parse($_.checked_at) -ge $startedAt
-    })
-} while ($records.Count -lt 3 -and [DateTimeOffset]::UtcNow -lt $deadline)
+try {
+    # Start only the API while the paid gate is being proved. Slack intake stays
+    # offline until all three providers pass the bounded check.
+    docker compose --project-name $composeProject --env-file $profilePath up -d --build --force-recreate orchestrator
+    if ($LASTEXITCODE -ne 0) { throw "Unable to start the gated provider-check service." }
+    $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
+    Assert-Ready -Health $health
 
-if ($records.Count -lt 3) {
-    throw "Timed out waiting for all provider checks. Inspect the isolated stack with: docker compose -p $composeProject logs --tail 200 orchestrator"
+    $startedAt = [DateTimeOffset]::UtcNow
+    Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/run" -Method Post -Headers $headers -TimeoutSec 30 | Out-Null
+    Write-Host "Bounded checks accepted. Waiting for OpenAI, Claude, and Cursor..."
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    $records = @()
+    do {
+        Start-Sleep -Seconds 5
+        $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30)
+        $records = @($latest | Where-Object {
+            $_.provider -in @("openai", "claude", "cursor") -and
+            [DateTimeOffset]::Parse($_.checked_at) -ge $startedAt
+        })
+    } while ($records.Count -lt 3 -and [DateTimeOffset]::UtcNow -lt $deadline)
+
+    if ($records.Count -lt 3) {
+        throw "Timed out waiting for all provider checks. Inspect with: docker compose -p $composeProject logs --tail 200 orchestrator"
+    }
+
+    $records | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
+    $failures = @($records | Where-Object { $_.status -in @("error", "skipped") })
+    if ($failures.Count -gt 0) { throw "One or more providers failed the bounded check." }
+
+    # The Slack gateway is the last service enabled, after readiness succeeds.
+    docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
+    if ($LASTEXITCODE -ne 0) { throw "Provider checks passed, but the complete isolated stack did not start." }
+}
+catch {
+    $failure = $_
+    Write-ProfileSwitches -PaidRuns $false -UsageChecks $false
+    docker compose --project-name $composeProject --env-file $profilePath stop slackbot | Out-Null
+    docker compose --project-name $composeProject --env-file $profilePath up -d --force-recreate orchestrator | Out-Null
+    throw $failure
 }
 
-$records | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
-$failures = @($records | Where-Object { $_.status -in @("error", "skipped") })
-if ($failures.Count -gt 0) {
-    throw "One or more providers failed the bounded check. Secret values were not displayed."
-}
-
-Write-Host "LIVE VALIDATION PASSED for the isolated Project Uppercut deployment."
+Write-Host "LIVE VALIDATION PASSED. Paid execution is enabled only for the isolated Project Uppercut deployment."
