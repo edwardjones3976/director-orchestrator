@@ -48,7 +48,7 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertIn("cannot be combined with -EnablePaidRuns", self.script)
 
     def test_failure_closes_paid_gate_and_keeps_slack_intake_offline(self):
-        catch_block = self.script[self.script.index("catch {") :]
+        catch_block = self.script[self.script.rindex("\ncatch {") :]
         self.assertIn("Write-ProfileSwitches -PaidRuns $false", catch_block)
         self.assertIn("stop slackbot", catch_block)
 

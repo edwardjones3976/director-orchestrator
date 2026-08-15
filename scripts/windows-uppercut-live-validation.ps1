@@ -147,7 +147,6 @@ $profile = [ordered]@{
     PROJECT_ALLOWLIST = "project-uppercut"
     REPOSITORY_ALLOWLIST = "edwardjones3976/Project-Uppercut"
     ALLOWED_STARTING_REFS = "main"
-    SLACK_DIRECTOR_CHANNEL_ID = "C0BP62MBFNK"
     PRIMARY_TEAM = "openai,claude,cursor"
     PRIMARY_WORKHORSE = "claude"
     USAGE_CHECK_PROVIDERS = "openai,claude,cursor"
