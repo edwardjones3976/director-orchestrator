@@ -1,25 +1,43 @@
 # Project Uppercut Reiteration
 
-Run this only after the shared Director passes its dry-run and one low-risk end-to-end live test. Project Uppercut is a separate deployment profile, not just another prompt.
+Project Uppercut uses the same runtime through an isolated deployment profile. It must not rewrite, reuse the task database of, or share local control-plane state with the primary Director deployment.
 
-## Isolation requirements
+## Isolation contract
 
-- Private repository allowlist limited to `edwardjones3976/Project-Uppercut` and explicitly approved dependencies.
-- Dedicated Slack channel or an enforceable thread policy.
-- Separate `.env`, task database, Docker volume names, provider budgets, and callback secrets.
-- Project-specific acceptance checks and branch protection.
-- No shared private documents, genealogy evidence, credentials, or provider sessions unless explicitly approved.
-- Separate audit and backup retention.
+- Populated profile: `.env.uppercut` (ignored by Git).
+- Committed template: `.env.uppercut.example` (contains no credentials).
+- Compose project: `project-uppercut-director`.
+- Orchestrator: `127.0.0.1:18080`.
+- n8n: `127.0.0.1:15678`.
+- Dedicated Compose volumes and SQLite database.
+- Repository allowlist limited to `edwardjones3976/Project-Uppercut`.
+- Slack routing limited to the approved Project Uppercut channel and owner.
+- Separate callback and internal service secrets. Provider credentials may be copied locally only through the explicit seeding switch; values are never printed or committed.
 
-## Reiteration checklist
+## Windows initialization
 
-1. Copy the deployment configuration, not the runtime secrets.
-2. Change Compose project and volume names to `project-uppercut-director`.
-3. Set the Slack channel ID and a repository allowlist containing only Project Uppercut.
-4. Add Project Uppercut instructions and tests in its own repository.
-5. Run the dry-run smoke test with `ALLOW_PAID_RUNS=false`.
-6. Run one reversible live task on an isolated branch.
-7. Review the draft PR, logs, spend, and approval behavior before enabling routine use.
+Run from the canonical `director-orchestrator` checkout:
 
-No agent may merge, deploy, publish, delete, purchase, expand access, or handle sensitive Project Uppercut data without the matching owner decision gate.
+```powershell
+git switch main
+git pull --ff-only
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-uppercut-live-validation.ps1 -SeedProviderCredentialsFromPrimaryEnv
+```
 
+The first invocation creates `.env.uppercut`, generates new internal secrets, copies only the OpenAI, Claude Routine, and Cursor provider entries when requested, and then stops if dedicated Slack configuration is still absent. Install the generated `CLAUDE_CALLBACK_SECRET` in the trusted callback sender before live Claude work.
+
+After the dry-run profile is healthy and provider-side limits are set:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-uppercut-live-validation.ps1 -EnablePaidRuns
+```
+
+## Activation gate
+
+1. Finish the original Director completion gate in [framework-transition-plan.md](framework-transition-plan.md).
+2. Prove the isolated profile leaves the primary `.env`, ports, containers, volumes, and task database unchanged.
+3. Run one analysis-only OpenAI → Claude → Cursor task.
+4. Run one reversible isolated-branch task that may create only a draft PR.
+5. Review provider evidence, spend, callbacks, approvals, and recovery before routine use.
+
+No agent may merge, deploy, publish, delete, purchase, expand access, or claim Unreal authority without the matching owner decision and Windows evidence.
