@@ -51,10 +51,10 @@ usage_monitor = UsageMonitor(settings, store)
 oracle_merge_policy = OracleMergePolicy(settings)
 oracle_merge_store = OracleMergeStore(settings.sqlite_path)
 oracle_github = (
-    GitHubOracleGateway(settings.oracle_automerge_github_token)
+    GitHubOracleGateway.from_settings(settings)
     if oracle_merge_policy.enabled
     and not oracle_merge_policy.kill_switch
-    and settings.oracle_automerge_github_token
+    and settings.oracle_github_credential_configured()
     else None
 )
 oracle_merge_service = OracleMergeService(

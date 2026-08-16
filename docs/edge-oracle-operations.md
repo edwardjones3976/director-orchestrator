@@ -38,10 +38,10 @@ Slack last. Any failure closes paid and usage switches and leaves Slack stopped.
 
 ## Deterministic exact-SHA merge gate
 
-The Oracle merge gate is a local CLI, not a model tool or public API. Its GitHub token and
-review-authentication secret are read only by deterministic code from
-`ORACLE_AUTOMERGE_GITHUB_TOKEN` and `ORACLE_AUTOMERGE_REVIEW_SECRET`; never include either
-value in a model session, work packet, review prompt, callback, log, issue, or artifact.
+The Oracle merge gate is a local CLI, not a model tool or public API. Its GitHub
+credential and review-authentication secret are read only by deterministic code; never
+include their values in a model session, work packet, review prompt, callback, log,
+issue, or artifact.
 The authenticated Claude callback adapter canonicalizes and HMAC-signs the final artifact
 only after matching the stored task, assignment sequence, repository, base ref, review run,
 and the exact base/head SHAs embedded in the assignment. Claude callback JSON must use
@@ -55,11 +55,25 @@ ORACLE_AUTOMERGE_ENABLED=false
 ORACLE_AUTOMERGE_KILL_SWITCH=true
 ```
 
-Enabling the feature requires a repository-scoped credential with the minimum contents
-and pull-request permissions needed to read PR evidence and merge. Branch protection and
-required checks remain authoritative. Landing the implementation does not authorize
-installing that credential, enabling the feature, deploying it, or executing a live
-merge.
+Use a GitHub App installed only on `edwardjones3976/edge_engine`. Grant exactly:
+
+- **Contents: read and write** for the exact-SHA merge request;
+- **Pull requests: read-only** for PR metadata, changed files, and review threads;
+- **Checks: read-only** for the required check-run evidence; and
+- **Metadata: read-only**, which GitHub adds automatically.
+
+No webhook subscription or event delivery is required. Store its App ID, installation
+ID, and base64-encoded private key only in ignored `.env.edge-oracle` fields named
+`ORACLE_AUTOMERGE_GITHUB_APP_ID`, `ORACLE_AUTOMERGE_GITHUB_INSTALLATION_ID`, and
+`ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64`. The Director signs a short-lived app JWT,
+mints an installation token only when needed, caches it for less than its expiry, and
+refreshes once after an authentication failure. A fine-grained personal access token is
+not sufficient because personal-repository fine-grained tokens do not expose the Checks
+permission required by this gate. `ORACLE_AUTOMERGE_GITHUB_TOKEN` remains a legacy
+static-token fallback; configuring it together with any GitHub App field fails closed.
+
+Branch protection and required checks remain authoritative. Installing the app and
+enabling the feature do not authorize executing a live merge.
 
 An immutable Claude review artifact must validate as
 `OracleReviewArtifact`. A secret-free shape is available in

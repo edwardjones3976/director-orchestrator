@@ -107,6 +107,7 @@ class UppercutDeploymentContractTests(unittest.TestCase):
             "SLACK_APP_TOKEN",
             "SLACK_BOT_TOKEN",
             "ORACLE_AUTOMERGE_REVIEW_SECRET",
+            "ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64",
         ):
             self.assertIn(f'"{name}"', self.script)
 
@@ -118,6 +119,7 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         for forbidden in (
             "OPENAI_API_KEY", "CLAUDE_ROUTINE_TOKEN", "CURSOR_API_KEY",
             "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_GITHUB_TOKEN",
+            "ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64",
             "ORACLE_AUTOMERGE_REVIEW_SECRET",
         ):
             self.assertNotIn(forbidden, slack_section)
@@ -179,6 +181,9 @@ class EdgeOracleDeploymentContractTests(unittest.TestCase):
         self.assertIn("ORACLE_AUTOMERGE_REQUIRED_CHECK_APP=github-actions", self.profile)
         self.assertIn("ORACLE_AUTOMERGE_PROJECT=edge-oracle", self.profile)
         self.assertIn("ORACLE_AUTOMERGE_REPOSITORY=edwardjones3976/edge_engine", self.profile)
+        self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_ID=", self.profile)
+        self.assertIn("ORACLE_AUTOMERGE_GITHUB_INSTALLATION_ID=", self.profile)
+        self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64=", self.profile)
 
     def test_oracle_uses_dedicated_secret_placeholders(self):
         for name in (

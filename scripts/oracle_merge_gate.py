@@ -34,8 +34,12 @@ def main() -> int:
     store = OracleMergeStore(args.database or settings.sqlite_path)
 
     github = None
-    if policy.enabled and not policy.kill_switch and settings.oracle_automerge_github_token:
-        github = GitHubOracleGateway(settings.oracle_automerge_github_token)
+    if (
+        policy.enabled
+        and not policy.kill_switch
+        and settings.oracle_github_credential_configured()
+    ):
+        github = GitHubOracleGateway.from_settings(settings)
 
     result = OracleMergeService(policy, store, github).process(artifact)
     print(result.model_dump_json(indent=2))

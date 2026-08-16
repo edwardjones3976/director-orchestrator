@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import fnmatch
 import hashlib
 import hmac
@@ -8,12 +10,13 @@ import re
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterator, Literal, Protocol
+from typing import Callable, Iterator, Literal, Protocol
 
 import httpx
+import jwt
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
@@ -706,28 +709,191 @@ class OracleMergeService:
         return self.store.complete(decision)
 
 
-class GitHubOracleGateway:
-    def __init__(self, token: str, api_base: str = "https://api.github.com"):
-        if not token:
-            raise ValueError("GitHub token is not configured")
+class GitHubTokenProvider(Protocol):
+    @property
+    def actor(self) -> str: ...
+
+    def get_token(self) -> str: ...
+
+    def invalidate(self) -> None: ...
+
+
+class GitHubAppInstallationTokenProvider:
+    def __init__(
+        self,
+        app_id: str,
+        installation_id: str,
+        private_key_pem: bytes,
+        *,
+        api_base: str = "https://api.github.com",
+        transport: httpx.BaseTransport | None = None,
+        now: Callable[[], datetime] | None = None,
+    ):
+        if not app_id or not installation_id or not private_key_pem:
+            raise ValueError("GitHub App credentials are incomplete")
+        if not app_id.isdigit() or not installation_id.isdigit():
+            raise ValueError("GitHub App and installation IDs must be numeric")
+        self._app_id = app_id
+        self._installation_id = installation_id
+        self._private_key_pem = private_key_pem
+        self._now = now or (lambda: datetime.now(timezone.utc))
+        self._lock = threading.Lock()
+        self._token = ""
+        self._expires_at: datetime | None = None
         self._client = httpx.Client(
             base_url=api_base.rstrip("/"),
             timeout=30,
+            transport=transport,
             headers={
-                "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": "director-orchestrator-oracle-merge-gate",
             },
         )
 
-    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        response = self._client.request(method, path, **kwargs)
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"GitHub API {method} {path} failed with status {response.status_code}"
+    @property
+    def actor(self) -> str:
+        return f"github-app-installation:{self._installation_id}"
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._token = ""
+            self._expires_at = None
+
+    def get_token(self) -> str:
+        with self._lock:
+            now = self._now()
+            if (
+                self._token
+                and self._expires_at is not None
+                and self._expires_at > now.replace(microsecond=0) + timedelta(seconds=60)
+            ):
+                return self._token
+
+            issued_at = int(now.timestamp()) - 60
+            app_jwt = jwt.encode(
+                {"iat": issued_at, "exp": issued_at + 600, "iss": self._app_id},
+                self._private_key_pem,
+                algorithm="RS256",
             )
-        return response
+            response = self._client.post(
+                f"/app/installations/{self._installation_id}/access_tokens",
+                headers={"Authorization": f"Bearer {app_jwt}"},
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    "GitHub App installation-token request failed with status "
+                    f"{response.status_code}"
+                )
+            payload = response.json()
+            token = payload.get("token")
+            expires_at = payload.get("expires_at")
+            if not token or not expires_at:
+                raise RuntimeError("GitHub App returned an incomplete installation token")
+            parsed_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if parsed_expiry.tzinfo is None:
+                raise RuntimeError("GitHub App returned an invalid installation-token expiry")
+            self._token = token
+            self._expires_at = parsed_expiry.astimezone(timezone.utc)
+            return token
+
+
+class GitHubOracleGateway:
+    def __init__(
+        self,
+        token: str = "",
+        api_base: str = "https://api.github.com",
+        *,
+        token_provider: GitHubTokenProvider | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ):
+        if bool(token) == bool(token_provider):
+            raise ValueError("Configure exactly one GitHub authentication method")
+        self._token = token
+        self._token_provider = token_provider
+        self._client = httpx.Client(
+            base_url=api_base.rstrip("/"),
+            timeout=30,
+            transport=transport,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "director-orchestrator-oracle-merge-gate",
+            },
+        )
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: Settings,
+        *,
+        api_base: str = "https://api.github.com",
+        transport: httpx.BaseTransport | None = None,
+        auth_transport: httpx.BaseTransport | None = None,
+        now: Callable[[], datetime] | None = None,
+    ) -> GitHubOracleGateway:
+        app_values = (
+            settings.oracle_automerge_github_app_id,
+            settings.oracle_automerge_github_installation_id,
+            settings.oracle_automerge_github_app_private_key_b64,
+        )
+        if any(app_values):
+            if not all(app_values) or settings.oracle_automerge_github_token:
+                raise ValueError("GitHub App authentication is incomplete or ambiguous")
+            try:
+                private_key = base64.b64decode(
+                    settings.oracle_automerge_github_app_private_key_b64,
+                    validate=True,
+                )
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("GitHub App private key is not valid base64") from exc
+            provider = GitHubAppInstallationTokenProvider(
+                settings.oracle_automerge_github_app_id,
+                settings.oracle_automerge_github_installation_id,
+                private_key,
+                api_base=api_base,
+                transport=auth_transport,
+                now=now,
+            )
+            return cls(
+                api_base=api_base,
+                token_provider=provider,
+                transport=transport,
+            )
+        if settings.oracle_automerge_github_token:
+            return cls(
+                settings.oracle_automerge_github_token,
+                api_base,
+                transport=transport,
+            )
+        raise ValueError("GitHub credential is not configured")
+
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        supplied_headers = dict(kwargs.pop("headers", {}))
+        for attempt in range(2):
+            token = (
+                self._token_provider.get_token()
+                if self._token_provider is not None
+                else self._token
+            )
+            request_headers = {**supplied_headers, "Authorization": f"Bearer {token}"}
+            response = self._client.request(
+                method, path, headers=request_headers, **kwargs
+            )
+            if (
+                response.status_code == 401
+                and self._token_provider is not None
+                and attempt == 0
+            ):
+                response.close()
+                self._token_provider.invalidate()
+                continue
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"GitHub API {method} {path} failed with status {response.status_code}"
+                )
+            return response
+        raise RuntimeError(f"GitHub API {method} {path} authentication failed")
 
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         repository = canonical_repository(repository)
@@ -824,7 +990,12 @@ class GitHubOracleGateway:
         pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
         if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
             raise RuntimeError("GitHub pull request changed during final merge validation")
-        actor = self._request("GET", "/user").json().get("login") or "unknown-github-actor"
+        actor = (
+            self._token_provider.actor
+            if self._token_provider is not None
+            else self._request("GET", "/user").json().get("login")
+            or "unknown-github-actor"
+        )
         payload = self._request(
             "PUT",
             f"/repos/{repository}/pulls/{pull_number}/merge",
