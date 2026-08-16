@@ -12,6 +12,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src ./src
+COPY docs/schemas ./docs/schemas
 COPY prompts ./prompts
 
 RUN mkdir -p /data && chown -R director:director /app /data

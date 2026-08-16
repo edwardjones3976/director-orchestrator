@@ -102,6 +102,7 @@ Prompts and full provider transcripts are artifacts referenced by digest, not un
 ### Phase 1 — contract first
 
 - Adopt the versioned provider-neutral work and result packet schemas. The v1 documentation/schema authority becomes accepted when this pull request merges; runtime adoption remains separately gated.
+- Load and write offline replay-run fixtures through the same RFC 8785 canonicalization and SHA-256 verification path.
 - Add contract tests against every adapter.
 - Reject unknown schema versions and missing authority snapshots.
 - Preserve current engine execution.

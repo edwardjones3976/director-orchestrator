@@ -104,3 +104,11 @@ This decision does not accept an adapter implementation. Phase 1 still requires 
 ## Compatibility
 
 Schema versions use semantic major versions. Additive optional fields may remain within v1. Removing, renaming, or changing the meaning of a required field creates a new major version. During transition, the orchestrator must read both the last accepted legacy record and v1 packets, but it writes only the configured canonical version.
+
+## Replay-run documents
+
+Offline replay fixtures bind one validated work packet to its validated result packet in a `director-replay-run` document. The v1 replay schema is `docs/schemas/model-replay-run-v1.schema.json`.
+
+`director_orchestrator.packet_contracts` writes and loads these documents symmetrically. It canonicalizes JSON with RFC 8785, records SHA-256 digests for both packets and the replay envelope, rejects duplicate keys and documents over 1 MiB, verifies task/assignment/idempotency/authority/correlation linkage, and can compare the envelope against an independently trusted digest. The `replay_run_digest` is calculated over the canonical envelope with that field omitted, avoiding a self-referential hash.
+
+A self-contained digest detects accidental or unsynchronized modification; it is not a signature and grants no authority. Acceptance, dispatch, external writes, and merge decisions remain governed by deterministic policy and separately trusted evidence.
