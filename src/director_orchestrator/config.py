@@ -49,6 +49,15 @@ class Settings:
     oracle_automerge_enabled: bool = _bool("ORACLE_AUTOMERGE_ENABLED", False)
     oracle_automerge_kill_switch: bool = _bool("ORACLE_AUTOMERGE_KILL_SWITCH", True)
     oracle_automerge_github_token: str = os.getenv("ORACLE_AUTOMERGE_GITHUB_TOKEN", "")
+    oracle_automerge_github_app_id: str = os.getenv(
+        "ORACLE_AUTOMERGE_GITHUB_APP_ID", ""
+    ).strip()
+    oracle_automerge_github_installation_id: str = os.getenv(
+        "ORACLE_AUTOMERGE_GITHUB_INSTALLATION_ID", ""
+    ).strip()
+    oracle_automerge_github_app_private_key_b64: str = os.getenv(
+        "ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64", ""
+    ).strip()
     oracle_automerge_review_secret: str = os.getenv("ORACLE_AUTOMERGE_REVIEW_SECRET", "")
     oracle_automerge_project: str = os.getenv(
         "ORACLE_AUTOMERGE_PROJECT", "edge-oracle"
@@ -103,6 +112,10 @@ class Settings:
 
     cursor_api_key: str = os.getenv("CURSOR_API_KEY", "")
     cursor_api_base: str = os.getenv("CURSOR_API_BASE", "https://api.cursor.com")
+    cursor_dispatch_max_attempts: int = _int("CURSOR_DISPATCH_MAX_ATTEMPTS", 4)
+    cursor_dispatch_max_retry_delay_seconds: int = _int(
+        "CURSOR_DISPATCH_MAX_RETRY_DELAY_SECONDS", 60
+    )
 
     claude_routine_url: str = os.getenv("CLAUDE_ROUTINE_URL", "")
     claude_routine_token: str = os.getenv("CLAUDE_ROUTINE_TOKEN", "")
@@ -151,15 +164,30 @@ class Settings:
         }
 
     def oracle_merge_readiness(self) -> dict[str, bool]:
+        app_parts = (
+            bool(self.oracle_automerge_github_app_id),
+            bool(self.oracle_automerge_github_installation_id),
+            bool(self.oracle_automerge_github_app_private_key_b64),
+        )
+        app_configured = all(app_parts)
+        static_token_configured = bool(self.oracle_automerge_github_token)
+        credential_configured = (app_configured and not static_token_configured) or (
+            static_token_configured and not any(app_parts)
+        )
         return {
             "enabled": self.oracle_automerge_enabled,
             "kill_switch_open": not self.oracle_automerge_kill_switch,
-            "github_credential_configured": bool(self.oracle_automerge_github_token),
+            "github_credential_configured": credential_configured,
+            "github_app_configured": app_configured and not static_token_configured,
+            "github_static_token_configured": static_token_configured and not any(app_parts),
             "review_secret_configured": bool(self.oracle_automerge_review_secret),
             "required_checks_configured": bool(self.oracle_automerge_required_checks),
             "required_check_app_configured": bool(self.oracle_automerge_required_check_app),
             "allowed_paths_configured": bool(self.oracle_automerge_allowed_paths),
         }
+
+    def oracle_github_credential_configured(self) -> bool:
+        return self.oracle_merge_readiness()["github_credential_configured"]
 
     def provider_strategy(self) -> dict[str, dict[str, object]]:
         return {

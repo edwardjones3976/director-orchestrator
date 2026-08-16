@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -46,6 +47,36 @@ class CursorAdapter(ProviderAdapter):
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.settings.cursor_api_key}", "Content-Type": "application/json"}
 
+    def _retry_delay(self, response: httpx.Response, attempt: int) -> float | None:
+        """Return a bounded delay only for an explicit, pre-creation rate limit."""
+        if response.status_code != 429:
+            return None
+        retry_after: object = response.headers.get("Retry-After")
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            for detail in payload.get("details", []):
+                if not isinstance(detail, dict):
+                    continue
+                debug = detail.get("debug")
+                provider_details = debug.get("details") if isinstance(debug, dict) else None
+                if not isinstance(provider_details, dict) or not provider_details.get("isRetryable"):
+                    continue
+                additional = provider_details.get("additionalInfo")
+                if isinstance(additional, dict) and additional.get("retryAfter") is not None:
+                    retry_after = additional["retryAfter"]
+                    break
+        try:
+            parsed = float(retry_after) if retry_after is not None else float(2**attempt)
+        except (TypeError, ValueError):
+            parsed = float(2**attempt)
+        return min(
+            max(parsed, 0.0),
+            float(max(0, self.settings.cursor_dispatch_max_retry_delay_seconds)),
+        )
+
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
         body: dict[str, Any] = {
             "name": f"Director task {assignment.sequence}",
@@ -59,9 +90,22 @@ class CursorAdapter(ProviderAdapter):
             if "://" not in repository_url:
                 repository_url = f"https://github.com/{repository_url.removesuffix('.git')}"
             body["repos"] = [{"url": repository_url, "startingRef": assignment.starting_ref}]
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f"{self.settings.cursor_api_base}/v1/agents", headers=self.headers, json=body)
-            response.raise_for_status()
+        attempts = max(1, self.settings.cursor_dispatch_max_attempts)
+        for attempt in range(attempts):
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    f"{self.settings.cursor_api_base}/v1/agents",
+                    headers=self.headers,
+                    json=body,
+                )
+            if response.status_code < 400:
+                break
+            delay = self._retry_delay(response, attempt)
+            if delay is None or attempt + 1 >= attempts:
+                response.raise_for_status()
+            await asyncio.sleep(delay)
+        else:  # pragma: no cover - the bounded loop always returns or raises
+            raise ProviderError("Cursor dispatch exhausted its bounded retry loop")
         payload = response.json()
         return ProviderRun(
             provider=self.name,

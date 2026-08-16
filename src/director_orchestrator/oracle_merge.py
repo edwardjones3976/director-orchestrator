@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import fnmatch
 import hashlib
 import hmac
@@ -8,16 +10,17 @@ import re
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterator, Literal, Protocol
+from typing import Callable, Iterator, Literal, Protocol
 
 import httpx
+import jwt
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
-from .models import ClaudeCallback, ProviderName, TaskRecord
+from .models import ClaudeCallback, ProviderName, ProviderRun, TaskRecord
 from .policy import canonical_repository
 
 
@@ -90,12 +93,22 @@ class OracleReviewArtifact(BaseModel):
         return hashlib.sha256(payload).hexdigest()
 
 
-def authenticate_claude_review_artifact(
-    record: TaskRecord, callback: ClaudeCallback, secret: str
+def authenticate_provider_review_artifact(
+    record: TaskRecord, run: ProviderRun, secret: str
 ) -> OracleReviewArtifact | None:
-    """Bind model output to one stored Claude review assignment before signing locally."""
+    """Bind one Claude or Cursor result to its stored exact-SHA review assignment."""
+    if run.provider not in {ProviderName.CLAUDE, ProviderName.CURSOR}:
+        return None
+    successful_statuses = {
+        ProviderName.CLAUDE: {"completed"},
+        ProviderName.CURSOR: {"FINISHED", "completed"},
+    }
+    if run.status not in successful_statuses[run.provider]:
+        raise ValueError("only a successful provider run can authenticate a review")
+    if not run.result:
+        return None
     try:
-        payload = json.loads(callback.result)
+        payload = json.loads(run.result)
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict) or payload.get("artifact_type") != (
@@ -103,32 +116,36 @@ def authenticate_claude_review_artifact(
     ):
         return None
     if "signature" in payload:
-        raise ValueError("Claude review output must not supply an authentication signature")
-    if callback.status != "completed":
-        raise ValueError("only a completed Claude callback can authenticate a review")
+        raise ValueError("provider review output must not supply an authentication signature")
     payload["signature"] = "0" * 64
     artifact = OracleReviewArtifact.model_validate(payload)
 
     matching_runs = [
-        run
-        for run in record.provider_runs
-        if run.provider == ProviderName.CLAUDE
-        and hmac.compare_digest(run.run_id, callback.run_id)
+        stored
+        for stored in record.provider_runs
+        if stored.provider == run.provider
+        and hmac.compare_digest(stored.run_id, run.run_id)
+        and stored.assignment_sequence == run.assignment_sequence
     ]
-    if not matching_runs or matching_runs[-1].assignment_sequence is None:
-        raise ValueError("Claude review output is not bound to a stored assignment")
-    if matching_runs[-1].status != "completed":
-        raise ValueError("stored Claude review run is not completed")
-    sequence = matching_runs[-1].assignment_sequence
-    if artifact.review_run_id != callback.run_id:
+    if len(matching_runs) != 1 or matching_runs[0].assignment_sequence is None:
+        raise ValueError("provider review output is not bound to one stored assignment")
+    stored_run = matching_runs[0]
+    if stored_run.status not in successful_statuses[run.provider]:
+        raise ValueError("stored provider review run is not successful")
+    if not hmac.compare_digest(stored_run.result or "", run.result):
+        raise ValueError("provider review result does not match the stored run")
+    sequence = stored_run.assignment_sequence
+    if artifact.review_run_id != run.run_id:
         raise ValueError("review artifact run does not match the authenticated callback")
+    if artifact.reviewer_provider.strip().lower() != run.provider.value:
+        raise ValueError("review artifact provider does not match the authenticated run")
     if artifact.assignment_id != f"{record.task_id}:{sequence}":
         raise ValueError("review artifact assignment identifier does not match the task")
     if record.plan is None or artifact.project.strip().lower() != record.plan.project.strip().lower():
         raise ValueError("review artifact project does not match the stored plan")
     assignments = [item for item in record.plan.assignments if item.sequence == sequence]
-    if len(assignments) != 1 or assignments[0].agent != ProviderName.CLAUDE:
-        raise ValueError("stored assignment is not an independent Claude review")
+    if len(assignments) != 1 or assignments[0].agent != run.provider:
+        raise ValueError("stored assignment does not match the review provider")
     assignment = assignments[0]
     if not assignment.repository or canonical_repository(assignment.repository) != canonical_repository(
         artifact.repository
@@ -136,12 +153,50 @@ def authenticate_claude_review_artifact(
         raise ValueError("review artifact repository does not match the stored assignment")
     if assignment.starting_ref != artifact.base_ref:
         raise ValueError("review artifact base ref does not match the stored assignment")
+    dependency_outcomes = [
+        outcome
+        for outcome in record.assignment_outcomes
+        if outcome.assignment_sequence in assignment.depends_on
+    ]
+    if len(dependency_outcomes) != 1:
+        raise ValueError(
+            "review assignment must depend on exactly one accepted implementation outcome"
+        )
+    implementation = dependency_outcomes[0]
+    if artifact.implementation_provider.strip().lower() != implementation.provider.value:
+        raise ValueError(
+            "review artifact implementation provider does not match the accepted dependency"
+        )
+    if implementation.provider == run.provider:
+        raise ValueError("review provider cannot accept its own implementation outcome")
     review_context = "\n".join([assignment.task, *assignment.acceptance]).lower()
     if "review" not in review_context or artifact.head_sha not in review_context:
-        raise ValueError("Claude assignment was not pinned to the exact reviewed head SHA")
+        raise ValueError("provider assignment was not pinned to the exact reviewed head SHA")
     if artifact.base_sha not in review_context:
-        raise ValueError("Claude assignment was not pinned to the exact reviewed base SHA")
+        raise ValueError("provider assignment was not pinned to the exact reviewed base SHA")
     return artifact.sign(secret)
+
+
+def authenticate_claude_review_artifact(
+    record: TaskRecord, callback: ClaudeCallback, secret: str
+) -> OracleReviewArtifact | None:
+    """Compatibility wrapper for the authenticated Claude callback boundary."""
+    if callback.status != "completed":
+        raise ValueError("only a completed Claude callback can authenticate a review")
+    matching_runs = [
+        run
+        for run in record.provider_runs
+        if run.provider == ProviderName.CLAUDE
+        and hmac.compare_digest(run.run_id, callback.run_id)
+    ]
+    if len(matching_runs) != 1:
+        raise ValueError("Claude review output is not bound to one stored assignment")
+    run = matching_runs[0]
+    if run.result is None:
+        raise ValueError("Claude callback result was not persisted before authentication")
+    if not hmac.compare_digest(run.result, callback.result):
+        raise ValueError("Claude callback result does not match the stored run")
+    return authenticate_provider_review_artifact(record, run, secret)
 
 
 class OracleChangedFile(BaseModel):
@@ -229,6 +284,14 @@ class OracleGitHubGateway(Protocol):
         expected_base_sha: str,
     ) -> OracleGitHubMerge: ...
 
+    def mark_ready(
+        self,
+        repository: str,
+        pull_number: int,
+        expected_sha: str,
+        expected_base_sha: str,
+    ) -> bool: ...
+
 
 class OracleMergePolicy:
     _SERIOUS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -305,7 +368,11 @@ class OracleMergePolicy:
         return "\n".join(additions)
 
     def evaluate(
-        self, artifact: OracleReviewArtifact, snapshot: OraclePullRequestSnapshot
+        self,
+        artifact: OracleReviewArtifact,
+        snapshot: OraclePullRequestSnapshot,
+        *,
+        allow_draft_transition: bool = False,
     ) -> OracleMergeResult:
         errors: list[str] = []
         serious: list[str] = []
@@ -317,11 +384,11 @@ class OracleMergePolicy:
         if not self.required_checks:
             errors.append("required exact-head checks are not configured")
         if artifact.verdict == OracleReviewVerdict.SERIOUS_SAFETY_STOP:
-            serious.append("Claude returned SERIOUS_SAFETY_STOP")
+            serious.append("reviewer returned SERIOUS_SAFETY_STOP")
         elif artifact.verdict != OracleReviewVerdict.ACCEPT:
-            errors.append("Claude did not accept the reviewed commit")
-        if artifact.reviewer_provider.lower() != "claude":
-            errors.append("the exact-SHA reviewer must be Claude")
+            errors.append("reviewer did not accept the reviewed commit")
+        if artifact.reviewer_provider.lower() not in {"claude", "cursor"}:
+            errors.append("the exact-SHA reviewer must be Claude or Cursor")
         if artifact.reviewer_provider.lower() == artifact.implementation_provider.lower():
             errors.append("the implementation author cannot accept its own work")
         if artifact.implementation_actor.lower() != snapshot.author_login.lower():
@@ -352,7 +419,7 @@ class OracleMergePolicy:
 
         if snapshot.state.lower() != "open" or snapshot.merged:
             errors.append("pull request is not open and unmerged")
-        if snapshot.draft:
+        if snapshot.draft and not allow_draft_transition:
             errors.append("draft pull requests cannot be merged automatically")
         if snapshot.mergeable is not True:
             errors.append("pull request is conflicting or mergeability is unresolved")
@@ -679,6 +746,30 @@ class OracleMergeService:
                     reasons=[f"GitHub validation failed closed: {type(exc).__name__}"],
                 )
             )
+        if snapshot.draft:
+            preflight = self.policy.evaluate(
+                artifact, snapshot, allow_draft_transition=True
+            )
+            if preflight.reasons or preflight.serious_safety_reasons:
+                return self.store.complete(preflight)
+            try:
+                ready = self.github.mark_ready(
+                    self.policy.repository,
+                    artifact.pull_number,
+                    artifact.head_sha,
+                    artifact.base_sha,
+                )
+                if not ready:
+                    raise RuntimeError("GitHub refused to mark the pull request ready")
+                snapshot = self.github.snapshot(
+                    artifact.repository, artifact.pull_number
+                )
+            except Exception as exc:
+                preflight.status = OracleMergeStatus.ERROR
+                preflight.reasons = [
+                    f"GitHub ready-for-review transition failed closed: {type(exc).__name__}"
+                ]
+                return self.store.complete(preflight)
         decision = self.policy.evaluate(artifact, snapshot)
         if decision.reasons or decision.serious_safety_reasons:
             return self.store.complete(decision)
@@ -706,28 +797,191 @@ class OracleMergeService:
         return self.store.complete(decision)
 
 
-class GitHubOracleGateway:
-    def __init__(self, token: str, api_base: str = "https://api.github.com"):
-        if not token:
-            raise ValueError("GitHub token is not configured")
+class GitHubTokenProvider(Protocol):
+    @property
+    def actor(self) -> str: ...
+
+    def get_token(self) -> str: ...
+
+    def invalidate(self) -> None: ...
+
+
+class GitHubAppInstallationTokenProvider:
+    def __init__(
+        self,
+        app_id: str,
+        installation_id: str,
+        private_key_pem: bytes,
+        *,
+        api_base: str = "https://api.github.com",
+        transport: httpx.BaseTransport | None = None,
+        now: Callable[[], datetime] | None = None,
+    ):
+        if not app_id or not installation_id or not private_key_pem:
+            raise ValueError("GitHub App credentials are incomplete")
+        if not app_id.isdigit() or not installation_id.isdigit():
+            raise ValueError("GitHub App and installation IDs must be numeric")
+        self._app_id = app_id
+        self._installation_id = installation_id
+        self._private_key_pem = private_key_pem
+        self._now = now or (lambda: datetime.now(timezone.utc))
+        self._lock = threading.Lock()
+        self._token = ""
+        self._expires_at: datetime | None = None
         self._client = httpx.Client(
             base_url=api_base.rstrip("/"),
             timeout=30,
+            transport=transport,
             headers={
-                "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": "director-orchestrator-oracle-merge-gate",
             },
         )
 
-    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        response = self._client.request(method, path, **kwargs)
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"GitHub API {method} {path} failed with status {response.status_code}"
+    @property
+    def actor(self) -> str:
+        return f"github-app-installation:{self._installation_id}"
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._token = ""
+            self._expires_at = None
+
+    def get_token(self) -> str:
+        with self._lock:
+            now = self._now()
+            if (
+                self._token
+                and self._expires_at is not None
+                and self._expires_at > now.replace(microsecond=0) + timedelta(seconds=60)
+            ):
+                return self._token
+
+            issued_at = int(now.timestamp()) - 60
+            app_jwt = jwt.encode(
+                {"iat": issued_at, "exp": issued_at + 600, "iss": self._app_id},
+                self._private_key_pem,
+                algorithm="RS256",
             )
-        return response
+            response = self._client.post(
+                f"/app/installations/{self._installation_id}/access_tokens",
+                headers={"Authorization": f"Bearer {app_jwt}"},
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    "GitHub App installation-token request failed with status "
+                    f"{response.status_code}"
+                )
+            payload = response.json()
+            token = payload.get("token")
+            expires_at = payload.get("expires_at")
+            if not token or not expires_at:
+                raise RuntimeError("GitHub App returned an incomplete installation token")
+            parsed_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if parsed_expiry.tzinfo is None:
+                raise RuntimeError("GitHub App returned an invalid installation-token expiry")
+            self._token = token
+            self._expires_at = parsed_expiry.astimezone(timezone.utc)
+            return token
+
+
+class GitHubOracleGateway:
+    def __init__(
+        self,
+        token: str = "",
+        api_base: str = "https://api.github.com",
+        *,
+        token_provider: GitHubTokenProvider | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ):
+        if bool(token) == bool(token_provider):
+            raise ValueError("Configure exactly one GitHub authentication method")
+        self._token = token
+        self._token_provider = token_provider
+        self._client = httpx.Client(
+            base_url=api_base.rstrip("/"),
+            timeout=30,
+            transport=transport,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "director-orchestrator-oracle-merge-gate",
+            },
+        )
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: Settings,
+        *,
+        api_base: str = "https://api.github.com",
+        transport: httpx.BaseTransport | None = None,
+        auth_transport: httpx.BaseTransport | None = None,
+        now: Callable[[], datetime] | None = None,
+    ) -> GitHubOracleGateway:
+        app_values = (
+            settings.oracle_automerge_github_app_id,
+            settings.oracle_automerge_github_installation_id,
+            settings.oracle_automerge_github_app_private_key_b64,
+        )
+        if any(app_values):
+            if not all(app_values) or settings.oracle_automerge_github_token:
+                raise ValueError("GitHub App authentication is incomplete or ambiguous")
+            try:
+                private_key = base64.b64decode(
+                    settings.oracle_automerge_github_app_private_key_b64,
+                    validate=True,
+                )
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("GitHub App private key is not valid base64") from exc
+            provider = GitHubAppInstallationTokenProvider(
+                settings.oracle_automerge_github_app_id,
+                settings.oracle_automerge_github_installation_id,
+                private_key,
+                api_base=api_base,
+                transport=auth_transport,
+                now=now,
+            )
+            return cls(
+                api_base=api_base,
+                token_provider=provider,
+                transport=transport,
+            )
+        if settings.oracle_automerge_github_token:
+            return cls(
+                settings.oracle_automerge_github_token,
+                api_base,
+                transport=transport,
+            )
+        raise ValueError("GitHub credential is not configured")
+
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        supplied_headers = dict(kwargs.pop("headers", {}))
+        for attempt in range(2):
+            token = (
+                self._token_provider.get_token()
+                if self._token_provider is not None
+                else self._token
+            )
+            request_headers = {**supplied_headers, "Authorization": f"Bearer {token}"}
+            response = self._client.request(
+                method, path, headers=request_headers, **kwargs
+            )
+            if (
+                response.status_code == 401
+                and self._token_provider is not None
+                and attempt == 0
+            ):
+                response.close()
+                self._token_provider.invalidate()
+                continue
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"GitHub API {method} {path} failed with status {response.status_code}"
+                )
+            return response
+        raise RuntimeError(f"GitHub API {method} {path} authentication failed")
 
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         repository = canonical_repository(repository)
@@ -824,7 +1078,12 @@ class GitHubOracleGateway:
         pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
         if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
             raise RuntimeError("GitHub pull request changed during final merge validation")
-        actor = self._request("GET", "/user").json().get("login") or "unknown-github-actor"
+        actor = (
+            self._token_provider.actor
+            if self._token_provider is not None
+            else self._request("GET", "/user").json().get("login")
+            or "unknown-github-actor"
+        )
         payload = self._request(
             "PUT",
             f"/repos/{repository}/pulls/{pull_number}/merge",
@@ -835,3 +1094,37 @@ class GitHubOracleGateway:
             merge_commit_sha=payload.get("sha"),
             actor=actor,
         )
+
+    def mark_ready(
+        self,
+        repository: str,
+        pull_number: int,
+        expected_sha: str,
+        expected_base_sha: str,
+    ) -> bool:
+        repository = canonical_repository(repository)
+        pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
+        if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
+            raise RuntimeError("GitHub pull request changed before ready-for-review transition")
+        if not pull.get("draft"):
+            return True
+        query = """
+        mutation($pullRequestId:ID!) {
+          markPullRequestReadyForReview(input:{pullRequestId:$pullRequestId}) {
+            pullRequest { isDraft }
+          }
+        }
+        """
+        payload = self._request(
+            "POST",
+            "/graphql",
+            json={"query": query, "variables": {"pullRequestId": pull["node_id"]}},
+        ).json()
+        if payload.get("errors"):
+            raise RuntimeError("GitHub refused the ready-for-review transition")
+        pull_request = (
+            payload.get("data", {})
+            .get("markPullRequestReadyForReview", {})
+            .get("pullRequest", {})
+        )
+        return pull_request.get("isDraft") is False

@@ -18,6 +18,11 @@ from .models import (
     TaskRecord,
     TaskStatus,
 )
+from .oracle_merge import (
+    OracleMergeService,
+    OracleMergeStatus,
+    authenticate_provider_review_artifact,
+)
 from .policy import enforce_plan, execution_policy_errors, preview_plan
 from .providers import ProviderError, ProviderRun, provider_registry
 from .store import TaskStore
@@ -73,9 +78,15 @@ class SlackNotifier:
 
 
 class OrchestrationEngine:
-    def __init__(self, settings: Settings, store: TaskStore):
+    def __init__(
+        self,
+        settings: Settings,
+        store: TaskStore,
+        oracle_merge_service: OracleMergeService | None = None,
+    ):
         self.settings = settings
         self.store = store
+        self.oracle_merge_service = oracle_merge_service
         self.director = OpenAIDirector(settings)
         self.providers = provider_registry(settings)
         self.notifier = SlackNotifier(settings)
@@ -258,6 +269,54 @@ class OrchestrationEngine:
             record.plan.max_hops * (1 + record.plan.max_revisions),
         )
 
+    async def _process_exact_sha_review(
+        self, record: TaskRecord, run: ProviderRun
+    ) -> bool | None:
+        service = self.oracle_merge_service
+        if service is None or not service.policy.enabled or service.policy.kill_switch:
+            return None
+        try:
+            artifact = authenticate_provider_review_artifact(
+                record, run, service.policy.review_secret
+            )
+        except (ValueError, TypeError) as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "Oracle review artifact failed closed: " + str(exc)
+            )[:2_000]
+            self.store.save(record)
+            await self.notifier.post(record, record.message)
+            return False
+        if artifact is None:
+            return None
+        try:
+            result = service.process(artifact)
+        except (RuntimeError, ValueError) as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "Oracle automatic merge failed closed: " + type(exc).__name__
+            )
+            self.store.save(record)
+            await self.notifier.post(record, record.message)
+            return False
+        if result.status != OracleMergeStatus.MERGED:
+            evidence = [*result.serious_safety_reasons, *result.reasons]
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "Oracle automatic merge stopped: "
+                + ("; ".join(evidence[:5]) or result.status.value)
+            )[:2_000]
+            self.store.save(record)
+            await self.notifier.post(record, record.message)
+            return False
+        record.message = (
+            f"Oracle exact-SHA merge completed at {result.merge_commit_sha} "
+            f"by {result.actor}."
+        )
+        self.store.save(record)
+        await self.notifier.post(record, record.message)
+        return True
+
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
         completed_sequences = {
             outcome.assignment_sequence for outcome in record.assignment_outcomes
@@ -319,6 +378,9 @@ class OrchestrationEngine:
         record.review = decision
         self.store.save(record)
         if decision.verdict == ReviewVerdict.ACCEPT:
+            merge_result = await self._process_exact_sha_review(record, run)
+            if merge_result is False:
+                return False
             self._record_outcome(record, assignment, run, decision)
             self.store.save(record)
             return True
@@ -351,6 +413,9 @@ class OrchestrationEngine:
             final_decision = await self.director.review(record, revised.result)
             record.review = final_decision
             if final_decision.verdict == ReviewVerdict.ACCEPT:
+                merge_result = await self._process_exact_sha_review(record, revised)
+                if merge_result is False:
+                    return False
                 self._record_outcome(record, assignment, revised, final_decision)
                 self.store.save(record)
                 return True

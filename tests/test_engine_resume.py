@@ -5,11 +5,13 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
+    AssignmentOutcome,
     DirectorPlan,
     ProviderName,
     ProviderRun,
@@ -20,6 +22,7 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
+from director_orchestrator.oracle_merge import OracleMergeResult, OracleMergeStatus
 from director_orchestrator.store import TaskStore
 
 
@@ -45,6 +48,134 @@ class NoRedispatchAdapter:
 
 
 class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cursor_exact_sha_review_reaches_deterministic_merge_after_acceptance(self):
+        base_sha = "d" * 40
+        head_sha = "a" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                cursor_api_key="test-cursor",
+                project_allowlist=("edge-oracle",),
+                repository_allowlist=("edwardjones3976/edge_engine",),
+                allowed_starting_refs=("main",),
+                sqlite_path=database,
+            )
+            implementation = Assignment(
+                sequence=1,
+                agent=ProviderName.CLAUDE,
+                task="Implement the bounded Oracle change.",
+                acceptance=["Create the isolated implementation."],
+                repository="edwardjones3976/edge_engine",
+                starting_ref="main",
+            )
+            assignment = Assignment(
+                sequence=2,
+                agent=ProviderName.CURSOR,
+                task=f"Independently review PR 23 at base {base_sha} and head {head_sha}",
+                acceptance=[f"Confirm exact base {base_sha} and head {head_sha}"],
+                repository="edwardjones3976/edge_engine",
+                starting_ref="main",
+                depends_on=[1],
+            )
+            payload = {
+                "artifact_type": "edge_oracle_exact_sha_review/v1",
+                "artifact_id": "cursor-artifact",
+                "assignment_id": "DIR-CURSOR-MERGE:2",
+                "project": "edge-oracle",
+                "repository": "edwardjones3976/edge_engine",
+                "pull_number": 23,
+                "base_ref": "main",
+                "base_sha": base_sha,
+                "head_ref": "oracle/revival-phase-1",
+                "head_sha": head_sha,
+                "implementation_provider": "claude",
+                "implementation_actor": "claude-agent",
+                "reviewer_provider": "cursor",
+                "review_run_id": "cursor-review-run",
+                "verdict": "ACCEPT",
+                "summary": "Independent exact-SHA review accepted.",
+                "evidence": ["Focused tests passed."],
+                "acceptance_checks": ["test"],
+                "rollback_instructions": "Revert the merge commit and restore the previous main ref.",
+                "reviewed_at": "2026-08-16T00:00:00Z",
+            }
+            run = ProviderRun(
+                provider=ProviderName.CURSOR,
+                assignment_sequence=2,
+                run_id="cursor-review-run",
+                status="FINISHED",
+                result=json.dumps(payload),
+            )
+            record = TaskRecord(
+                task_id="DIR-CURSOR-MERGE",
+                status=TaskStatus.RUNNING,
+                intake=SlackIntake(
+                    source_event_id="evt-cursor-merge",
+                    channel_id="C123",
+                    thread_ts="123.45",
+                    user_id="U123",
+                    text="DIRECTOR Project: edge-oracle Outcome: exact-SHA review",
+                ),
+                plan=DirectorPlan(
+                    project="edge-oracle",
+                    normalized_outcome="Review and conditionally merge one Oracle PR.",
+                    risk_level=RiskLevel.MEDIUM,
+                    approval_required=False,
+                    max_hops=2,
+                    max_revisions=0,
+                    assignments=[implementation, assignment],
+                    final_acceptance=["Exact-SHA review accepted."],
+                ),
+                provider_runs=[run],
+                assignment_outcomes=[AssignmentOutcome(
+                    assignment_sequence=1,
+                    provider=ProviderName.CLAUDE,
+                    run_id="claude-implementation-run",
+                    result="Implementation completed on the isolated branch.",
+                    review_summary="OpenAI accepted the implementation evidence.",
+                )],
+                next_assignment_index=1,
+            )
+            store = TaskStore(database)
+            store.create(record)
+
+            class RecordingMergeService:
+                def __init__(self):
+                    self.policy = SimpleNamespace(
+                        enabled=True,
+                        kill_switch=False,
+                        review_secret="test-review-secret",
+                    )
+                    self.artifact = None
+
+                def process(self, artifact):
+                    self.artifact = artifact
+                    return OracleMergeResult(
+                        artifact_id=artifact.artifact_id,
+                        artifact_digest=artifact.digest(),
+                        status=OracleMergeStatus.MERGED,
+                        repository=artifact.repository,
+                        pull_number=artifact.pull_number,
+                        reviewed_sha=artifact.head_sha,
+                        merge_commit_sha="c" * 40,
+                        actor="github-app-installation:test",
+                    )
+
+            merge_service = RecordingMergeService()
+            engine = OrchestrationEngine(settings, store, merge_service)
+            engine.director = AcceptingDirector()
+            engine.providers[ProviderName.CURSOR] = NoRedispatchAdapter()
+
+            await engine.run(record.task_id)
+
+            completed = store.get(record.task_id)
+            self.assertEqual(completed.status, TaskStatus.DONE)
+            self.assertEqual(merge_service.artifact.reviewer_provider, "cursor")
+            self.assertTrue(merge_service.artifact.signature_is_valid("test-review-secret"))
+
     async def test_revision_preserves_assignment_and_approval_context(self):
         class RevisingDirector:
             def __init__(self):

@@ -17,7 +17,7 @@ from director_orchestrator.oracle_merge import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Evaluate one immutable Claude review artifact and fail closed before any merge."
+        description="Evaluate one immutable Claude or Cursor review artifact and fail closed before any merge."
     )
     parser.add_argument("artifact", type=Path, help="Path to the typed review-artifact JSON file")
     parser.add_argument(
@@ -34,8 +34,12 @@ def main() -> int:
     store = OracleMergeStore(args.database or settings.sqlite_path)
 
     github = None
-    if policy.enabled and not policy.kill_switch and settings.oracle_automerge_github_token:
-        github = GitHubOracleGateway(settings.oracle_automerge_github_token)
+    if (
+        policy.enabled
+        and not policy.kill_switch
+        and settings.oracle_github_credential_configured()
+    ):
+        github = GitHubOracleGateway.from_settings(settings)
 
     result = OracleMergeService(policy, store, github).process(artifact)
     print(result.model_dump_json(indent=2))

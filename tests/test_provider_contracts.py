@@ -5,17 +5,26 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
+import httpx
+
 from director_orchestrator.config import Settings
 from director_orchestrator.models import Assignment, ProviderName, ProviderRun
 from director_orchestrator.providers import ClaudeAdapter, CursorAdapter, GeminiAdapter, PerplexityAdapter
 
 
 class FakeResponse:
-    def __init__(self, payload: dict):
+    def __init__(self, payload: dict, *, status_code: int = 200, headers: dict | None = None):
         self.payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
-        return None
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://cursor.example")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError(
+                "test response failed", request=request, response=response
+            )
 
     def json(self) -> dict:
         return self.payload
@@ -23,7 +32,7 @@ class FakeResponse:
 
 class RecordingAsyncClient:
     calls: list[dict] = []
-    responses: list[dict] = []
+    responses: list[dict | FakeResponse] = []
 
     def __init__(self, **_: object):
         pass
@@ -36,11 +45,13 @@ class RecordingAsyncClient:
 
     async def post(self, url: str, *, headers: dict, json: dict) -> FakeResponse:
         self.calls.append({"method": "POST", "url": url, "headers": headers, "json": json})
-        return FakeResponse(self.responses.pop(0))
+        response = self.responses.pop(0)
+        return response if isinstance(response, FakeResponse) else FakeResponse(response)
 
     async def get(self, url: str, *, headers: dict) -> FakeResponse:
         self.calls.append({"method": "GET", "url": url, "headers": headers})
-        return FakeResponse(self.responses.pop(0))
+        response = self.responses.pop(0)
+        return response if isinstance(response, FakeResponse) else FakeResponse(response)
 
 
 class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
@@ -96,6 +107,67 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             RecordingAsyncClient.calls[0]["json"]["repos"][0]["url"],
             "https://github.com/example/demo",
         )
+
+    async def test_cursor_dispatch_retries_only_explicit_rate_limits(self):
+        settings = replace(
+            Settings(),
+            cursor_api_key="test-cursor",
+            cursor_dispatch_max_attempts=3,
+            cursor_dispatch_max_retry_delay_seconds=60,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Review exact SHA",
+            acceptance=["Return evidence"],
+            repository="example/demo",
+        )
+        rate_limit = {
+            "code": "resource_exhausted",
+            "details": [{
+                "debug": {
+                    "details": {
+                        "isRetryable": True,
+                        "additionalInfo": {"retryAfter": "60"},
+                    }
+                }
+            }],
+        }
+        RecordingAsyncClient.responses = [
+            FakeResponse(rate_limit, status_code=429),
+            {"run": {"id": "run-2", "status": "RUNNING"}, "agent": {"id": "agent-2"}},
+        ]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep") as sleep,
+        ):
+            run = await CursorAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(run.run_id, "run-2")
+        self.assertEqual(len(RecordingAsyncClient.calls), 2)
+        sleep.assert_awaited_once_with(60.0)
+
+    async def test_cursor_dispatch_does_not_retry_ambiguous_server_failure(self):
+        settings = replace(Settings(), cursor_api_key="test-cursor")
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Review exact SHA",
+            acceptance=["Return evidence"],
+            repository="example/demo",
+        )
+        RecordingAsyncClient.responses = [FakeResponse({}, status_code=503)]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep") as sleep,
+        ):
+            with self.assertRaises(httpx.HTTPStatusError):
+                await CursorAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(len(RecordingAsyncClient.calls), 1)
+        sleep.assert_not_awaited()
 
     async def test_claude_revision_fires_a_bounded_callback_run(self):
         settings = replace(
