@@ -141,3 +141,9 @@ $env:PYTHONPATH = "src"
 $env:DIRECTOR_ENV_FILE = ".env.example"
 docker compose --env-file .env.example config --quiet
 ```
+
+## LangGraph transition planning
+
+The gated incremental migration is documented in [docs/langgraph-transition-plan.md](docs/langgraph-transition-plan.md). The owner-accepted provider-neutral documentation/schema authority is in [docs/model-interoperability-contract.md](docs/model-interoperability-contract.md), with versioned work/result schemas and checked examples under [docs/schemas](docs/schemas/).
+
+Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and preserve the current Slack/API surface, provider adapters, deterministic approval policy, single-writer rule, and rollback path. No LangGraph runtime transition begins merely because the documentation/schema authority is merged.

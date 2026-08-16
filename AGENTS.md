@@ -27,3 +27,11 @@ This repo is a single Python 3.12 product: the **Director Orchestrator** FastAPI
 - Windows Docker `.env` credentials are **not** visible to Cloud Agents. Live provider probes from this environment need the same secret names injected as Cursor Cloud secrets (or a new agent session after they are added). Do not copy secret values into chat, commits, or AGENTS.md.
 - There is no configured linter/formatter (no ruff/flake8/mypy config). Treat `PYTHONPATH=src .venv/bin/python -m compileall -q src tests` as the syntax sanity check, and `.venv/bin/python -m json.tool n8n/workflows/director-intake.json` to validate the n8n workflow JSON.
 
+
+## LangGraph transition work
+
+Before changing orchestration, read `docs/langgraph-transition-plan.md` and `docs/model-interoperability-contract.md`. All model work must conform to the v1 packet schemas in `docs/schemas/`.
+
+Gate 0 was accepted by the owner on 2026-08-16 against the checkpoint recorded in Project Uppercut Issue #48. Transition phases remain individually gated: first merge only the accepted documentation/schema authority, then prove adapter fixture conformance, then add a disabled graph skeleton with a separate checkpoint namespace and zero provider dispatch or external write paths. Gate 0 acceptance alone does not start LangGraph or change the current Director's sole-writer authority.
+
+During dual operation, exactly one engine may own provider dispatch and GitHub/Slack side effects for a task. Models cannot remove deterministic policy gates, approve their own work, or treat checkpoint rollback as reversal of an external action.
