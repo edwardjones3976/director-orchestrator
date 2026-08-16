@@ -132,9 +132,10 @@ reviewed change. The gate classifies the state instead:
     confirmed `isDraft: false` through GraphQL — three stale-draft reads. A draft flag is
     only ever forgiven on a transition the gate performed itself.
 
-  Backoff is one second doubling to an eight-second cap. Exactly one allowance is spent per
-  read, so the poll performs at most eight reads over about thirty-nine seconds, and the
-  whole gate at most ten GitHub reads over about forty seconds. Every successful read
+  Backoff is one second doubling to an eight-second cap. Each read spends the allowance for
+  every transient condition it exhibits, so overlapping conditions shorten the wait. The
+  poll performs at most eight reads over about thirty-nine seconds, and the whole gate at
+  most ten GitHub reads over about forty seconds. Every successful read
   revalidates the
   repository, pull-request identity, open and unmerged state, expected base SHA, exact head
   SHA, checks, review threads, paths, and safety signals before the wait continues. The
