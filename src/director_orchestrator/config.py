@@ -46,6 +46,30 @@ class Settings:
     repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
     allowed_starting_refs: tuple[str, ...] = _csv_exact("ALLOWED_STARTING_REFS", "main")
 
+    oracle_automerge_enabled: bool = _bool("ORACLE_AUTOMERGE_ENABLED", False)
+    oracle_automerge_kill_switch: bool = _bool("ORACLE_AUTOMERGE_KILL_SWITCH", True)
+    oracle_automerge_github_token: str = os.getenv("ORACLE_AUTOMERGE_GITHUB_TOKEN", "")
+    oracle_automerge_review_secret: str = os.getenv("ORACLE_AUTOMERGE_REVIEW_SECRET", "")
+    oracle_automerge_project: str = os.getenv(
+        "ORACLE_AUTOMERGE_PROJECT", "edge-oracle"
+    )
+    oracle_automerge_repository: str = os.getenv(
+        "ORACLE_AUTOMERGE_REPOSITORY", "edwardjones3976/edge_engine"
+    )
+    oracle_automerge_base_ref: str = os.getenv("ORACLE_AUTOMERGE_BASE_REF", "main")
+    oracle_automerge_branch_prefix: str = os.getenv(
+        "ORACLE_AUTOMERGE_BRANCH_PREFIX", "oracle/"
+    )
+    oracle_automerge_allowed_paths: tuple[str, ...] = _csv_exact(
+        "ORACLE_AUTOMERGE_ALLOWED_PATHS", "oracle/**,docs/oracle/**,tests/oracle/**"
+    )
+    oracle_automerge_required_checks: tuple[str, ...] = _csv_exact(
+        "ORACLE_AUTOMERGE_REQUIRED_CHECKS", ""
+    )
+    oracle_automerge_required_check_app: str = os.getenv(
+        "ORACLE_AUTOMERGE_REQUIRED_CHECK_APP", "github-actions"
+    ).strip()
+
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
     usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)
     usage_check_initial_delay_seconds: int = _int("USAGE_CHECK_INITIAL_DELAY_SECONDS", 60)
@@ -124,6 +148,17 @@ class Settings:
             "repositories_configured": bool(self.repository_allowlist),
             "starting_refs_configured": bool(self.allowed_starting_refs),
             "claude_callback_configured": bool(self.claude_callback_secret),
+        }
+
+    def oracle_merge_readiness(self) -> dict[str, bool]:
+        return {
+            "enabled": self.oracle_automerge_enabled,
+            "kill_switch_open": not self.oracle_automerge_kill_switch,
+            "github_credential_configured": bool(self.oracle_automerge_github_token),
+            "review_secret_configured": bool(self.oracle_automerge_review_secret),
+            "required_checks_configured": bool(self.oracle_automerge_required_checks),
+            "required_check_app_configured": bool(self.oracle_automerge_required_check_app),
+            "allowed_paths_configured": bool(self.oracle_automerge_allowed_paths),
         }
 
     def provider_strategy(self) -> dict[str, dict[str, object]]:

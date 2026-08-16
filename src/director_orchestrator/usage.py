@@ -31,15 +31,7 @@ TERMINAL_STATUSES = {
     "requires_action",
     "prompted",
 }
-FAILED_STATUSES = {
-    "ERROR",
-    "CANCELLED",
-    "EXPIRED",
-    "failed",
-    "cancelled",
-    "incomplete",
-    "requires_action",
-}
+SUCCESS_STATUSES = {"FINISHED", "completed", "prompted"}
 SUPPORTED_PROVIDERS = {"openai", "cursor", "claude", "gemini", "perplexity"}
 MINIMUM_INTERVAL = timedelta(minutes=15)
 
@@ -178,7 +170,7 @@ class UsageMonitor:
 
     def _record_from_run(self, cycle_id: str, provider: str, run: ProviderRun) -> UsageCheckRecord:
         raw_usage, input_tokens, output_tokens, total_tokens = normalize_usage(run.raw)
-        failed = run.status in FAILED_STATUSES
+        failed = run.status not in SUCCESS_STATUSES
         status = UsageCheckStatus.ERROR if failed else (
             UsageCheckStatus.PROMPTED if run.status == "prompted" else UsageCheckStatus.OK
         )
@@ -221,13 +213,15 @@ class UsageMonitor:
             # A reporting failure must not turn successful provider checks into a retry storm.
             return
 
-    async def run_once(self, force: bool = False) -> list[UsageCheckRecord]:
+    async def run_once(
+        self, force: bool = False, cycle_id: str | None = None
+    ) -> list[UsageCheckRecord]:
         if not self.settings.usage_check_enabled or not self.settings.allow_paid_runs:
             return []
         if self._lock.locked():
             return []
         async with self._lock:
-            cycle_id = f"USAGE-{secrets.token_hex(5).upper()}"
+            cycle_id = cycle_id or f"USAGE-{secrets.token_hex(5).upper()}"
             readiness = self.settings.usage_check_readiness()
             now = datetime.now(timezone.utc)
             records: list[UsageCheckRecord] = []

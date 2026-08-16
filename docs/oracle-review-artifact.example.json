@@ -1,0 +1,27 @@
+{
+  "artifact_type": "edge_oracle_exact_sha_review/v1",
+  "artifact_id": "example-not-for-live-merge",
+  "assignment_id": "DIR-EXAMPLE:2",
+  "project": "edge-oracle",
+  "repository": "edwardjones3976/edge_engine",
+  "pull_number": 999999,
+  "base_ref": "main",
+  "base_sha": "0000000000000000000000000000000000000000",
+  "head_ref": "oracle/example",
+  "head_sha": "0000000000000000000000000000000000000000",
+  "implementation_provider": "cursor",
+  "implementation_actor": "example-cursor-actor",
+  "reviewer_provider": "claude",
+  "review_run_id": "example-claude-run",
+  "verdict": "ACCEPT",
+  "summary": "Example exact-SHA decision only; this is not live acceptance evidence.",
+  "evidence": [
+    "Example evidence is deliberately non-operational."
+  ],
+  "acceptance_checks": [
+    "test"
+  ],
+  "rollback_instructions": "Revert the recorded merge commit and restore the previously recorded main ref.",
+  "reviewed_at": "2026-08-16T00:00:00Z",
+  "signature": "0000000000000000000000000000000000000000000000000000000000000000"
+}

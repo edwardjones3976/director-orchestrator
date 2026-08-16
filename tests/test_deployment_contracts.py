@@ -24,9 +24,10 @@ class DeploymentContractTests(unittest.TestCase):
 
     def test_compose_does_not_expose_the_orchestrator_secret_to_n8n(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        n8n_section = compose.split("  n8n:\n", 1)[1].split("\nvolumes:", 1)[0]
 
         self.assertIn("env_file: ${DIRECTOR_ENV_FILE:-.env}", compose)
-        self.assertNotIn("ORCHESTRATOR_SHARED_SECRET: ${ORCHESTRATOR_SHARED_SECRET}", compose)
+        self.assertNotIn("ORCHESTRATOR_SHARED_SECRET", n8n_section)
         self.assertIn('N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"', compose)
         self.assertIn("postgres:17-alpine@sha256:", compose)
         self.assertIn("n8n:latest@sha256:", compose)

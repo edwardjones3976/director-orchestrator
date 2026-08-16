@@ -1,0 +1,836 @@
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import hmac
+import json
+import re
+import sqlite3
+import threading
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from enum import StrEnum
+from pathlib import Path
+from typing import Iterator, Literal, Protocol
+
+import httpx
+from pydantic import BaseModel, ConfigDict, Field
+
+from .config import Settings
+from .models import ClaudeCallback, ProviderName, TaskRecord
+from .policy import canonical_repository
+
+
+class OracleReviewVerdict(StrEnum):
+    ACCEPT = "ACCEPT"
+    CHANGES_REQUIRED = "CHANGES_REQUIRED"
+    SERIOUS_SAFETY_STOP = "SERIOUS_SAFETY_STOP"
+
+
+class OracleMergeStatus(StrEnum):
+    REJECTED = "REJECTED"
+    SERIOUS_SAFETY_STOP = "SERIOUS_SAFETY_STOP"
+    MERGED = "MERGED"
+    ERROR = "ERROR"
+
+
+class OracleReviewArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_type: Literal["edge_oracle_exact_sha_review/v1"]
+    artifact_id: str = Field(min_length=1, max_length=255)
+    assignment_id: str = Field(min_length=1, max_length=255)
+    project: str = Field(min_length=1, max_length=255)
+    repository: str = Field(min_length=3, max_length=255)
+    pull_number: int = Field(ge=1)
+    base_ref: str = Field(min_length=1, max_length=255)
+    base_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    head_ref: str = Field(min_length=1, max_length=255)
+    head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    implementation_provider: str = Field(min_length=1, max_length=64)
+    implementation_actor: str = Field(min_length=1, max_length=255)
+    reviewer_provider: str = Field(min_length=1, max_length=64)
+    review_run_id: str = Field(min_length=1, max_length=255)
+    verdict: OracleReviewVerdict
+    summary: str = Field(min_length=1, max_length=10_000)
+    evidence: list[str] = Field(min_length=1, max_length=50)
+    acceptance_checks: list[str] = Field(min_length=1, max_length=50)
+    rollback_instructions: str = Field(min_length=20, max_length=10_000)
+    reviewed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    signature: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    def signing_payload(self) -> bytes:
+        return json.dumps(
+            self.model_dump(mode="json", exclude={"signature"}),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+    def sign(self, secret: str) -> OracleReviewArtifact:
+        if not secret:
+            raise ValueError("review signing secret is not configured")
+        signature = hmac.new(
+            secret.encode("utf-8"), self.signing_payload(), hashlib.sha256
+        ).hexdigest()
+        return self.model_copy(update={"signature": signature})
+
+    def signature_is_valid(self, secret: str) -> bool:
+        if not secret:
+            return False
+        expected = hmac.new(
+            secret.encode("utf-8"), self.signing_payload(), hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(self.signature, expected)
+
+    def digest(self) -> str:
+        payload = json.dumps(
+            self.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+
+def authenticate_claude_review_artifact(
+    record: TaskRecord, callback: ClaudeCallback, secret: str
+) -> OracleReviewArtifact | None:
+    """Bind model output to one stored Claude review assignment before signing locally."""
+    try:
+        payload = json.loads(callback.result)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or payload.get("artifact_type") != (
+        "edge_oracle_exact_sha_review/v1"
+    ):
+        return None
+    if "signature" in payload:
+        raise ValueError("Claude review output must not supply an authentication signature")
+    if callback.status != "completed":
+        raise ValueError("only a completed Claude callback can authenticate a review")
+    payload["signature"] = "0" * 64
+    artifact = OracleReviewArtifact.model_validate(payload)
+
+    matching_runs = [
+        run
+        for run in record.provider_runs
+        if run.provider == ProviderName.CLAUDE
+        and hmac.compare_digest(run.run_id, callback.run_id)
+    ]
+    if not matching_runs or matching_runs[-1].assignment_sequence is None:
+        raise ValueError("Claude review output is not bound to a stored assignment")
+    if matching_runs[-1].status != "completed":
+        raise ValueError("stored Claude review run is not completed")
+    sequence = matching_runs[-1].assignment_sequence
+    if artifact.review_run_id != callback.run_id:
+        raise ValueError("review artifact run does not match the authenticated callback")
+    if artifact.assignment_id != f"{record.task_id}:{sequence}":
+        raise ValueError("review artifact assignment identifier does not match the task")
+    if record.plan is None or artifact.project.strip().lower() != record.plan.project.strip().lower():
+        raise ValueError("review artifact project does not match the stored plan")
+    assignments = [item for item in record.plan.assignments if item.sequence == sequence]
+    if len(assignments) != 1 or assignments[0].agent != ProviderName.CLAUDE:
+        raise ValueError("stored assignment is not an independent Claude review")
+    assignment = assignments[0]
+    if not assignment.repository or canonical_repository(assignment.repository) != canonical_repository(
+        artifact.repository
+    ):
+        raise ValueError("review artifact repository does not match the stored assignment")
+    if assignment.starting_ref != artifact.base_ref:
+        raise ValueError("review artifact base ref does not match the stored assignment")
+    review_context = "\n".join([assignment.task, *assignment.acceptance]).lower()
+    if "review" not in review_context or artifact.head_sha not in review_context:
+        raise ValueError("Claude assignment was not pinned to the exact reviewed head SHA")
+    if artifact.base_sha not in review_context:
+        raise ValueError("Claude assignment was not pinned to the exact reviewed base SHA")
+    return artifact.sign(secret)
+
+
+class OracleChangedFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(min_length=1, max_length=2_000)
+    previous_filename: str | None = Field(default=None, min_length=1, max_length=2_000)
+    status: str = Field(min_length=1, max_length=64)
+    additions: int = Field(default=0, ge=0)
+    deletions: int = Field(default=0, ge=0)
+    patch: str | None = Field(default=None, max_length=200_000)
+
+
+class OracleCheckRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: int = Field(ge=1)
+    suite_id: int | None = Field(default=None, ge=1)
+    name: str = Field(min_length=1, max_length=255)
+    status: str = Field(min_length=1, max_length=64)
+    conclusion: str | None = Field(default=None, max_length=64)
+    head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    app_slug: str = Field(min_length=1, max_length=255)
+
+
+class OraclePullRequestSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repository: str
+    pull_number: int = Field(ge=1)
+    title: str = Field(max_length=2_000)
+    body: str = Field(default="", max_length=100_000)
+    state: str
+    draft: bool
+    mergeable: bool | None
+    merged: bool = False
+    base_ref: str
+    base_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    head_ref: str
+    head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    head_repository: str = Field(min_length=3, max_length=255)
+    author_login: str = Field(min_length=1, max_length=255)
+    changed_files: list[OracleChangedFile]
+    checks: list[OracleCheckRun]
+    blocking_review_threads: int = Field(default=0, ge=0)
+    review_threads_complete: bool = True
+    review_decision: str | None = Field(default=None, max_length=64)
+
+
+class OracleGitHubMerge(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    merged: bool
+    merge_commit_sha: str | None = None
+    actor: str = Field(min_length=1, max_length=255)
+
+
+class OracleMergeResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str
+    artifact_digest: str
+    status: OracleMergeStatus
+    repository: str
+    pull_number: int
+    reviewed_sha: str
+    reasons: list[str] = Field(default_factory=list)
+    serious_safety_reasons: list[str] = Field(default_factory=list)
+    check_run_ids: list[int] = Field(default_factory=list)
+    check_suite_ids: list[int] = Field(default_factory=list)
+    changed_paths: list[str] = Field(default_factory=list)
+    merge_commit_sha: str | None = None
+    actor: str | None = None
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class OracleGitHubGateway(Protocol):
+    def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot: ...
+
+    def merge(
+        self,
+        repository: str,
+        pull_number: int,
+        expected_sha: str,
+        expected_base_sha: str,
+    ) -> OracleGitHubMerge: ...
+
+
+class OracleMergePolicy:
+    _SERIOUS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+        (
+            "funded wagering or sportsbook operation",
+            re.compile(
+                r"\b(?:place|submit|execute|authorize|enable|automate|start|run)\w*\b.{0,80}"
+                r"\b(?:real[- ]money|funded|wager|bet|sportsbook|bankroll|settlement)\b",
+                re.I | re.S,
+            ),
+        ),
+        (
+            "deployment or publication",
+            re.compile(
+                r"\b(?:deploy|publish|release|activate|go live)\w*\b.{0,80}"
+                r"\b(?:production|service|artifact|release|public)\b",
+                re.I | re.S,
+            ),
+        ),
+        (
+            "live scheduler activation or modification",
+            re.compile(
+                r"\b(?:enable|activate|start|run|modify|change)\w*\b.{0,80}"
+                r"\b(?:live scheduler|scheduler service|scheduled job)\b",
+                re.I | re.S,
+            ),
+        ),
+        (
+            "permission or repository administration",
+            re.compile(
+                r"\b(?:branch protection|repository admin|collaborator|permission expansion|access control)\b",
+                re.I,
+            ),
+        ),
+        (
+            "safety-gate weakening",
+            re.compile(
+                r"\b(?:bypass|disable|remove|weaken)\w*\b.{0,50}"
+                r"\b(?:approval|security|budget|provenance|idempotency|calibration|promotion)\b",
+                re.I | re.S,
+            ),
+        ),
+    )
+    _SECRET_MATERIAL = re.compile(
+        r"(?im)(?:^\s*(?:[A-Z0-9_]*(?:API_KEY|TOKEN|PASSWORD|SECRET)|GITHUB_TOKEN)\s*="
+        r"\s*(?!$|REPLACE_WITH_|PASTE_|\$\{)[^\s#]+|"
+        r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----|"
+        r"\b(?:gh[oprsu]_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,})\b)"
+    )
+
+    def __init__(self, settings: Settings):
+        self.enabled = settings.oracle_automerge_enabled
+        self.kill_switch = settings.oracle_automerge_kill_switch
+        self.project = settings.oracle_automerge_project.strip().lower()
+        self.repository = canonical_repository(settings.oracle_automerge_repository)
+        self.base_ref = settings.oracle_automerge_base_ref
+        self.branch_prefix = settings.oracle_automerge_branch_prefix
+        self.allowed_paths = settings.oracle_automerge_allowed_paths
+        self.required_checks = settings.oracle_automerge_required_checks
+        self.required_check_app = settings.oracle_automerge_required_check_app
+        self.review_secret = settings.oracle_automerge_review_secret
+
+    @staticmethod
+    def _added_patch_text(snapshot: OraclePullRequestSnapshot) -> str:
+        additions: list[str] = []
+        for changed in snapshot.changed_files:
+            if changed.patch is None:
+                continue
+            additions.extend(
+                line[1:]
+                for line in changed.patch.splitlines()
+                if line.startswith("+") and not line.startswith("+++")
+            )
+        return "\n".join(additions)
+
+    def evaluate(
+        self, artifact: OracleReviewArtifact, snapshot: OraclePullRequestSnapshot
+    ) -> OracleMergeResult:
+        errors: list[str] = []
+        serious: list[str] = []
+
+        if not self.enabled:
+            errors.append("Oracle automatic merge is disabled")
+        if self.kill_switch:
+            errors.append("Oracle automatic merge kill switch is active")
+        if not self.required_checks:
+            errors.append("required exact-head checks are not configured")
+        if artifact.verdict == OracleReviewVerdict.SERIOUS_SAFETY_STOP:
+            serious.append("Claude returned SERIOUS_SAFETY_STOP")
+        elif artifact.verdict != OracleReviewVerdict.ACCEPT:
+            errors.append("Claude did not accept the reviewed commit")
+        if artifact.reviewer_provider.lower() != "claude":
+            errors.append("the exact-SHA reviewer must be Claude")
+        if artifact.reviewer_provider.lower() == artifact.implementation_provider.lower():
+            errors.append("the implementation author cannot accept its own work")
+        if artifact.implementation_actor.lower() != snapshot.author_login.lower():
+            errors.append("pull request author does not match the recorded implementation actor")
+
+        if artifact.project.strip().lower() != self.project:
+            errors.append("project does not match the Edge Oracle policy")
+        artifact_repository = canonical_repository(artifact.repository)
+        snapshot_repository = canonical_repository(snapshot.repository)
+        if artifact_repository != self.repository or snapshot_repository != self.repository:
+            errors.append("repository does not match the Edge Oracle policy")
+        if canonical_repository(snapshot.head_repository) != self.repository:
+            errors.append("pull request head repository does not match the Oracle policy")
+        if artifact.base_ref != self.base_ref or snapshot.base_ref != self.base_ref:
+            errors.append("base ref does not match the Edge Oracle policy")
+        if artifact.base_sha != snapshot.base_sha:
+            errors.append("base SHA changed after review")
+        if not artifact.head_ref.startswith(self.branch_prefix) or not snapshot.head_ref.startswith(
+            self.branch_prefix
+        ):
+            errors.append("head branch does not use the authorized Oracle prefix")
+        if artifact.pull_number != snapshot.pull_number:
+            errors.append("pull request number does not match the review artifact")
+        if artifact.head_ref != snapshot.head_ref:
+            errors.append("head ref changed after review")
+        if artifact.head_sha != snapshot.head_sha:
+            errors.append("head SHA changed after review")
+
+        if snapshot.state.lower() != "open" or snapshot.merged:
+            errors.append("pull request is not open and unmerged")
+        if snapshot.draft:
+            errors.append("draft pull requests cannot be merged automatically")
+        if snapshot.mergeable is not True:
+            errors.append("pull request is conflicting or mergeability is unresolved")
+        if not snapshot.review_threads_complete:
+            errors.append("review-thread enumeration is incomplete")
+        if snapshot.blocking_review_threads:
+            errors.append("blocking review threads remain unresolved")
+        if (snapshot.review_decision or "").upper() == "CHANGES_REQUESTED":
+            errors.append("GitHub reviews still request changes")
+
+        candidate_paths = {
+            path
+            for changed in snapshot.changed_files
+            for path in (changed.filename, changed.previous_filename)
+            if path is not None
+        }
+        unauthorized = sorted(
+            path
+            for path in candidate_paths
+            if not any(fnmatch.fnmatchcase(path, pattern) for pattern in self.allowed_paths)
+        )
+        if unauthorized:
+            errors.append("changed paths exceed the Oracle allowlist: " + ", ".join(unauthorized))
+        incomplete_files = sorted(
+            changed.filename for changed in snapshot.changed_files if changed.patch is None
+        )
+        if incomplete_files:
+            errors.append(
+                "changed file content is incomplete and cannot be scanned: "
+                + ", ".join(incomplete_files)
+            )
+
+        checks_by_name: dict[str, list[OracleCheckRun]] = {}
+        for check in snapshot.checks:
+            checks_by_name.setdefault(check.name, []).append(check)
+        missing_from_review = sorted(
+            set(self.required_checks) - set(artifact.acceptance_checks)
+        )
+        if missing_from_review:
+            errors.append(
+                "review artifact omits required checks: " + ", ".join(missing_from_review)
+            )
+        for name in self.required_checks:
+            matches = checks_by_name.get(name, [])
+            if not matches:
+                errors.append(f"required check is missing: {name}")
+                continue
+            if len(matches) != 1:
+                errors.append(f"required check is ambiguous: {name}")
+                continue
+            check = matches[0]
+            if check.app_slug != self.required_check_app:
+                errors.append(f"required check has an untrusted producer: {name}")
+            elif check.head_sha != artifact.head_sha:
+                errors.append(f"required check is not bound to the reviewed SHA: {name}")
+            elif check.status.lower() != "completed" or (check.conclusion or "").lower() != "success":
+                errors.append(f"required check is not successful: {name}")
+        for check in snapshot.checks:
+            if check.status.lower() != "completed" or (check.conclusion or "").lower() != "success":
+                errors.append(f"non-green check blocks merge: {check.name}")
+
+        added_text = self._added_patch_text(snapshot)
+        safety_text = "\n".join(
+            [snapshot.title, snapshot.body, *(item.filename for item in snapshot.changed_files), added_text]
+        )
+        for label, pattern in self._SERIOUS_PATTERNS:
+            if pattern.search(safety_text):
+                serious.append(label)
+        if any(
+            changed.status.lower() == "removed"
+            or (changed.deletions >= 100 and changed.deletions > changed.additions * 2)
+            for changed in snapshot.changed_files
+        ):
+            serious.append("material deletion")
+        if self._SECRET_MATERIAL.search(added_text):
+            serious.append("credential or secret material")
+
+        status = (
+            OracleMergeStatus.SERIOUS_SAFETY_STOP
+            if serious
+            else OracleMergeStatus.REJECTED
+        )
+        return OracleMergeResult(
+            artifact_id=artifact.artifact_id,
+            artifact_digest=artifact.digest(),
+            status=status,
+            repository=self.repository,
+            pull_number=artifact.pull_number,
+            reviewed_sha=artifact.head_sha,
+            reasons=sorted(set(errors)),
+            serious_safety_reasons=sorted(set(serious)),
+            check_run_ids=sorted(check.run_id for check in snapshot.checks),
+            check_suite_ids=sorted(
+                {check.suite_id for check in snapshot.checks if check.suite_id is not None}
+            ),
+            changed_paths=sorted(candidate_paths),
+        )
+
+
+class OracleMergeStore:
+    def __init__(self, path: str):
+        self.path = path
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._initialize()
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self.path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS oracle_merge_attempts (
+                    artifact_id TEXT PRIMARY KEY,
+                    artifact_digest TEXT NOT NULL,
+                    assignment_id TEXT NOT NULL UNIQUE,
+                    review_run_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_oracle_merge_assignment "
+                "ON oracle_merge_attempts(assignment_id)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS oracle_merge_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    artifact_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS oracle_merge_audit_no_update
+                BEFORE UPDATE ON oracle_merge_audit
+                BEGIN SELECT RAISE(ABORT, 'oracle merge audit is append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS oracle_merge_audit_no_delete
+                BEFORE DELETE ON oracle_merge_audit
+                BEGIN SELECT RAISE(ABORT, 'oracle merge audit is append-only'); END
+                """
+            )
+
+    def reserve(self, artifact: OracleReviewArtifact) -> OracleMergeResult | None:
+        digest = artifact.digest()
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connect() as connection:
+            existing = connection.execute(
+                "SELECT artifact_digest, status, result_json FROM oracle_merge_attempts WHERE artifact_id = ?",
+                (artifact.artifact_id,),
+            ).fetchone()
+            if existing:
+                if existing["artifact_digest"] != digest:
+                    raise ValueError("review artifact identifier was reused with different content")
+                if existing["result_json"]:
+                    return OracleMergeResult.model_validate_json(existing["result_json"])
+                raise RuntimeError("the review artifact is already being evaluated")
+            assignment = connection.execute(
+                "SELECT artifact_id FROM oracle_merge_attempts WHERE assignment_id = ?",
+                (artifact.assignment_id,),
+            ).fetchone()
+            if assignment:
+                raise ValueError("assignment already has terminal review authority")
+            review_run = connection.execute(
+                "SELECT artifact_id FROM oracle_merge_attempts WHERE review_run_id = ?",
+                (artifact.review_run_id,),
+            ).fetchone()
+            if review_run:
+                raise ValueError("review run was reused for another merge artifact")
+            try:
+                connection.execute(
+                    "INSERT INTO oracle_merge_attempts VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+                    (
+                        artifact.artifact_id,
+                        digest,
+                        artifact.assignment_id,
+                        artifact.review_run_id,
+                        "EVALUATING",
+                        now,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("assignment or review run was already consumed") from exc
+            self._append(connection, artifact.artifact_id, "review_artifact_reserved", {
+                "artifact_digest": digest,
+                "assignment_id": artifact.assignment_id,
+                "review_run_id": artifact.review_run_id,
+                "repository": canonical_repository(artifact.repository),
+                "pull_number": artifact.pull_number,
+                "head_sha": artifact.head_sha,
+            })
+        return None
+
+    @staticmethod
+    def _append(
+        connection: sqlite3.Connection, artifact_id: str, event_type: str, payload: dict
+    ) -> None:
+        connection.execute(
+            "INSERT INTO oracle_merge_audit(artifact_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+            (
+                artifact_id,
+                event_type,
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+    def complete(self, result: OracleMergeResult) -> OracleMergeResult:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE oracle_merge_attempts SET status = ?, result_json = ?, updated_at = ? WHERE artifact_id = ?",
+                (
+                    result.status.value,
+                    result.model_dump_json(),
+                    datetime.now(timezone.utc).isoformat(),
+                    result.artifact_id,
+                ),
+            )
+            self._append(
+                connection,
+                result.artifact_id,
+                "merge_gate_completed",
+                result.model_dump(mode="json"),
+            )
+        return result
+
+    def audit_events(self, artifact_id: str) -> list[dict]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT event_type, payload_json, created_at FROM oracle_merge_audit WHERE artifact_id = ? ORDER BY id",
+                (artifact_id,),
+            ).fetchall()
+        return [
+            {
+                "event_type": row["event_type"],
+                "payload": json.loads(row["payload_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+
+class OracleMergeService:
+    def __init__(
+        self,
+        policy: OracleMergePolicy,
+        store: OracleMergeStore,
+        github: OracleGitHubGateway | None,
+    ):
+        self.policy = policy
+        self.store = store
+        self.github = github
+
+    def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
+        if self.policy.enabled and not self.policy.kill_switch:
+            if not artifact.signature_is_valid(self.policy.review_secret):
+                raise ValueError("review artifact signature is invalid")
+        existing = self.store.reserve(artifact)
+        if existing is not None:
+            return existing
+
+        if not self.policy.enabled or self.policy.kill_switch:
+            placeholder = OraclePullRequestSnapshot(
+                repository=artifact.repository,
+                pull_number=artifact.pull_number,
+                title="",
+                state="open",
+                draft=False,
+                mergeable=None,
+                base_ref=artifact.base_ref,
+                base_sha=artifact.base_sha,
+                head_ref=artifact.head_ref,
+                head_sha=artifact.head_sha,
+                head_repository=artifact.repository,
+                author_login=artifact.implementation_actor,
+                changed_files=[],
+                checks=[],
+            )
+            return self.store.complete(self.policy.evaluate(artifact, placeholder))
+        if self.github is None:
+            return self.store.complete(
+                OracleMergeResult(
+                    artifact_id=artifact.artifact_id,
+                    artifact_digest=artifact.digest(),
+                    status=OracleMergeStatus.ERROR,
+                    repository=self.policy.repository,
+                    pull_number=artifact.pull_number,
+                    reviewed_sha=artifact.head_sha,
+                    reasons=["GitHub merger is not configured"],
+                )
+            )
+
+        try:
+            snapshot = self.github.snapshot(artifact.repository, artifact.pull_number)
+        except Exception as exc:
+            return self.store.complete(
+                OracleMergeResult(
+                    artifact_id=artifact.artifact_id,
+                    artifact_digest=artifact.digest(),
+                    status=OracleMergeStatus.ERROR,
+                    repository=self.policy.repository,
+                    pull_number=artifact.pull_number,
+                    reviewed_sha=artifact.head_sha,
+                    reasons=[f"GitHub validation failed closed: {type(exc).__name__}"],
+                )
+            )
+        decision = self.policy.evaluate(artifact, snapshot)
+        if decision.reasons or decision.serious_safety_reasons:
+            return self.store.complete(decision)
+
+        try:
+            merged = self.github.merge(
+                self.policy.repository,
+                artifact.pull_number,
+                artifact.head_sha,
+                artifact.base_sha,
+            )
+        except Exception as exc:
+            decision.status = OracleMergeStatus.ERROR
+            decision.reasons = [f"GitHub merge failed closed: {type(exc).__name__}"]
+            return self.store.complete(decision)
+        if not merged.merged or not merged.merge_commit_sha:
+            decision.status = OracleMergeStatus.ERROR
+            decision.reasons = ["GitHub refused the exact-SHA merge"]
+            decision.actor = merged.actor
+            return self.store.complete(decision)
+
+        decision.status = OracleMergeStatus.MERGED
+        decision.merge_commit_sha = merged.merge_commit_sha
+        decision.actor = merged.actor
+        return self.store.complete(decision)
+
+
+class GitHubOracleGateway:
+    def __init__(self, token: str, api_base: str = "https://api.github.com"):
+        if not token:
+            raise ValueError("GitHub token is not configured")
+        self._client = httpx.Client(
+            base_url=api_base.rstrip("/"),
+            timeout=30,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "director-orchestrator-oracle-merge-gate",
+            },
+        )
+
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        response = self._client.request(method, path, **kwargs)
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"GitHub API {method} {path} failed with status {response.status_code}"
+            )
+        return response
+
+    def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
+        repository = canonical_repository(repository)
+        owner, name = repository.split("/", 1)
+        pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
+        files = self._request(
+            "GET", f"/repos/{repository}/pulls/{pull_number}/files", params={"per_page": 100}
+        ).json()
+        if len(files) != int(pull.get("changed_files", len(files))):
+            raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
+        checks_payload = self._request(
+            "GET",
+            f"/repos/{repository}/commits/{pull['head']['sha']}/check-runs",
+            params={"per_page": 100, "filter": "latest"},
+        ).json()
+        if checks_payload.get("total_count", 0) != len(checks_payload.get("check_runs", [])):
+            raise RuntimeError("GitHub check-run enumeration is incomplete; merge failed closed")
+
+        query = """
+        query($owner:String!, $name:String!, $number:Int!) {
+          repository(owner:$owner, name:$name) {
+            pullRequest(number:$number) {
+              reviewDecision
+              reviewThreads(first:100) {
+                nodes { isResolved isOutdated }
+                pageInfo { hasNextPage }
+              }
+            }
+          }
+        }
+        """
+        graph = self._request(
+            "POST",
+            "/graphql",
+            json={"query": query, "variables": {"owner": owner, "name": name, "number": pull_number}},
+        ).json()
+        threads = graph["data"]["repository"]["pullRequest"]["reviewThreads"]
+        review_decision = graph["data"]["repository"]["pullRequest"].get("reviewDecision")
+        blocking = sum(
+            1 for node in threads["nodes"] if not node["isResolved"] and not node["isOutdated"]
+        )
+
+        return OraclePullRequestSnapshot(
+            repository=repository,
+            pull_number=pull_number,
+            title=pull.get("title") or "",
+            body=pull.get("body") or "",
+            state=pull["state"],
+            draft=bool(pull["draft"]),
+            mergeable=pull.get("mergeable"),
+            merged=bool(pull.get("merged")),
+            base_ref=pull["base"]["ref"],
+            base_sha=pull["base"]["sha"],
+            head_ref=pull["head"]["ref"],
+            head_sha=pull["head"]["sha"],
+            head_repository=pull["head"]["repo"]["full_name"],
+            author_login=pull["user"]["login"],
+            changed_files=[
+                OracleChangedFile(
+                    filename=item["filename"],
+                    previous_filename=item.get("previous_filename"),
+                    status=item["status"],
+                    additions=item.get("additions", 0),
+                    deletions=item.get("deletions", 0),
+                    patch=item.get("patch"),
+                )
+                for item in files
+            ],
+            checks=[
+                OracleCheckRun(
+                    run_id=item["id"],
+                    suite_id=(item.get("check_suite") or {}).get("id"),
+                    name=item["name"],
+                    status=item["status"],
+                    conclusion=item.get("conclusion"),
+                    head_sha=item["head_sha"],
+                    app_slug=(item.get("app") or {}).get("slug") or "unknown",
+                )
+                for item in checks_payload.get("check_runs", [])
+            ],
+            blocking_review_threads=blocking,
+            review_threads_complete=not threads["pageInfo"]["hasNextPage"],
+            review_decision=review_decision,
+        )
+
+    def merge(
+        self,
+        repository: str,
+        pull_number: int,
+        expected_sha: str,
+        expected_base_sha: str,
+    ) -> OracleGitHubMerge:
+        repository = canonical_repository(repository)
+        pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
+        if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
+            raise RuntimeError("GitHub pull request changed during final merge validation")
+        actor = self._request("GET", "/user").json().get("login") or "unknown-github-actor"
+        payload = self._request(
+            "PUT",
+            f"/repos/{repository}/pulls/{pull_number}/merge",
+            json={"sha": expected_sha, "merge_method": "merge"},
+        ).json()
+        return OracleGitHubMerge(
+            merged=bool(payload.get("merged")),
+            merge_commit_sha=payload.get("sha"),
+            actor=actor,
+        )
