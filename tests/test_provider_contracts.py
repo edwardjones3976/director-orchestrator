@@ -92,6 +92,10 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(RecordingAsyncClient.calls[0]["json"]["autoCreatePR"])
         self.assertTrue(RecordingAsyncClient.calls[1]["json"]["autoCreatePR"])
+        self.assertEqual(
+            RecordingAsyncClient.calls[0]["json"]["repos"][0]["url"],
+            "https://github.com/example/demo",
+        )
 
     async def test_claude_revision_fires_a_bounded_callback_run(self):
         settings = replace(

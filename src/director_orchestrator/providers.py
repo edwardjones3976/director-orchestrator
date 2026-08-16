@@ -55,7 +55,10 @@ class CursorAdapter(ProviderAdapter):
             "skipReviewerRequest": False,
         }
         if assignment.repository:
-            body["repos"] = [{"url": assignment.repository, "startingRef": assignment.starting_ref}]
+            repository_url = assignment.repository.strip().rstrip("/")
+            if "://" not in repository_url:
+                repository_url = f"https://github.com/{repository_url.removesuffix('.git')}"
+            body["repos"] = [{"url": repository_url, "startingRef": assignment.starting_ref}]
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.cursor_api_base}/v1/agents", headers=self.headers, json=body)
             response.raise_for_status()
