@@ -7,10 +7,12 @@ from pydantic import ValidationError
 from director_orchestrator.callbacks import (
     CallbackConflict,
     apply_claude_callback,
+    apply_manual_run_completion,
     bearer_matches,
 )
 from director_orchestrator.models import (
     ClaudeCallback,
+    ManualRunCompletion,
     ProviderName,
     ProviderRun,
     SlackIntake,
@@ -83,6 +85,29 @@ class ClaudeCallbackTests(unittest.TestCase):
                     "result": "Done",
                     "unexpected": "ignored payload must not cross the boundary",
                 }
+            )
+
+    def test_owner_can_recover_exact_failed_run_with_manual_result(self):
+        record = self._record()
+        record.status = TaskStatus.FAILED
+        record.provider_runs[0] = record.provider_runs[0].model_copy(
+            update={"provider": ProviderName.CURSOR, "run_id": "cursor-run", "status": "CREATING"}
+        )
+
+        apply_manual_run_completion(
+            record,
+            "cursor-run",
+            ManualRunCompletion(owner_user_id="U123", result="Independent review completed."),
+        )
+
+        self.assertEqual(record.status, TaskStatus.QUEUED)
+        self.assertEqual(record.provider_runs[0].status, "FINISHED")
+        self.assertEqual(record.provider_runs[0].result, "Independent review completed.")
+        with self.assertRaises(CallbackConflict):
+            apply_manual_run_completion(
+                record,
+                "cursor-run",
+                ManualRunCompletion(owner_user_id="U123", result="Different result"),
             )
 
 

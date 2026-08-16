@@ -185,3 +185,10 @@ class ClaudeCallback(BaseModel):
     status: Literal["completed", "failed", "cancelled"]
     result: str = Field(min_length=1, max_length=50_000)
     session_url: str | None = Field(default=None, max_length=2_000)
+
+
+class ManualRunCompletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    owner_user_id: str = Field(min_length=1, max_length=64)
+    result: str = Field(min_length=1, max_length=50_000)

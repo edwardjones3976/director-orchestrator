@@ -14,11 +14,17 @@ from .approvals import (
     apply_owner_approval,
     owner_identity_matches,
 )
-from .callbacks import CallbackConflict, apply_claude_callback, bearer_matches
+from .callbacks import (
+    CallbackConflict,
+    apply_claude_callback,
+    apply_manual_run_completion,
+    bearer_matches,
+)
 from .config import Settings
 from .engine import OrchestrationEngine
 from .models import (
     ClaudeCallback,
+    ManualRunCompletion,
     OwnerApproval,
     ProviderName,
     SlackIntake,
@@ -172,6 +178,29 @@ def claude_callback(task_id: str, callback: ClaudeCallback, background: Backgrou
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not changed:
         return record
+    stored = store.save(record)
+    background.add_task(engine.run, task_id)
+    return stored
+
+
+@app.post(
+    "/v1/tasks/{task_id}/runs/{run_id}/complete",
+    response_model=TaskRecord,
+    dependencies=[Depends(require_auth)],
+)
+def complete_run(
+    task_id: str,
+    run_id: str,
+    completion: ManualRunCompletion,
+    background: BackgroundTasks,
+) -> TaskRecord:
+    if not owner_identity_matches(completion.owner_user_id, settings.slack_owner_user_id):
+        raise HTTPException(status_code=403, detail="Owner identity mismatch")
+    record = get_task(task_id)
+    try:
+        apply_manual_run_completion(record, run_id, completion)
+    except CallbackConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     stored = store.save(record)
     background.add_task(engine.run, task_id)
     return stored
