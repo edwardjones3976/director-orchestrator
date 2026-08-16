@@ -98,6 +98,12 @@ class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(director.captured["current_assignment"]["sequence"], 1)
         self.assertEqual(director.captured["final_acceptance"], [])
         self.assertIn("Do not require future assignments", director.captured["instruction"])
+        self.assertIn("do not reject or escalate", director.captured["instruction"])
+        self.assertEqual(director.captured["plan_context"]["estimated_total_cost_usd"], 0)
+        self.assertEqual(
+            director.captured["plan_context"]["configured_max_task_budget_usd"],
+            director.settings.max_task_budget_usd,
+        )
 
         record.next_assignment_index = 1
         record.assignment_outcomes = [

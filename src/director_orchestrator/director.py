@@ -100,6 +100,7 @@ class OpenAIDirector:
             "routing_rules": [
                 "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases.",
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
+                "Use estimated_cost_usd and max_task_budget_usd for the deterministic budget gate. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
                 "Treat OpenAI, Claude, and Cursor as the primary team.",
                 "Use Claude as the primary coding and general workhorse when configured.",
                 "Use Cursor as the other primary repository teammate for coding overflow, independent second passes, and cloud-agent automation.",
@@ -128,6 +129,12 @@ class OpenAIDirector:
                 "normalized_outcome": record.plan.normalized_outcome if record.plan else None,
                 "max_hops": record.plan.max_hops if record.plan else 0,
                 "max_revisions": record.plan.max_revisions if record.plan else 0,
+                "configured_max_task_budget_usd": self.settings.max_task_budget_usd,
+                "estimated_total_cost_usd": (
+                    sum(item.estimated_cost_usd for item in record.plan.assignments)
+                    if record.plan
+                    else 0
+                ),
             },
             "current_assignment": (
                 current_assignment.model_dump(mode="json")
@@ -158,6 +165,9 @@ class OpenAIDirector:
                 "evidence. Do not require future assignments, future provider run IDs, or final "
                 "acceptance evidence at this intermediate phase. A complete evidence-backed "
                 "negative or indeterminate result may be accepted."
-            ),
+            )
+            + " Enforce budget using the deterministic plan estimate and configured task budget. "
+            "If provider-reported token or actual-cost telemetry is unavailable and the specialist "
+            "states that explicitly, do not reject or escalate solely for that missing optional telemetry.",
         }
         return await self._structured(json.dumps(request), ReviewDecision, "review_decision")
