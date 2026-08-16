@@ -51,16 +51,25 @@ class FakeGitHub:
         *,
         merge_error: bool = False,
         advance_base_on_merge: bool = False,
+        responses: tuple[OraclePullRequestSnapshot | Exception, ...] = (),
     ):
         self.current = snapshot
         self.merge_error = merge_error
         self.advance_base_on_merge = advance_base_on_merge
+        # Scripted reads are returned in order; afterwards every read observes the
+        # steady state in `current`.
+        self.responses = list(responses)
         self.snapshot_calls = 0
         self.merge_calls = 0
         self.ready_calls = 0
 
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         self.snapshot_calls += 1
+        if self.responses:
+            scripted = self.responses.pop(0)
+            if isinstance(scripted, Exception):
+                raise scripted
+            return scripted
         return self.current
 
     def merge(
@@ -91,6 +100,7 @@ class OracleMergeGateTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.database = str(Path(self.temporary.name) / "oracle.sqlite3")
+        self.sleeps: list[float] = []
         self.settings = Settings(
             sqlite_path=self.database,
             oracle_automerge_enabled=True,
@@ -180,10 +190,18 @@ class OracleMergeGateTests(unittest.TestCase):
         values.update(changes)
         return OraclePullRequestSnapshot.model_validate(values)
 
-    def service(self, github: FakeGitHub, settings: Settings | None = None) -> OracleMergeService:
+    def service(
+        self,
+        github: FakeGitHub,
+        settings: Settings | None = None,
+        store: OracleMergeStore | None = None,
+    ) -> OracleMergeService:
         selected = settings or self.settings
         return OracleMergeService(
-            OracleMergePolicy(selected), OracleMergeStore(self.database), github
+            OracleMergePolicy(selected),
+            store or OracleMergeStore(self.database),
+            github,
+            sleep=self.sleeps.append,
         )
 
     def callback_record(self, *, include_exact_shas: bool = True) -> TaskRecord:
@@ -657,6 +675,234 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(result.status, OracleMergeStatus.SERIOUS_SAFETY_STOP)
         self.assertEqual(github.ready_calls, 0)
         self.assertEqual(github.merge_calls, 0)
+
+    def test_unresolved_mergeability_after_ready_is_polled_until_resolved(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(mergeable=None),
+                self.snapshot(mergeable=None),
+                self.snapshot(),
+            ),
+        )
+
+        result = self.service(github).process(self.artifact(artifact_id="poll-resolves"))
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.snapshot_calls, 4)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(self.sleeps, [1.0, 2.0])
+
+    def test_unresolved_mergeability_without_a_draft_transition_is_polled(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(self.snapshot(mergeable=None), self.snapshot(mergeable=None)),
+        )
+
+        result = self.service(github).process(self.artifact(artifact_id="poll-open"))
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(self.sleeps, [1.0])
+
+    def test_repeatedly_unresolved_mergeability_stays_retryable_and_then_recovers(self):
+        github = FakeGitHub(
+            self.snapshot(mergeable=None), responses=(self.snapshot(draft=True),)
+        )
+        store = OracleMergeStore(self.database)
+        artifact = self.artifact(artifact_id="poll-timeout")
+
+        timed_out = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(timed_out.status, OracleMergeStatus.ERROR)
+        self.assertIn("unresolved", timed_out.reasons[0])
+        self.assertIn("retryable", timed_out.reasons[0])
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 6)
+        self.assertEqual(self.sleeps, [1.0, 2.0, 4.0, 8.0])
+        connection = sqlite3.connect(self.database)
+        try:
+            attempt = connection.execute(
+                "SELECT status, result_json FROM oracle_merge_attempts WHERE artifact_id = ?",
+                ("poll-timeout",),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(attempt[0], "RECOVERABLE")
+        self.assertIsNone(attempt[1])
+        with self.assertRaisesRegex(ValueError, "assignment"):
+            self.service(github).process(
+                self.artifact(
+                    artifact_id="poll-timeout-poacher",
+                    assignment_id="assignment-for-poll-timeout",
+                )
+            )
+
+        github.current = self.snapshot()
+        recovered = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(recovered.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(
+            [event["event_type"] for event in store.audit_events("poll-timeout")],
+            [
+                "review_artifact_reserved",
+                "merge_gate_recoverable",
+                "review_artifact_retried",
+                "merge_gate_completed",
+            ],
+        )
+
+    def test_explicit_conflict_during_mergeability_poll_is_terminal(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(mergeable=None),
+                self.snapshot(mergeable=False),
+            ),
+        )
+        store = OracleMergeStore(self.database)
+        artifact = self.artifact(artifact_id="poll-conflict")
+        service = self.service(github, store=store)
+
+        result = service.process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn(OracleMergePolicy.UNRESOLVED_MERGEABILITY_REASON, result.reasons)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(self.sleeps, [1.0])
+        self.assertEqual(service.process(artifact), result)
+        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(
+            [event["event_type"] for event in store.audit_events("poll-conflict")],
+            ["review_artifact_reserved", "merge_gate_completed"],
+        )
+
+    def test_drift_while_mergeability_is_unresolved_is_terminal(self):
+        drifted_checks = [
+            check.model_copy(update={"head_sha": NEW_SHA})
+            for check in self.snapshot().checks
+        ]
+        cases = (
+            (
+                self.snapshot(mergeable=None, head_sha=NEW_SHA, checks=drifted_checks),
+                "head SHA changed",
+            ),
+            (self.snapshot(mergeable=None, base_sha=NEW_BASE_SHA), "base SHA changed"),
+            (self.snapshot(mergeable=None, state="closed"), "not open and unmerged"),
+            (self.snapshot(mergeable=None, merged=True), "not open and unmerged"),
+            (self.snapshot(mergeable=None, draft=True), "draft pull requests"),
+            (
+                self.snapshot(mergeable=None, repository="attacker/edge_engine"),
+                "repository does not match",
+            ),
+            (self.snapshot(mergeable=None, pull_number=999), "pull request number"),
+            (
+                self.snapshot(mergeable=None, title="Enable automated funded bet execution"),
+                "funded wagering",
+            ),
+        )
+        for index, (drifted, reason) in enumerate(cases):
+            with self.subTest(index=index):
+                github = FakeGitHub(
+                    self.snapshot(),
+                    responses=(
+                        self.snapshot(draft=True),
+                        self.snapshot(mergeable=None),
+                        drifted,
+                    ),
+                )
+
+                result = self.service(github).process(
+                    self.artifact(artifact_id=f"poll-drift-{index}")
+                )
+
+                self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+                self.assertEqual(github.merge_calls, 0)
+                self.assertEqual(github.snapshot_calls, 3)
+                self.assertTrue(
+                    any(
+                        reason in item
+                        for item in [*result.reasons, *result.serious_safety_reasons]
+                    ),
+                    result.model_dump(),
+                )
+
+    def test_temporary_snapshot_failure_is_retryable_and_a_later_delivery_merges(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                RuntimeError("GitHub secondary rate limit"),
+            ),
+        )
+        store = OracleMergeStore(self.database)
+        artifact = self.artifact(artifact_id="poll-read-failure")
+
+        failed = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(failed.status, OracleMergeStatus.ERROR)
+        self.assertIn("re-read failed closed", failed.reasons[0])
+        self.assertIn("retryable", failed.reasons[0])
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(self.sleeps, [])
+
+        recovered = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(recovered.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.merge_calls, 1)
+
+        duplicate = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(duplicate, recovered)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(
+            [event["event_type"] for event in store.audit_events("poll-read-failure")],
+            [
+                "review_artifact_reserved",
+                "merge_gate_recoverable",
+                "review_artifact_retried",
+                "merge_gate_completed",
+            ],
+        )
+
+    def test_ambiguous_merge_call_is_never_retried(self):
+        github = FakeGitHub(self.snapshot(), merge_error=True)
+        store = OracleMergeStore(self.database)
+        artifact = self.artifact(artifact_id="merge-ambiguous")
+
+        failed = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(failed.status, OracleMergeStatus.ERROR)
+        self.assertIn("GitHub merge failed closed", failed.reasons[0])
+        self.assertEqual(github.merge_calls, 1)
+
+        duplicate = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(duplicate, failed)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(
+            [event["event_type"] for event in store.audit_events("merge-ambiguous")],
+            ["review_artifact_reserved", "merge_gate_completed"],
+        )
+
+    def test_a_terminal_attempt_cannot_be_released_for_retry(self):
+        github = FakeGitHub(self.snapshot())
+        store = OracleMergeStore(self.database)
+        merged = self.service(github, store=store).process(
+            self.artifact(artifact_id="terminal-release")
+        )
+
+        self.assertEqual(merged.status, OracleMergeStatus.MERGED)
+        with self.assertRaisesRegex(RuntimeError, "unresolved merge attempt"):
+            store.release(merged)
 
     def test_branch_protection_or_github_refusal_is_recorded_as_error(self):
         github = FakeGitHub(self.snapshot(), merge_error=True)
