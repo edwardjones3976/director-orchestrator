@@ -14,6 +14,7 @@ class CodexSecurityReviewContractTests(unittest.TestCase):
     def test_review_is_label_and_main_branch_scoped(self):
         self.assertIn("pull_request_target:", self.workflow)
         self.assertIn("types: [labeled]", self.workflow)
+        self.assertIn("github.actor == 'edwardjones3976'", self.workflow)
         self.assertIn("github.event.label.name == 'codex-security-review'", self.workflow)
         self.assertIn("github.event.pull_request.base.ref == 'main'", self.workflow)
         self.assertIn(

@@ -15,6 +15,7 @@ jobs:
   review:
     name: Read-only Codex security review
     if: >-
+      github.actor == 'edwardjones3976' &&
       github.event.label.name == 'codex-security-review' &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == github.repository
