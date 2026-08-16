@@ -9,6 +9,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
@@ -36,6 +37,9 @@ class OracleMergeStatus(StrEnum):
     SERIOUS_SAFETY_STOP = "SERIOUS_SAFETY_STOP"
     MERGED = "MERGED"
     ERROR = "ERROR"
+    # Fail-closed but non-terminal: the gate learned nothing about the pull request,
+    # so the artifact keeps its one-shot merge authority for a later delivery.
+    RETRYABLE = "RETRYABLE"
 
 
 class OracleReviewArtifact(BaseModel):
@@ -353,6 +357,24 @@ class OracleMergePolicy:
         self.required_checks = settings.oracle_automerge_required_checks
         self.required_check_app = settings.oracle_automerge_required_check_app
         self.review_secret = settings.oracle_automerge_review_secret
+        self.mergeability_poll_attempts = max(
+            0, settings.oracle_automerge_mergeability_poll_attempts
+        )
+        self.mergeability_poll_initial_seconds = max(
+            0.0, settings.oracle_automerge_mergeability_poll_initial_seconds
+        )
+        self.mergeability_poll_max_seconds = max(
+            0.0, settings.oracle_automerge_mergeability_poll_max_seconds
+        )
+
+    def mergeability_backoff_delays(self) -> tuple[float, ...]:
+        """Deterministic, bounded backoff used only while mergeability is unresolved."""
+        delays: list[float] = []
+        delay = self.mergeability_poll_initial_seconds
+        for _ in range(self.mergeability_poll_attempts):
+            delays.append(min(delay, self.mergeability_poll_max_seconds))
+            delay *= 2
+        return tuple(delays)
 
     @staticmethod
     def _added_patch_text(snapshot: OraclePullRequestSnapshot) -> str:
@@ -648,6 +670,34 @@ class OracleMergeStore:
             ),
         )
 
+    def release(self, artifact: OracleReviewArtifact, reason: str) -> None:
+        """Give an unresolved reservation back so a transient failure stays retryable.
+
+        Only a reservation that never reached a decision can be released, so a recorded
+        rejection, safety stop, error, or merge can never be reopened by this path. The
+        append-only audit keeps the reservation and the release, so a later retry is
+        visible rather than silent.
+        """
+        with self._lock, self._connect() as connection:
+            released = connection.execute(
+                "DELETE FROM oracle_merge_attempts WHERE artifact_id = ? "
+                "AND status = 'EVALUATING' AND result_json IS NULL",
+                (artifact.artifact_id,),
+            ).rowcount
+            if released != 1:
+                raise RuntimeError(
+                    "only an undecided review artifact reservation can be released"
+                )
+            self._append(connection, artifact.artifact_id, "merge_gate_released", {
+                "artifact_digest": artifact.digest(),
+                "assignment_id": artifact.assignment_id,
+                "review_run_id": artifact.review_run_id,
+                "repository": canonical_repository(artifact.repository),
+                "pull_number": artifact.pull_number,
+                "head_sha": artifact.head_sha,
+                "reason": reason,
+            })
+
     def complete(self, result: OracleMergeResult) -> OracleMergeResult:
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -684,15 +734,102 @@ class OracleMergeStore:
 
 
 class OracleMergeService:
+    _POLL_TIMEOUT_REASON = (
+        "GitHub mergeability stayed unresolved within the bounded poll window"
+    )
+
     def __init__(
         self,
         policy: OracleMergePolicy,
         store: OracleMergeStore,
         github: OracleGitHubGateway | None,
+        *,
+        sleep: Callable[[float], None] | None = None,
     ):
         self.policy = policy
         self.store = store
         self.github = github
+        self._sleep = sleep or time.sleep
+
+    def _identity_reasons(
+        self, artifact: OracleReviewArtifact, snapshot: OraclePullRequestSnapshot
+    ) -> list[str]:
+        """Revalidate identity and exact SHAs on every snapshot taken while polling.
+
+        Waiting for mergeability is the only thing the poll loop tolerates. Anything
+        else that moves under it — a different repository or pull request, a closed or
+        merged pull request, a return to draft, or a base/head advance — ends the wait
+        terminally rather than letting the gate make progress toward merging something
+        other than the reviewed commit.
+        """
+        reasons: list[str] = []
+        if canonical_repository(snapshot.repository) != self.policy.repository:
+            reasons.append("repository changed while mergeability was unresolved")
+        if canonical_repository(snapshot.head_repository) != self.policy.repository:
+            reasons.append("head repository changed while mergeability was unresolved")
+        if snapshot.pull_number != artifact.pull_number:
+            reasons.append("pull request number changed while mergeability was unresolved")
+        if snapshot.state.lower() != "open" or snapshot.merged:
+            reasons.append(
+                "pull request stopped being open and unmerged while mergeability was unresolved"
+            )
+        if snapshot.draft:
+            reasons.append("pull request returned to draft while mergeability was unresolved")
+        if snapshot.base_ref != artifact.base_ref or snapshot.base_sha != artifact.base_sha:
+            reasons.append("base moved while mergeability was unresolved")
+        if snapshot.head_ref != artifact.head_ref or snapshot.head_sha != artifact.head_sha:
+            reasons.append("head moved while mergeability was unresolved")
+        return reasons
+
+    def _release(
+        self, artifact: OracleReviewArtifact, preflight: OracleMergeResult, reason: str
+    ) -> OracleMergeResult:
+        """Fail closed without consuming the artifact or recording a terminal verdict."""
+        self.store.release(artifact, reason)
+        return preflight.model_copy(
+            update={
+                "status": OracleMergeStatus.RETRYABLE,
+                "reasons": [reason],
+                "serious_safety_reasons": [],
+            }
+        )
+
+    def _await_mergeability(
+        self, artifact: OracleReviewArtifact, preflight: OracleMergeResult
+    ) -> OraclePullRequestSnapshot | OracleMergeResult:
+        """Refetch after the ready transition, waiting only on unresolved mergeability.
+
+        GitHub computes mergeability asynchronously, so the first read after a
+        draft-to-ready transition routinely reports ``mergeable=null``. Treating that as
+        a conflict would permanently consume a correctly reviewed artifact over a
+        transient answer, so an unresolved read is retried under a bounded, deterministic
+        backoff. An explicit ``mergeable=false`` is a real conflict and is returned for
+        terminal evaluation; a timeout or a failed read releases the reservation instead.
+        """
+        delays = self.policy.mergeability_backoff_delays()
+        for attempt in range(len(delays) + 1):
+            if attempt:
+                self._sleep(delays[attempt - 1])
+            try:
+                snapshot = self.github.snapshot(artifact.repository, artifact.pull_number)
+            except Exception as exc:
+                # A failed read proves nothing about the pull request in either
+                # direction, so it must not spend the artifact's merge authority.
+                return self._release(
+                    artifact,
+                    preflight,
+                    f"GitHub mergeability read failed closed: {type(exc).__name__}",
+                )
+            drift = self._identity_reasons(artifact, snapshot)
+            if drift:
+                decision = self.policy.evaluate(artifact, snapshot)
+                decision.reasons = sorted({*decision.reasons, *drift})
+                if decision.status == OracleMergeStatus.ELIGIBLE:
+                    decision.status = OracleMergeStatus.REJECTED
+                return self.store.complete(decision)
+            if snapshot.mergeable is not None:
+                return snapshot
+        return self._release(artifact, preflight, self._POLL_TIMEOUT_REASON)
 
     def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
         if not artifact.signature_is_valid(self.policy.review_secret):
@@ -761,19 +898,23 @@ class OracleMergeService:
                 )
                 if not ready:
                     raise RuntimeError("GitHub refused to mark the pull request ready")
-                snapshot = self.github.snapshot(
-                    artifact.repository, artifact.pull_number
-                )
             except Exception as exc:
                 preflight.status = OracleMergeStatus.ERROR
                 preflight.reasons = [
                     f"GitHub ready-for-review transition failed closed: {type(exc).__name__}"
                 ]
                 return self.store.complete(preflight)
+            outcome = self._await_mergeability(artifact, preflight)
+            if isinstance(outcome, OracleMergeResult):
+                return outcome
+            snapshot = outcome
         decision = self.policy.evaluate(artifact, snapshot)
         if decision.reasons or decision.serious_safety_reasons:
             return self.store.complete(decision)
 
+        # The merge itself is invoked exactly once and its outcome is always terminal.
+        # A failed merge call is ambiguous — GitHub may already have merged the commit —
+        # so it is never retried and never released back for a later delivery.
         try:
             merged = self.github.merge(
                 self.policy.repository,

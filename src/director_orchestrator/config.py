@@ -78,6 +78,15 @@ class Settings:
     oracle_automerge_required_check_app: str = os.getenv(
         "ORACLE_AUTOMERGE_REQUIRED_CHECK_APP", "github-actions"
     ).strip()
+    oracle_automerge_mergeability_poll_attempts: int = _int(
+        "ORACLE_AUTOMERGE_MERGEABILITY_POLL_ATTEMPTS", 5
+    )
+    oracle_automerge_mergeability_poll_initial_seconds: float = _float(
+        "ORACLE_AUTOMERGE_MERGEABILITY_POLL_INITIAL_SECONDS", 2.0
+    )
+    oracle_automerge_mergeability_poll_max_seconds: float = _float(
+        "ORACLE_AUTOMERGE_MERGEABILITY_POLL_MAX_SECONDS", 16.0
+    )
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
     usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)

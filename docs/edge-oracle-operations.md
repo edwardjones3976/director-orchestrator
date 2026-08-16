@@ -100,9 +100,10 @@ refetches GitHub state and fails closed on:
 - disabled or killed policy;
 - an invalid HMAC, non-`ACCEPT` review, self-review, provider mismatch, or reused artifact, assignment, or run;
 - head/base SHA, PR, repository, project, base, branch, fork, or author mismatch;
-- a conflict, unresolved mergeability, incomplete thread enumeration, or blocking review
-  thread; an otherwise eligible draft is marked ready by deterministic code and then fully
-  refetched and revalidated before merge;
+- a conflict, incomplete thread enumeration, or blocking review thread; an otherwise
+  eligible draft is marked ready by deterministic code and then fully refetched and
+  revalidated before merge, with a bounded wait for unresolved mergeability described
+  under "Mergeability outcomes" below;
 - missing, pending, failed, ambiguous, wrong-producer, or wrong-SHA checks;
 - any current or previous rename path outside `oracle/**`, `docs/oracle/**`, or
   `tests/oracle/**`, or any file whose complete patch is unavailable;
@@ -115,6 +116,45 @@ once, makes
 retry delivery idempotent after a terminal result, and records an append-only audit with
 the artifact digest, assignment/review identifiers, changed paths, check run/suite IDs,
 decision, merge commit, actor, and UTC timestamp.
+
+### Mergeability outcomes
+
+GitHub computes `mergeable` asynchronously, so the first read after the deterministic
+draft-to-ready transition often returns `null` even for a clean pull request. That
+transient answer must not be read as a conflict, because every artifact, assignment, and
+review run is reservable exactly once and a terminal rejection would permanently spend a
+correctly reviewed change. The gate therefore distinguishes four outcomes after
+`mark_ready`:
+
+- **Transient** — `mergeable=null`. The gate refetches under a bounded, deterministic
+  backoff (`ORACLE_AUTOMERGE_MERGEABILITY_POLL_ATTEMPTS` extra reads, doubling from
+  `..._INITIAL_SECONDS` and capped at `..._MAX_SECONDS`; shipped defaults wait
+  2s, 4s, 8s, 16s, 16s). Mergeability is the **only** condition ever waited on. Every
+  refetch first revalidates repository and head-repository identity, pull-request number,
+  open and unmerged state, non-draft state, base ref and exact base SHA, and head ref and
+  exact head SHA. Anything else moving ends the wait terminally.
+- **Terminal** — `mergeable=false`, or any identity, state, or exact-SHA drift observed
+  while waiting. The gate records `REJECTED` (or `SERIOUS_SAFETY_STOP`), the artifact is
+  consumed, and re-delivery replays the recorded result without a second GitHub call.
+  A real conflict is answered on the first read and is never waited on.
+- **Recoverable** — the poll window expires with mergeability still unresolved, or a
+  refetch itself fails. Neither outcome proves anything about the pull request, so the
+  gate records **no** verdict: it returns status `RETRYABLE`, releases the artifact,
+  assignment, and review-run reservations, and appends a `merge_gate_released` audit
+  event. Redelivering the identical signed artifact re-reserves it and re-runs every
+  gate from the start. Release only ever applies to an undecided reservation, so it can
+  never reopen a recorded rejection, safety stop, error, or merge.
+- **Ambiguous** — the merge call itself fails. GitHub may already have merged the exact
+  SHA, so this is invoked once, recorded as terminal `ERROR`, and never retried or
+  released.
+
+`RETRYABLE` is not an approval to merge. Like every other non-`MERGED` status it stops the
+Director at `OWNER_DECISION_REQUIRED` and exits the CLI non-zero; it only records that the
+operator may safely redeliver the same artifact instead of reissuing the review.
+
+Two narrower cases remain deliberately terminal and unchanged: an unresolved `mergeable`
+on a pull request that was already non-draft, and a failure of the `mark_ready` call
+itself. Both still fail closed, and both consume the artifact.
 
 The initial Edge Engine required check is configured as `test`, matching its pull-request
 workflow. A baseline failure is not inherited or waived; the exact Oracle head must be
