@@ -21,9 +21,11 @@ from director_orchestrator.oracle_merge import (
     OracleReviewArtifact,
     OracleReviewVerdict,
     authenticate_claude_review_artifact,
+    authenticate_provider_review_artifact,
 )
 from director_orchestrator.models import (
     Assignment,
+    AssignmentOutcome,
     ClaudeCallback,
     DirectorPlan,
     ProviderName,
@@ -55,6 +57,7 @@ class FakeGitHub:
         self.advance_base_on_merge = advance_base_on_merge
         self.snapshot_calls = 0
         self.merge_calls = 0
+        self.ready_calls = 0
 
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         self.snapshot_calls += 1
@@ -72,6 +75,15 @@ class FakeGitHub:
         return OracleGitHubMerge(
             merged=True, merge_commit_sha="c" * 40, actor="test-merger"
         )
+
+    def mark_ready(
+        self, repository: str, pull_number: int, expected_sha: str, expected_base_sha: str
+    ) -> bool:
+        self.ready_calls += 1
+        if expected_sha != self.current.head_sha or expected_base_sha != self.current.base_sha:
+            return False
+        self.current = self.current.model_copy(update={"draft": False})
+        return True
 
 
 class OracleMergeGateTests(unittest.TestCase):
@@ -200,14 +212,25 @@ class OracleMergeGateTests(unittest.TestCase):
                 approval_required=False,
                 max_hops=3,
                 max_revisions=1,
-                assignments=[Assignment(
-                    sequence=2,
-                    agent=ProviderName.CLAUDE,
-                    task=review_context,
-                    acceptance=acceptance,
-                    repository="edwardjones3976/edge_engine",
-                    starting_ref="main",
-                )],
+                assignments=[
+                    Assignment(
+                        sequence=1,
+                        agent=ProviderName.CURSOR,
+                        task="Implement the bounded Oracle change.",
+                        acceptance=["Create the isolated implementation."],
+                        repository="edwardjones3976/edge_engine",
+                        starting_ref="main",
+                    ),
+                    Assignment(
+                        sequence=2,
+                        agent=ProviderName.CLAUDE,
+                        task=review_context,
+                        acceptance=acceptance,
+                        repository="edwardjones3976/edge_engine",
+                        starting_ref="main",
+                        depends_on=[1],
+                    ),
+                ],
                 final_acceptance=["Exact-SHA review is recorded."],
             ),
             provider_runs=[ProviderRun(
@@ -215,6 +238,14 @@ class OracleMergeGateTests(unittest.TestCase):
                 assignment_sequence=2,
                 run_id="claude-review-callback",
                 status="completed",
+                result=self.callback().result,
+            )],
+            assignment_outcomes=[AssignmentOutcome(
+                assignment_sequence=1,
+                provider=ProviderName.CURSOR,
+                run_id="cursor-implementation-run",
+                result="Implementation completed on the isolated branch.",
+                review_summary="OpenAI accepted the implementation evidence.",
             )],
         )
 
@@ -238,10 +269,79 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertIsNotNone(artifact)
         self.assertTrue(artifact.signature_is_valid(REVIEW_SECRET))
 
+    def test_verified_cursor_run_authenticates_artifact_locally(self):
+        payload = self.artifact(
+            implementation_provider="claude",
+            implementation_actor="claude-agent",
+            reviewer_provider="cursor",
+            review_run_id="cursor-review-run",
+        ).model_dump(mode="json", exclude={"signature"})
+        payload.update({"assignment_id": "DIR-CURSOR:2"})
+        run = ProviderRun(
+            provider=ProviderName.CURSOR,
+            assignment_sequence=2,
+            run_id="cursor-review-run",
+            status="FINISHED",
+            result=json.dumps(payload),
+        )
+        base_record = self.callback_record()
+        record = base_record.model_copy(
+            update={
+                "task_id": "DIR-CURSOR",
+                "plan": base_record.plan.model_copy(
+                    update={
+                        "assignments": [
+                            base_record.plan.assignments[0].model_copy(
+                                update={"agent": ProviderName.CLAUDE}
+                            ),
+                            base_record.plan.assignments[1].model_copy(
+                                update={"agent": ProviderName.CURSOR}
+                            ),
+                        ]
+                    }
+                ),
+                "provider_runs": [run],
+                "assignment_outcomes": [
+                    base_record.assignment_outcomes[0].model_copy(
+                        update={"provider": ProviderName.CLAUDE}
+                    )
+                ],
+            }
+        )
+
+        artifact = authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
+
+        self.assertIsNotNone(artifact)
+        self.assertEqual(artifact.reviewer_provider, "cursor")
+        self.assertTrue(artifact.signature_is_valid(REVIEW_SECRET))
+
+    def test_review_provider_must_match_authenticated_run(self):
+        callback = self.callback(reviewer_provider="cursor")
+        record = self.callback_record()
+        record.provider_runs[0] = record.provider_runs[0].model_copy(
+            update={"result": callback.result}
+        )
+        with self.assertRaisesRegex(ValueError, "provider does not match"):
+            authenticate_claude_review_artifact(record, callback, REVIEW_SECRET)
+
+    def test_reviewer_cannot_relabel_its_own_implementation(self):
+        callback = self.callback(implementation_provider="claude")
+        record = self.callback_record()
+        record.provider_runs[0] = record.provider_runs[0].model_copy(
+            update={"result": callback.result}
+        )
+        with self.assertRaisesRegex(ValueError, "accepted dependency"):
+            authenticate_claude_review_artifact(record, callback, REVIEW_SECRET)
+
     def test_callback_cannot_supply_its_own_signature_or_omit_sha_binding(self):
+        signed_callback = self.callback(signature="f" * 64)
+        signed_record = self.callback_record()
+        signed_record.provider_runs[0] = signed_record.provider_runs[0].model_copy(
+            update={"result": signed_callback.result}
+        )
         with self.assertRaisesRegex(ValueError, "must not supply"):
             authenticate_claude_review_artifact(
-                self.callback_record(), self.callback(signature="f" * 64), REVIEW_SECRET
+                signed_record, signed_callback, REVIEW_SECRET
             )
         with self.assertRaisesRegex(ValueError, "exact reviewed head SHA"):
             authenticate_claude_review_artifact(
@@ -276,6 +376,19 @@ class OracleMergeGateTests(unittest.TestCase):
                 connection.execute("DELETE FROM oracle_merge_audit")
         finally:
             connection.close()
+
+    def test_cursor_can_independently_accept_claude_implementation(self):
+        artifact = self.artifact(
+            implementation_provider="claude",
+            implementation_actor="claude-agent",
+            reviewer_provider="cursor",
+            review_run_id="cursor-review-1",
+        )
+        snapshot = self.snapshot(author_login="claude-agent")
+
+        result = self.service(FakeGitHub(snapshot)).process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
 
     def test_duplicate_delivery_returns_recorded_result_without_second_merge(self):
         github = FakeGitHub(self.snapshot())
@@ -515,16 +628,35 @@ class OracleMergeGateTests(unittest.TestCase):
             with self.subTest(index=index):
                 self.assert_rejected(artifact=artifact, reason=reason)
 
-    def test_conflict_and_draft_fail_closed(self):
-        for index, (changes, reason) in enumerate(
-            (({"mergeable": False}, "mergeability"), ({"draft": True}, "draft"))
-        ):
-            with self.subTest(index=index):
-                self.assert_rejected(
-                    artifact=self.artifact(artifact_id=f"state-{index}"),
-                    snapshot=self.snapshot(**changes),
-                    reason=reason,
-                )
+    def test_conflict_fails_closed(self):
+        self.assert_rejected(
+            artifact=self.artifact(artifact_id="state-conflict"),
+            snapshot=self.snapshot(mergeable=False),
+            reason="mergeability",
+        )
+
+    def test_eligible_draft_is_marked_ready_then_revalidated_and_merged(self):
+        github = FakeGitHub(self.snapshot(draft=True))
+
+        result = self.service(github).process(self.artifact(artifact_id="draft-ready"))
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertEqual(github.merge_calls, 1)
+
+    def test_draft_with_serious_safety_signal_stops_before_ready_transition(self):
+        github = FakeGitHub(
+            self.snapshot(draft=True, title="Enable automated funded bet execution")
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="unsafe-draft")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.SERIOUS_SAFETY_STOP)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertEqual(github.merge_calls, 0)
 
     def test_branch_protection_or_github_refusal_is_recorded_as_error(self):
         github = FakeGitHub(self.snapshot(), merge_error=True)

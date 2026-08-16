@@ -20,7 +20,7 @@ import jwt
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
-from .models import ClaudeCallback, ProviderName, TaskRecord
+from .models import ClaudeCallback, ProviderName, ProviderRun, TaskRecord
 from .policy import canonical_repository
 
 
@@ -93,12 +93,22 @@ class OracleReviewArtifact(BaseModel):
         return hashlib.sha256(payload).hexdigest()
 
 
-def authenticate_claude_review_artifact(
-    record: TaskRecord, callback: ClaudeCallback, secret: str
+def authenticate_provider_review_artifact(
+    record: TaskRecord, run: ProviderRun, secret: str
 ) -> OracleReviewArtifact | None:
-    """Bind model output to one stored Claude review assignment before signing locally."""
+    """Bind one Claude or Cursor result to its stored exact-SHA review assignment."""
+    if run.provider not in {ProviderName.CLAUDE, ProviderName.CURSOR}:
+        return None
+    successful_statuses = {
+        ProviderName.CLAUDE: {"completed"},
+        ProviderName.CURSOR: {"FINISHED", "completed"},
+    }
+    if run.status not in successful_statuses[run.provider]:
+        raise ValueError("only a successful provider run can authenticate a review")
+    if not run.result:
+        return None
     try:
-        payload = json.loads(callback.result)
+        payload = json.loads(run.result)
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict) or payload.get("artifact_type") != (
@@ -106,32 +116,36 @@ def authenticate_claude_review_artifact(
     ):
         return None
     if "signature" in payload:
-        raise ValueError("Claude review output must not supply an authentication signature")
-    if callback.status != "completed":
-        raise ValueError("only a completed Claude callback can authenticate a review")
+        raise ValueError("provider review output must not supply an authentication signature")
     payload["signature"] = "0" * 64
     artifact = OracleReviewArtifact.model_validate(payload)
 
     matching_runs = [
-        run
-        for run in record.provider_runs
-        if run.provider == ProviderName.CLAUDE
-        and hmac.compare_digest(run.run_id, callback.run_id)
+        stored
+        for stored in record.provider_runs
+        if stored.provider == run.provider
+        and hmac.compare_digest(stored.run_id, run.run_id)
+        and stored.assignment_sequence == run.assignment_sequence
     ]
-    if not matching_runs or matching_runs[-1].assignment_sequence is None:
-        raise ValueError("Claude review output is not bound to a stored assignment")
-    if matching_runs[-1].status != "completed":
-        raise ValueError("stored Claude review run is not completed")
-    sequence = matching_runs[-1].assignment_sequence
-    if artifact.review_run_id != callback.run_id:
+    if len(matching_runs) != 1 or matching_runs[0].assignment_sequence is None:
+        raise ValueError("provider review output is not bound to one stored assignment")
+    stored_run = matching_runs[0]
+    if stored_run.status not in successful_statuses[run.provider]:
+        raise ValueError("stored provider review run is not successful")
+    if not hmac.compare_digest(stored_run.result or "", run.result):
+        raise ValueError("provider review result does not match the stored run")
+    sequence = stored_run.assignment_sequence
+    if artifact.review_run_id != run.run_id:
         raise ValueError("review artifact run does not match the authenticated callback")
+    if artifact.reviewer_provider.strip().lower() != run.provider.value:
+        raise ValueError("review artifact provider does not match the authenticated run")
     if artifact.assignment_id != f"{record.task_id}:{sequence}":
         raise ValueError("review artifact assignment identifier does not match the task")
     if record.plan is None or artifact.project.strip().lower() != record.plan.project.strip().lower():
         raise ValueError("review artifact project does not match the stored plan")
     assignments = [item for item in record.plan.assignments if item.sequence == sequence]
-    if len(assignments) != 1 or assignments[0].agent != ProviderName.CLAUDE:
-        raise ValueError("stored assignment is not an independent Claude review")
+    if len(assignments) != 1 or assignments[0].agent != run.provider:
+        raise ValueError("stored assignment does not match the review provider")
     assignment = assignments[0]
     if not assignment.repository or canonical_repository(assignment.repository) != canonical_repository(
         artifact.repository
@@ -139,12 +153,50 @@ def authenticate_claude_review_artifact(
         raise ValueError("review artifact repository does not match the stored assignment")
     if assignment.starting_ref != artifact.base_ref:
         raise ValueError("review artifact base ref does not match the stored assignment")
+    dependency_outcomes = [
+        outcome
+        for outcome in record.assignment_outcomes
+        if outcome.assignment_sequence in assignment.depends_on
+    ]
+    if len(dependency_outcomes) != 1:
+        raise ValueError(
+            "review assignment must depend on exactly one accepted implementation outcome"
+        )
+    implementation = dependency_outcomes[0]
+    if artifact.implementation_provider.strip().lower() != implementation.provider.value:
+        raise ValueError(
+            "review artifact implementation provider does not match the accepted dependency"
+        )
+    if implementation.provider == run.provider:
+        raise ValueError("review provider cannot accept its own implementation outcome")
     review_context = "\n".join([assignment.task, *assignment.acceptance]).lower()
     if "review" not in review_context or artifact.head_sha not in review_context:
-        raise ValueError("Claude assignment was not pinned to the exact reviewed head SHA")
+        raise ValueError("provider assignment was not pinned to the exact reviewed head SHA")
     if artifact.base_sha not in review_context:
-        raise ValueError("Claude assignment was not pinned to the exact reviewed base SHA")
+        raise ValueError("provider assignment was not pinned to the exact reviewed base SHA")
     return artifact.sign(secret)
+
+
+def authenticate_claude_review_artifact(
+    record: TaskRecord, callback: ClaudeCallback, secret: str
+) -> OracleReviewArtifact | None:
+    """Compatibility wrapper for the authenticated Claude callback boundary."""
+    if callback.status != "completed":
+        raise ValueError("only a completed Claude callback can authenticate a review")
+    matching_runs = [
+        run
+        for run in record.provider_runs
+        if run.provider == ProviderName.CLAUDE
+        and hmac.compare_digest(run.run_id, callback.run_id)
+    ]
+    if len(matching_runs) != 1:
+        raise ValueError("Claude review output is not bound to one stored assignment")
+    run = matching_runs[0]
+    if run.result is None:
+        raise ValueError("Claude callback result was not persisted before authentication")
+    if not hmac.compare_digest(run.result, callback.result):
+        raise ValueError("Claude callback result does not match the stored run")
+    return authenticate_provider_review_artifact(record, run, secret)
 
 
 class OracleChangedFile(BaseModel):
@@ -232,6 +284,14 @@ class OracleGitHubGateway(Protocol):
         expected_base_sha: str,
     ) -> OracleGitHubMerge: ...
 
+    def mark_ready(
+        self,
+        repository: str,
+        pull_number: int,
+        expected_sha: str,
+        expected_base_sha: str,
+    ) -> bool: ...
+
 
 class OracleMergePolicy:
     _SERIOUS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -308,7 +368,11 @@ class OracleMergePolicy:
         return "\n".join(additions)
 
     def evaluate(
-        self, artifact: OracleReviewArtifact, snapshot: OraclePullRequestSnapshot
+        self,
+        artifact: OracleReviewArtifact,
+        snapshot: OraclePullRequestSnapshot,
+        *,
+        allow_draft_transition: bool = False,
     ) -> OracleMergeResult:
         errors: list[str] = []
         serious: list[str] = []
@@ -320,11 +384,11 @@ class OracleMergePolicy:
         if not self.required_checks:
             errors.append("required exact-head checks are not configured")
         if artifact.verdict == OracleReviewVerdict.SERIOUS_SAFETY_STOP:
-            serious.append("Claude returned SERIOUS_SAFETY_STOP")
+            serious.append("reviewer returned SERIOUS_SAFETY_STOP")
         elif artifact.verdict != OracleReviewVerdict.ACCEPT:
-            errors.append("Claude did not accept the reviewed commit")
-        if artifact.reviewer_provider.lower() != "claude":
-            errors.append("the exact-SHA reviewer must be Claude")
+            errors.append("reviewer did not accept the reviewed commit")
+        if artifact.reviewer_provider.lower() not in {"claude", "cursor"}:
+            errors.append("the exact-SHA reviewer must be Claude or Cursor")
         if artifact.reviewer_provider.lower() == artifact.implementation_provider.lower():
             errors.append("the implementation author cannot accept its own work")
         if artifact.implementation_actor.lower() != snapshot.author_login.lower():
@@ -355,7 +419,7 @@ class OracleMergePolicy:
 
         if snapshot.state.lower() != "open" or snapshot.merged:
             errors.append("pull request is not open and unmerged")
-        if snapshot.draft:
+        if snapshot.draft and not allow_draft_transition:
             errors.append("draft pull requests cannot be merged automatically")
         if snapshot.mergeable is not True:
             errors.append("pull request is conflicting or mergeability is unresolved")
@@ -682,6 +746,30 @@ class OracleMergeService:
                     reasons=[f"GitHub validation failed closed: {type(exc).__name__}"],
                 )
             )
+        if snapshot.draft:
+            preflight = self.policy.evaluate(
+                artifact, snapshot, allow_draft_transition=True
+            )
+            if preflight.reasons or preflight.serious_safety_reasons:
+                return self.store.complete(preflight)
+            try:
+                ready = self.github.mark_ready(
+                    self.policy.repository,
+                    artifact.pull_number,
+                    artifact.head_sha,
+                    artifact.base_sha,
+                )
+                if not ready:
+                    raise RuntimeError("GitHub refused to mark the pull request ready")
+                snapshot = self.github.snapshot(
+                    artifact.repository, artifact.pull_number
+                )
+            except Exception as exc:
+                preflight.status = OracleMergeStatus.ERROR
+                preflight.reasons = [
+                    f"GitHub ready-for-review transition failed closed: {type(exc).__name__}"
+                ]
+                return self.store.complete(preflight)
         decision = self.policy.evaluate(artifact, snapshot)
         if decision.reasons or decision.serious_safety_reasons:
             return self.store.complete(decision)
@@ -1006,3 +1094,37 @@ class GitHubOracleGateway:
             merge_commit_sha=payload.get("sha"),
             actor=actor,
         )
+
+    def mark_ready(
+        self,
+        repository: str,
+        pull_number: int,
+        expected_sha: str,
+        expected_base_sha: str,
+    ) -> bool:
+        repository = canonical_repository(repository)
+        pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
+        if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
+            raise RuntimeError("GitHub pull request changed before ready-for-review transition")
+        if not pull.get("draft"):
+            return True
+        query = """
+        mutation($pullRequestId:ID!) {
+          markPullRequestReadyForReview(input:{pullRequestId:$pullRequestId}) {
+            pullRequest { isDraft }
+          }
+        }
+        """
+        payload = self._request(
+            "POST",
+            "/graphql",
+            json={"query": query, "variables": {"pullRequestId": pull["node_id"]}},
+        ).json()
+        if payload.get("errors"):
+            raise RuntimeError("GitHub refused the ready-for-review transition")
+        pull_request = (
+            payload.get("data", {})
+            .get("markPullRequestReadyForReview", {})
+            .get("pullRequest", {})
+        )
+        return pull_request.get("isDraft") is False

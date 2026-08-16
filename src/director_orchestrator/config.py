@@ -112,6 +112,10 @@ class Settings:
 
     cursor_api_key: str = os.getenv("CURSOR_API_KEY", "")
     cursor_api_base: str = os.getenv("CURSOR_API_BASE", "https://api.cursor.com")
+    cursor_dispatch_max_attempts: int = _int("CURSOR_DISPATCH_MAX_ATTEMPTS", 4)
+    cursor_dispatch_max_retry_delay_seconds: int = _int(
+        "CURSOR_DISPATCH_MAX_RETRY_DELAY_SECONDS", 60
+    )
 
     claude_routine_url: str = os.getenv("CLAUDE_ROUTINE_URL", "")
     claude_routine_token: str = os.getenv("CLAUDE_ROUTINE_TOKEN", "")

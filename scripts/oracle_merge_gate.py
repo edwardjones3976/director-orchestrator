@@ -17,7 +17,7 @@ from director_orchestrator.oracle_merge import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Evaluate one immutable Claude review artifact and fail closed before any merge."
+        description="Evaluate one immutable Claude or Cursor review artifact and fail closed before any merge."
     )
     parser.add_argument("artifact", type=Path, help="Path to the typed review-artifact JSON file")
     parser.add_argument(

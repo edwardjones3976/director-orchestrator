@@ -195,6 +195,51 @@ class GitHubAppAuthenticationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             GitHubOracleGateway.from_settings(ambiguous)
 
+    def test_gateway_marks_only_the_expected_exact_sha_draft_ready(self):
+        requests: list[httpx.Request] = []
+        pull = {
+            "node_id": "PR_node_23",
+            "draft": True,
+            "base": {"sha": BASE_SHA},
+            "head": {"sha": HEAD_SHA},
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.method == "GET" and request.url.path.endswith("/pulls/23"):
+                return httpx.Response(200, json=pull)
+            if request.method == "POST" and request.url.path == "/graphql":
+                payload = json.loads(request.content)
+                self.assertEqual(payload["variables"]["pullRequestId"], "PR_node_23")
+                self.assertIn("markPullRequestReadyForReview", payload["query"])
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "markPullRequestReadyForReview": {
+                                "pullRequest": {"isDraft": False}
+                            }
+                        }
+                    },
+                )
+            return httpx.Response(404)
+
+        gateway = GitHubOracleGateway(
+            "repo-scoped-token", transport=httpx.MockTransport(handler)
+        )
+
+        self.assertTrue(
+            gateway.mark_ready(
+                "edwardjones3976/edge_engine", 23, HEAD_SHA, BASE_SHA
+            )
+        )
+        self.assertEqual([request.method for request in requests], ["GET", "POST"])
+
+        with self.assertRaisesRegex(RuntimeError, "changed"):
+            gateway.mark_ready(
+                "edwardjones3976/edge_engine", 23, "f" * 40, BASE_SHA
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
