@@ -51,7 +51,7 @@ class CursorAdapter(ProviderAdapter):
             "name": f"Director task {assignment.sequence}",
             "prompt": {"text": f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"},
             "workOnCurrentBranch": False,
-            "autoCreatePR": True,
+            "autoCreatePR": assignment.allow_draft_pr,
             "skipReviewerRequest": False,
         }
         if assignment.repository:

@@ -149,6 +149,41 @@ class PolicyTests(unittest.TestCase):
             execution_policy_errors(plan, settings),
         )
 
+    def test_draft_pr_capability_requires_assignment_approval(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Create a draft PR",
+            acceptance=["Draft PR exists"],
+            repository="example/demo",
+            allow_draft_pr=True,
+        )
+        plan = DirectorPlan(
+            project="demo",
+            normalized_outcome="Create a draft PR",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[assignment],
+            final_acceptance=["Draft only"],
+        )
+
+        self.assertIn(
+            "assignment 1: draft PR creation requires assignment approval",
+            execution_policy_errors(plan, settings),
+        )
+        approved = plan.model_copy(
+            update={"assignments": [assignment.model_copy(update={"requires_approval": True})]}
+        )
+        self.assertEqual(execution_policy_errors(approved, settings), [])
+
 
 class StoreTests(unittest.TestCase):
     def test_source_event_is_idempotent(self):

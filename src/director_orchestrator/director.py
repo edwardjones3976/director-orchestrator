@@ -99,6 +99,7 @@ class OpenAIDirector:
             "provider_strategy": self.settings.provider_strategy(),
             "routing_rules": [
                 "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases.",
+                "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
                 "Treat OpenAI, Claude, and Cursor as the primary team.",
                 "Use Claude as the primary coding and general workhorse when configured.",
                 "Use Cursor as the other primary repository teammate for coding overflow, independent second passes, and cloud-agent automation.",

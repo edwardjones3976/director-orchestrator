@@ -74,6 +74,7 @@ class Assignment(BaseModel):
     starting_ref: str = Field(default="main", min_length=1, max_length=255)
     depends_on: list[int] = Field(default_factory=list, max_length=20)
     requires_approval: bool = False
+    allow_draft_pr: bool = False
     estimated_cost_usd: float = Field(default=0, ge=0, le=1_000)
 
 

@@ -67,6 +67,32 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.status, "FINISHED")
         self.assertIn("2 models", run.result)
 
+    async def test_cursor_dispatch_denies_draft_pr_unless_assignment_explicitly_allows_it(self):
+        settings = replace(Settings(), cursor_api_key="test-cursor")
+        base = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Review the repository without changing it",
+            acceptance=["Report evidence"],
+            repository="example/demo",
+            requires_approval=True,
+        )
+        response = {
+            "run": {"id": "run-1", "status": "RUNNING"},
+            "agent": {"id": "agent-1", "url": "https://cursor.example/agent-1"},
+        }
+        RecordingAsyncClient.responses = [response, response]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            await CursorAdapter(settings).dispatch(base, "context")
+            await CursorAdapter(settings).dispatch(
+                base.model_copy(update={"task": "Create only a draft PR", "allow_draft_pr": True}),
+                "context",
+            )
+
+        self.assertFalse(RecordingAsyncClient.calls[0]["json"]["autoCreatePR"])
+        self.assertTrue(RecordingAsyncClient.calls[1]["json"]["autoCreatePR"])
+
     async def test_claude_revision_fires_a_bounded_callback_run(self):
         settings = replace(
             Settings(),
