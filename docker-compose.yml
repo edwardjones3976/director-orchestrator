@@ -20,7 +20,16 @@ services:
     build: .
     restart: unless-stopped
     command: ["python", "-m", "director_orchestrator.slack_bot"]
-    env_file: ${DIRECTOR_ENV_FILE:-.env}
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ORCHESTRATOR_BASE_URL: ${ORCHESTRATOR_BASE_URL:-http://orchestrator:8080}
+      ORCHESTRATOR_SHARED_SECRET: ${ORCHESTRATOR_SHARED_SECRET}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_DIRECTOR_CHANNEL_ID: ${SLACK_DIRECTOR_CHANNEL_ID}
+      SLACK_OWNER_USER_ID: ${SLACK_OWNER_USER_ID}
+      N8N_DIRECTOR_WEBHOOK_URL: ${N8N_DIRECTOR_WEBHOOK_URL:-}
     depends_on:
       orchestrator:
         condition: service_healthy

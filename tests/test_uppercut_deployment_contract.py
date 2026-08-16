@@ -10,14 +10,18 @@ ROOT = Path(__file__).resolve().parents[1]
 class UppercutDeploymentContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.script = (
+        cls.wrapper = (
             ROOT / "scripts" / "windows-uppercut-live-validation.ps1"
+        ).read_text(encoding="utf-8")
+        cls.script = (
+            ROOT / "scripts" / "windows-isolated-live-validation.ps1"
         ).read_text(encoding="utf-8")
         cls.compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         cls.profile = (ROOT / ".env.uppercut.example").read_text(encoding="utf-8")
 
     def test_profile_is_separate_and_primary_env_is_read_only(self):
-        self.assertIn('$profilePath = ".env.uppercut"', self.script)
+        self.assertIn('ProfileName = "project-uppercut"', self.wrapper)
+        self.assertIn('ProfilePath = ".env.uppercut"', self.script)
         self.assertNotIn('Set-Content ".env"', self.script)
         self.assertNotIn('WriteAllText((Join-Path (Get-Location) ".env")', self.script)
         self.assertIn("SeedProviderCredentialsFromPrimaryEnv", self.script)
@@ -32,7 +36,7 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertIn("SQLITE_PATH=/data/project-uppercut.sqlite3", self.profile)
 
     def test_paid_gate_starts_closed_and_checks_store_before_opening(self):
-        closed = self.script.index('ALLOW_PAID_RUNS = "false"')
+        closed = self.script.index('ALLOW_PAID_RUNS = "false"', self.script.index("$identity"))
         store_probe = self.script.index("list_recoverable()")
         opens = self.script.index("Write-ProfileSwitches -PaidRuns $true")
         provider_probe = self.script.index('/v1/usage-checks/run')
@@ -51,6 +55,8 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         catch_block = self.script[self.script.rindex("\ncatch {") :]
         self.assertIn("Write-ProfileSwitches -PaidRuns $false", catch_block)
         self.assertIn("stop slackbot", catch_block)
+        self.assertIn("$LASTEXITCODE -ne 0", catch_block)
+        self.assertIn("stop orchestrator slackbot", catch_block)
 
     def test_paid_validation_closes_slack_and_timestamps_before_api_start(self):
         paid_section = self.script.index("\ntry {", self.script.index("Write-ProfileSwitches -PaidRuns $true"))
@@ -66,6 +72,106 @@ class UppercutDeploymentContractTests(unittest.TestCase):
             line for line in self.script.splitlines() if "$latest = @(Invoke-RestMethod" in line
         )
         self.assertIn("| ForEach-Object { $_ })", latest_line)
+
+    def test_provider_probe_is_bound_to_one_exact_cycle_and_status_set(self):
+        self.assertIn("$cycleId = [string]$accepted.cycle_id", self.script)
+        self.assertIn("$_.cycle_id -ceq $cycleId", self.script)
+        self.assertIn('$_.status -notin @("ok", "prompted")', self.script)
+        self.assertIn("did not return exactly one result", self.script)
+
+    def test_acl_precedes_every_secret_read_or_write(self):
+        acl = self.script.index("& icacls.exe")
+        profile_read = self.script.index("$profileText = Get-Content")
+        secret_generation = self.script.index("New-RandomSecret", profile_read)
+        self.assertLess(acl, profile_read)
+        self.assertLess(acl, secret_generation)
+
+    def test_process_environment_and_location_are_restored(self):
+        self.assertIn("$originalLocation = Get-Location", self.script)
+        self.assertIn("$originalProcessEnvironment", self.script)
+        self.assertIn("finally {", self.script)
+        self.assertIn("Set-Location $originalLocation", self.script)
+
+    def test_collision_detection_covers_primary_and_both_isolated_profiles(self):
+        self.assertIn('@(".env", ".env.uppercut", ".env.edge-oracle")', self.script)
+        for name in (
+            "DIRECTOR_COMPOSE_PROJECT_NAME",
+            "DIRECTOR_HOST_PORT",
+            "N8N_HOST_PORT",
+            "SQLITE_PATH",
+            "ORCHESTRATOR_SHARED_SECRET",
+            "CLAUDE_CALLBACK_SECRET",
+            "N8N_ENCRYPTION_KEY",
+            "N8N_POSTGRES_PASSWORD",
+            "SLACK_DIRECTOR_CHANNEL_ID",
+            "SLACK_APP_TOKEN",
+            "SLACK_BOT_TOKEN",
+            "ORACLE_AUTOMERGE_REVIEW_SECRET",
+        ):
+            self.assertIn(f'"{name}"', self.script)
+
+    def test_slackbot_receives_only_its_required_environment(self):
+        slack_section = self.compose.split("  slackbot:", 1)[1].split("  n8n-db:", 1)[0]
+        self.assertNotIn("env_file:", slack_section)
+        self.assertIn("ORCHESTRATOR_SHARED_SECRET:", slack_section)
+        self.assertIn("SLACK_APP_TOKEN:", slack_section)
+        for forbidden in (
+            "OPENAI_API_KEY", "CLAUDE_ROUTINE_TOKEN", "CURSOR_API_KEY",
+            "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_GITHUB_TOKEN",
+            "ORACLE_AUTOMERGE_REVIEW_SECRET",
+        ):
+            self.assertNotIn(forbidden, slack_section)
+
+
+class EdgeOracleDeploymentContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.wrapper = (
+            ROOT / "scripts" / "windows-edge-oracle-live-validation.ps1"
+        ).read_text(encoding="utf-8")
+        cls.script = (
+            ROOT / "scripts" / "windows-isolated-live-validation.ps1"
+        ).read_text(encoding="utf-8")
+        cls.profile = (ROOT / ".env.edge-oracle.example").read_text(encoding="utf-8")
+
+    def test_wrapper_selects_oracle_without_copying_bootstrap_logic(self):
+        self.assertIn('ProfileName = "edge-oracle"', self.wrapper)
+        self.assertIn("windows-isolated-live-validation.ps1", self.wrapper)
+        self.assertNotIn("docker compose", self.wrapper)
+
+    def test_oracle_identity_and_state_are_isolated(self):
+        expected = (
+            "APP_ENV=edge-oracle",
+            "DIRECTOR_COMPOSE_PROJECT_NAME=edge-oracle-director",
+            "DIRECTOR_HOST_PORT=28080",
+            "N8N_HOST_PORT=25678",
+            "SQLITE_PATH=/data/edge-oracle.sqlite3",
+            "PROJECT_ALLOWLIST=edge-oracle",
+            "REPOSITORY_ALLOWLIST=edwardjones3976/edge_engine",
+            "ALLOWED_STARTING_REFS=main",
+        )
+        for line in expected:
+            self.assertIn(line, self.profile)
+
+    def test_oracle_stages_paid_usage_and_merge_gates_closed(self):
+        self.assertIn("ALLOW_PAID_RUNS=false", self.profile)
+        self.assertIn("USAGE_CHECK_ENABLED=false", self.profile)
+        self.assertIn("ORACLE_AUTOMERGE_ENABLED=false", self.profile)
+        self.assertIn("ORACLE_AUTOMERGE_KILL_SWITCH=true", self.profile)
+        self.assertIn("ORACLE_AUTOMERGE_REQUIRED_CHECK_APP=github-actions", self.profile)
+        self.assertIn("ORACLE_AUTOMERGE_PROJECT=edge-oracle", self.profile)
+        self.assertIn("ORACLE_AUTOMERGE_REPOSITORY=edwardjones3976/edge_engine", self.profile)
+
+    def test_oracle_uses_dedicated_secret_placeholders(self):
+        for name in (
+            "ORCHESTRATOR_SHARED_SECRET",
+            "CLAUDE_CALLBACK_SECRET",
+            "N8N_ENCRYPTION_KEY",
+            "N8N_POSTGRES_PASSWORD",
+            "ORACLE_AUTOMERGE_REVIEW_SECRET",
+        ):
+            self.assertIn(f"{name}=REPLACE_WITH_RANDOM_SECRET", self.profile)
+        self.assertIn("No values were printed", self.script)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,14 @@ from .models import (
     TaskStatus,
     UsageCheckRecord,
 )
+from .oracle_merge import (
+    GitHubOracleGateway,
+    OracleMergePolicy,
+    OracleMergeService,
+    OracleMergeStatus,
+    OracleMergeStore,
+    authenticate_claude_review_artifact,
+)
 from .store import TaskStore
 from .usage import UsageMonitor
 
@@ -40,6 +48,18 @@ settings = Settings()
 store = TaskStore(settings.sqlite_path)
 engine = OrchestrationEngine(settings, store)
 usage_monitor = UsageMonitor(settings, store)
+oracle_merge_policy = OracleMergePolicy(settings)
+oracle_merge_store = OracleMergeStore(settings.sqlite_path)
+oracle_github = (
+    GitHubOracleGateway(settings.oracle_automerge_github_token)
+    if oracle_merge_policy.enabled
+    and not oracle_merge_policy.kill_switch
+    and settings.oracle_automerge_github_token
+    else None
+)
+oracle_merge_service = OracleMergeService(
+    oracle_merge_policy, oracle_merge_store, oracle_github
+)
 
 
 @asynccontextmanager
@@ -81,6 +101,7 @@ def health() -> dict:
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": settings.readiness(),
         "execution_profile": settings.execution_profile_readiness(),
+        "oracle_merge": settings.oracle_merge_readiness(),
         "usage_monitor": usage_monitor.health(),
     }
 
@@ -100,8 +121,9 @@ def run_usage_checks(background: BackgroundTasks) -> dict[str, str]:
         raise HTTPException(status_code=409, detail="Periodic usage checks are disabled")
     if not settings.allow_paid_runs:
         raise HTTPException(status_code=409, detail="Paid provider execution is disabled")
-    background.add_task(usage_monitor.run_once, True)
-    return {"status": "accepted"}
+    cycle_id = f"USAGE-{secrets.token_hex(5).upper()}"
+    background.add_task(usage_monitor.run_once, True, cycle_id)
+    return {"status": "accepted", "cycle_id": cycle_id}
 
 
 @app.post("/v1/intake", response_model=TaskRecord, status_code=202, dependencies=[Depends(require_auth)])
@@ -176,10 +198,46 @@ def claude_callback(task_id: str, callback: ClaudeCallback, background: Backgrou
         changed = apply_claude_callback(record, callback)
     except CallbackConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if not changed:
-        return record
-    stored = store.save(record)
-    background.add_task(engine.run, task_id)
+    oracle_artifact = None
+    if oracle_merge_policy.enabled and not oracle_merge_policy.kill_switch:
+        try:
+            oracle_artifact = authenticate_claude_review_artifact(
+                record, callback, oracle_merge_policy.review_secret
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Oracle review artifact failed closed: {exc}",
+            ) from exc
+
+    stored = store.save(record) if changed else record
+    if oracle_artifact is not None:
+        try:
+            merge_result = oracle_merge_service.process(oracle_artifact)
+        except (RuntimeError, ValueError) as exc:
+            stored.status = TaskStatus.OWNER_DECISION_REQUIRED
+            stored.message = f"Oracle automatic merge failed closed: {type(exc).__name__}"
+            stored = store.save(stored)
+            background.add_task(engine.notifier.post, stored, stored.message)
+            return stored
+        if merge_result.status != OracleMergeStatus.MERGED:
+            evidence = [*merge_result.serious_safety_reasons, *merge_result.reasons]
+            stored.status = TaskStatus.OWNER_DECISION_REQUIRED
+            stored.message = (
+                "Oracle automatic merge stopped: "
+                + ("; ".join(evidence[:5]) or merge_result.status.value)
+            )[:2_000]
+            stored = store.save(stored)
+            background.add_task(engine.notifier.post, stored, stored.message)
+            return stored
+        stored.message = (
+            f"Oracle exact-SHA merge completed at {merge_result.merge_commit_sha} "
+            f"by {merge_result.actor}."
+        )
+        stored = store.save(stored)
+        background.add_task(engine.notifier.post, stored, stored.message)
+    if changed:
+        background.add_task(engine.run, task_id)
     return stored
 
 

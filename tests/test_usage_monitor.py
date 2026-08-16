@@ -48,6 +48,24 @@ class UsageNormalizationTests(unittest.TestCase):
 
 
 class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unknown_provider_terminal_status_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            monitor = UsageMonitor(
+                replace(Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")),
+                store,
+                adapters={},
+            )
+            record = monitor._record_from_run(
+                "USAGE-UNKNOWN", "cursor", ProviderRun(
+                    provider=ProviderName.CURSOR,
+                    run_id="unknown-run",
+                    status="UNRECOGNIZED",
+                )
+            )
+            self.assertEqual(record.status, UsageCheckStatus.ERROR)
+            self.assertIn("UNRECOGNIZED", record.error)
+
     async def test_paid_gate_prevents_all_provider_prompts(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
@@ -118,6 +136,27 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(first), 1)
             self.assertEqual(second, [])
             self.assertEqual(adapter.calls, 1)
+
+    async def test_caller_supplied_cycle_id_binds_all_persisted_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulCursorProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("cursor",),
+                cursor_api_key="test-cursor",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.CURSOR: adapter})
+
+            records = await monitor.run_once(force=True, cycle_id="USAGE-1234567890")
+
+            self.assertEqual([record.cycle_id for record in records], ["USAGE-1234567890"])
+            self.assertEqual(store.latest_usage_check("cursor").cycle_id, "USAGE-1234567890")
 
     async def test_provider_list_is_deduplicated_and_unknown_names_are_visible(self):
         with tempfile.TemporaryDirectory() as directory:

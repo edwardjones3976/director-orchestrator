@@ -27,16 +27,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path scripts/windows-uppercut-live-validation.ps1),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            exit 1
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$($_.Extent.File): $($_.Message)" }
+              exit 1
+            }
           }
       - uses: actions/setup-python@v5
         with:
@@ -47,8 +49,9 @@ jobs:
       - run: python -m unittest discover -s tests -v
         env:
           SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
-      - run: python -m compileall -q src tests
+      - run: python -m compileall -q src scripts tests
       - run: python -m json.tool n8n/workflows/director-intake.json
+      - run: python -m json.tool docs/oracle-review-artifact.example.json
 
   containers:
     name: Compose and container build
@@ -63,6 +66,11 @@ jobs:
           DIRECTOR_ENV_FILE: .env.uppercut.example
           DIRECTOR_COMPOSE_PROJECT_NAME: project-uppercut-director-ci
         run: docker compose --env-file .env.uppercut.example config --quiet
+      - name: Validate isolated Edge Oracle profile
+        env:
+          DIRECTOR_ENV_FILE: .env.edge-oracle.example
+          DIRECTOR_COMPOSE_PROJECT_NAME: edge-oracle-director-ci
+        run: docker compose --env-file .env.edge-oracle.example config --quiet
       - run: docker compose --env-file .env.example build orchestrator
 
   secret-hygiene:
@@ -95,6 +103,18 @@ jobs:
             exit 1
           fi
           echo "No secret-bearing files are committed."
+      - name: Reject credential-shaped committed content
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='gh[oprsu]_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{30,}|-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'
+          matches=$(git grep -l -E "$pattern" -- ':!.github/workflows/ci.yml' || true)
+          if [ -n "$matches" ]; then
+            echo "::error::Credential-shaped content found in committed files."
+            printf '%s\n' "$matches"
+            exit 1
+          fi
+          echo "No credential-shaped content was found."
 
   recovery-probe:
     name: Cross-process recovery probe

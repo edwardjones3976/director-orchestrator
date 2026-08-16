@@ -15,7 +15,7 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - A reusable Slack app manifest and a Claude routine prompt.
 - Dry-run previews for testing without provider spending.
 
-Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`, `docs/cloud-hosting-later.md`, and `docs/project-uppercut-reiteration.md`.
+Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`, `docs/cloud-hosting-later.md`, `docs/project-uppercut-reiteration.md`, and `docs/edge-oracle-operations.md`.
 
 ## Architecture
 
@@ -122,6 +122,13 @@ Do not expose the local n8n editor or orchestrator port directly to the internet
 ## Project Uppercut reiteration
 
 Project Uppercut runs as a separate Compose project using `.env.uppercut`, dedicated ports, volumes, task state, Slack routing, budgets, and callback secrets. The supervised Windows script never edits the primary `.env`. See [the Uppercut runbook](docs/project-uppercut-reiteration.md). The broader LangGraph migration is planned separately in [PR #18](https://github.com/edwardjones3976/director-orchestrator/pull/18) so this remediation stays focused.
+
+Edge Oracle uses the same isolated bootstrap through a separate `.env.edge-oracle`,
+Compose namespace, ports, database, Slack route, and allowlists. Its optional exact-SHA
+merge gate is disabled and kill-switched by default, accepts only Oracle-scoped paths,
+and is reached only through an authenticated, exact-assignment Claude callback or the
+local audit CLI rather than a public merge API. See
+[Edge Oracle operations](docs/edge-oracle-operations.md).
 
 ## Local validation
 
