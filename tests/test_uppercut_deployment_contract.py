@@ -137,7 +137,25 @@ class EdgeOracleDeploymentContractTests(unittest.TestCase):
     def test_wrapper_selects_oracle_without_copying_bootstrap_logic(self):
         self.assertIn('ProfileName = "edge-oracle"', self.wrapper)
         self.assertIn("windows-isolated-live-validation.ps1", self.wrapper)
+        self.assertIn("ApiOnly", self.wrapper)
         self.assertNotIn("docker compose", self.wrapper)
+
+    def test_api_only_activation_keeps_external_intake_and_paid_runs_closed(self):
+        self.assertIn("$ApiOnly -and $EnablePaidRuns", self.script)
+        api_only = self.script.index("if ($ApiOnly) {", self.script.index("if (-not $EnablePaidRuns)"))
+        stop_optional = self.script.index("stop slackbot n8n n8n-db", api_only)
+        start_api = self.script.index(
+            "up -d --build --remove-orphans orchestrator", stop_optional
+        )
+        self.assertLess(stop_optional, start_api)
+        self.assertIn("Slack and n8n remain stopped", self.script)
+
+    def test_api_only_profile_does_not_require_slack_credentials(self):
+        required = self.script.index("$requiredConfiguration = @(")
+        optional_slack = self.script.index("if (-not $ApiOnly)", required)
+        assertion = self.script.index("Assert-Configured", optional_slack)
+        self.assertLess(required, optional_slack)
+        self.assertLess(optional_slack, assertion)
 
     def test_oracle_identity_and_state_are_isolated(self):
         expected = (

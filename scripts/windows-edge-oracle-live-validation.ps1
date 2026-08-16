@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [switch]$ApiOnly,
     [switch]$EnablePaidRuns,
     [switch]$SkipProviderChecks,
     [switch]$SeedProviderCredentialsFromPrimaryEnv,
@@ -13,6 +14,7 @@ $arguments = @{
     ProfileName = "edge-oracle"
     TimeoutSeconds = $TimeoutSeconds
 }
+if ($ApiOnly) { $arguments.ApiOnly = $true }
 if ($EnablePaidRuns) { $arguments.EnablePaidRuns = $true }
 if ($SkipProviderChecks) { $arguments.SkipProviderChecks = $true }
 if ($SeedProviderCredentialsFromPrimaryEnv) {
