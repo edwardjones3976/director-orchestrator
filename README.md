@@ -121,7 +121,7 @@ Do not expose the local n8n editor or orchestrator port directly to the internet
 
 ## Project Uppercut reiteration
 
-After the shared Director system passes its smoke test, create a separate Project Uppercut deployment configuration. Reuse the engine, but give it its own repository allowlist, Slack thread/channel policy, provider budgets, acceptance checks, and secrets. Do not commingle Project Uppercut credentials or project data with the shared defaults.
+Project Uppercut runs as a separate Compose project using `.env.uppercut`, dedicated ports, volumes, task state, Slack routing, budgets, and callback secrets. The supervised Windows script never edits the primary `.env`. See [the Uppercut runbook](docs/project-uppercut-reiteration.md). The broader LangGraph migration is planned separately in [PR #18](https://github.com/edwardjones3976/director-orchestrator/pull/18) so this remediation stays focused.
 
 ## Local validation
 
