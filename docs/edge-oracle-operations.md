@@ -134,7 +134,10 @@ state instead of treating it as a verdict:
   threads, paths, and safety signals before the wait continues. Immediately after this
   process successfully marks a draft ready, a stale `draft=true` replica read spends the
   same bounded unresolved-state allowance rather than consuming the review artifact. Once
-  a re-read observes `draft=false`, any later flip back to draft is terminal drift.
+  a re-read observes `draft=false`, any later flip back to draft is terminal drift. A null
+  mergeability value does not prevent an otherwise clean exact-SHA draft preflight from
+  making the ready transition, because the value is recalculated and fully revalidated
+  afterwards.
 - **Terminal.** An explicit `mergeable=false`, any drift observed during those re-reads
   (head or base advance, close, merge, a draft state outside the immediate ready-transition
   reconciliation, a new blocking thread or non-green check), and any serious-safety signal

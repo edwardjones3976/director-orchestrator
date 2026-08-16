@@ -847,7 +847,9 @@ class OracleMergeService:
             snapshot = self.github.snapshot(artifact.repository, artifact.pull_number)
         except Exception as exc:
             resolved, unresolved = self._resolved_snapshot(
-                artifact, initial_read_failure=exc
+                artifact,
+                initial_read_failure=exc,
+                return_draft_to_caller=True,
             )
             if unresolved is not None:
                 return unresolved
@@ -856,7 +858,18 @@ class OracleMergeService:
             preflight = self.policy.evaluate(
                 artifact, snapshot, allow_draft_transition=True
             )
-            if preflight.reasons or preflight.serious_safety_reasons:
+            unresolved_preflight = snapshot.mergeable is None
+            if unresolved_preflight:
+                assert self.policy.UNRESOLVED_MERGEABILITY_REASON in preflight.reasons
+            preflight_blocking = [
+                reason
+                for reason in preflight.reasons
+                if not (
+                    unresolved_preflight
+                    and reason == self.policy.UNRESOLVED_MERGEABILITY_REASON
+                )
+            ]
+            if preflight_blocking or preflight.serious_safety_reasons:
                 return self.store.complete(preflight)
             try:
                 ready = self.github.mark_ready(
@@ -915,6 +928,7 @@ class OracleMergeService:
         *,
         initial_read_failure: Exception | None = None,
         allow_stale_draft: bool = False,
+        return_draft_to_caller: bool = False,
     ) -> tuple[OraclePullRequestSnapshot | None, OracleMergeResult | None]:
         """Re-read the pull request until transient GitHub state resolves.
 
@@ -956,6 +970,10 @@ class OracleMergeService:
                 read_failure_allowance -= 1
                 last_read_failure = exc
                 continue
+            if return_draft_to_caller and snapshot.draft:
+                # The caller owns the complete draft preflight and ready transition.
+                # A null mergeability value is expected to be recalculated afterwards.
+                return snapshot, None
             stale_ready_draft = allow_stale_draft and snapshot.draft
             if not snapshot.draft:
                 # Once this process observes the ready state, any later draft=true

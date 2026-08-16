@@ -665,6 +665,21 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(github.snapshot_calls, 2)
         self.assertEqual(github.merge_calls, 1)
 
+    def test_eligible_draft_with_unresolved_mergeability_is_marked_ready(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(self.snapshot(draft=True, mergeable=None),),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="draft-unresolved-ready")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertEqual(github.merge_calls, 1)
+
     def test_stale_draft_after_ready_is_polled_until_replica_catches_up(self):
         github = FakeGitHub(
             self.snapshot(),
@@ -953,6 +968,24 @@ class OracleMergeGateTests(unittest.TestCase):
             [event["event_type"] for event in store.audit_events(artifact.artifact_id)],
             ["review_artifact_reserved", "merge_gate_completed"],
         )
+
+    def test_initial_read_failure_recovers_to_unresolved_draft_then_marks_ready(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                TimeoutError("initial GitHub read timed out"),
+                self.snapshot(draft=True, mergeable=None),
+            ),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="initial-read-unresolved-draft")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.merge_calls, 1)
 
     def test_initial_snapshot_read_failures_are_recoverable_and_reserved(self):
         github = FakeGitHub(
