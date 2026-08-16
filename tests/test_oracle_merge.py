@@ -665,6 +665,58 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(github.snapshot_calls, 2)
         self.assertEqual(github.merge_calls, 1)
 
+    def test_stale_draft_after_ready_is_polled_until_replica_catches_up(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(draft=True),
+                self.snapshot(),
+            ),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="ready-stale-draft")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(self.sleeps, [1.0])
+
+    def test_stale_draft_after_ready_exhaustion_is_recoverable(self):
+        github = FakeGitHub(
+            self.snapshot(draft=True),
+            responses=tuple(self.snapshot(draft=True) for _ in range(6)),
+        )
+        store = OracleMergeStore(self.database)
+        artifact = self.artifact(artifact_id="ready-stale-draft-timeout")
+
+        timed_out = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(timed_out.status, OracleMergeStatus.ERROR)
+        self.assertIn("draft state remained stale", timed_out.reasons[0])
+        self.assertIn("retryable", timed_out.reasons[0])
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.snapshot_calls, 6)
+        self.assertEqual(github.merge_calls, 0)
+        connection = sqlite3.connect(self.database)
+        try:
+            attempt = connection.execute(
+                "SELECT status, result_json FROM oracle_merge_attempts WHERE artifact_id = ?",
+                (artifact.artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(attempt, ("RECOVERABLE", None))
+
+        github.current = self.snapshot()
+        recovered = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(recovered.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 1)
+
     def test_draft_with_serious_safety_signal_stops_before_ready_transition(self):
         github = FakeGitHub(
             self.snapshot(draft=True, title="Enable automated funded bet execution")
@@ -882,6 +934,59 @@ class OracleMergeGateTests(unittest.TestCase):
             ],
             ["review_artifact_reserved", "merge_gate_completed"],
         )
+
+    def test_initial_snapshot_read_failure_recovers_within_the_same_delivery(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(TimeoutError("initial GitHub read timed out"),),
+        )
+        store = OracleMergeStore(self.database)
+        artifact = self.artifact(artifact_id="initial-read-failure")
+
+        result = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(
+            [event["event_type"] for event in store.audit_events(artifact.artifact_id)],
+            ["review_artifact_reserved", "merge_gate_completed"],
+        )
+
+    def test_initial_snapshot_read_failures_are_recoverable_and_reserved(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                TimeoutError("initial GitHub read timed out"),
+                ConnectionError("retry connection reset"),
+            ),
+        )
+        store = OracleMergeStore(self.database)
+        artifact = self.artifact(artifact_id="initial-read-failure-timeout")
+
+        failed = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(failed.status, OracleMergeStatus.ERROR)
+        self.assertIn("2 transient read failures", failed.reasons[0])
+        self.assertIn("retryable", failed.reasons[0])
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertEqual(github.merge_calls, 0)
+        connection = sqlite3.connect(self.database)
+        try:
+            attempt = connection.execute(
+                "SELECT status, result_json FROM oracle_merge_attempts WHERE artifact_id = ?",
+                (artifact.artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(attempt, ("RECOVERABLE", None))
+
+        github.current = self.snapshot()
+        recovered = self.service(github, store=store).process(artifact)
+
+        self.assertEqual(recovered.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 1)
 
     def test_unresolved_allowance_is_exhausted_independently_of_read_failures(self):
         github = FakeGitHub(

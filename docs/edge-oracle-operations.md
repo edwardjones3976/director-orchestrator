@@ -123,19 +123,23 @@ visibly right after the deterministic draft-to-ready transition. The gate classi
 state instead of treating it as a verdict:
 
 - **Transient.** A null value is re-read with bounded backoff — five unresolved reads, one
-  second doubling to an eight-second cap, about fifteen seconds. A temporary read failure
-  during that wait is a separate transient condition with its own allowance of two failed
-  reads, because a read that never produced a snapshot proves nothing about mergeability:
-  a failed read never spends the unresolved-mergeability allowance, an unresolved read
-  never spends the read-failure allowance, and the poll is bounded at seven reads and about
-  thirty-one seconds. Every successful read revalidates the repository, pull-request
-  identity, open and unmerged state, non-draft state, expected base SHA, exact head SHA,
-  checks, review threads, paths, and safety signals before the wait continues.
+  second doubling to an eight-second cap. A temporary read failure, including the initial
+  pull-request read, is a separate transient condition with one shared allowance of two
+  failed reads, because a read that never produced a snapshot proves nothing about
+  mergeability. A failed read never spends the unresolved-state allowance, an unresolved
+  read never spends the read-failure allowance, and the longest post-snapshot poll is six
+  reads with five sleeps totaling twenty-three seconds (seven GitHub reads including the
+  successful pre-poll read). Every successful read revalidates the repository, pull-request
+  identity, open and unmerged state, expected base SHA, exact head SHA, checks, review
+  threads, paths, and safety signals before the wait continues. Immediately after this
+  process successfully marks a draft ready, a stale `draft=true` replica read spends the
+  same bounded unresolved-state allowance rather than consuming the review artifact. Once
+  a re-read observes `draft=false`, any later flip back to draft is terminal drift.
 - **Terminal.** An explicit `mergeable=false`, any drift observed during those re-reads
-  (head or base advance, close, merge, a flip back to draft, a new blocking thread or
-  non-green check), and any serious-safety signal record a terminal decision and consume the
-  review artifact.
-- **Recoverable.** Exhausting either allowance — five unresolved reads or two failed reads
+  (head or base advance, close, merge, a draft state outside the immediate ready-transition
+  reconciliation, a new blocking thread or non-green check), and any serious-safety signal
+  record a terminal decision and consume the review artifact.
+- **Recoverable.** Exhausting either allowance — five unresolved/stale-state reads or two failed reads
   — fails closed as `ERROR` with a reason containing `remains retryable` that names which
   allowance ran out. The attempt keeps its artifact, assignment, and review-run
   reservation, so no other review can claim them, but it records no terminal result:
