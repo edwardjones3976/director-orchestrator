@@ -298,6 +298,7 @@ class OracleMergePolicy:
     UNRESOLVED_MERGEABILITY_REASON = (
         "pull request is conflicting or mergeability is unresolved"
     )
+    DRAFT_NOT_MERGEABLE_REASON = "draft pull requests cannot be merged automatically"
     _SERIOUS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         (
             "funded wagering or sportsbook operation",
@@ -424,7 +425,7 @@ class OracleMergePolicy:
         if snapshot.state.lower() != "open" or snapshot.merged:
             errors.append("pull request is not open and unmerged")
         if snapshot.draft and not allow_draft_transition:
-            errors.append("draft pull requests cannot be merged automatically")
+            errors.append(self.DRAFT_NOT_MERGEABLE_REASON)
         if snapshot.mergeable is not True:
             errors.append(self.UNRESOLVED_MERGEABILITY_REASON)
         if not snapshot.review_threads_complete:
@@ -782,6 +783,7 @@ class OracleMergeService:
         *,
         mergeable_poll_attempts: int = 5,
         mergeable_poll_read_failures: int = 2,
+        mergeable_poll_stale_draft_reads: int = 3,
         mergeable_poll_base_delay_seconds: float = 1.0,
         mergeable_poll_max_delay_seconds: float = 8.0,
         sleep: Callable[[float], None] = time.sleep,
@@ -790,6 +792,8 @@ class OracleMergeService:
             raise ValueError("mergeability polling requires at least one attempt")
         if mergeable_poll_read_failures < 1:
             raise ValueError("mergeability polling requires at least one read attempt")
+        if mergeable_poll_stale_draft_reads < 1:
+            raise ValueError("mergeability polling requires at least one draft read")
         if (
             mergeable_poll_base_delay_seconds <= 0
             or mergeable_poll_max_delay_seconds < mergeable_poll_base_delay_seconds
@@ -800,6 +804,7 @@ class OracleMergeService:
         self.github = github
         self._poll_attempts = mergeable_poll_attempts
         self._poll_read_failures = mergeable_poll_read_failures
+        self._poll_stale_draft_reads = mergeable_poll_stale_draft_reads
         self._poll_base_delay = mergeable_poll_base_delay_seconds
         self._poll_max_delay = mergeable_poll_max_delay_seconds
         self._sleep = sleep
@@ -842,25 +847,29 @@ class OracleMergeService:
                 )
             )
 
-        try:
-            snapshot = self.github.snapshot(artifact.repository, artifact.pull_number)
-        except Exception as exc:
-            return self.store.complete(
-                OracleMergeResult(
-                    artifact_id=artifact.artifact_id,
-                    artifact_digest=artifact.digest(),
-                    status=OracleMergeStatus.ERROR,
-                    repository=self.policy.repository,
-                    pull_number=artifact.pull_number,
-                    reviewed_sha=artifact.head_sha,
-                    reasons=[f"GitHub validation failed closed: {type(exc).__name__}"],
-                )
-            )
+        snapshot, unreadable = self._initial_snapshot(artifact)
+        if unreadable is not None:
+            return unreadable
+        transitioned_from_draft = snapshot.draft
         if snapshot.draft:
             preflight = self.policy.evaluate(
                 artifact, snapshot, allow_draft_transition=True
             )
-            if preflight.reasons or preflight.serious_safety_reasons:
+            # Unresolved mergeability is the ordinary state of a draft pull request,
+            # and it is revalidated in full under the bounded wait after the ready
+            # transition. Letting it veto the transition would record a terminal
+            # rejection before the wait ever began, which is the exact consumption this
+            # gate exists to avoid. Every other reason still blocks, and the guard is
+            # taken from the snapshot so an explicit conflict is never forgiven.
+            blocking = [
+                reason
+                for reason in preflight.reasons
+                if not (
+                    snapshot.mergeable is None
+                    and reason == self.policy.UNRESOLVED_MERGEABILITY_REASON
+                )
+            ]
+            if blocking or preflight.serious_safety_reasons:
                 return self.store.complete(preflight)
             try:
                 ready = self.github.mark_ready(
@@ -880,7 +889,9 @@ class OracleMergeService:
         if snapshot.draft or snapshot.mergeable is None:
             # The stale draft snapshot must be refetched after the ready transition,
             # and GitHub may report mergeability as unresolved while it recalculates.
-            resolved, unresolved = self._resolved_snapshot(artifact)
+            resolved, unresolved = self._resolved_snapshot(
+                artifact, transitioned_from_draft=transitioned_from_draft
+            )
             if unresolved is not None:
                 return unresolved
             snapshot = resolved
@@ -910,31 +921,83 @@ class OracleMergeService:
         decision.actor = merged.actor
         return self.store.complete(decision)
 
-    def _resolved_snapshot(
+    def _initial_snapshot(
         self, artifact: OracleReviewArtifact
     ) -> tuple[OraclePullRequestSnapshot | None, OracleMergeResult | None]:
-        """Re-read the pull request until GitHub resolves mergeability.
+        """Take the first read, tolerating the same transient failures as the poll.
 
-        Unresolved mergeability and a transient read failure are independent transient
-        conditions, so each carries its own strictly bounded allowance: a failed read
-        never consumes the unresolved-mergeability allowance, an unresolved snapshot
-        never consumes the read-failure allowance, and the loop performs at most
-        ``mergeable_poll_attempts + mergeable_poll_read_failures`` reads.
-
-        Every successful snapshot is revalidated in full before the wait continues, so
-        any repository, pull-request, state, draft, base-SHA, head-SHA, check,
-        review-thread, or safety drift is terminal, and an explicit ``mergeable: false``
-        conflict is terminal. Only an unresolved (null) value is retried. Exhausting
-        either allowance fails closed without consuming the review artifact, so the
-        identical artifact can be delivered again. No merge call is made from here, so
-        nothing ambiguous is retried.
+        A read that never produced a snapshot proves nothing about the pull request, so
+        the first read gets the same bounded read-failure allowance as every later one.
+        Recording a terminal verdict here would spend a correctly reviewed artifact on a
+        network blip; exhausting the allowance releases it for an authenticated retry
+        instead. Nothing is merged from here, so nothing ambiguous is retried.
         """
-        unresolved_allowance = self._poll_attempts
         read_failure_allowance = self._poll_read_failures
         last_read_failure: Exception | None = None
         delay = self._poll_base_delay
         reads = 0
-        while unresolved_allowance and read_failure_allowance:
+        while read_failure_allowance:
+            if reads:
+                self._sleep(delay)
+                delay = min(delay * 2, self._poll_max_delay)
+            reads += 1
+            try:
+                return (
+                    self.github.snapshot(artifact.repository, artifact.pull_number),
+                    None,
+                )
+            except Exception as exc:
+                read_failure_allowance -= 1
+                last_read_failure = exc
+        return None, self._release_for_retry(
+            artifact,
+            f"GitHub validation read failed closed after {self._poll_read_failures} "
+            "transient read failures and remains retryable: "
+            f"{type(last_read_failure).__name__}",
+        )
+
+    def _resolved_snapshot(
+        self,
+        artifact: OracleReviewArtifact,
+        *,
+        transitioned_from_draft: bool = False,
+    ) -> tuple[OraclePullRequestSnapshot | None, OracleMergeResult | None]:
+        """Re-read the pull request until GitHub converges on the state it confirmed.
+
+        Three transient conditions are possible here, and each carries its own strictly
+        bounded allowance so that none can exhaust another's:
+
+        * an unresolved ``mergeable: null`` (``mergeable_poll_attempts``);
+        * a read that never produced a snapshot (``mergeable_poll_read_failures``);
+        * a stale ``draft: true`` after ``mark_ready`` already confirmed ``isDraft:
+          false`` through GraphQL, which a lagging REST replica can still report
+          (``mergeable_poll_stale_draft_reads``).
+
+        Exactly one allowance is spent per iteration, so the loop performs at most
+        ``attempts + read_failures + stale_draft_reads - 2`` reads — eight by default,
+        over about thirty-nine seconds of backoff.
+
+        Every successful snapshot is revalidated in full before the wait continues, so
+        any repository, pull-request, state, base-SHA, head-SHA, check, review-thread,
+        path, or safety drift is terminal. A condition is treated as transient only when
+        the snapshot actually exhibits it, so an explicit ``mergeable: false`` conflict
+        is terminal on the read that reports it, and a draft flag is only ever forgiven
+        on a pull request this gate just transitioned. Exhausting any allowance fails
+        closed without consuming the review artifact, so the identical artifact can be
+        delivered again. No merge call is made from here.
+        """
+        unresolved_allowance = self._poll_attempts
+        read_failure_allowance = self._poll_read_failures
+        # Without a transition of our own there is nothing to be stale about, so the
+        # allowance stays pinned at one and is never spent: a draft flag then falls
+        # through to `blocking` as genuine drift.
+        stale_draft_allowance = (
+            self._poll_stale_draft_reads if transitioned_from_draft else 1
+        )
+        last_read_failure: Exception | None = None
+        delay = self._poll_base_delay
+        reads = 0
+        while unresolved_allowance and read_failure_allowance and stale_draft_allowance:
             if reads:
                 self._sleep(delay)
                 delay = min(delay * 2, self._poll_max_delay)
@@ -949,23 +1012,40 @@ class OracleMergeService:
                 read_failure_allowance -= 1
                 last_read_failure = exc
                 continue
-            if snapshot.mergeable is not None:
-                return snapshot, None
+            # Classify from the snapshot itself rather than from the reason text alone,
+            # so a `false` conflict can never be mistaken for an unresolved one.
+            unresolved = snapshot.mergeable is None
+            stale_draft = transitioned_from_draft and snapshot.draft
+            transient = set()
+            if unresolved:
+                transient.add(self.policy.UNRESOLVED_MERGEABILITY_REASON)
+            if stale_draft:
+                transient.add(self.policy.DRAFT_NOT_MERGEABLE_REASON)
             interim = self.policy.evaluate(artifact, snapshot)
             blocking = [
-                reason
-                for reason in interim.reasons
-                if reason != self.policy.UNRESOLVED_MERGEABILITY_REASON
+                reason for reason in interim.reasons if reason not in transient
             ]
             if blocking or interim.serious_safety_reasons:
                 return None, self.store.complete(interim)
-            unresolved_allowance -= 1
+            if not transient:
+                return snapshot, None
+            if unresolved:
+                unresolved_allowance -= 1
+            if stale_draft:
+                stale_draft_allowance -= 1
         if last_read_failure is not None and not read_failure_allowance:
             return None, self._release_for_retry(
                 artifact,
                 "GitHub mergeability re-read failed closed after "
                 f"{self._poll_read_failures} transient read failures and remains "
                 f"retryable: {type(last_read_failure).__name__}",
+            )
+        if not stale_draft_allowance:
+            return None, self._release_for_retry(
+                artifact,
+                "GitHub still reported the pull request as draft after "
+                f"{self._poll_stale_draft_reads} bounded re-reads following a confirmed "
+                "ready-for-review transition and remains retryable",
             )
         return None, self._release_for_retry(
             artifact,
