@@ -122,22 +122,27 @@ GitHub recalculates mergeability asynchronously and reports it as null meanwhile
 visibly right after the deterministic draft-to-ready transition. The gate classifies that
 state instead of treating it as a verdict:
 
-- **Transient.** A null value is re-read with bounded backoff — five reads, one second
-  doubling to an eight-second cap, about fifteen seconds in total. Every read revalidates
-  the repository, pull-request identity, open and unmerged state, non-draft state, expected
-  base SHA, exact head SHA, checks, review threads, paths, and safety signals before the
-  wait continues.
+- **Transient.** A null value is re-read with bounded backoff — five unresolved reads, one
+  second doubling to an eight-second cap, about fifteen seconds. A temporary read failure
+  during that wait is a separate transient condition with its own allowance of two failed
+  reads, because a read that never produced a snapshot proves nothing about mergeability:
+  a failed read never spends the unresolved-mergeability allowance, an unresolved read
+  never spends the read-failure allowance, and the poll is bounded at seven reads and about
+  thirty-one seconds. Every successful read revalidates the repository, pull-request
+  identity, open and unmerged state, non-draft state, expected base SHA, exact head SHA,
+  checks, review threads, paths, and safety signals before the wait continues.
 - **Terminal.** An explicit `mergeable=false`, any drift observed during those re-reads
   (head or base advance, close, merge, a flip back to draft, a new blocking thread or
   non-green check), and any serious-safety signal record a terminal decision and consume the
   review artifact.
-- **Recoverable.** Exhausting the backoff, or a temporary read failure during it, fails
-  closed as `ERROR` with a reason ending in `remains retryable`. The attempt keeps its
-  artifact, assignment, and review-run reservation, so no other review can claim them, but
-  it records no terminal result: redelivering the identical artifact resumes the gate. The
-  audit shows `merge_gate_recoverable` and then `review_artifact_retried`. Nothing was
-  merged, so the only operator action is to re-run the gate with the same artifact once the
-  transient condition clears.
+- **Recoverable.** Exhausting either allowance — five unresolved reads or two failed reads
+  — fails closed as `ERROR` with a reason containing `remains retryable` that names which
+  allowance ran out. The attempt keeps its artifact, assignment, and review-run
+  reservation, so no other review can claim them, but it records no terminal result:
+  redelivering the identical artifact resumes the gate. The audit shows
+  `merge_gate_recoverable` and then `review_artifact_retried`. Nothing was merged, so the
+  only operator action is to re-run the gate with the same artifact once the transient
+  condition clears.
 - **Ambiguous.** The merge call itself is never retried. If it raises or is refused, the
   result is a terminal `ERROR`, and a redelivery returns that recorded result without
   calling GitHub again.
