@@ -82,7 +82,8 @@ class FakeGitHub:
         self.ready_calls += 1
         if expected_sha != self.current.head_sha or expected_base_sha != self.current.base_sha:
             return False
-        self.current = self.current.model_copy(update={"draft": False})
+        # Mirror GitHub's post-draft recalculation window where mergeable is null.
+        self.current = self.current.model_copy(update={"draft": False, "mergeable": None})
         return True
 
 
@@ -644,6 +645,29 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(github.ready_calls, 1)
         self.assertEqual(github.snapshot_calls, 2)
         self.assertEqual(github.merge_calls, 1)
+        # mark_ready leaves mergeable null; the gate must not permanently reject.
+        self.assertIsNone(github.current.mergeable)
+
+    def test_draft_ready_real_conflict_still_rejects(self):
+        github = FakeGitHub(self.snapshot(draft=True))
+
+        def mark_ready_conflict(
+            repository: str, pull_number: int, expected_sha: str, expected_base_sha: str
+        ) -> bool:
+            github.ready_calls += 1
+            github.current = github.current.model_copy(
+                update={"draft": False, "mergeable": False}
+            )
+            return True
+
+        github.mark_ready = mark_ready_conflict  # type: ignore[method-assign]
+        result = self.service(github).process(
+            self.artifact(artifact_id="draft-ready-conflict")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertTrue(any("mergeability" in reason for reason in result.reasons))
+        self.assertEqual(github.merge_calls, 0)
 
     def test_draft_with_serious_safety_signal_stops_before_ready_transition(self):
         github = FakeGitHub(

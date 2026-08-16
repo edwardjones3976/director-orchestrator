@@ -764,6 +764,17 @@ class OracleMergeService:
                 snapshot = self.github.snapshot(
                     artifact.repository, artifact.pull_number
                 )
+                # GitHub recalculates mergeability asynchronously after leaving
+                # draft and commonly returns null in that window. The exact SHA
+                # pair was already mergeable during preflight; treating null as a
+                # hard failure would permanently reject via store.complete.
+                if (
+                    not snapshot.draft
+                    and snapshot.mergeable is None
+                    and snapshot.head_sha == artifact.head_sha
+                    and snapshot.base_sha == artifact.base_sha
+                ):
+                    snapshot = snapshot.model_copy(update={"mergeable": True})
             except Exception as exc:
                 preflight.status = OracleMergeStatus.ERROR
                 preflight.reasons = [
