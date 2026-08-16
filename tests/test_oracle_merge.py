@@ -1110,6 +1110,27 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(github.snapshot_calls, 8)
         self.assertEqual(self.sleeps, [1.0, 2.0, 4.0, 8.0, 8.0, 8.0])
 
+    def test_overlapping_stale_draft_and_unresolved_spend_one_allowance(self):
+        # After mark_ready, GitHub often returns draft=true and mergeable=null together.
+        # Dual-spend would burn two unresolved slots on those reads and exhaust the
+        # unresolved budget before the documented four follow-up nulls complete.
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(draft=True, mergeable=None),
+                self.snapshot(draft=True, mergeable=None),
+                *(self.snapshot(mergeable=None) for _ in range(4)),
+                self.snapshot(),
+            ),
+        )
+
+        result = self.service(github).process(self.artifact(artifact_id="overlap-spend"))
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.snapshot_calls, 8)
+        self.assertEqual(self.sleeps, [1.0, 2.0, 4.0, 8.0, 8.0, 8.0])
+
     def test_read_failure_between_unresolved_reads_still_reaches_the_resolved_snapshot(self):
         github = FakeGitHub(
             self.snapshot(),

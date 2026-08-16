@@ -1029,10 +1029,13 @@ class OracleMergeService:
                 return None, self.store.complete(interim)
             if not transient:
                 return snapshot, None
-            if unresolved:
-                unresolved_allowance -= 1
+            # Exactly one allowance per read: when draft lag and unresolved
+            # mergeability overlap (common right after mark_ready), prefer the
+            # stale-draft budget so the unresolved bound stays intact.
             if stale_draft:
                 stale_draft_allowance -= 1
+            elif unresolved:
+                unresolved_allowance -= 1
         if last_read_failure is not None and not read_failure_allowance:
             return None, self._release_for_retry(
                 artifact,
