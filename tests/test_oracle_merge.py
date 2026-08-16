@@ -913,6 +913,116 @@ class OracleMergeGateTests(unittest.TestCase):
             OracleMergeStatus.MERGED,
         )
 
+    def test_unresolved_mergeability_does_not_veto_the_draft_transition(self):
+        # A draft pull request whose first read has not resolved mergeability is the
+        # ordinary case. Rejecting it before mark_ready consumed the artifact without
+        # ever starting the bounded wait.
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True, mergeable=None),
+                self.snapshot(mergeable=None),
+                self.snapshot(),
+            ),
+        )
+
+        result = self.service(github).process(self.artifact(artifact_id="draft-null"))
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(self.sleeps, [1.0])
+
+    def test_recovered_first_read_of_an_unresolved_draft_still_transitions(self):
+        # Initial read raises, the retry returns draft=true with mergeable=null, and
+        # the delivery still reaches the bounded wait and merges.
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                TimeoutError("transient 504"),
+                self.snapshot(draft=True, mergeable=None),
+                self.snapshot(),
+            ),
+        )
+
+        result = self.service(github).process(self.artifact(artifact_id="recovered-draft"))
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.snapshot_calls, 3)
+        # One sleep for the initial-read retry; the first post-ready read resolves
+        # immediately, so the bounded wait never sleeps.
+        self.assertEqual(self.sleeps, [1.0])
+
+    def test_unresolved_draft_that_never_resolves_is_recoverable_not_terminal(self):
+        github = FakeGitHub(
+            self.snapshot(mergeable=None),
+            responses=(self.snapshot(draft=True, mergeable=None),),
+        )
+        artifact = self.artifact(artifact_id="draft-null-stuck")
+
+        result = self.service(github).process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertIn("unresolved", result.reasons[0])
+        self.assertIn("remains retryable", result.reasons[0])
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(self.released_attempt("draft-null-stuck"), ("RECOVERABLE", None))
+        self.assertEqual(
+            self.service(FakeGitHub(self.snapshot())).process(artifact).status,
+            OracleMergeStatus.MERGED,
+        )
+
+    def test_draft_preflight_still_blocks_on_every_other_condition(self):
+        # Only unresolved mergeability is forgiven before the transition. An explicit
+        # conflict and every other gate still stop the gate before mark_ready.
+        cases = (
+            ({"mergeable": False}, "conflicting or mergeability is unresolved"),
+            ({"head_sha": NEW_SHA}, "head SHA changed"),
+            ({"head_repository": "attacker/edge_engine"}, "head repository"),
+            (
+                {
+                    "mergeable": None,
+                    "changed_files": [
+                        OracleChangedFile(
+                            filename="scheduler.py",
+                            status="modified",
+                            patch="@@ -1 +1 @@\n+x = 1",
+                        )
+                    ],
+                },
+                "exceed",
+            ),
+            (
+                {"mergeable": None, "title": "Enable automated funded bet execution"},
+                "funded wagering",
+            ),
+        )
+        for index, (change, reason) in enumerate(cases):
+            with self.subTest(change=change):
+                github = FakeGitHub(
+                    self.snapshot(),
+                    responses=(self.snapshot(draft=True, **change), self.snapshot()),
+                )
+
+                result = self.service(github).process(
+                    self.artifact(artifact_id=f"preflight-block-{index}")
+                )
+
+                self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+                self.assertEqual(github.ready_calls, 0)
+                self.assertEqual(github.merge_calls, 0)
+                self.assertEqual(github.snapshot_calls, 1)
+                self.assertTrue(
+                    any(
+                        reason in item
+                        for item in [*result.reasons, *result.serious_safety_reasons]
+                    ),
+                    result.model_dump(),
+                )
+
     def test_first_read_failure_recovers_within_the_same_delivery(self):
         github = FakeGitHub(
             self.snapshot(), responses=(TimeoutError("transient 504"), self.snapshot())

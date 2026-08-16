@@ -855,7 +855,21 @@ class OracleMergeService:
             preflight = self.policy.evaluate(
                 artifact, snapshot, allow_draft_transition=True
             )
-            if preflight.reasons or preflight.serious_safety_reasons:
+            # Unresolved mergeability is the ordinary state of a draft pull request,
+            # and it is revalidated in full under the bounded wait after the ready
+            # transition. Letting it veto the transition would record a terminal
+            # rejection before the wait ever began, which is the exact consumption this
+            # gate exists to avoid. Every other reason still blocks, and the guard is
+            # taken from the snapshot so an explicit conflict is never forgiven.
+            blocking = [
+                reason
+                for reason in preflight.reasons
+                if not (
+                    snapshot.mergeable is None
+                    and reason == self.policy.UNRESOLVED_MERGEABILITY_REASON
+                )
+            ]
+            if blocking or preflight.serious_safety_reasons:
                 return self.store.complete(preflight)
             try:
                 ready = self.github.mark_ready(
