@@ -244,7 +244,10 @@ try {
     $records = @()
     do {
         Start-Sleep -Seconds 5
-        $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30)
+        # PowerShell 7 preserves a top-level JSON array from Invoke-RestMethod
+        # as one pipeline object. Re-emit it so the provider records are
+        # enumerated before filtering.
+        $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30 | ForEach-Object { $_ })
         $records = @($latest | Where-Object {
             $_.provider -in @("openai", "claude", "cursor") -and
             [DateTimeOffset]::Parse($_.checked_at) -ge $startedAt

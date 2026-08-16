@@ -61,6 +61,12 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertLess(stop_slack, starts_at)
         self.assertLess(starts_at, starts_api)
 
+    def test_usage_response_array_is_enumerated_before_filtering(self):
+        latest_line = next(
+            line for line in self.script.splitlines() if "$latest = @(Invoke-RestMethod" in line
+        )
+        self.assertIn("| ForEach-Object { $_ })", latest_line)
+
 
 if __name__ == "__main__":
     unittest.main()
