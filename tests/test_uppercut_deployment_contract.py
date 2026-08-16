@@ -52,6 +52,15 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertIn("Write-ProfileSwitches -PaidRuns $false", catch_block)
         self.assertIn("stop slackbot", catch_block)
 
+    def test_paid_validation_closes_slack_and_timestamps_before_api_start(self):
+        paid_section = self.script.index("\ntry {", self.script.index("Write-ProfileSwitches -PaidRuns $true"))
+        stop_slack = self.script.index("stop slackbot", paid_section)
+        starts_at = self.script.index("$startedAt = [DateTimeOffset]::UtcNow", paid_section)
+        starts_api = self.script.index("up -d --build --force-recreate orchestrator", paid_section)
+
+        self.assertLess(stop_slack, starts_at)
+        self.assertLess(starts_at, starts_api)
+
 
 if __name__ == "__main__":
     unittest.main()
