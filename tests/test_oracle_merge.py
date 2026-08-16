@@ -904,6 +904,21 @@ class OracleMergeGateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unresolved merge attempt"):
             store.release(merged)
 
+    def test_recoverable_rearm_is_exclusive_across_store_instances(self):
+        github = FakeGitHub(
+            self.snapshot(mergeable=None), responses=(self.snapshot(draft=True),)
+        )
+        store = OracleMergeStore(self.database)
+        artifact = self.artifact(artifact_id="rearm-race")
+        timed_out = self.service(github, store=store).process(artifact)
+        self.assertEqual(timed_out.status, OracleMergeStatus.ERROR)
+        self.assertIn("retryable", timed_out.reasons[0])
+
+        peer = OracleMergeStore(self.database)
+        self.assertIsNone(peer.reserve(artifact))
+        with self.assertRaisesRegex(RuntimeError, "already being evaluated"):
+            OracleMergeStore(self.database).reserve(artifact)
+
     def test_branch_protection_or_github_refusal_is_recorded_as_error(self):
         github = FakeGitHub(self.snapshot(), merge_error=True)
         result = self.service(github).process(self.artifact())

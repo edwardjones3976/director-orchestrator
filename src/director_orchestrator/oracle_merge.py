@@ -607,11 +607,26 @@ class OracleMergeStore:
                     raise RuntimeError("the review artifact is already being evaluated")
                 # A released attempt failed closed on a transient condition without
                 # reaching a terminal result, so the identical artifact may retry.
-                connection.execute(
+                # Compare-and-swap on status so concurrent writers (service + CLI)
+                # cannot both re-arm after seeing the same RECOVERABLE snapshot.
+                rearmed = connection.execute(
                     "UPDATE oracle_merge_attempts SET status = ?, updated_at = ? "
-                    "WHERE artifact_id = ? AND result_json IS NULL",
-                    (self._EVALUATING, now, artifact.artifact_id),
-                )
+                    "WHERE artifact_id = ? AND status = ? AND result_json IS NULL",
+                    (
+                        self._EVALUATING,
+                        now,
+                        artifact.artifact_id,
+                        self._RECOVERABLE,
+                    ),
+                ).rowcount
+                if rearmed != 1:
+                    raced = connection.execute(
+                        "SELECT result_json FROM oracle_merge_attempts WHERE artifact_id = ?",
+                        (artifact.artifact_id,),
+                    ).fetchone()
+                    if raced and raced["result_json"]:
+                        return OracleMergeResult.model_validate_json(raced["result_json"])
+                    raise RuntimeError("the review artifact is already being evaluated")
                 self._append(
                     connection,
                     artifact.artifact_id,
