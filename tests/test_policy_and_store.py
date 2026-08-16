@@ -24,6 +24,37 @@ from director_orchestrator.store import TaskStore
 
 
 class PolicyTests(unittest.TestCase):
+    def test_openai_runtime_cannot_be_an_assignment_target(self):
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        plan = DirectorPlan(
+            project="demo",
+            normalized_outcome="Plan then accept",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.OPENAI,
+                    task="Duplicate the Director planning phase",
+                    acceptance=["Plan exists"],
+                    repository="example/demo",
+                )
+            ],
+            final_acceptance=["Accepted"],
+        )
+
+        self.assertIn(
+            "assignment 1: OpenAI is the Director runtime and cannot be an assignment target",
+            execution_policy_errors(plan, settings),
+        )
+
     def setUp(self):
         self.settings = replace(Settings(), max_agent_hops=4, max_revisions=1, max_task_budget_usd=1.0)
 
@@ -117,6 +148,41 @@ class PolicyTests(unittest.TestCase):
             "assignment 1: Cursor requires an explicit repository",
             execution_policy_errors(plan, settings),
         )
+
+    def test_draft_pr_capability_requires_assignment_approval(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Create a draft PR",
+            acceptance=["Draft PR exists"],
+            repository="example/demo",
+            allow_draft_pr=True,
+        )
+        plan = DirectorPlan(
+            project="demo",
+            normalized_outcome="Create a draft PR",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[assignment],
+            final_acceptance=["Draft only"],
+        )
+
+        self.assertIn(
+            "assignment 1: draft PR creation requires assignment approval",
+            execution_policy_errors(plan, settings),
+        )
+        approved = plan.model_copy(
+            update={"assignments": [assignment.model_copy(update={"requires_approval": True})]}
+        )
+        self.assertEqual(execution_policy_errors(approved, settings), [])
 
 
 class StoreTests(unittest.TestCase):
