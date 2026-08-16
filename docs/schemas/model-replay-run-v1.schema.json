@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-replay-run-v1.schema.json",
+  "title": "Director Model Replay Run v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_type",
+    "work_packet_digest",
+    "result_packet_digest",
+    "work_packet",
+    "result_packet",
+    "replay_run_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "document_type": {
+      "const": "director-replay-run"
+    },
+    "work_packet_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "result_packet_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "work_packet": {
+      "$ref": "model-work-packet-v1.schema.json"
+    },
+    "result_packet": {
+      "$ref": "model-result-packet-v1.schema.json"
+    },
+    "replay_run_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}
