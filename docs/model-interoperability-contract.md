@@ -1,7 +1,13 @@
 # Model interoperability contract
 
-**Status:** Proposed for transition use  
+**Status:** Owner-accepted v1 documentation/schema authority, effective when PR #18 merges; adapter conformance remains unaccepted
 **Applies to:** OpenAI, Claude, Cursor, Gemini, Perplexity, and future adapters
+
+## Acceptance boundary
+
+The owner accepted this provider-neutral contract authority on 2026-08-16 after Gate 0 acceptance. Merging these documents and schemas authorizes fixture and adapter-conformance work only. It does not install LangGraph, enable a graph, dispatch a provider, migrate state, change the sole writer, or permit an external write.
+
+OpenAI, Claude, and Cursor are the primary team. Gemini, Perplexity, and future providers may implement the same contract later without widening its authority.
 
 ## Principle
 
@@ -13,7 +19,7 @@ Every model receives the same bounded work packet and returns the same bounded r
 - `task_id` and `assignment_id`
 - project, repository, and starting ref
 - objective and explicit non-goals
-- authority snapshot: canonical paths plus commit/blob digests
+- authority snapshot: canonical paths plus commit/blob digests and one deterministic snapshot digest
 - dependencies and accepted upstream outcomes
 - constraints and prohibited actions
 - allowed tools and allowed external effects
@@ -28,6 +34,7 @@ A packet missing its authority snapshot, acceptance checks, or repository bounda
 
 - matching schema, task, assignment, and idempotency identifiers;
 - provider and run reference;
+- the authority-snapshot digest and matching correlation identifiers;
 - terminal status;
 - concise outcome;
 - artifacts with repository path/URL and digest where available;
@@ -77,6 +84,22 @@ Agents receive:
 4. the task-specific evidence and tool boundaries.
 
 They do not receive unrestricted secrets, unrelated user data, or unlimited repository history.
+
+## Formal v1 authority decision
+
+**Decision:** ACCEPTED for documentation and JSON Schema authority, effective when PR #18 merges.
+
+The accepted schemas fail closed on unknown fields and require:
+
+- task, assignment, idempotency, correlation, and authority-snapshot identifiers;
+- exact canonical file commit/blob references plus a deterministic snapshot digest;
+- explicit dependencies, boundaries, approvals, acceptance checks, evidence, and resource ceilings;
+- a terminal result with acceptance dispositions, risks, blockers, requested decisions, normalized usage, and a revision recommendation;
+- an idempotency key for every reported external side effect.
+
+The checked examples validate against JSON Schema Draft 2020-12, while negative validation cases prove that omitted dependencies, authority blob identity, correlation, and revision recommendation are rejected.
+
+This decision does not accept an adapter implementation. Phase 1 still requires fixture-based conformance tests for each adapter before any runtime packet dispatch is enabled.
 
 ## Compatibility
 

@@ -14,6 +14,8 @@
     "objective",
     "non_goals",
     "authority_snapshot",
+    "authority_snapshot_digest",
+    "dependencies",
     "constraints",
     "prohibited_actions",
     "allowed_tools",
@@ -67,7 +69,8 @@
         "additionalProperties": false,
         "required": [
           "path",
-          "commit_sha"
+          "commit_sha",
+          "blob_sha"
         ],
         "properties": {
           "path": {
@@ -79,13 +82,15 @@
             "pattern": "^[0-9a-f]{40}$"
           },
           "blob_sha": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
           }
         }
       }
+    },
+    "authority_snapshot_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
     },
     "dependencies": {
       "type": "array",
@@ -99,10 +104,12 @@
         ],
         "properties": {
           "assignment_id": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "accepted_outcome_digest": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
           }
         }
       }
@@ -187,9 +194,14 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "correlation_id",
         "source_event_id"
       ],
       "properties": {
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "source_event_id": {
           "type": "string",
           "minLength": 1

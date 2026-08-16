@@ -1,9 +1,10 @@
 # LangGraph control-plane transition plan
 
-**Status:** Proposed, documentation-only until its gates are satisfied  
-**Owner:** Aesop / Ed  
-**Orchestration authority:** Director policy and deterministic code, never a model  
-**Baseline:** `director-orchestrator` main at `9981208862c991a127ca7400d687230a2153b688`  
+**Status:** Gate 0 accepted; documentation/schema authority proposed for merge; runtime transition not started
+**Owner:** Aesop / Ed
+**Orchestration authority:** Director policy and deterministic code, never a model
+**Director baseline:** `director-orchestrator` main at `3454e4369857cf9030cbb366d09f7c1b83959871`
+**Uppercut checkpoint:** `Project-Uppercut` main at `af4cafcb727ce837f62f99fd16f07704b7122904`
 **Project consumer:** `edwardjones3976/Project-Uppercut`
 
 ## Outcome
@@ -12,59 +13,34 @@ Introduce LangGraph beneath the existing Director Orchestrator as a durable stat
 
 LangGraph does not become a second Director. It implements the workflow that the Director and policy code authorize.
 
-## Gate 0 — finish the original Uppercut deployment task
+## Gate 0 — accepted 2026-08-16
 
-No LangGraph runtime dependency, graph execution, state migration, or production cutover begins until all items below are complete.
+The owner accepted Gate 0 in [Project Uppercut Issue #48](https://github.com/edwardjones3976/Project-Uppercut/issues/48#issuecomment-5306397247) after the [final evidence and rollback bundle](https://github.com/edwardjones3976/Project-Uppercut/issues/48#issuecomment-5306393066) was recorded. That acceptance closes the prerequisite; it does not itself start LangGraph, change the sole writer, or authorize a deployment.
 
-### 0A. Repair the merged PR 17 deployment pattern
+### 0A. Isolated deployment — accepted
 
-The current `scripts/windows-uppercut-live-validation.ps1` rewrites the shared root `.env` and starts the default Compose project. That violates the documented requirement for a separate Project Uppercut deployment and can reuse shared task/n8n state. Its paid switch can also recover persisted work before the bounded availability check.
+- Director PR #20 merged at `b54efdb749bda656adf6a8135d828da3165d34f7`.
+- Director PR #22 merged at `3454e4369857cf9030cbb366d09f7c1b83959871` with the live-validation, approval-binding, callback, provider, and recovery corrections.
+- The ignored `.env.uppercut`, Compose project `project-uppercut-director`, ports 18080/15678, three isolated volumes, task database, callback secret, allowlists, budgets, and Slack routing remain separate from the primary profile.
+- Paid execution was staged closed, provider readiness was checked, and failure paths close the paid and Slack gates.
 
-The remediation must:
+### 0B. Canonical Uppercut snapshot — accepted
 
-- create and use a gitignored `.env.uppercut`; never rewrite `.env`;
-- add a committed `.env.uppercut.example` containing placeholders only;
-- run a distinct Compose project named `project-uppercut-director`;
-- use separate task, n8n, and PostgreSQL volumes;
-- use non-conflicting loopback ports when shared and Uppercut stacks may coexist;
-- keep Uppercut Slack channel, repository allowlist, budgets, callback secret, and audit data isolated;
-- start with paid execution and periodic checks disabled;
-- prove the isolated task store contains no recoverable task before any paid gate can open;
-- enable one provider at a time, then run one bounded availability check;
-- add behavioral tests for dotenv preservation, Compose isolation, paid-gate ordering, polling, timeout, and failure cleanup;
-- retain parse and source checks, but never treat them as behavioral proof.
-
-### 0B. Refresh Project Uppercut PR 45
-
-PR 45 embeds the runtime from source commit `110e403`, which predates the current main and the PR 17 remediation.
-
-After 0A merges:
-
-1. regenerate the embedded snapshot from the repaired Director Orchestrator commit;
-2. update `SOURCE_SNAPSHOT.md` with the exact upstream commit, creation procedure, exclusions, and tree/content digest;
-3. exclude secrets, `.env*` values, databases, volumes, caches, credentials, and runtime logs;
-4. reapply only the Project Uppercut profile/configuration layer;
-5. run the upstream Director suite and Project Uppercut suite on the exact PR head;
-6. verify the snapshot differs from upstream only where the manifest explicitly permits;
-7. perform remote readback of the committed manifest and profile;
-8. keep PR 45 draft until the Windows operator dry-run succeeds.
+- Uppercut PR #45 merged at `2f9900c2304403cda099a3629e609e132de7a2e8` with the first repaired snapshot.
+- Corrective Uppercut PR #57 merged at `af4cafcb727ce837f62f99fd16f07704b7122904`, embedding Director merge `3454e4369857cf9030cbb366d09f7c1b83959871`.
+- Post-merge comparison proved all 46 canonical blobs exact, with only `SOURCE_SNAPSHOT.md` and `requirements.lock.txt` as declared overlays.
+- Exact-head Linux, Windows, Director, Compose, source, and provenance-relevant checks passed before merge.
 
 The standalone `director-orchestrator` repository remains the upstream runtime source. The embedded copy is a pinned compatibility snapshot, not an independently editable fork.
 
-### 0C. Establish the pre-transition known-good checkpoint
+### 0C. Known-good checkpoint — accepted
 
-Record one checkpoint containing:
+- OpenAI planning/acceptance, Claude work, and Cursor independent review completed one bounded analysis task and one isolated-branch/draft-PR task.
+- Assignment-specific approval, stale approval rejection, callback replay/conflict handling, restart recovery without duplicate dispatch, SQLite backup/restore, and disposable n8n restore were proved.
+- Four owner-authorized accelerated recovery observations passed, including a controlled isolated-orchestrator restart; the superseded Monday heartbeat was paused.
+- The primary deployment remained separate and unchanged; rollback commands and volume identifiers are recorded in Issue #48.
 
-- repaired Director Orchestrator commit;
-- refreshed Project Uppercut PR 45 head;
-- current Project Uppercut main commit and Decision 0040;
-- open PR/issue inventory;
-- unit, validation, Docker-config, and dry-run results;
-- exact provider readiness booleans without secret values;
-- rollback commands and volume identifiers;
-- one reversible end-to-end Uppercut work order with paid limits enforced.
-
-If any field is unknown, Gate 0 is not complete.
+Issue #58 remains outside orchestration Gate 0. It blocks First Bell and gameplay product-evidence claims on affected paths, not the read-only transition phases below.
 
 ## Invariants throughout migration
 
@@ -125,7 +101,7 @@ Prompts and full provider transcripts are artifacts referenced by digest, not un
 
 ### Phase 1 — contract first
 
-- Adopt the versioned provider-neutral work and result packet schemas.
+- Adopt the versioned provider-neutral work and result packet schemas. The v1 documentation/schema authority becomes accepted when this pull request merges; runtime adoption remains separately gated.
 - Add contract tests against every adapter.
 - Reject unknown schema versions and missing authority snapshots.
 - Preserve current engine execution.

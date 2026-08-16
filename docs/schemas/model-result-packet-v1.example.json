@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "task_id": "DIR-EXAMPLE",
+  "assignment_id": "DIR-EXAMPLE-1",
+  "idempotency_key": "DIR-EXAMPLE:1:review",
+  "authority_snapshot_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "correlation": {
+    "correlation_id": "corr-DIR-EXAMPLE-1",
+    "source_event_id": "event-DIR-EXAMPLE",
+    "slack_thread_ts": null,
+    "github_issue": null,
+    "github_pull_request": null
+  },
+  "provider": "claude",
+  "run_reference": "example-run-1",
+  "status": "SUCCEEDED",
+  "outcome": "The documentation-only change satisfies both acceptance checks.",
+  "artifacts": [
+    {
+      "kind": "review-report",
+      "location": "docs/reviews/example.md",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "checks": [
+    {
+      "command": "python -m unittest discover -s tests -v",
+      "result": "All tests passed.",
+      "exit_code": 0
+    }
+  ],
+  "acceptance": [
+    {
+      "check": "The proposed change is documentation-only.",
+      "status": "PASS",
+      "evidence": "The reviewed diff contains only Markdown and JSON Schema files."
+    },
+    {
+      "check": "No deterministic approval gate is weakened.",
+      "status": "PASS",
+      "evidence": "No runtime policy file changed."
+    }
+  ],
+  "risks": [],
+  "blockers": [],
+  "requested_decisions": [],
+  "side_effects": [],
+  "usage": {
+    "model": "example-model",
+    "input_tokens": 100,
+    "output_tokens": 50,
+    "total_tokens": 150,
+    "cost_usd": null
+  },
+  "revision_recommended": false
+}

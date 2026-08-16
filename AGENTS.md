@@ -32,6 +32,6 @@ This repo is a single Python 3.12 product: the **Director Orchestrator** FastAPI
 
 Before changing orchestration, read `docs/langgraph-transition-plan.md` and `docs/model-interoperability-contract.md`. All model work must conform to the v1 packet schemas in `docs/schemas/`.
 
-Gate 0 is binding for transition work: repair the merged PR 17 Uppercut deployment so it uses an isolated `.env.uppercut`, Compose project, ports, volumes, secrets, and task store; then refresh Project Uppercut PR 45 from the repaired upstream commit. Until those prerequisites and their operator evidence are accepted, LangGraph may be added only as disabled documentation/test scaffolding and must not dispatch providers or own external writes.
+Gate 0 was accepted by the owner on 2026-08-16 against the checkpoint recorded in Project Uppercut Issue #48. Transition phases remain individually gated: first merge only the accepted documentation/schema authority, then prove adapter fixture conformance, then add a disabled graph skeleton with a separate checkpoint namespace and zero provider dispatch or external write paths. Gate 0 acceptance alone does not start LangGraph or change the current Director's sole-writer authority.
 
 During dual operation, exactly one engine may own provider dispatch and GitHub/Slack side effects for a task. Models cannot remove deterministic policy gates, approve their own work, or treat checkpoint rollback as reversal of an external action.

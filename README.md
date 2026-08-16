@@ -137,6 +137,6 @@ docker compose --env-file .env.example config --quiet
 
 ## LangGraph transition planning
 
-The proposed incremental migration is documented in [docs/langgraph-transition-plan.md](docs/langgraph-transition-plan.md). The provider-neutral handoff rules are in [docs/model-interoperability-contract.md](docs/model-interoperability-contract.md), with versioned work/result schemas under [docs/schemas](docs/schemas/).
+The gated incremental migration is documented in [docs/langgraph-transition-plan.md](docs/langgraph-transition-plan.md). The owner-accepted provider-neutral documentation/schema authority is in [docs/model-interoperability-contract.md](docs/model-interoperability-contract.md), with versioned work/result schemas and checked examples under [docs/schemas](docs/schemas/).
 
-The migration is gated behind correction of the isolated Project Uppercut deployment and refresh of Project Uppercut PR 45. It preserves the current Slack/API surface, provider adapters, deterministic approval policy, and rollback path.
+Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and preserve the current Slack/API surface, provider adapters, deterministic approval policy, single-writer rule, and rollback path. No LangGraph runtime transition begins merely because the documentation/schema authority is merged.
