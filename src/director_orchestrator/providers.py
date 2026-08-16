@@ -133,7 +133,10 @@ class ClaudeAdapter(ProviderAdapter):
         text = json.dumps({
             "assignment": assignment.model_dump(mode="json"),
             "context": context,
-            "completion_requirement": "Post the completion report to the originating Slack thread until a callback is configured.",
+            "completion_requirement": (
+                "Return the bounded completion report for authenticated callback delivery; "
+                "the orchestrator is the only Slack writer."
+            ),
         })
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(self.settings.claude_routine_url, headers=headers, json={"text": text})

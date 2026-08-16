@@ -245,6 +245,17 @@ class OrchestrationEngine:
             key=lambda existing: existing.assignment_sequence,
         )
 
+    def _provider_run_limit(self, record: TaskRecord) -> int:
+        if record.plan is None:
+            return self.settings.max_agent_hops
+        # Plans commonly describe max_hops as their specialist-assignment count
+        # and max_revisions separately. Reserve only that declared revision
+        # headroom, while the deployment-wide ceiling remains authoritative.
+        return min(
+            self.settings.max_agent_hops,
+            record.plan.max_hops + record.plan.max_revisions,
+        )
+
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
         completed_sequences = {
             outcome.assignment_sequence for outcome in record.assignment_outcomes
@@ -277,7 +288,7 @@ class OrchestrationEngine:
         if existing_runs:
             run = existing_runs[-1]
         else:
-            if len(record.provider_runs) >= record.plan.max_hops:
+            if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached")
             record.status = TaskStatus.RUNNING
             self.store.save(record)
@@ -310,7 +321,7 @@ class OrchestrationEngine:
             self.store.save(record)
             return True
         if decision.verdict == ReviewVerdict.REVISE and record.revision_count < record.plan.max_revisions:
-            if len(record.provider_runs) >= record.plan.max_hops:
+            if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached before revision")
             record.revision_count += 1
             revised = await adapter.revise(

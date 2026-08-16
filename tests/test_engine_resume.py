@@ -73,9 +73,13 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
                 return ProviderRun(
                     provider=ProviderName.CLAUDE,
-                    run_id="claude-original",
+                    run_id=f"claude-original-{assignment.sequence}",
                     status="completed",
-                    result="Incomplete evidence",
+                    result=(
+                        "Incomplete evidence"
+                        if assignment.sequence == 1
+                        else "Independent evidence"
+                    ),
                 )
 
             async def poll(self, run: ProviderRun) -> ProviderRun:
@@ -109,7 +113,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 project_allowlist=("demo",),
                 repository_allowlist=("example/demo",),
                 allowed_starting_refs=("main",),
-                max_agent_hops=2,
+                max_agent_hops=4,
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
             assignment = Assignment(
@@ -119,6 +123,14 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 acceptance=["Exact evidence"],
                 repository="example/demo",
                 requires_approval=True,
+            )
+            second_assignment = Assignment(
+                sequence=2,
+                agent=ProviderName.CLAUDE,
+                task="Review independently",
+                acceptance=["Independent evidence"],
+                repository="example/demo",
+                depends_on=[1],
             )
             record = TaskRecord(
                 task_id="DIR-REVISION",
@@ -137,7 +149,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     approval_required=False,
                     max_hops=2,
                     max_revisions=1,
-                    assignments=[assignment],
+                    assignments=[assignment, second_assignment],
                     final_acceptance=["Accepted"],
                 ),
                 approved_assignments=[1],
@@ -152,7 +164,11 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
             completed = store.get(record.task_id)
             self.assertEqual(completed.status, TaskStatus.DONE)
-            self.assertEqual([run.run_id for run in completed.provider_runs], ["claude-original", "claude-revision"])
+            self.assertEqual(
+                [run.run_id for run in completed.provider_runs],
+                ["claude-original-1", "claude-revision", "claude-original-2"],
+            )
+            self.assertEqual(len(completed.assignment_outcomes), 2)
             self.assertEqual(adapter.revision_assignment.sequence, 1)
             self.assertTrue(adapter.revision_context["current_assignment"]["owner_approval_recorded"])
 
