@@ -23,7 +23,7 @@ class CodexSecurityReviewContractTests(unittest.TestCase):
 
     def test_untrusted_pr_checkout_cannot_persist_credentials(self):
         self.assertIn(
-            "ref: refs/pull/${{ github.event.pull_request.number }}/merge",
+            "ref: ${{ github.event.pull_request.head.sha }}",
             self.workflow,
         )
         self.assertIn("persist-credentials: false", self.workflow)
@@ -35,6 +35,7 @@ class CodexSecurityReviewContractTests(unittest.TestCase):
         self.assertIn('allow-users: "edwardjones3976"', self.workflow)
         self.assertIn("EDGE_ORACLE_OPENAI_API_KEY", self.workflow)
         self.assertIn("Model output is advisory and never authorizes merge", self.workflow)
+        self.assertIn("timeout-minutes: 15", self.workflow)
 
     def test_only_publisher_receives_comment_permissions(self):
         review_prefix, publish_suffix = self.workflow.split("\n  publish:\n", 1)
@@ -43,6 +44,7 @@ class CodexSecurityReviewContractTests(unittest.TestCase):
         self.assertIn("issues: write", publish_suffix)
         self.assertIn("pull-requests: write", publish_suffix)
         self.assertIn(".replaceAll('@', '@\\u200b')", publish_suffix)
+        self.assertIn("timeout-minutes: 5", publish_suffix)
 
 
 if __name__ == "__main__":

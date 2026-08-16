@@ -48,7 +48,7 @@ a same-repository pull request targeting `main`. Store a project-scoped OpenAI
 key in the GitHub Actions secret `EDGE_ORACLE_OPENAI_API_KEY`; never reuse the
 Windows Director `.env` file or expose the key to a pull-request checkout.
 
-The workflow checks out the synthetic merge ref without persisted GitHub
+The workflow checks out the exact pull-request head SHA without persisted GitHub
 credentials and runs the SHA-pinned Codex action with `drop-sudo` and a read-only
 sandbox. Codex cannot edit, push, merge, deploy, or authorize the deterministic
 Oracle merge gate. A separate publisher job receives only the GitHub permissions
