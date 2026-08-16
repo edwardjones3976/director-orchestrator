@@ -24,6 +24,37 @@ from director_orchestrator.store import TaskStore
 
 
 class PolicyTests(unittest.TestCase):
+    def test_openai_runtime_cannot_be_an_assignment_target(self):
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        plan = DirectorPlan(
+            project="demo",
+            normalized_outcome="Plan then accept",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.OPENAI,
+                    task="Duplicate the Director planning phase",
+                    acceptance=["Plan exists"],
+                    repository="example/demo",
+                )
+            ],
+            final_acceptance=["Accepted"],
+        )
+
+        self.assertIn(
+            "assignment 1: OpenAI is the Director runtime and cannot be an assignment target",
+            execution_policy_errors(plan, settings),
+        )
+
     def setUp(self):
         self.settings = replace(Settings(), max_agent_hops=4, max_revisions=1, max_task_budget_usd=1.0)
 
