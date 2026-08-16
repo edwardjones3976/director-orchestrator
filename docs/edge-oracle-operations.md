@@ -100,9 +100,9 @@ refetches GitHub state and fails closed on:
 - disabled or killed policy;
 - an invalid HMAC, non-`ACCEPT` review, self-review, provider mismatch, or reused artifact, assignment, or run;
 - head/base SHA, PR, repository, project, base, branch, fork, or author mismatch;
-- a conflict, unresolved mergeability, incomplete thread enumeration, or blocking review
-  thread; an otherwise eligible draft is marked ready by deterministic code and then fully
-  refetched and revalidated before merge;
+- an explicit conflict, incomplete thread enumeration, or blocking review thread; an
+  otherwise eligible draft is marked ready by deterministic code and then fully refetched
+  and revalidated before merge;
 - missing, pending, failed, ambiguous, wrong-producer, or wrong-SHA checks;
 - any current or previous rename path outside `oracle/**`, `docs/oracle/**`, or
   `tests/oracle/**`, or any file whose complete patch is unavailable;
@@ -115,6 +115,32 @@ once, makes
 retry delivery idempotent after a terminal result, and records an append-only audit with
 the artifact digest, assignment/review identifiers, changed paths, check run/suite IDs,
 decision, merge commit, actor, and UTC timestamp.
+
+### Unresolved mergeability
+
+GitHub recalculates mergeability asynchronously and reports it as null meanwhile, most
+visibly right after the deterministic draft-to-ready transition. The gate classifies that
+state instead of treating it as a verdict:
+
+- **Transient.** A null value is re-read with bounded backoff — five reads, one second
+  doubling to an eight-second cap, about fifteen seconds in total. Every read revalidates
+  the repository, pull-request identity, open and unmerged state, non-draft state, expected
+  base SHA, exact head SHA, checks, review threads, paths, and safety signals before the
+  wait continues.
+- **Terminal.** An explicit `mergeable=false`, any drift observed during those re-reads
+  (head or base advance, close, merge, a flip back to draft, a new blocking thread or
+  non-green check), and any serious-safety signal record a terminal decision and consume the
+  review artifact.
+- **Recoverable.** Exhausting the backoff, or a temporary read failure during it, fails
+  closed as `ERROR` with a reason ending in `remains retryable`. The attempt keeps its
+  artifact, assignment, and review-run reservation, so no other review can claim them, but
+  it records no terminal result: redelivering the identical artifact resumes the gate. The
+  audit shows `merge_gate_recoverable` and then `review_artifact_retried`. Nothing was
+  merged, so the only operator action is to re-run the gate with the same artifact once the
+  transient condition clears.
+- **Ambiguous.** The merge call itself is never retried. If it raises or is refused, the
+  result is a terminal `ERROR`, and a redelivery returns that recorded result without
+  calling GitHub again.
 
 The initial Edge Engine required check is configured as `test`, matching its pull-request
 workflow. A baseline failure is not inherited or waived; the exact Oracle head must be

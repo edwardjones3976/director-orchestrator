@@ -9,6 +9,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
@@ -294,6 +295,9 @@ class OracleGitHubGateway(Protocol):
 
 
 class OracleMergePolicy:
+    UNRESOLVED_MERGEABILITY_REASON = (
+        "pull request is conflicting or mergeability is unresolved"
+    )
     _SERIOUS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         (
             "funded wagering or sportsbook operation",
@@ -422,7 +426,7 @@ class OracleMergePolicy:
         if snapshot.draft and not allow_draft_transition:
             errors.append("draft pull requests cannot be merged automatically")
         if snapshot.mergeable is not True:
-            errors.append("pull request is conflicting or mergeability is unresolved")
+            errors.append(self.UNRESOLVED_MERGEABILITY_REASON)
         if not snapshot.review_threads_complete:
             errors.append("review-thread enumeration is incomplete")
         if snapshot.blocking_review_threads:
@@ -521,6 +525,9 @@ class OracleMergePolicy:
 
 
 class OracleMergeStore:
+    _EVALUATING = "EVALUATING"
+    _RECOVERABLE = "RECOVERABLE"
+
     def __init__(self, path: str):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -596,7 +603,22 @@ class OracleMergeStore:
                     raise ValueError("review artifact identifier was reused with different content")
                 if existing["result_json"]:
                     return OracleMergeResult.model_validate_json(existing["result_json"])
-                raise RuntimeError("the review artifact is already being evaluated")
+                if existing["status"] != self._RECOVERABLE:
+                    raise RuntimeError("the review artifact is already being evaluated")
+                # A released attempt failed closed on a transient condition without
+                # reaching a terminal result, so the identical artifact may retry.
+                connection.execute(
+                    "UPDATE oracle_merge_attempts SET status = ?, updated_at = ? "
+                    "WHERE artifact_id = ? AND result_json IS NULL",
+                    (self._EVALUATING, now, artifact.artifact_id),
+                )
+                self._append(
+                    connection,
+                    artifact.artifact_id,
+                    "review_artifact_retried",
+                    self._reservation_payload(artifact, digest),
+                )
+                return None
             assignment = connection.execute(
                 "SELECT artifact_id FROM oracle_merge_attempts WHERE assignment_id = ?",
                 (artifact.assignment_id,),
@@ -617,22 +639,31 @@ class OracleMergeStore:
                         digest,
                         artifact.assignment_id,
                         artifact.review_run_id,
-                        "EVALUATING",
+                        self._EVALUATING,
                         now,
                         now,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("assignment or review run was already consumed") from exc
-            self._append(connection, artifact.artifact_id, "review_artifact_reserved", {
-                "artifact_digest": digest,
-                "assignment_id": artifact.assignment_id,
-                "review_run_id": artifact.review_run_id,
-                "repository": canonical_repository(artifact.repository),
-                "pull_number": artifact.pull_number,
-                "head_sha": artifact.head_sha,
-            })
+            self._append(
+                connection,
+                artifact.artifact_id,
+                "review_artifact_reserved",
+                self._reservation_payload(artifact, digest),
+            )
         return None
+
+    @staticmethod
+    def _reservation_payload(artifact: OracleReviewArtifact, digest: str) -> dict:
+        return {
+            "artifact_digest": digest,
+            "assignment_id": artifact.assignment_id,
+            "review_run_id": artifact.review_run_id,
+            "repository": canonical_repository(artifact.repository),
+            "pull_number": artifact.pull_number,
+            "head_sha": artifact.head_sha,
+        }
 
     @staticmethod
     def _append(
@@ -667,6 +698,36 @@ class OracleMergeStore:
             )
         return result
 
+    def release(self, result: OracleMergeResult) -> OracleMergeResult:
+        """Record a fail-closed outcome that the same artifact may retry.
+
+        The attempt keeps its artifact, assignment, and review-run reservation, so no
+        other review can claim them, but it stores no terminal result: the identical
+        artifact can be delivered again once the transient condition clears. Only an
+        attempt that has not reached a terminal result can be released.
+        """
+        with self._lock, self._connect() as connection:
+            released = connection.execute(
+                "UPDATE oracle_merge_attempts SET status = ?, updated_at = ? "
+                "WHERE artifact_id = ? AND result_json IS NULL",
+                (
+                    self._RECOVERABLE,
+                    datetime.now(timezone.utc).isoformat(),
+                    result.artifact_id,
+                ),
+            ).rowcount
+            if released != 1:
+                raise RuntimeError(
+                    "only an unresolved merge attempt can be released for retry"
+                )
+            self._append(
+                connection,
+                result.artifact_id,
+                "merge_gate_recoverable",
+                result.model_dump(mode="json"),
+            )
+        return result
+
     def audit_events(self, artifact_id: str) -> list[dict]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
@@ -684,15 +745,39 @@ class OracleMergeStore:
 
 
 class OracleMergeService:
+    """Deterministic exact-SHA merge gate.
+
+    GitHub recomputes mergeability asynchronously and reports `mergeable: null`
+    meanwhile, most visibly right after a draft-to-ready transition. An unresolved
+    value is transient rather than a verdict, so it is re-read with bounded backoff
+    instead of consuming the one-shot review artifact.
+    """
+
     def __init__(
         self,
         policy: OracleMergePolicy,
         store: OracleMergeStore,
         github: OracleGitHubGateway | None,
+        *,
+        mergeable_poll_attempts: int = 5,
+        mergeable_poll_base_delay_seconds: float = 1.0,
+        mergeable_poll_max_delay_seconds: float = 8.0,
+        sleep: Callable[[float], None] = time.sleep,
     ):
+        if mergeable_poll_attempts < 1:
+            raise ValueError("mergeability polling requires at least one attempt")
+        if (
+            mergeable_poll_base_delay_seconds <= 0
+            or mergeable_poll_max_delay_seconds < mergeable_poll_base_delay_seconds
+        ):
+            raise ValueError("mergeability backoff bounds are invalid")
         self.policy = policy
         self.store = store
         self.github = github
+        self._poll_attempts = mergeable_poll_attempts
+        self._poll_base_delay = mergeable_poll_base_delay_seconds
+        self._poll_max_delay = mergeable_poll_max_delay_seconds
+        self._sleep = sleep
 
     def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
         if not artifact.signature_is_valid(self.policy.review_secret):
@@ -761,15 +846,19 @@ class OracleMergeService:
                 )
                 if not ready:
                     raise RuntimeError("GitHub refused to mark the pull request ready")
-                snapshot = self.github.snapshot(
-                    artifact.repository, artifact.pull_number
-                )
             except Exception as exc:
                 preflight.status = OracleMergeStatus.ERROR
                 preflight.reasons = [
                     f"GitHub ready-for-review transition failed closed: {type(exc).__name__}"
                 ]
                 return self.store.complete(preflight)
+        if snapshot.draft or snapshot.mergeable is None:
+            # The stale draft snapshot must be refetched after the ready transition,
+            # and GitHub may report mergeability as unresolved while it recalculates.
+            resolved, unresolved = self._resolved_snapshot(artifact)
+            if unresolved is not None:
+                return unresolved
+            snapshot = resolved
         decision = self.policy.evaluate(artifact, snapshot)
         if decision.reasons or decision.serious_safety_reasons:
             return self.store.complete(decision)
@@ -795,6 +884,66 @@ class OracleMergeService:
         decision.merge_commit_sha = merged.merge_commit_sha
         decision.actor = merged.actor
         return self.store.complete(decision)
+
+    def _resolved_snapshot(
+        self, artifact: OracleReviewArtifact
+    ) -> tuple[OraclePullRequestSnapshot | None, OracleMergeResult | None]:
+        """Re-read the pull request until GitHub resolves mergeability.
+
+        Every snapshot is revalidated in full before the wait continues, so any
+        repository, pull-request, state, draft, base-SHA, head-SHA, check,
+        review-thread, or safety drift is terminal, and an explicit
+        ``mergeable: false`` conflict is terminal. Only an unresolved (null) value is
+        retried. Exhausting the bounded backoff, or a transient read failure, fails
+        closed without consuming the review artifact, so the identical artifact can be
+        delivered again. No merge call is made from here, so nothing ambiguous is
+        retried.
+        """
+        delay = self._poll_base_delay
+        for attempt in range(self._poll_attempts):
+            if attempt:
+                self._sleep(delay)
+                delay = min(delay * 2, self._poll_max_delay)
+            try:
+                snapshot = self.github.snapshot(
+                    artifact.repository, artifact.pull_number
+                )
+            except Exception as exc:
+                return None, self._release_for_retry(
+                    artifact,
+                    "GitHub mergeability re-read failed closed and remains retryable: "
+                    f"{type(exc).__name__}",
+                )
+            if snapshot.mergeable is not None:
+                return snapshot, None
+            interim = self.policy.evaluate(artifact, snapshot)
+            blocking = [
+                reason
+                for reason in interim.reasons
+                if reason != self.policy.UNRESOLVED_MERGEABILITY_REASON
+            ]
+            if blocking or interim.serious_safety_reasons:
+                return None, self.store.complete(interim)
+        return None, self._release_for_retry(
+            artifact,
+            f"GitHub mergeability was unresolved after {self._poll_attempts} bounded "
+            "re-reads and remains retryable",
+        )
+
+    def _release_for_retry(
+        self, artifact: OracleReviewArtifact, reason: str
+    ) -> OracleMergeResult:
+        return self.store.release(
+            OracleMergeResult(
+                artifact_id=artifact.artifact_id,
+                artifact_digest=artifact.digest(),
+                status=OracleMergeStatus.ERROR,
+                repository=self.policy.repository,
+                pull_number=artifact.pull_number,
+                reviewed_sha=artifact.head_sha,
+                reasons=[reason],
+            )
+        )
 
 
 class GitHubTokenProvider(Protocol):
