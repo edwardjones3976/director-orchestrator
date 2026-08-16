@@ -313,7 +313,12 @@ class OrchestrationEngine:
             if len(record.provider_runs) >= record.plan.max_hops:
                 raise ProviderError("Maximum agent hops reached before revision")
             record.revision_count += 1
-            revised = await adapter.revise(run, decision.revision_prompt or "Address the failed acceptance checks and report new evidence.")
+            revised = await adapter.revise(
+                run,
+                decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
+                assignment=assignment,
+                context=self._handoff_context(record, assignment),
+            )
             revised.assignment_sequence = assignment.sequence
             record.provider_runs.append(revised)
             self.store.save(record)
@@ -322,8 +327,13 @@ class OrchestrationEngine:
             self.store.save(record)
             if not revised.result:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
-                record.message = "Revision completed without retrievable evidence"
+                record.message = f"{assignment.agent.value} revision requires manual completion verification"
                 self.store.save(record)
+                await self.notifier.post(
+                    record,
+                    f"*{record.task_id} — OWNER DECISION REQUIRED*\nThe `{assignment.agent.value}` revision must be reviewed at its provider session before the loop can continue."
+                    + (f" [Open run]({revised.url})" if revised.url else ""),
+                )
                 return False
             final_decision = await self.director.review(record, revised.result)
             record.review = final_decision

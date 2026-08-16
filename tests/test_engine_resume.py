@@ -45,6 +45,117 @@ class NoRedispatchAdapter:
 
 
 class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_revision_preserves_assignment_and_approval_context(self):
+        class RevisingDirector:
+            def __init__(self):
+                self.reviews = 0
+
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                self.reviews += 1
+                if self.reviews == 1:
+                    return ReviewDecision(
+                        verdict=ReviewVerdict.REVISE,
+                        summary="More evidence required.",
+                        evidence=[],
+                        revision_prompt="Add exact evidence.",
+                    )
+                return ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Revision accepted.",
+                    evidence=[result],
+                )
+
+        class RevisingAdapter:
+            def __init__(self):
+                self.revision_assignment = None
+                self.revision_context = None
+
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                return ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    run_id="claude-original",
+                    status="completed",
+                    result="Incomplete evidence",
+                )
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal runs must not be polled")
+
+            async def revise(
+                self,
+                run: ProviderRun,
+                prompt: str,
+                *,
+                assignment: Assignment,
+                context: str,
+            ) -> ProviderRun:
+                self.revision_assignment = assignment
+                self.revision_context = json.loads(context)
+                return ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    run_id="claude-revision",
+                    status="completed",
+                    result="Exact evidence added",
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.example/routine",
+                claude_routine_token="test-claude",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                max_agent_hops=2,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            assignment = Assignment(
+                sequence=1,
+                agent=ProviderName.CLAUDE,
+                task="Analyze",
+                acceptance=["Exact evidence"],
+                repository="example/demo",
+                requires_approval=True,
+            )
+            record = TaskRecord(
+                task_id="DIR-REVISION",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-revision",
+                    channel_id="C123",
+                    thread_ts="123.44",
+                    user_id="U123",
+                    text="DIRECTOR Project: demo Outcome: analyze",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="analyze",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=2,
+                    max_revisions=1,
+                    assignments=[assignment],
+                    final_acceptance=["Accepted"],
+                ),
+                approved_assignments=[1],
+            )
+            store.create(record)
+
+            engine = OrchestrationEngine(settings, store)
+            adapter = RevisingAdapter()
+            engine.providers[ProviderName.CLAUDE] = adapter
+            engine.director = RevisingDirector()
+            await engine.run(record.task_id)
+
+            completed = store.get(record.task_id)
+            self.assertEqual(completed.status, TaskStatus.DONE)
+            self.assertEqual([run.run_id for run in completed.provider_runs], ["claude-original", "claude-revision"])
+            self.assertEqual(adapter.revision_assignment.sequence, 1)
+            self.assertTrue(adapter.revision_context["current_assignment"]["owner_approval_recorded"])
+
     async def test_execution_policy_blocks_before_provider_dispatch(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))

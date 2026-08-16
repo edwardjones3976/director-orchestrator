@@ -25,7 +25,14 @@ class ProviderAdapter:
     async def poll(self, run: ProviderRun) -> ProviderRun:
         raise NotImplementedError
 
-    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
         raise ProviderError(f"{self.name} follow-up is not configured")
 
     async def usage_check(self, prompt: str) -> ProviderRun:
@@ -72,7 +79,14 @@ class CursorAdapter(ProviderAdapter):
         payload = response.json()
         return run.model_copy(update={"status": payload["status"], "result": payload.get("result"), "raw": payload})
 
-    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
                 f"{self.settings.cursor_api_base}/v1/agents/{run.session_id}/runs",
@@ -136,6 +150,54 @@ class ClaudeAdapter(ProviderAdapter):
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         return run
+
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
+        if assignment is None or context is None:
+            raise ProviderError("claude revision requires the bounded assignment and approval context")
+        headers = {
+            "Authorization": f"Bearer {self.settings.claude_routine_token}",
+            "anthropic-beta": self.settings.claude_routine_beta,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        text = json.dumps(
+            {
+                "assignment": assignment.model_dump(mode="json"),
+                "revision": {
+                    "prior_run_id": run.run_id,
+                    "prompt": prompt,
+                },
+                "context": context,
+                "completion_requirement": (
+                    "Return the bounded revision report for authenticated callback delivery; "
+                    "the orchestrator is the only Slack writer."
+                ),
+            }
+        )
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                self.settings.claude_routine_url,
+                headers=headers,
+                json={"text": text},
+            )
+            response.raise_for_status()
+        payload = response.json()
+        session_id = payload["claude_code_session_id"]
+        return ProviderRun(
+            provider=self.name,
+            run_id=session_id,
+            session_id=session_id,
+            status="WAITING_CALLBACK",
+            url=payload.get("claude_code_session_url"),
+            raw=payload,
+        )
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         headers = {
