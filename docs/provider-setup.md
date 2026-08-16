@@ -40,6 +40,21 @@ Practical operating patterns:
 | Supplemental — sandbox/prototype | Gemini Antigravity Managed Agent | `GEMINI_API_KEY` | Poll background Interaction |
 | Supplemental — current research | Perplexity Agent API | `PERPLEXITY_API_KEY` | Synchronous response |
 
+## Label-triggered Codex security review
+
+The optional `.github/workflows/codex-security-review.yml` lane runs only when
+an authorized repository maintainer applies the `codex-security-review` label to
+a same-repository pull request targeting `main`. Store a project-scoped OpenAI
+key in the GitHub Actions secret `EDGE_ORACLE_OPENAI_API_KEY`; never reuse the
+Windows Director `.env` file or expose the key to a pull-request checkout.
+
+The workflow checks out the exact pull-request head SHA without persisted GitHub
+credentials and runs the SHA-pinned Codex action with `drop-sudo` and a read-only
+sandbox. Codex cannot edit, push, merge, deploy, or authorize the deterministic
+Oracle merge gate. A separate publisher job receives only the GitHub permissions
+needed to post the bounded advisory result. Remove and reapply the label to run a
+fresh review after a new head commit; each run consumes OpenAI API usage.
+
 ## Important Claude Cowork boundary
 
 Claude Cowork supports cloud and scheduled tasks, but the official Cowork documentation does not currently expose an on-demand inbound API trigger for a real-time Slack loop. The supported programmable bridge here is a **Claude Code Routine** with an API trigger. A Cowork project or scheduled task can be added later for recurring knowledge-work jobs, but it should report into Slack rather than being treated as a synchronous API adapter.
