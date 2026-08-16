@@ -234,6 +234,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                         acceptance=["Independent review evidence"],
                         repository="example/demo",
                         depends_on=[1],
+                        requires_approval=True,
                     ),
                 ],
                 final_acceptance=["Implementation and review accepted"],
@@ -243,6 +244,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 status=TaskStatus.QUEUED,
                 intake=intake,
                 plan=plan,
+                approved_assignments=[2],
             )
             store.create(record)
 
@@ -258,6 +260,24 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(completed.assignment_outcomes), 2)
             second_context = adapter.contexts[1]
             self.assertIn("untrusted evidence", second_context["trust_boundary"])
+            self.assertEqual(
+                adapter.contexts[0]["current_assignment"],
+                {
+                    "sequence": 1,
+                    "depends_on": [],
+                    "requires_approval": False,
+                    "owner_approval_recorded": False,
+                },
+            )
+            self.assertEqual(
+                second_context["current_assignment"],
+                {
+                    "sequence": 2,
+                    "depends_on": [1],
+                    "requires_approval": True,
+                    "owner_approval_recorded": True,
+                },
+            )
             self.assertEqual(
                 second_context["dependency_outcomes"][0]["result"],
                 "accepted result 1",

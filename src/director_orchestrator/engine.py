@@ -207,6 +207,8 @@ class OrchestrationEngine:
             "current_assignment": {
                 "sequence": assignment.sequence,
                 "depends_on": list(assignment.depends_on),
+                "requires_approval": assignment.requires_approval,
+                "owner_approval_recorded": assignment.sequence in record.approved_assignments,
             },
             "dependency_outcomes": [
                 bounded(outcome)
