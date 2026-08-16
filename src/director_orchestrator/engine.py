@@ -248,12 +248,14 @@ class OrchestrationEngine:
     def _provider_run_limit(self, record: TaskRecord) -> int:
         if record.plan is None:
             return self.settings.max_agent_hops
-        # Plans commonly describe max_hops as their specialist-assignment count
-        # and max_revisions separately. Reserve only that declared revision
-        # headroom, while the deployment-wide ceiling remains authoritative.
+        # max_revisions is enforced per assignment (revision_count is reset after
+        # each accepted assignment). Reserve the same bounded headroom here for
+        # every permitted assignment; otherwise an earlier specialist revision
+        # can consume the only revision slot available to a later specialist.
+        # The deployment-wide ceiling remains authoritative.
         return min(
             self.settings.max_agent_hops,
-            record.plan.max_hops + record.plan.max_revisions,
+            record.plan.max_hops * (1 + record.plan.max_revisions),
         )
 
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
