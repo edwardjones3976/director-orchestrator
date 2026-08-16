@@ -346,6 +346,42 @@ class OracleMergeGateTests(unittest.TestCase):
             connection.close()
         self.assertEqual(count, 0)
 
+    def test_disabled_gate_rejects_invalid_signature_before_reservation(self):
+        github = FakeGitHub(self.snapshot())
+        settings = replace(
+            self.settings,
+            oracle_automerge_enabled=False,
+            oracle_automerge_kill_switch=True,
+        )
+        artifact = self.artifact().model_copy(update={"summary": "tampered"})
+
+        with self.assertRaisesRegex(ValueError, "signature"):
+            self.service(github, settings).process(artifact)
+
+        self.assertEqual(github.snapshot_calls, 0)
+        self.assertEqual(github.merge_calls, 0)
+        connection = sqlite3.connect(self.database)
+        try:
+            attempts = connection.execute(
+                "SELECT COUNT(*) FROM oracle_merge_attempts"
+            ).fetchone()[0]
+            audit_events = connection.execute(
+                "SELECT COUNT(*) FROM oracle_merge_audit"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(attempts, 0)
+        self.assertEqual(audit_events, 0)
+
+    def test_policy_evaluate_reports_eligible_when_no_reasons(self):
+        result = OracleMergePolicy(self.settings).evaluate(
+            self.artifact(), self.snapshot()
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.ELIGIBLE)
+        self.assertEqual(result.reasons, [])
+        self.assertEqual(result.serious_safety_reasons, [])
+
     def test_implementation_author_cannot_self_accept(self):
         self.assert_rejected(
             artifact=self.artifact(implementation_provider="claude"), reason="own work"

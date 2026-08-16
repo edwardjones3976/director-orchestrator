@@ -28,6 +28,7 @@ class OracleReviewVerdict(StrEnum):
 
 
 class OracleMergeStatus(StrEnum):
+    ELIGIBLE = "ELIGIBLE"
     REJECTED = "REJECTED"
     SERIOUS_SAFETY_STOP = "SERIOUS_SAFETY_STOP"
     MERGED = "MERGED"
@@ -429,11 +430,12 @@ class OracleMergePolicy:
         if self._SECRET_MATERIAL.search(added_text):
             serious.append("credential or secret material")
 
-        status = (
-            OracleMergeStatus.SERIOUS_SAFETY_STOP
-            if serious
-            else OracleMergeStatus.REJECTED
-        )
+        if serious:
+            status = OracleMergeStatus.SERIOUS_SAFETY_STOP
+        elif errors:
+            status = OracleMergeStatus.REJECTED
+        else:
+            status = OracleMergeStatus.ELIGIBLE
         return OracleMergeResult(
             artifact_id=artifact.artifact_id,
             artifact_digest=artifact.digest(),
@@ -626,9 +628,8 @@ class OracleMergeService:
         self.github = github
 
     def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
-        if self.policy.enabled and not self.policy.kill_switch:
-            if not artifact.signature_is_valid(self.policy.review_secret):
-                raise ValueError("review artifact signature is invalid")
+        if not artifact.signature_is_valid(self.policy.review_secret):
+            raise ValueError("review artifact signature is invalid")
         existing = self.store.reserve(artifact)
         if existing is not None:
             return existing
