@@ -12,17 +12,24 @@ The populated `.env.edge-oracle` file is ignored. The committed
 database, n8n volumes, Slack routing, allowlists, budgets, and merge policy. Never copy
 Uppercut's internal, callback, n8n, or database secrets into this profile.
 
-From PowerShell, stage the profile closed and start the isolated stack:
+From PowerShell, stage the profile closed and start the isolated API while dedicated
+Slack credentials are still being provisioned:
 
 ```powershell
 .\scripts\windows-edge-oracle-live-validation.ps1 `
+  -ApiOnly `
   -SeedProviderCredentialsFromPrimaryEnv
 ```
 
 The reusable bootstrap generates new internal secrets when it creates the profile. It
 does not print them. Before Docker starts, it verifies the selected profile identity,
 rejects collisions with `.env` and `.env.uppercut`, validates Compose, and inspects the
-isolated task store for recoverable work. Paid execution and usage checks remain false.
+isolated task store for recoverable work. API-only activation starts the orchestrator
+and its isolated SQLite volume but keeps Slack and n8n stopped. Paid execution, usage
+checks, and the merge gate remain closed.
+
+Once a dedicated Slack app and channel are configured in `.env.edge-oracle`, omit
+`-ApiOnly` to start the complete isolated stack with paid execution still disabled.
 
 After dedicated Slack and all three provider credentials are configured, an explicitly
 supervised provider validation may use `-EnablePaidRuns`. The script starts only the API,

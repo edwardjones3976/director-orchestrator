@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("project-uppercut", "edge-oracle")]
     [string]$ProfileName,
+    [switch]$ApiOnly,
     [switch]$EnablePaidRuns,
     [switch]$SkipProviderChecks,
     [switch]$SeedProviderCredentialsFromPrimaryEnv,
@@ -247,6 +248,12 @@ function Assert-Ready {
 if ($EnablePaidRuns -and $SkipProviderChecks) {
     throw "-SkipProviderChecks cannot be combined with -EnablePaidRuns. Provider readiness is a required paid-run gate."
 }
+if ($ApiOnly -and $EnablePaidRuns) {
+    throw "-ApiOnly cannot be combined with -EnablePaidRuns. API-only activation keeps paid execution closed."
+}
+if ($ApiOnly -and $ProfileName -ne "edge-oracle") {
+    throw "-ApiOnly is currently limited to the Edge Oracle recovery profile."
+}
 
 if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
     if (-not (Test-Path -LiteralPath $profileTemplate -PathType Leaf)) {
@@ -309,12 +316,17 @@ $profileText = $null
 $values = Read-DotEnv -Path $profilePath
 Assert-ProfileIdentity -Values $values
 Assert-NoProfileCollisions -TargetValues $values
-Assert-Configured -Values $values -Names @(
-    "ORCHESTRATOR_SHARED_SECRET", "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN",
-    "SLACK_DIRECTOR_CHANNEL_ID", "OPENAI_API_KEY", "CLAUDE_ROUTINE_URL",
+$requiredConfiguration = @(
+    "ORCHESTRATOR_SHARED_SECRET", "OPENAI_API_KEY", "CLAUDE_ROUTINE_URL",
     "CLAUDE_ROUTINE_TOKEN", "CLAUDE_CALLBACK_SECRET", "CURSOR_API_KEY",
     "N8N_ENCRYPTION_KEY", "N8N_POSTGRES_PASSWORD"
 )
+if (-not $ApiOnly) {
+    $requiredConfiguration += @(
+        "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SLACK_DIRECTOR_CHANNEL_ID"
+    )
+}
+Assert-Configured -Values $values -Names $requiredConfiguration
 if ($ProfileName -eq "edge-oracle") {
     Assert-Configured -Values $values -Names @("ORACLE_AUTOMERGE_REVIEW_SECRET")
 }
@@ -352,11 +364,23 @@ if ([int]$recoverableLine[0] -ne 0) {
 Write-Host "Isolated task store contains no recoverable work."
 
 if (-not $EnablePaidRuns) {
-    docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
+    if ($ApiOnly) {
+        docker compose --project-name $composeProject --env-file $profilePath stop slackbot n8n n8n-db
+        if ($LASTEXITCODE -ne 0) { throw "Unable to stop optional Edge Oracle services for API-only activation." }
+        docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans orchestrator
+    }
+    else {
+        docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
+    }
     if ($LASTEXITCODE -ne 0) { throw "Docker Compose failed to start the $displayName Director." }
     $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
     Assert-Ready -Health $health
-    Write-Host "$displayName Director is ready with paid execution disabled; other deployments were not modified."
+    if ($ApiOnly) {
+        Write-Host "$displayName Director API is ready with paid execution disabled; Slack and n8n remain stopped."
+    }
+    else {
+        Write-Host "$displayName Director is ready with paid execution disabled; other deployments were not modified."
+    }
     return
 }
 
