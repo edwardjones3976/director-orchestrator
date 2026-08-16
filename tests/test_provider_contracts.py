@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
 from director_orchestrator.config import Settings
-from director_orchestrator.providers import CursorAdapter, GeminiAdapter, PerplexityAdapter
+from director_orchestrator.models import Assignment, ProviderName, ProviderRun
+from director_orchestrator.providers import ClaudeAdapter, CursorAdapter, GeminiAdapter, PerplexityAdapter
 
 
 class FakeResponse:
@@ -64,6 +66,82 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(request["url"].endswith("/v1/models"))
         self.assertEqual(run.status, "FINISHED")
         self.assertIn("2 models", run.result)
+
+    async def test_cursor_dispatch_denies_draft_pr_unless_assignment_explicitly_allows_it(self):
+        settings = replace(Settings(), cursor_api_key="test-cursor")
+        base = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Review the repository without changing it",
+            acceptance=["Report evidence"],
+            repository="example/demo",
+            requires_approval=True,
+        )
+        response = {
+            "run": {"id": "run-1", "status": "RUNNING"},
+            "agent": {"id": "agent-1", "url": "https://cursor.example/agent-1"},
+        }
+        RecordingAsyncClient.responses = [response, response]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            await CursorAdapter(settings).dispatch(base, "context")
+            await CursorAdapter(settings).dispatch(
+                base.model_copy(update={"task": "Create only a draft PR", "allow_draft_pr": True}),
+                "context",
+            )
+
+        self.assertFalse(RecordingAsyncClient.calls[0]["json"]["autoCreatePR"])
+        self.assertTrue(RecordingAsyncClient.calls[1]["json"]["autoCreatePR"])
+        self.assertEqual(
+            RecordingAsyncClient.calls[0]["json"]["repos"][0]["url"],
+            "https://github.com/example/demo",
+        )
+
+    async def test_claude_revision_fires_a_bounded_callback_run(self):
+        settings = replace(
+            Settings(),
+            claude_routine_url="https://claude.example/routine",
+            claude_routine_token="test-claude",
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CLAUDE,
+            task="Analyze",
+            acceptance=["Evidence exists"],
+            repository="example/demo",
+            requires_approval=True,
+        )
+        prior = ProviderRun(
+            provider=ProviderName.CLAUDE,
+            run_id="claude-original",
+            status="completed",
+            result="Incomplete evidence",
+        )
+        context = '{"current_assignment":{"sequence":1,"owner_approval_recorded":true}}'
+        RecordingAsyncClient.responses = [
+            {
+                "claude_code_session_id": "claude-revision",
+                "claude_code_session_url": "https://claude.example/session/claude-revision",
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await ClaudeAdapter(settings).revise(
+                prior,
+                "Add exact evidence",
+                assignment=assignment,
+                context=context,
+            )
+
+        request = RecordingAsyncClient.calls[0]
+        payload = json.loads(request["json"]["text"])
+        self.assertEqual(payload["revision"]["prior_run_id"], "claude-original")
+        self.assertEqual(payload["revision"]["prompt"], "Add exact evidence")
+        self.assertEqual(payload["assignment"]["sequence"], 1)
+        self.assertEqual(payload["context"], context)
+        self.assertIn("only Slack writer", payload["completion_requirement"])
+        self.assertEqual(run.run_id, "claude-revision")
+        self.assertEqual(run.status, "WAITING_CALLBACK")
 
     async def test_gemini_usage_check_uses_current_interactions_contract(self):
         settings = replace(

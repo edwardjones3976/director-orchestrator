@@ -207,6 +207,8 @@ class OrchestrationEngine:
             "current_assignment": {
                 "sequence": assignment.sequence,
                 "depends_on": list(assignment.depends_on),
+                "requires_approval": assignment.requires_approval,
+                "owner_approval_recorded": assignment.sequence in record.approved_assignments,
             },
             "dependency_outcomes": [
                 bounded(outcome)
@@ -243,6 +245,19 @@ class OrchestrationEngine:
             key=lambda existing: existing.assignment_sequence,
         )
 
+    def _provider_run_limit(self, record: TaskRecord) -> int:
+        if record.plan is None:
+            return self.settings.max_agent_hops
+        # max_revisions is enforced per assignment (revision_count is reset after
+        # each accepted assignment). Reserve the same bounded headroom here for
+        # every permitted assignment; otherwise an earlier specialist revision
+        # can consume the only revision slot available to a later specialist.
+        # The deployment-wide ceiling remains authoritative.
+        return min(
+            self.settings.max_agent_hops,
+            record.plan.max_hops * (1 + record.plan.max_revisions),
+        )
+
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
         completed_sequences = {
             outcome.assignment_sequence for outcome in record.assignment_outcomes
@@ -275,7 +290,7 @@ class OrchestrationEngine:
         if existing_runs:
             run = existing_runs[-1]
         else:
-            if len(record.provider_runs) >= record.plan.max_hops:
+            if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached")
             record.status = TaskStatus.RUNNING
             self.store.save(record)
@@ -308,10 +323,15 @@ class OrchestrationEngine:
             self.store.save(record)
             return True
         if decision.verdict == ReviewVerdict.REVISE and record.revision_count < record.plan.max_revisions:
-            if len(record.provider_runs) >= record.plan.max_hops:
+            if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached before revision")
             record.revision_count += 1
-            revised = await adapter.revise(run, decision.revision_prompt or "Address the failed acceptance checks and report new evidence.")
+            revised = await adapter.revise(
+                run,
+                decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
+                assignment=assignment,
+                context=self._handoff_context(record, assignment),
+            )
             revised.assignment_sequence = assignment.sequence
             record.provider_runs.append(revised)
             self.store.save(record)
@@ -320,8 +340,13 @@ class OrchestrationEngine:
             self.store.save(record)
             if not revised.result:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
-                record.message = "Revision completed without retrievable evidence"
+                record.message = f"{assignment.agent.value} revision requires manual completion verification"
                 self.store.save(record)
+                await self.notifier.post(
+                    record,
+                    f"*{record.task_id} — OWNER DECISION REQUIRED*\nThe `{assignment.agent.value}` revision must be reviewed at its provider session before the loop can continue."
+                    + (f" [Open run]({revised.url})" if revised.url else ""),
+                )
                 return False
             final_decision = await self.director.review(record, revised.result)
             record.review = final_decision

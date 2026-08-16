@@ -224,12 +224,19 @@ $baseUrl = "http://127.0.0.1:${hostPort}"
 try {
     # Start only the API while the paid gate is being proved. Slack intake stays
     # offline until all three providers pass the bounded check.
+    docker compose --project-name $composeProject --env-file $profilePath stop slackbot
+    if ($LASTEXITCODE -ne 0) { throw "Unable to close Slack intake before provider checks." }
+
+    # Capture the boundary before FastAPI starts. Its lifespan hook can begin
+    # the same bounded cycle before the explicit endpoint call returns; those
+    # records are fresh for this validation and must not be mistaken for stale
+    # results from an earlier run.
+    $startedAt = [DateTimeOffset]::UtcNow
     docker compose --project-name $composeProject --env-file $profilePath up -d --build --force-recreate orchestrator
     if ($LASTEXITCODE -ne 0) { throw "Unable to start the gated provider-check service." }
     $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
     Assert-Ready -Health $health
 
-    $startedAt = [DateTimeOffset]::UtcNow
     Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/run" -Method Post -Headers $headers -TimeoutSec 30 | Out-Null
     Write-Host "Bounded checks accepted. Waiting for OpenAI, Claude, and Cursor..."
 
@@ -237,7 +244,10 @@ try {
     $records = @()
     do {
         Start-Sleep -Seconds 5
-        $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30)
+        # PowerShell 7 preserves a top-level JSON array from Invoke-RestMethod
+        # as one pipeline object. Re-emit it so the provider records are
+        # enumerated before filtering.
+        $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30 | ForEach-Object { $_ })
         $records = @($latest | Where-Object {
             $_.provider -in @("openai", "claude", "cursor") -and
             [DateTimeOffset]::Parse($_.checked_at) -ge $startedAt

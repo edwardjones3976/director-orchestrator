@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 
-from .models import ClaudeCallback, ProviderName, TaskRecord, TaskStatus
+from .models import ClaudeCallback, ManualRunCompletion, ProviderName, TaskRecord, TaskStatus
 
 
 class CallbackConflict(ValueError):
@@ -39,3 +39,25 @@ def apply_claude_callback(record: TaskRecord, callback: ClaudeCallback) -> bool:
     run.url = callback.session_url or run.url
     record.status = TaskStatus.REVIEWING
     return True
+
+
+def apply_manual_run_completion(
+    record: TaskRecord,
+    run_id: str,
+    completion: ManualRunCompletion,
+) -> None:
+    if record.status not in {TaskStatus.FAILED, TaskStatus.OWNER_DECISION_REQUIRED}:
+        raise CallbackConflict("Task is not awaiting manual run recovery")
+    matching = [
+        run for run in record.provider_runs if hmac.compare_digest(run.run_id, run_id)
+    ]
+    if not matching:
+        raise CallbackConflict("Provider run does not match this task")
+    run = matching[-1]
+    if run.result:
+        raise CallbackConflict("Provider run already has a result")
+    run.status = "FINISHED"
+    run.result = completion.result
+    record.status = TaskStatus.QUEUED
+    record.error = None
+    record.message = "Owner supplied exact-run manual completion evidence"

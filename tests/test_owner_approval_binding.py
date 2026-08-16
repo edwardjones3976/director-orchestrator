@@ -4,6 +4,7 @@ import unittest
 
 from director_orchestrator.approvals import (
     StaleApproval,
+    apply_failed_predispatch_retry,
     apply_owner_approval,
     plan_gate_pending,
 )
@@ -12,6 +13,7 @@ from director_orchestrator.models import (
     DirectorPlan,
     OwnerApproval,
     ProviderName,
+    ProviderRun,
     RiskLevel,
     SlackIntake,
     TaskRecord,
@@ -127,6 +129,47 @@ class StaleButtonTests(unittest.TestCase):
         with self.assertRaises(StaleApproval):
             apply_owner_approval(
                 record, OwnerApproval(owner_user_id="U0B9UJ86D27", assignment_sequence=2)
+            )
+
+
+class FailedPredispatchRetryTests(unittest.TestCase):
+    def test_retry_resumes_exact_approved_assignment_without_a_run(self):
+        record = _record(owner_approved=True, index=1, approved=[1, 2])
+        record.status = TaskStatus.FAILED
+        record.error = "HTTP 400"
+
+        apply_failed_predispatch_retry(
+            record,
+            OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                assignment_sequence=2,
+                note="Retry after correcting the request contract",
+            ),
+        )
+
+        self.assertEqual(record.status, TaskStatus.QUEUED)
+        self.assertIsNone(record.error)
+
+    def test_retry_refuses_when_a_provider_run_already_exists(self):
+        record = _record(owner_approved=True, index=1, approved=[1, 2])
+        record.status = TaskStatus.FAILED
+        record.provider_runs = [
+            ProviderRun(
+                provider=ProviderName.CURSOR,
+                assignment_sequence=2,
+                run_id="remote-run",
+                status="RUNNING",
+            )
+        ]
+
+        with self.assertRaisesRegex(StaleApproval, "duplicate dispatch"):
+            apply_failed_predispatch_retry(
+                record,
+                OwnerApproval(
+                    owner_user_id="U0B9UJ86D27",
+                    assignment_sequence=2,
+                    note="Retry",
+                ),
             )
 
 

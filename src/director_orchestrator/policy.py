@@ -56,8 +56,16 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
     }
     allowed_refs = set(settings.allowed_starting_refs)
     for assignment in plan.assignments:
+        if assignment.agent == ProviderName.OPENAI:
+            errors.add(
+                f"assignment {assignment.sequence}: OpenAI is the Director runtime and cannot be an assignment target"
+            )
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
+        if assignment.allow_draft_pr and not assignment.requires_approval:
+            errors.add(
+                f"assignment {assignment.sequence}: draft PR creation requires assignment approval"
+            )
         if assignment.repository:
             repository = canonical_repository(assignment.repository)
             if not allowed_repositories:

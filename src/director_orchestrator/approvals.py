@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 
-from .models import Assignment, OwnerApproval, TaskRecord
+from .models import Assignment, OwnerApproval, TaskRecord, TaskStatus
 
 
 class StaleApproval(ValueError):
@@ -61,3 +61,21 @@ def apply_owner_approval(record: TaskRecord, approval: OwnerApproval) -> None:
         return
     if pending.sequence not in record.approved_assignments:
         record.approved_assignments.append(pending.sequence)
+
+
+def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) -> None:
+    """Retry a failed assignment only when no provider run was recorded."""
+    if record.status != TaskStatus.FAILED:
+        raise StaleApproval("Task is not failed")
+    pending = pending_assignment(record)
+    if pending is None or approval.assignment_sequence != pending.sequence:
+        raise StaleApproval("A failed retry must name the exact pending assignment")
+    if pending.requires_approval and pending.sequence not in record.approved_assignments:
+        raise StaleApproval("The pending assignment has not been approved")
+    if any(run.assignment_sequence == pending.sequence for run in record.provider_runs):
+        raise StaleApproval("A provider run already exists; retry could duplicate dispatch")
+    if not approval.note.strip() or approval.note == "Approved":
+        raise StaleApproval("A failed retry requires an explicit owner note")
+    record.status = TaskStatus.QUEUED
+    record.error = None
+    record.message = approval.note.strip()
