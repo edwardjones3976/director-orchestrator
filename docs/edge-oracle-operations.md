@@ -116,30 +116,40 @@ retry delivery idempotent after a terminal result, and records an append-only au
 the artifact digest, assignment/review identifiers, changed paths, check run/suite IDs,
 decision, merge commit, actor, and UTC timestamp.
 
-### Unresolved mergeability
+### Unresolved and unconverged GitHub state
 
-GitHub recalculates mergeability asynchronously and reports it as null meanwhile, most
-visibly right after the deterministic draft-to-ready transition. The gate classifies that
-state instead of treating it as a verdict:
+GitHub applies the gate's own mutations and recalculates derived fields asynchronously, so
+a read taken immediately afterwards can lag. Because every artifact, assignment, and review
+run is reservable exactly once, reading lag as a verdict would permanently spend a correctly
+reviewed change. The gate classifies the state instead:
 
-- **Transient.** A null value is re-read with bounded backoff — five unresolved reads, one
-  second doubling to an eight-second cap, about fifteen seconds. A temporary read failure
-  during that wait is a separate transient condition with its own allowance of two failed
-  reads, because a read that never produced a snapshot proves nothing about mergeability:
-  a failed read never spends the unresolved-mergeability allowance, an unresolved read
-  never spends the read-failure allowance, and the poll is bounded at seven reads and about
-  thirty-one seconds. Every successful read revalidates the repository, pull-request
-  identity, open and unmerged state, non-draft state, expected base SHA, exact head SHA,
-  checks, review threads, paths, and safety signals before the wait continues.
-- **Terminal.** An explicit `mergeable=false`, any drift observed during those re-reads
-  (head or base advance, close, merge, a flip back to draft, a new blocking thread or
-  non-green check), and any serious-safety signal record a terminal decision and consume the
-  review artifact.
-- **Recoverable.** Exhausting either allowance — five unresolved reads or two failed reads
-  — fails closed as `ERROR` with a reason containing `remains retryable` that names which
-  allowance ran out. The attempt keeps its artifact, assignment, and review-run
-  reservation, so no other review can claim them, but it records no terminal result:
-  redelivering the identical artifact resumes the gate. The audit shows
+- **Transient.** Three conditions are transient, and each has its own bounded allowance so
+  that none can exhaust another's:
+  - `mergeable: null` — five unresolved reads;
+  - a read that raised and produced no snapshot — two failed reads, because a read that
+    returned nothing proves nothing about the pull request;
+  - `draft: true` on a pull request this gate just transitioned, after `mark_ready` already
+    confirmed `isDraft: false` through GraphQL — three stale-draft reads. A draft flag is
+    only ever forgiven on a transition the gate performed itself.
+
+  Backoff is one second doubling to an eight-second cap. Exactly one allowance is spent per
+  read, so the poll performs at most eight reads over about thirty-nine seconds, and the
+  whole gate at most ten GitHub reads over about forty seconds. Every successful read
+  revalidates the
+  repository, pull-request identity, open and unmerged state, expected base SHA, exact head
+  SHA, checks, review threads, paths, and safety signals before the wait continues. The
+  first read of the pull request carries the same read-failure allowance as every later one.
+- **Terminal.** An explicit `mergeable=false`, a draft flag on a pull request the gate did
+  **not** transition, any drift observed during those re-reads (head or base advance, close,
+  merge, a new blocking thread or non-green check), and any serious-safety signal record a
+  terminal decision and consume the review artifact. Each condition is classified from the
+  snapshot itself, so a `false` conflict is terminal on the read that reports it and can
+  never be forgiven as an unresolved `null`.
+- **Recoverable.** Exhausting any allowance — five unresolved reads, two failed reads, or
+  three stale-draft reads — fails closed as `ERROR` with a reason containing
+  `remains retryable` that names which allowance ran out. The attempt keeps its artifact,
+  assignment, and review-run reservation, so no other review can claim them, but it records
+  no terminal result: redelivering the identical artifact resumes the gate. The audit shows
   `merge_gate_recoverable` and then `review_artifact_retried`. Nothing was merged, so the
   only operator action is to re-run the gate with the same artifact once the transient
   condition clears.
