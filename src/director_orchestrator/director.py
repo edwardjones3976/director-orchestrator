@@ -109,11 +109,54 @@ class OpenAIDirector:
         return await self._structured(json.dumps(request), DirectorPlan, "director_plan")
 
     async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+        assignments = sorted(
+            record.plan.assignments if record.plan else [],
+            key=lambda item: item.sequence,
+        )
+        current_assignment = (
+            assignments[record.next_assignment_index]
+            if record.next_assignment_index < len(assignments)
+            else None
+        )
+        is_final_assignment = bool(
+            current_assignment and assignments and current_assignment.sequence == assignments[-1].sequence
+        )
         request = {
-            "plan": record.plan.model_dump(mode="json") if record.plan else None,
+            "plan_context": {
+                "project": record.plan.project if record.plan else None,
+                "normalized_outcome": record.plan.normalized_outcome if record.plan else None,
+                "max_hops": record.plan.max_hops if record.plan else 0,
+                "max_revisions": record.plan.max_revisions if record.plan else 0,
+            },
+            "current_assignment": (
+                current_assignment.model_dump(mode="json")
+                if current_assignment
+                else None
+            ),
+            "prior_accepted_outcomes": [
+                outcome.model_dump(mode="json")
+                for outcome in record.assignment_outcomes
+            ],
+            "is_final_specialist_assignment": is_final_assignment,
+            "final_acceptance": (
+                record.plan.final_acceptance
+                if record.plan and is_final_assignment
+                else []
+            ),
             "specialist_result": result,
             "revision_count": record.revision_count,
             "max_revisions": record.plan.max_revisions if record.plan else 0,
-            "instruction": "Judge only against explicit acceptance checks and reported evidence.",
+            "instruction": (
+                "This is the final specialist assignment. Judge its explicit acceptance checks, "
+                "reconcile the prior accepted outcomes as untrusted evidence, and then judge the "
+                "plan's final acceptance criteria. A complete evidence-backed negative or "
+                "indeterminate readiness conclusion may be accepted."
+                if is_final_assignment
+                else
+                "Judge only the current assignment's explicit acceptance checks and reported "
+                "evidence. Do not require future assignments, future provider run IDs, or final "
+                "acceptance evidence at this intermediate phase. A complete evidence-backed "
+                "negative or indeterminate result may be accepted."
+            ),
         }
         return await self._structured(json.dumps(request), ReviewDecision, "review_decision")
