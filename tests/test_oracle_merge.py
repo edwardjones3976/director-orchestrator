@@ -3,7 +3,9 @@ from __future__ import annotations
 import sqlite3
 import json
 import tempfile
+import threading
 import unittest
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -917,6 +919,81 @@ class OracleMergeGateTests(unittest.TestCase):
 
         self.assertEqual(recovered.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.merge_calls, 1)
+
+    def test_recoverable_rearm_is_exclusive_across_store_instances(self):
+        github = FakeGitHub(
+            self.snapshot(mergeable=None), responses=(self.snapshot(draft=True),)
+        )
+        artifact = self.artifact(artifact_id="recoverable-rearm-race")
+        store = OracleMergeStore(self.database)
+        timed_out = self.service(github, store=store).process(artifact)
+        self.assertEqual(timed_out.status, OracleMergeStatus.ERROR)
+
+        barrier = threading.Barrier(2)
+
+        class BarrierCursor:
+            def __init__(self, cursor):
+                self.cursor = cursor
+
+            def fetchone(self):
+                row = self.cursor.fetchone()
+                if row and row["status"] == "RECOVERABLE":
+                    barrier.wait(timeout=5)
+                return row
+
+            def __getattr__(self, name):
+                return getattr(self.cursor, name)
+
+        class BarrierConnection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, sql, parameters=()):
+                cursor = self.connection.execute(sql, parameters)
+                if "SELECT artifact_digest, status, result_json" in sql:
+                    return BarrierCursor(cursor)
+                return cursor
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+        class BarrierStore(OracleMergeStore):
+            @contextmanager
+            def _connect(self):
+                with super()._connect() as connection:
+                    yield BarrierConnection(connection)
+
+        outcomes = []
+        errors = []
+
+        def reserve_once(candidate_store):
+            try:
+                outcomes.append(candidate_store.reserve(artifact))
+            except Exception as exc:  # the losing contender must fail closed
+                errors.append(exc)
+
+        contenders = [BarrierStore(self.database), BarrierStore(self.database)]
+        threads = [
+            threading.Thread(target=reserve_once, args=(candidate,))
+            for candidate in contenders
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(outcomes, [None])
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], RuntimeError)
+        self.assertIn("already being evaluated", str(errors[0]))
+        self.assertEqual(
+            [
+                event["event_type"]
+                for event in store.audit_events("recoverable-rearm-race")
+            ].count("review_artifact_retried"),
+            1,
+        )
 
     def test_drift_after_a_read_failure_is_terminal(self):
         drifted_checks = [
