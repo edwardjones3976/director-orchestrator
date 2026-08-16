@@ -973,7 +973,8 @@ class OracleMergeService:
           false`` through GraphQL, which a lagging REST replica can still report
           (``mergeable_poll_stale_draft_reads``).
 
-        Exactly one allowance is spent per iteration, so the loop performs at most
+        Each iteration spends the allowance for every transient condition it exhibits;
+        overlapping conditions therefore shorten the wait. The loop performs at most
         ``attempts + read_failures + stale_draft_reads - 2`` reads — eight by default,
         over about thirty-nine seconds of backoff.
 
