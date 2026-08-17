@@ -6,7 +6,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from director_orchestrator.config import Settings
-from director_orchestrator.models import ProviderName, ProviderRun, UsageCheckStatus
+from director_orchestrator.models import (
+    ProviderName,
+    ProviderRun,
+    UsageCheckRunStatus,
+    UsageCheckStatus,
+)
 from director_orchestrator.store import TaskStore
 from director_orchestrator.usage import UsageMonitor, normalize_usage
 
@@ -201,6 +206,194 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].status, UsageCheckStatus.SKIPPED)
             self.assertIn("not configured", records[0].error)
+
+    async def test_legacy_force_accept_path_yields_no_records_while_cooling_down(self):
+        """Reproduce the pre-fix defect: force=True still enforces 15 minutes.
+
+        The old API accepted a cycle_id and scheduled run_once(force=True) even when
+        every provider was cooling down, so callers waited for impossible records.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulCursorProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("cursor",),
+                cursor_api_key="test-cursor",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.CURSOR: adapter})
+            first = await monitor.run_once(force=True, cycle_id="USAGE-OLDACCEPT1")
+            second = await monitor.run_once(force=True, cycle_id="USAGE-OLDACCEPT2")
+
+            self.assertEqual(len(first), 1)
+            self.assertEqual(second, [])
+            self.assertEqual(adapter.calls, 1)
+            latest = store.latest_usage_check("cursor")
+            self.assertEqual(latest.cycle_id, "USAGE-OLDACCEPT1")
+            self.assertNotEqual(latest.cycle_id, "USAGE-OLDACCEPT2")
+
+    async def test_reserve_manual_cycle_due_providers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("cursor", "openai", "claude"),
+                cursor_api_key="",
+                openai_api_key="",
+                claude_routine_url="",
+                claude_routine_token="",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            plan = await monitor.reserve_manual_cycle("USAGE-DUE0000001")
+
+            self.assertEqual(plan.status, UsageCheckRunStatus.ACCEPTED)
+            self.assertEqual(plan.cycle_id, "USAGE-DUE0000001")
+            self.assertEqual(plan.scheduled_providers, ["cursor", "openai", "claude"])
+            self.assertEqual(plan.cooling_down_providers, [])
+            self.assertEqual(plan.minimum_interval_minutes, 15)
+
+            records = await monitor.run_once(force=True, cycle_id="USAGE-DUE0000001")
+            self.assertEqual({record.provider for record in records}, {"cursor", "openai", "claude"})
+            self.assertTrue(all(record.status == UsageCheckStatus.SKIPPED for record in records))
+
+    async def test_reserve_manual_cycle_all_providers_cooling_down(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulCursorProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("cursor",),
+                cursor_api_key="test-cursor",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.CURSOR: adapter})
+            await monitor.run_once(force=True, cycle_id="USAGE-SEED000001")
+
+            plan = await monitor.reserve_manual_cycle("USAGE-COOLDOWN01")
+            self.assertEqual(plan.status, UsageCheckRunStatus.NOT_DUE)
+            self.assertIsNone(plan.cycle_id)
+            self.assertEqual(plan.scheduled_providers, [])
+            self.assertEqual(plan.cooling_down_providers, ["cursor"])
+            self.assertIn("15-minute", plan.reason or "")
+
+            # No reservation means a follow-up forced run still creates no records.
+            self.assertEqual(await monitor.run_once(force=True, cycle_id="USAGE-COOLDOWN01"), [])
+            self.assertEqual(adapter.calls, 1)
+
+    async def test_reserve_manual_cycle_partially_due_providers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulCursorProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("cursor", "openai"),
+                cursor_api_key="test-cursor",
+                openai_api_key="",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.CURSOR: adapter})
+            await monitor.run_once(force=True, cycle_id="USAGE-PARTIAL001")
+
+            plan = await monitor.reserve_manual_cycle("USAGE-PARTIAL002")
+            self.assertEqual(plan.status, UsageCheckRunStatus.ACCEPTED)
+            self.assertEqual(plan.scheduled_providers, ["openai"])
+            self.assertEqual(plan.cooling_down_providers, ["cursor"])
+
+            records = await monitor.run_once(force=True, cycle_id="USAGE-PARTIAL002")
+            self.assertEqual([record.provider for record in records], ["openai"])
+            self.assertEqual(records[0].status, UsageCheckStatus.SKIPPED)
+            self.assertEqual(adapter.calls, 1)
+
+    async def test_reserve_manual_cycle_busy_when_lock_held(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_providers=("cursor",),
+                cursor_api_key="test-cursor",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            await monitor._lock.acquire()
+            try:
+                plan = await monitor.reserve_manual_cycle("USAGE-BUSY000001")
+            finally:
+                monitor._lock.release()
+
+            self.assertEqual(plan.status, UsageCheckRunStatus.BUSY)
+            self.assertEqual(plan.scheduled_providers, [])
+            self.assertIn("already running", plan.reason or "")
+
+    async def test_reserve_manual_cycle_busy_when_already_reserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_providers=("cursor",),
+                cursor_api_key="test-cursor",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            first = await monitor.reserve_manual_cycle("USAGE-RESERVE001")
+            second = await monitor.reserve_manual_cycle("USAGE-RESERVE002")
+
+            self.assertEqual(first.status, UsageCheckRunStatus.ACCEPTED)
+            self.assertEqual(second.status, UsageCheckRunStatus.BUSY)
+            self.assertEqual(second.scheduled_providers, [])
+
+            # The reserved owner can still run; a concurrent unreserved pass cannot.
+            skipped = await monitor.run_once(force=True)
+            self.assertEqual(skipped, [])
+            records = await monitor.run_once(force=True, cycle_id="USAGE-RESERVE001")
+            self.assertEqual([record.cycle_id for record in records], ["USAGE-RESERVE001"])
+
+    async def test_minimum_interval_cannot_be_bypassed_by_reservation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulCursorProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("cursor",),
+                cursor_api_key="test-cursor",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.CURSOR: adapter})
+            await monitor.run_once(force=True)
+            # Forge a stale reservation that claims a cooling-down provider.
+            from director_orchestrator.usage import _ManualCycleReservation
+
+            monitor._reserved = _ManualCycleReservation(
+                cycle_id="USAGE-FORGE00001", providers=("cursor",)
+            )
+            records = await monitor.run_once(force=True, cycle_id="USAGE-FORGE00001")
+            self.assertEqual(records, [])
+            self.assertEqual(adapter.calls, 1)
 
 
 if __name__ == "__main__":

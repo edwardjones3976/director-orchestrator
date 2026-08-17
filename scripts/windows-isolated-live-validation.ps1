@@ -401,11 +401,39 @@ try {
     Assert-Ready -Health $health
 
     $accepted = Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/run" -Method Post -Headers $headers -TimeoutSec 30
+    $runStatus = [string]$accepted.status
+    if ($runStatus -ceq "not_due") {
+        $cooling = @($accepted.cooling_down_providers | ForEach-Object { [string]$_ })
+        Write-Host (
+            "No usage-check providers are due under the 15-minute minimum. " +
+            "Cooling down: $(if ($cooling.Count -gt 0) { $cooling -join ', ' } else { '(none)' }). " +
+            "Skipping paid provider probes for this cycle."
+        )
+        docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
+        if ($LASTEXITCODE -ne 0) { throw "Cooldown handled, but the complete isolated stack did not start." }
+        Write-Host "LIVE VALIDATION PASSED (cooldown/no-due). Paid execution remains enabled only for the isolated $displayName deployment."
+        return
+    }
+    if ($runStatus -cne "accepted") {
+        throw "The usage-check endpoint refused the cycle with status '$runStatus'."
+    }
     $cycleId = [string]$accepted.cycle_id
     if ($cycleId -notmatch '^USAGE-[A-F0-9]{10}$') {
         throw "The usage-check endpoint did not return a valid cycle identifier."
     }
-    Write-Host "Bounded check cycle $cycleId accepted. Waiting for OpenAI, Claude, and Cursor..."
+    $scheduledProviders = @(
+        $accepted.scheduled_providers |
+            ForEach-Object { [string]$_ } |
+            Where-Object { $_ -in @("openai", "claude", "cursor") } |
+            Sort-Object -Unique
+    )
+    if ($scheduledProviders.Count -eq 0) {
+        throw "The usage-check endpoint accepted a cycle but scheduled no primary providers."
+    }
+    Write-Host (
+        "Bounded check cycle $cycleId accepted. Waiting for scheduled providers: " +
+        ($scheduledProviders -join ", ") + "..."
+    )
 
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
     $records = @()
@@ -414,20 +442,23 @@ try {
         $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30 | ForEach-Object { $_ })
         $records = @($latest | Where-Object {
             $_.cycle_id -ceq $cycleId -and
-            $_.provider -in @("openai", "claude", "cursor") -and
+            $_.provider -in $scheduledProviders -and
             [DateTimeOffset]::Parse($_.checked_at) -ge $startedAt
         })
-    } while ($records.Count -lt 3 -and [DateTimeOffset]::UtcNow -lt $deadline)
+        $observedProviders = @($records | ForEach-Object { [string]$_.provider } | Sort-Object -Unique)
+    } while (
+        $observedProviders.Count -lt $scheduledProviders.Count -and
+        [DateTimeOffset]::UtcNow -lt $deadline
+    )
 
-    if ($records.Count -lt 3) {
-        throw "Timed out waiting for all provider checks. Inspect with: docker compose -p $composeProject logs --tail 200 orchestrator"
+    $observedProviders = @($records | ForEach-Object { [string]$_.provider } | Sort-Object -Unique)
+    if ($observedProviders.Count -lt $scheduledProviders.Count) {
+        throw "Timed out waiting for scheduled provider checks ($($scheduledProviders -join ', ')). Inspect with: docker compose -p $composeProject logs --tail 200 orchestrator"
     }
 
-    $expectedProviders = @("claude", "cursor", "openai")
-    $actualProviders = @($records | ForEach-Object { [string]$_.provider } | Sort-Object -Unique)
-    if ($records.Count -ne 3 -or $actualProviders.Count -ne 3 -or
-        @(Compare-Object -ReferenceObject $expectedProviders -DifferenceObject $actualProviders).Count -ne 0) {
-        throw "The bounded cycle did not return exactly one result for each primary provider."
+    if ($records.Count -ne $scheduledProviders.Count -or
+        @(Compare-Object -ReferenceObject $scheduledProviders -DifferenceObject $observedProviders).Count -ne 0) {
+        throw "The bounded cycle did not return exactly one result for each scheduled primary provider."
     }
     $records | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
     $failures = @($records | Where-Object { $_.status -notin @("ok", "prompted") })

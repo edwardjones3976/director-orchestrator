@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 
 from .config import Settings
-from .models import ProviderName, ProviderRun, UsageCheckRecord, UsageCheckStatus
+from .models import (
+    ProviderName,
+    ProviderRun,
+    UsageCheckRecord,
+    UsageCheckRunResponse,
+    UsageCheckRunStatus,
+    UsageCheckStatus,
+)
 from .providers import ProviderAdapter, provider_registry
 from .store import TaskStore
 
@@ -34,6 +42,13 @@ TERMINAL_STATUSES = {
 SUCCESS_STATUSES = {"FINISHED", "completed", "prompted"}
 SUPPORTED_PROVIDERS = {"openai", "cursor", "claude", "gemini", "perplexity"}
 MINIMUM_INTERVAL = timedelta(minutes=15)
+MINIMUM_INTERVAL_MINUTES = 15
+
+
+@dataclass(frozen=True)
+class _ManualCycleReservation:
+    cycle_id: str
+    providers: tuple[str, ...]
 
 
 def _output_text(payload: dict[str, Any]) -> str | None:
@@ -99,6 +114,8 @@ class UsageMonitor:
         self.store = store
         self.adapters = adapters or provider_registry(settings)
         self._lock = asyncio.Lock()
+        self._schedule_lock = asyncio.Lock()
+        self._reserved: _ManualCycleReservation | None = None
 
     @property
     def interval(self) -> timedelta:
@@ -115,10 +132,84 @@ class UsageMonitor:
     def unsupported_providers(self) -> tuple[str, ...]:
         return tuple(provider for provider in self.providers if provider not in SUPPORTED_PROVIDERS)
 
+    @property
+    def supported_providers(self) -> tuple[str, ...]:
+        return tuple(provider for provider in self.providers if provider in SUPPORTED_PROVIDERS)
+
     def _is_due(self, provider: str, now: datetime, force: bool) -> bool:
         latest = self.store.latest_usage_check(provider)
         required_interval = MINIMUM_INTERVAL if force else self.interval
         return latest is None or now - latest.checked_at >= required_interval
+
+    def partition_providers(
+        self, *, force: bool, now: datetime | None = None
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Return (due, cooling_down) for configured supported providers."""
+        current = now or datetime.now(timezone.utc)
+        due: list[str] = []
+        cooling_down: list[str] = []
+        for provider in self.supported_providers:
+            if self._is_due(provider, current, force):
+                due.append(provider)
+            else:
+                cooling_down.append(provider)
+        return tuple(due), tuple(cooling_down)
+
+    def _clear_reservation(self, cycle_id: str | None) -> None:
+        reserved = self._reserved
+        if reserved is not None and cycle_id is not None and reserved.cycle_id == cycle_id:
+            self._reserved = None
+
+    async def reserve_manual_cycle(self, cycle_id: str) -> UsageCheckRunResponse:
+        """Fail closed unless a forced cycle can actually schedule due providers.
+
+        An accepted response reserves the cycle so a concurrent monitor pass cannot
+        steal the lock and leave the caller with an empty cycle_id.
+        """
+        unsupported = list(self.unsupported_providers)
+        if not self.settings.usage_check_enabled or not self.settings.allow_paid_runs:
+            return UsageCheckRunResponse(
+                status=UsageCheckRunStatus.BUSY,
+                scheduled_providers=[],
+                cooling_down_providers=[],
+                unsupported_providers=unsupported,
+                minimum_interval_minutes=MINIMUM_INTERVAL_MINUTES,
+                reason="Usage checks or paid provider execution is disabled",
+            )
+        async with self._schedule_lock:
+            if self._lock.locked() or self._reserved is not None:
+                due, cooling_down = self.partition_providers(force=True)
+                return UsageCheckRunResponse(
+                    status=UsageCheckRunStatus.BUSY,
+                    scheduled_providers=[],
+                    cooling_down_providers=list(cooling_down),
+                    unsupported_providers=unsupported,
+                    minimum_interval_minutes=MINIMUM_INTERVAL_MINUTES,
+                    reason="A usage-check cycle is already running or reserved",
+                )
+            due, cooling_down = self.partition_providers(force=True)
+            if not due:
+                return UsageCheckRunResponse(
+                    status=UsageCheckRunStatus.NOT_DUE,
+                    scheduled_providers=[],
+                    cooling_down_providers=list(cooling_down),
+                    unsupported_providers=unsupported,
+                    minimum_interval_minutes=MINIMUM_INTERVAL_MINUTES,
+                    reason=(
+                        "All configured supported providers are within the "
+                        f"{MINIMUM_INTERVAL_MINUTES}-minute minimum interval"
+                    ),
+                )
+            self._reserved = _ManualCycleReservation(cycle_id=cycle_id, providers=due)
+            return UsageCheckRunResponse(
+                status=UsageCheckRunStatus.ACCEPTED,
+                cycle_id=cycle_id,
+                scheduled_providers=list(due),
+                cooling_down_providers=list(cooling_down),
+                unsupported_providers=unsupported,
+                minimum_interval_minutes=MINIMUM_INTERVAL_MINUTES,
+                reason=None,
+            )
 
     async def _openai_usage_check(self) -> ProviderRun:
         headers = {
@@ -217,42 +308,74 @@ class UsageMonitor:
         self, force: bool = False, cycle_id: str | None = None
     ) -> list[UsageCheckRecord]:
         if not self.settings.usage_check_enabled or not self.settings.allow_paid_runs:
+            async with self._schedule_lock:
+                self._clear_reservation(cycle_id)
             return []
-        if self._lock.locked():
+
+        async with self._schedule_lock:
+            reserved = self._reserved
+            if reserved is not None and (not cycle_id or reserved.cycle_id != cycle_id):
+                return []
+            is_reserved_owner = (
+                reserved is not None and cycle_id is not None and reserved.cycle_id == cycle_id
+            )
+
+        # Periodic passes skip when another cycle holds the lock. A reserved manual
+        # cycle waits instead of returning empty after the API already accepted it.
+        if not is_reserved_owner and self._lock.locked():
             return []
+
         async with self._lock:
-            cycle_id = cycle_id or f"USAGE-{secrets.token_hex(5).upper()}"
-            readiness = self.settings.usage_check_readiness()
-            now = datetime.now(timezone.utc)
-            records: list[UsageCheckRecord] = []
-            providers = tuple(provider for provider in self.providers if provider in SUPPORTED_PROVIDERS)
-            for index, provider in enumerate(providers):
-                if not self._is_due(provider, now, force):
-                    continue
-                if not readiness.get(provider, False):
-                    record = UsageCheckRecord(
-                        cycle_id=cycle_id,
-                        provider=provider,
-                        status=UsageCheckStatus.SKIPPED,
-                        error="Provider credential is not configured",
-                    )
-                else:
-                    try:
-                        run = await self._prompt(provider)
-                        record = self._record_from_run(cycle_id, provider, run)
-                    except Exception as exc:
+            try:
+                async with self._schedule_lock:
+                    reserved = self._reserved
+                    if reserved is not None:
+                        if not cycle_id or reserved.cycle_id != cycle_id:
+                            return []
+                        provider_filter = set(reserved.providers)
+                        self._reserved = None
+                    else:
+                        provider_filter = None
+
+                cycle_id = cycle_id or f"USAGE-{secrets.token_hex(5).upper()}"
+                readiness = self.settings.usage_check_readiness()
+                now = datetime.now(timezone.utc)
+                records: list[UsageCheckRecord] = []
+                providers = self.supported_providers
+                for index, provider in enumerate(providers):
+                    if provider_filter is not None and provider not in provider_filter:
+                        continue
+                    if not self._is_due(provider, now, force):
+                        continue
+                    if not readiness.get(provider, False):
                         record = UsageCheckRecord(
                             cycle_id=cycle_id,
                             provider=provider,
-                            status=UsageCheckStatus.ERROR,
-                            error=f"{type(exc).__name__}: {exc}"[:2_000],
+                            status=UsageCheckStatus.SKIPPED,
+                            error="Provider credential is not configured",
                         )
-                self.store.add_usage_check(record)
-                records.append(record)
-                if index < len(providers) - 1:
-                    await asyncio.sleep(max(0, min(self.settings.usage_check_provider_delay_seconds, 60)))
-            await self._post_summary(records)
-            return records
+                    else:
+                        try:
+                            run = await self._prompt(provider)
+                            record = self._record_from_run(cycle_id, provider, run)
+                        except Exception as exc:
+                            record = UsageCheckRecord(
+                                cycle_id=cycle_id,
+                                provider=provider,
+                                status=UsageCheckStatus.ERROR,
+                                error=f"{type(exc).__name__}: {exc}"[:2_000],
+                            )
+                    self.store.add_usage_check(record)
+                    records.append(record)
+                    if index < len(providers) - 1:
+                        await asyncio.sleep(
+                            max(0, min(self.settings.usage_check_provider_delay_seconds, 60))
+                        )
+                await self._post_summary(records)
+                return records
+            finally:
+                async with self._schedule_lock:
+                    self._clear_reservation(cycle_id)
 
     async def run_forever(self) -> None:
         if not self.settings.usage_check_enabled:

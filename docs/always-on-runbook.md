@@ -44,6 +44,14 @@ The health response also includes `usage_monitor`. Its `latest` list shows the m
 
 To pause the checks without disabling ordinary approved work, set `USAGE_CHECK_ENABLED=false` and restart `orchestrator`. To request one bounded cycle ahead of the normal six-hour cadence, call `POST /v1/usage-checks/run` with the local bearer secret. The endpoint still refuses to run unless both `USAGE_CHECK_ENABLED` and `ALLOW_PAID_RUNS` are true, and it never bypasses the 15-minute per-provider minimum.
 
+The manual endpoint returns a structured schedule contract instead of an ambiguous acceptance:
+
+- `202` + `status=accepted` when at least one configured supported provider is due. The body lists `scheduled_providers` and any `cooling_down_providers`, and only then schedules the background cycle.
+- `200` + `status=not_due` when every configured supported provider is still inside the 15-minute minimum. No `cycle_id` is accepted and no background work is scheduled.
+- `409` + `status=busy` when a cycle is already running or reserved, so callers cannot be promised records another pass cannot create.
+
+Edge Oracle recovery note: isolated live-validation used to wait for three records after every accepted `cycle_id`. When providers were cooling down, that wait timed out and could close paid-run switches even though no probes were due. The shared schedule contract fixes that for every deployment that calls the endpoint; do not encode Edge Oracle committee rules into global Director governance.
+
 ## Scheduled recovery soak
 
 The repository runs a bounded recovery probe every six hours and supports manual runs from GitHub Actions. Each scheduled job performs 12 independent cycles. Every cycle starts three separate Python processes against the same temporary SQLite database: one seeds an in-progress task with a recorded terminal provider result, one recovers and accepts it, and one verifies that a second recovery is an idempotent no-op.

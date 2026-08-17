@@ -75,9 +75,13 @@ class UppercutDeploymentContractTests(unittest.TestCase):
 
     def test_provider_probe_is_bound_to_one_exact_cycle_and_status_set(self):
         self.assertIn("$cycleId = [string]$accepted.cycle_id", self.script)
+        self.assertIn("$scheduledProviders = @(", self.script)
         self.assertIn("$_.cycle_id -ceq $cycleId", self.script)
+        self.assertIn("$_.provider -in $scheduledProviders", self.script)
         self.assertIn('$_.status -notin @("ok", "prompted")', self.script)
-        self.assertIn("did not return exactly one result", self.script)
+        self.assertIn("did not return exactly one result for each scheduled", self.script)
+        self.assertIn('$runStatus -ceq "not_due"', self.script)
+        self.assertIn("Skipping paid provider probes for this cycle.", self.script)
 
     def test_acl_precedes_every_secret_read_or_write(self):
         acl = self.script.index("& icacls.exe")
