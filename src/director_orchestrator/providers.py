@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import deepcopy
 from typing import Any
 
 import httpx
@@ -10,11 +11,6 @@ from .config import Settings
 from .models import Assignment, ProviderName, ProviderRun
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
-_MISSING_STARTING_REF_MARKERS = (
-    "github branch not found",
-    "deleted after its pull request merged",
-    "choose an existing branch and try again",
-)
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
 
 
@@ -178,7 +174,7 @@ class CursorAdapter(ProviderAdapter):
                 response = await client.post(
                     f"{self.settings.cursor_api_base}/v1/agents",
                     headers=self.headers,
-                    json=body,
+                    json=deepcopy(body),
                 )
             if response.status_code < 400:
                 break
