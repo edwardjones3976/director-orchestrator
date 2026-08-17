@@ -250,7 +250,9 @@ function Get-UsageProviderNames {
     param($Values)
 
     if ($null -eq $Values) { return @() }
-    return @($Values | ForEach-Object { [string]$_ })
+    # Force array enumeration: a bare string (single-element JSON unwrap) would
+    # otherwise pipe character-by-character through ForEach-Object.
+    return @(@($Values) | ForEach-Object { [string]$_ })
 }
 
 function Assert-UsageProviderPartition {
@@ -510,6 +512,9 @@ try {
     Assert-Ready -Health $health
 
     $accepted = Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/run" -Method Post -Headers $headers -TimeoutSec 30
+    # Freeze cooling age to accept time; waiting for scheduled probes must not
+    # expire evidence that justified cooling_down_providers at reserve time.
+    $acceptedAt = [DateTimeOffset]::UtcNow
     $runStatus = [string]$accepted.status
     $partition = Assert-UsageProviderPartition `
         -ScheduledProviders $accepted.scheduled_providers `
@@ -591,7 +596,7 @@ try {
     $coolingEvidence = Assert-CoolingProviderEvidence `
         -Providers $coolingProviders `
         -LatestRecords $latest `
-        -Now ([DateTimeOffset]::UtcNow)
+        -Now $acceptedAt
     $allEvidence = @($scheduledEvidence + $coolingEvidence)
     $allEvidence | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
 

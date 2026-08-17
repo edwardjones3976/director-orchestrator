@@ -312,6 +312,48 @@ class PartialDueEvidenceTests(unittest.TestCase):
                 now=self.now,
             )
 
+    def test_accepted_cooling_age_uses_started_at_not_post_wait_now(self):
+        """Waiting for scheduled probes must not expire accept-time cooling evidence."""
+        started = self.now
+        post_wait = self.now + timedelta(minutes=6)
+        records = [
+            {
+                "provider": "openai",
+                "status": "ok",
+                "checked_at": _ts(post_wait, minutes_ago=0.5),
+                "cycle_id": "USAGE-PARTIAL001",
+            },
+            {
+                "provider": "claude",
+                "status": "ok",
+                # ~14 minutes old at started_at (still cooling); ~20 at post_wait.
+                "checked_at": _ts(started, minutes_ago=14),
+                "cycle_id": "USAGE-OLD0000001",
+            },
+            {
+                "provider": "cursor",
+                "status": "prompted",
+                "checked_at": _ts(started, minutes_ago=14),
+                "cycle_id": "USAGE-OLD0000002",
+            },
+        ]
+        with self.assertRaisesRegex(UsageLiveValidationError, "outside the 15-minute"):
+            assert_cooling_success_evidence(
+                providers=["claude", "cursor"],
+                latest_records=records,
+                now=post_wait,
+            )
+        accepted = evaluate_usage_live_validation(
+            run_status="accepted",
+            scheduled_providers=["openai"],
+            cooling_down_providers=["claude", "cursor"],
+            latest_records=records,
+            cycle_id="USAGE-PARTIAL001",
+            started_at=started,
+            now=post_wait,
+        )
+        self.assertEqual(len(accepted), 3)
+
     def test_scheduled_evidence_rejects_wrong_cycle_stale_and_unsuccessful(self):
         with self.assertRaisesRegex(UsageLiveValidationError, "Missing exact-cycle"):
             assert_scheduled_cycle_evidence(

@@ -2,7 +2,9 @@
 
 The Windows validation script mirrors these rules. Keep both paths aligned: a
 cooling provider may only count as ready when its latest record is inside the
-15-minute window and status is exactly ok or prompted.
+15-minute window and status is exactly ok or prompted. For accepted partial
+schedules, judge cooling age at cycle accept/start time—not after waiting for
+scheduled probes—so near-boundary cooling evidence cannot expire mid-wait.
 """
 
 from __future__ import annotations
@@ -235,10 +237,13 @@ def evaluate_usage_live_validation(
             records=latest_records,
             started_at=started_at,
         )
+        # Freeze cooling judgment to started_at (accept/cycle start). Callers may
+        # pass a later wall-clock `now` after waiting on scheduled probes; that
+        # must not expire evidence that was valid when the schedule was accepted.
         cooling_records = assert_cooling_success_evidence(
             providers=cooling,
             latest_records=latest_records,
-            now=now,
+            now=started_at,
         )
         return [*scheduled_records, *cooling_records]
     raise UsageLiveValidationError(f"Unsupported usage-check run status {status!r}")

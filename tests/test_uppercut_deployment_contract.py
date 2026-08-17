@@ -72,6 +72,11 @@ class UppercutDeploymentContractTests(unittest.TestCase):
             line for line in self.script.splitlines() if "$latest = @(Invoke-RestMethod" in line
         )
         self.assertIn("| ForEach-Object { $_ })", latest_line)
+        names_fn = self.script[
+            self.script.index("function Get-UsageProviderNames") :
+            self.script.index("function Assert-UsageProviderPartition")
+        ]
+        self.assertIn("@($Values)", names_fn)
 
     def test_provider_probe_is_bound_to_one_exact_cycle_and_status_set(self):
         self.assertIn("$cycleId = [string]$accepted.cycle_id", self.script)
@@ -114,6 +119,8 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         ]
         self.assertIn("Assert-ScheduledCycleEvidence", accepted)
         self.assertIn("Assert-CoolingProviderEvidence", accepted)
+        self.assertIn("-Now $acceptedAt", accepted)
+        self.assertNotIn("-Now ([DateTimeOffset]::UtcNow)", accepted)
 
     def test_acl_precedes_every_secret_read_or_write(self):
         acl = self.script.index("& icacls.exe")
