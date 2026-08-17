@@ -106,6 +106,7 @@ class OpenAIDirector:
                 "Use Cursor as the other primary repository teammate for coding overflow, independent second passes, and cloud-agent automation.",
                 "Use Gemini or Perplexity only as supplemental specialists when their distinct sandbox, validation, research, or sourcing strengths materially help.",
                 "Use owner for ambiguity, unavailable specialists, quota exhaustion, or approval-gated actions.",
+                "Never set starting_ref to a Cursor auto-generated cursor/... working branch. Those branches are deleted after their pull requests merge; use only a durable allowlisted ref such as main.",
             ],
         }
         return await self._structured(json.dumps(request), DirectorPlan, "director_plan")

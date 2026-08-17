@@ -77,9 +77,16 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             if not allowed_refs:
                 errors.add("starting-ref allowlist is not configured")
             elif assignment.starting_ref not in allowed_refs:
-                errors.add(
-                    f"assignment {assignment.sequence}: starting ref is not allowlisted: {assignment.starting_ref}"
-                )
+                if assignment.starting_ref.startswith("cursor/"):
+                    errors.add(
+                        f"assignment {assignment.sequence}: starting ref is a Cursor "
+                        "working branch that is deleted after merge: "
+                        f"{assignment.starting_ref}"
+                    )
+                else:
+                    errors.add(
+                        f"assignment {assignment.sequence}: starting ref is not allowlisted: {assignment.starting_ref}"
+                    )
         for dependency in assignment.depends_on:
             if dependency not in sequence_set:
                 errors.add(

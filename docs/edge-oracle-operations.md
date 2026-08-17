@@ -164,11 +164,14 @@ genuinely green.
 
 Cursor dispatch retries only explicit HTTP 429 pre-creation responses, including its
 `resource_exhausted` GitHub-installation lookup response, using a bounded provider
-`Retry-After` value. It does not retry timeouts, connection failures, or generic 5xx
-responses because an agent may already have been created and a blind retry could duplicate
-paid work. Tune only `CURSOR_DISPATCH_MAX_ATTEMPTS` and
-`CURSOR_DISPATCH_MAX_RETRY_DELAY_SECONDS`; exhaustion still fails closed for operator
-recovery.
+`Retry-After` value. A separate one-shot retry applies when create or follow-up fails
+because a Cursor `cursor/...` working branch was deleted after merge: create retries
+once against the first `ALLOWED_STARTING_REFS` value, and follow-up starts a new agent
+from that durable ref. It does not retry timeouts, connection failures, generic 5xx
+responses, or a missing durable ref such as `main`, because an agent may already have
+been created and a blind retry could duplicate paid work. Tune only
+`CURSOR_DISPATCH_MAX_ATTEMPTS` and `CURSOR_DISPATCH_MAX_RETRY_DELAY_SECONDS`;
+exhaustion still fails closed for operator recovery.
 
 ## Rollout boundary
 

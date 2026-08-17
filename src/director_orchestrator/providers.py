@@ -9,9 +9,50 @@ import httpx
 from .config import Settings
 from .models import Assignment, ProviderName, ProviderRun
 
+_CURSOR_WORKING_REF_PREFIX = "cursor/"
+_MISSING_STARTING_REF_MARKERS = (
+    "github branch not found",
+    "deleted after its pull request merged",
+    "choose an existing branch and try again",
+)
+_MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
+
 
 class ProviderError(RuntimeError):
     pass
+
+
+def _response_error_blob(response: httpx.Response) -> str:
+    parts: list[str] = []
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError, TypeError):
+        payload = None
+    if payload is not None:
+        try:
+            parts.append(json.dumps(payload, ensure_ascii=False))
+        except (TypeError, ValueError):
+            parts.append(str(payload))
+    text = getattr(response, "text", None)
+    if isinstance(text, str) and text:
+        parts.append(text)
+    return "\n".join(parts).lower()
+
+
+def _is_missing_starting_ref_error(response: httpx.Response) -> bool:
+    """True only for a pre-creation missing GitHub starting ref."""
+    if response.status_code not in _MISSING_STARTING_REF_STATUSES:
+        return False
+    blob = _response_error_blob(response)
+    return "github branch not found" in blob or (
+        "branch" in blob
+        and "does not exist" in blob
+        and "deleted after its pull request merged" in blob
+    )
+
+
+def _is_cursor_working_ref(ref: str) -> bool:
+    return ref.startswith(_CURSOR_WORKING_REF_PREFIX)
 
 
 class ProviderAdapter:
@@ -77,10 +118,45 @@ class CursorAdapter(ProviderAdapter):
             float(max(0, self.settings.cursor_dispatch_max_retry_delay_seconds)),
         )
 
-    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+    def _body_starting_ref(self, body: dict[str, Any]) -> str | None:
+        repos = body.get("repos")
+        if not isinstance(repos, list) or not repos or not isinstance(repos[0], dict):
+            return None
+        ref = repos[0].get("startingRef")
+        return ref if isinstance(ref, str) and ref else None
+
+    def _fallback_starting_ref(self, requested: str | None) -> str | None:
+        if not requested or not _is_cursor_working_ref(requested):
+            return None
+        allowed = [item for item in self.settings.allowed_starting_refs if item]
+        if not allowed:
+            return None
+        default = allowed[0]
+        if requested == default:
+            return None
+        return default
+
+    def _apply_starting_ref_fallback(self, body: dict[str, Any]) -> bool:
+        requested = self._body_starting_ref(body)
+        fallback = self._fallback_starting_ref(requested)
+        if fallback is None:
+            return False
+        repos = body.get("repos")
+        if not isinstance(repos, list) or not repos or not isinstance(repos[0], dict):
+            return False
+        repos[0]["startingRef"] = fallback
+        return True
+
+    def _dispatch_body(self, assignment: Assignment, context: str) -> dict[str, Any]:
         body: dict[str, Any] = {
             "name": f"Director task {assignment.sequence}",
-            "prompt": {"text": f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"},
+            "prompt": {
+                "text": (
+                    f"{assignment.task}\n\nAcceptance checks:\n- "
+                    + "\n- ".join(assignment.acceptance)
+                    + f"\n\nContext:\n{context}"
+                )
+            },
             "workOnCurrentBranch": False,
             "autoCreatePR": assignment.allow_draft_pr,
             "skipReviewerRequest": False,
@@ -90,8 +166,14 @@ class CursorAdapter(ProviderAdapter):
             if "://" not in repository_url:
                 repository_url = f"https://github.com/{repository_url.removesuffix('.git')}"
             body["repos"] = [{"url": repository_url, "startingRef": assignment.starting_ref}]
+        return body
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        body = self._dispatch_body(assignment, context)
         attempts = max(1, self.settings.cursor_dispatch_max_attempts)
-        for attempt in range(attempts):
+        fallback_used = False
+        attempt = 0
+        while True:
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(
                     f"{self.settings.cursor_api_base}/v1/agents",
@@ -100,12 +182,18 @@ class CursorAdapter(ProviderAdapter):
                 )
             if response.status_code < 400:
                 break
+            if (
+                not fallback_used
+                and _is_missing_starting_ref_error(response)
+                and self._apply_starting_ref_fallback(body)
+            ):
+                fallback_used = True
+                continue
             delay = self._retry_delay(response, attempt)
             if delay is None or attempt + 1 >= attempts:
                 response.raise_for_status()
             await asyncio.sleep(delay)
-        else:  # pragma: no cover - the bounded loop always returns or raises
-            raise ProviderError("Cursor dispatch exhausted its bounded retry loop")
+            attempt += 1
         payload = response.json()
         return ProviderRun(
             provider=self.name,
@@ -140,9 +228,35 @@ class CursorAdapter(ProviderAdapter):
                 headers=self.headers,
                 json={"prompt": {"text": prompt}},
             )
-            response.raise_for_status()
-        payload = response.json()["run"]
-        return ProviderRun(provider=self.name, run_id=payload["id"], session_id=run.session_id, status=payload["status"], url=run.url, raw=payload)
+        if response.status_code < 400:
+            payload = response.json()["run"]
+            return ProviderRun(
+                provider=self.name,
+                run_id=payload["id"],
+                session_id=run.session_id,
+                status=payload["status"],
+                url=run.url,
+                raw=payload,
+            )
+        if _is_missing_starting_ref_error(response):
+            if assignment is None:
+                raise ProviderError(
+                    "Cursor follow-up failed because its working branch is gone; "
+                    "a fresh dispatch requires the bounded assignment"
+                )
+            fallback = self._fallback_starting_ref(assignment.starting_ref)
+            revised = assignment.model_copy(
+                update={
+                    "task": (
+                        f"{assignment.task}\n\nRevision required after the prior "
+                        f"Cursor working branch was deleted:\n{prompt}"
+                    ),
+                    "starting_ref": fallback or assignment.starting_ref,
+                }
+            )
+            return await self.dispatch(revised, context or "")
+        response.raise_for_status()
+        raise ProviderError("Cursor follow-up returned an empty success payload")
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         # An authenticated read, not an agent launch. Verified live 2026-08-14:
