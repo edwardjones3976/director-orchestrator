@@ -9,6 +9,7 @@ from director_orchestrator.config import Settings
 from director_orchestrator.models import (
     ProviderName,
     ProviderRun,
+    UsageCheckRecord,
     UsageCheckRunStatus,
     UsageCheckStatus,
 )
@@ -310,7 +311,14 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
             monitor = UsageMonitor(settings, store, adapters={ProviderName.CURSOR: adapter})
-            await monitor.run_once(force=True, cycle_id="USAGE-PARTIAL001")
+            store.add_usage_check(
+                UsageCheckRecord(
+                    cycle_id="USAGE-PARTIAL001",
+                    provider="cursor",
+                    status=UsageCheckStatus.OK,
+                    response_text="seeded cooldown",
+                )
+            )
 
             plan = await monitor.reserve_manual_cycle("USAGE-PARTIAL002")
             self.assertEqual(plan.status, UsageCheckRunStatus.ACCEPTED)
@@ -320,7 +328,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             records = await monitor.run_once(force=True, cycle_id="USAGE-PARTIAL002")
             self.assertEqual([record.provider for record in records], ["openai"])
             self.assertEqual(records[0].status, UsageCheckStatus.SKIPPED)
-            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(adapter.calls, 0)
 
     async def test_reserve_manual_cycle_busy_when_lock_held(self):
         with tempfile.TemporaryDirectory() as directory:
