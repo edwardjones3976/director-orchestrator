@@ -75,13 +75,45 @@ class UppercutDeploymentContractTests(unittest.TestCase):
 
     def test_provider_probe_is_bound_to_one_exact_cycle_and_status_set(self):
         self.assertIn("$cycleId = [string]$accepted.cycle_id", self.script)
-        self.assertIn("$scheduledProviders = @(", self.script)
+        self.assertIn("Assert-UsageProviderPartition", self.script)
+        self.assertIn("Assert-CoolingProviderEvidence", self.script)
+        self.assertIn("Assert-ScheduledCycleEvidence", self.script)
         self.assertIn("$_.cycle_id -ceq $cycleId", self.script)
-        self.assertIn("$_.provider -in $scheduledProviders", self.script)
-        self.assertIn('$_.status -notin @("ok", "prompted")', self.script)
-        self.assertIn("did not return exactly one result for each scheduled", self.script)
+        self.assertIn('[string]$_.provider -in $scheduledProviders', self.script)
+        self.assertIn('[string]$_.status -notin @("ok", "prompted")', self.script)
         self.assertIn('$runStatus -ceq "not_due"', self.script)
-        self.assertIn("Skipping paid provider probes for this cycle.", self.script)
+        self.assertIn("Verifying recent successful evidence for:", self.script)
+        self.assertNotIn("Skipping paid provider probes for this cycle.", self.script)
+        self.assertNotIn("LIVE VALIDATION PASSED (cooldown/no-due)", self.script)
+        self.assertIn(
+            "only ok/prompted evidence is acceptable",
+            self.script,
+        )
+
+    def test_usage_cooldown_evidence_fails_closed_for_error_and_skipped(self):
+        cooling_fn = self.script[
+            self.script.index("function Assert-CoolingProviderEvidence") :
+            self.script.index("function Assert-ScheduledCycleEvidence")
+        ]
+        self.assertIn('$status -notin @("ok", "prompted")', cooling_fn)
+        self.assertIn("FromMinutes($CooldownWindowMinutes)", cooling_fn)
+        self.assertIn("Ambiguous usage evidence", cooling_fn)
+        self.assertIn("Missing latest usage record", cooling_fn)
+
+        not_due = self.script[
+            self.script.index('$runStatus -ceq "not_due"') :
+            self.script.index('$runStatus -cne "accepted"')
+        ]
+        self.assertIn("Assert-CoolingProviderEvidence", not_due)
+        self.assertIn("/v1/usage-checks/latest", not_due)
+        self.assertIn("LIVE VALIDATION PASSED.", not_due)
+
+        accepted = self.script[
+            self.script.index("Bounded check cycle $cycleId accepted") :
+            self.script.index("Provider checks passed, but the complete isolated stack")
+        ]
+        self.assertIn("Assert-ScheduledCycleEvidence", accepted)
+        self.assertIn("Assert-CoolingProviderEvidence", accepted)
 
     def test_acl_precedes_every_secret_read_or_write(self):
         acl = self.script.index("& icacls.exe")

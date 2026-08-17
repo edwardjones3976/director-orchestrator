@@ -50,7 +50,7 @@ The manual endpoint returns a structured schedule contract instead of an ambiguo
 - `200` + `status=not_due` when every configured supported provider is still inside the 15-minute minimum. No `cycle_id` is accepted and no background work is scheduled.
 - `409` + `status=busy` when a cycle is already running or reserved, so callers cannot be promised records another pass cannot create.
 
-Edge Oracle recovery note: isolated live-validation used to wait for three records after every accepted `cycle_id`. When providers were cooling down, that wait timed out and could close paid-run switches even though no probes were due. The shared schedule contract fixes that for every deployment that calls the endpoint; do not encode Edge Oracle committee rules into global Director governance.
+Edge Oracle recovery note: isolated live-validation used to wait for three records after every accepted `cycle_id`. When providers were cooling down, that wait timed out and could close paid-run switches even though no probes were due. The shared schedule contract fixes that for every deployment that calls the endpoint; do not encode Edge Oracle committee rules into global Director governance. Live validation still fail-closes unless every cooling primary provider has a latest `ok`/`prompted` record inside the 15-minute window—recent `error` or `skipped` results are not treated as readiness.
 
 ## Scheduled recovery soak
 

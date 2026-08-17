@@ -246,6 +246,115 @@ function Assert-Ready {
     }
 }
 
+function Get-UsageProviderNames {
+    param($Values)
+
+    if ($null -eq $Values) { return @() }
+    return @($Values | ForEach-Object { [string]$_ })
+}
+
+function Assert-UsageProviderPartition {
+    param(
+        [Parameter(Mandatory = $true)]$ScheduledProviders,
+        [Parameter(Mandatory = $true)]$CoolingDownProviders,
+        [string[]]$ExpectedPrimary = @("claude", "cursor", "openai")
+    )
+
+    $scheduled = @(Get-UsageProviderNames -Values $ScheduledProviders)
+    $cooling = @(Get-UsageProviderNames -Values $CoolingDownProviders)
+    if ($scheduled.Count -ne @($scheduled | Sort-Object -Unique).Count) {
+        throw "scheduled_providers contains duplicates."
+    }
+    if ($cooling.Count -ne @($cooling | Sort-Object -Unique).Count) {
+        throw "cooling_down_providers contains duplicates."
+    }
+    $scheduledSorted = @($scheduled | Sort-Object)
+    $coolingSorted = @($cooling | Sort-Object)
+    $expectedSorted = @($ExpectedPrimary | Sort-Object)
+    $unknown = @(Compare-Object -ReferenceObject $expectedSorted -DifferenceObject @($scheduledSorted + $coolingSorted | Sort-Object -Unique) |
+        Where-Object { $_.SideIndicator -eq "=>" } |
+        ForEach-Object { [string]$_.InputObject })
+    if ($unknown.Count -gt 0) {
+        throw "Unknown providers in schedule response: $($unknown -join ', ')."
+    }
+    $overlap = @($scheduledSorted | Where-Object { $coolingSorted -contains $_ })
+    if ($overlap.Count -gt 0) {
+        throw "scheduled_providers and cooling_down_providers overlap: $($overlap -join ', ')."
+    }
+    $covered = @($scheduledSorted + $coolingSorted | Sort-Object -Unique)
+    if (@(Compare-Object -ReferenceObject $expectedSorted -DifferenceObject $covered).Count -ne 0) {
+        throw "scheduled_providers and cooling_down_providers must partition expected primary providers $($expectedSorted -join ', '); got $($covered -join ', ')."
+    }
+    return [pscustomobject]@{
+        ScheduledProviders = $scheduledSorted
+        CoolingDownProviders = $coolingSorted
+    }
+}
+
+function Assert-CoolingProviderEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Providers,
+        [Parameter(Mandatory = $true)]$LatestRecords,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$Now,
+        [int]$CooldownWindowMinutes = 15
+    )
+
+    $accepted = @()
+    foreach ($provider in $Providers) {
+        $matches = @($LatestRecords | Where-Object { [string]$_.provider -ceq $provider })
+        if ($matches.Count -eq 0) {
+            throw "Missing latest usage record for cooling provider $provider."
+        }
+        if ($matches.Count -ne 1) {
+            throw "Ambiguous usage evidence for provider ${provider}: $($matches.Count) records."
+        }
+        $record = $matches[0]
+        $status = [string]$record.status
+        if ($status -notin @("ok", "prompted")) {
+            throw "Cooling provider $provider latest status is '$status'; only ok/prompted evidence is acceptable."
+        }
+        $checkedAt = [DateTimeOffset]::Parse([string]$record.checked_at)
+        $age = $Now - $checkedAt
+        if ($age -lt [TimeSpan]::Zero -or $age -ge [TimeSpan]::FromMinutes($CooldownWindowMinutes)) {
+            throw "Cooling provider $provider latest check is outside the ${CooldownWindowMinutes}-minute cooldown window."
+        }
+        $accepted += $record
+    }
+    return $accepted
+}
+
+function Assert-ScheduledCycleEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Providers,
+        [Parameter(Mandatory = $true)][string]$CycleId,
+        [Parameter(Mandatory = $true)]$Records,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$StartedAt
+    )
+
+    $matched = @($Records | Where-Object {
+        [string]$_.cycle_id -ceq $CycleId -and
+        [string]$_.provider -in $Providers -and
+        [DateTimeOffset]::Parse([string]$_.checked_at) -ge $StartedAt
+    })
+    $accepted = @()
+    foreach ($provider in $Providers) {
+        $matches = @($matched | Where-Object { [string]$_.provider -ceq $provider })
+        if ($matches.Count -eq 0) {
+            throw "Missing exact-cycle usage record for scheduled provider $provider."
+        }
+        if ($matches.Count -ne 1) {
+            throw "Ambiguous usage evidence for provider ${provider}: $($matches.Count) records."
+        }
+        $record = $matches[0]
+        $status = [string]$record.status
+        if ($status -notin @("ok", "prompted")) {
+            throw "Scheduled provider $provider status is '$status'; only ok/prompted evidence is acceptable."
+        }
+        $accepted += $record
+    }
+    return $accepted
+}
+
 if ($EnablePaidRuns -and $SkipProviderChecks) {
     throw "-SkipProviderChecks cannot be combined with -EnablePaidRuns. Provider readiness is a required paid-run gate."
 }
@@ -402,16 +511,26 @@ try {
 
     $accepted = Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/run" -Method Post -Headers $headers -TimeoutSec 30
     $runStatus = [string]$accepted.status
+    $partition = Assert-UsageProviderPartition `
+        -ScheduledProviders $accepted.scheduled_providers `
+        -CoolingDownProviders $accepted.cooling_down_providers
+    $scheduledProviders = @($partition.ScheduledProviders)
+    $coolingProviders = @($partition.CoolingDownProviders)
+
     if ($runStatus -ceq "not_due") {
-        $cooling = @($accepted.cooling_down_providers | ForEach-Object { [string]$_ })
         Write-Host (
             "No usage-check providers are due under the 15-minute minimum. " +
-            "Cooling down: $(if ($cooling.Count -gt 0) { $cooling -join ', ' } else { '(none)' }). " +
-            "Skipping paid provider probes for this cycle."
+            "Verifying recent successful evidence for: $($coolingProviders -join ', ')."
         )
+        $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30 | ForEach-Object { $_ })
+        $evidence = Assert-CoolingProviderEvidence `
+            -Providers $coolingProviders `
+            -LatestRecords $latest `
+            -Now ([DateTimeOffset]::UtcNow)
+        $evidence | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
         docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
-        if ($LASTEXITCODE -ne 0) { throw "Cooldown handled, but the complete isolated stack did not start." }
-        Write-Host "LIVE VALIDATION PASSED (cooldown/no-due). Paid execution remains enabled only for the isolated $displayName deployment."
+        if ($LASTEXITCODE -ne 0) { throw "Cooldown evidence accepted, but the complete isolated stack did not start." }
+        Write-Host "LIVE VALIDATION PASSED. Paid execution is enabled only for the isolated $displayName deployment."
         return
     }
     if ($runStatus -cne "accepted") {
@@ -421,48 +540,60 @@ try {
     if ($cycleId -notmatch '^USAGE-[A-F0-9]{10}$') {
         throw "The usage-check endpoint did not return a valid cycle identifier."
     }
-    $scheduledProviders = @(
-        $accepted.scheduled_providers |
-            ForEach-Object { [string]$_ } |
-            Where-Object { $_ -in @("openai", "claude", "cursor") } |
-            Sort-Object -Unique
-    )
     if ($scheduledProviders.Count -eq 0) {
         throw "The usage-check endpoint accepted a cycle but scheduled no primary providers."
     }
     Write-Host (
         "Bounded check cycle $cycleId accepted. Waiting for scheduled providers: " +
-        ($scheduledProviders -join ", ") + "..."
+        ($scheduledProviders -join ", ") +
+        $(if ($coolingProviders.Count -gt 0) { "; verifying cooling providers: $($coolingProviders -join ', ')" } else { "" }) +
+        "..."
     )
 
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
-    $records = @()
+    $latest = @()
+    $scheduledReady = $false
     do {
         Start-Sleep -Seconds 5
         $latest = @(Invoke-RestMethod -Uri "${baseUrl}/v1/usage-checks/latest" -Method Get -Headers $headers -TimeoutSec 30 | ForEach-Object { $_ })
-        $records = @($latest | Where-Object {
-            $_.cycle_id -ceq $cycleId -and
-            $_.provider -in $scheduledProviders -and
-            [DateTimeOffset]::Parse($_.checked_at) -ge $startedAt
+        $matched = @($latest | Where-Object {
+            [string]$_.cycle_id -ceq $cycleId -and
+            [string]$_.provider -in $scheduledProviders -and
+            [DateTimeOffset]::Parse([string]$_.checked_at) -ge $startedAt
         })
-        $observedProviders = @($records | ForEach-Object { [string]$_.provider } | Sort-Object -Unique)
+        $failed = @($matched | Where-Object { [string]$_.status -notin @("ok", "prompted") })
+        if ($failed.Count -gt 0) {
+            $names = @($failed | ForEach-Object { [string]$_.provider } | Sort-Object -Unique)
+            throw "Scheduled provider checks returned unsuccessful status for: $($names -join ', ')."
+        }
+        $ambiguous = @($scheduledProviders | Where-Object {
+            $provider = $_
+            @($matched | Where-Object { [string]$_.provider -ceq $provider }).Count -gt 1
+        })
+        if ($ambiguous.Count -gt 0) {
+            throw "Ambiguous usage evidence for provider $($ambiguous[0])."
+        }
+        $observedProviders = @($matched | ForEach-Object { [string]$_.provider } | Sort-Object -Unique)
+        $scheduledReady = ($observedProviders.Count -eq $scheduledProviders.Count)
     } while (
-        $observedProviders.Count -lt $scheduledProviders.Count -and
+        -not $scheduledReady -and
         [DateTimeOffset]::UtcNow -lt $deadline
     )
 
-    $observedProviders = @($records | ForEach-Object { [string]$_.provider } | Sort-Object -Unique)
-    if ($observedProviders.Count -lt $scheduledProviders.Count) {
+    if (-not $scheduledReady) {
         throw "Timed out waiting for scheduled provider checks ($($scheduledProviders -join ', ')). Inspect with: docker compose -p $composeProject logs --tail 200 orchestrator"
     }
-
-    if ($records.Count -ne $scheduledProviders.Count -or
-        @(Compare-Object -ReferenceObject $scheduledProviders -DifferenceObject $observedProviders).Count -ne 0) {
-        throw "The bounded cycle did not return exactly one result for each scheduled primary provider."
-    }
-    $records | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
-    $failures = @($records | Where-Object { $_.status -notin @("ok", "prompted") })
-    if ($failures.Count -gt 0) { throw "One or more providers did not return an explicitly successful bounded status." }
+    $scheduledEvidence = Assert-ScheduledCycleEvidence `
+        -Providers $scheduledProviders `
+        -CycleId $cycleId `
+        -Records $latest `
+        -StartedAt $startedAt
+    $coolingEvidence = Assert-CoolingProviderEvidence `
+        -Providers $coolingProviders `
+        -LatestRecords $latest `
+        -Now ([DateTimeOffset]::UtcNow)
+    $allEvidence = @($scheduledEvidence + $coolingEvidence)
+    $allEvidence | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
 
     docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
     if ($LASTEXITCODE -ne 0) { throw "Provider checks passed, but the complete isolated stack did not start." }
