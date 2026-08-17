@@ -131,6 +131,26 @@ class UsageCheckRecord(BaseModel):
     error: str | None = Field(default=None, max_length=2_000)
 
 
+class UsageCheckRunStatus(StrEnum):
+    ACCEPTED = "accepted"
+    NOT_DUE = "not_due"
+    BUSY = "busy"
+
+
+class UsageCheckRunResponse(BaseModel):
+    """Deterministic manual-cycle schedule contract for POST /v1/usage-checks/run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: UsageCheckRunStatus
+    cycle_id: str | None = Field(default=None, min_length=1, max_length=64)
+    scheduled_providers: list[str] = Field(default_factory=list, max_length=20)
+    cooling_down_providers: list[str] = Field(default_factory=list, max_length=20)
+    unsupported_providers: list[str] = Field(default_factory=list, max_length=20)
+    minimum_interval_minutes: int = Field(default=15, ge=15, le=15)
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class AssignmentOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

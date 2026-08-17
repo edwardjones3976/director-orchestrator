@@ -33,8 +33,13 @@ Once a dedicated Slack app and channel are configured in `.env.edge-oracle`, omi
 
 After dedicated Slack and all three provider credentials are configured, an explicitly
 supervised provider validation may use `-EnablePaidRuns`. The script starts only the API,
-keeps Slack intake stopped, waits for fresh OpenAI, Claude, and Cursor checks, and starts
-Slack last. Any failure closes paid and usage switches and leaves Slack stopped.
+keeps Slack intake stopped, requests one bounded usage-check cycle, and starts Slack last.
+It waits for exact-cycle `ok`/`prompted` records for every `scheduled_providers` entry and
+also requires each `cooling_down_providers` entry to have a latest `ok`/`prompted` record
+inside the shared 15-minute window. A `not_due` response is accepted only after that same
+recent-success check against `/v1/usage-checks/latest`; recent `error` or `skipped`
+results fail closed and trigger rollback. Any hard failure closes paid and usage switches
+and leaves Slack stopped.
 
 ## Deterministic exact-SHA merge gate
 

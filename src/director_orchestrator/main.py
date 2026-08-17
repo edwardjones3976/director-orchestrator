@@ -6,6 +6,7 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 
 from . import __version__
 from .approvals import (
@@ -31,6 +32,7 @@ from .models import (
     TaskRecord,
     TaskStatus,
     UsageCheckRecord,
+    UsageCheckRunStatus,
 )
 from .oracle_merge import (
     GitHubOracleGateway,
@@ -113,15 +115,22 @@ def latest_usage_checks() -> list[UsageCheckRecord]:
     return store.latest_usage_checks()
 
 
-@app.post("/v1/usage-checks/run", status_code=202, dependencies=[Depends(require_auth)])
-def run_usage_checks(background: BackgroundTasks) -> dict[str, str]:
+@app.post("/v1/usage-checks/run", dependencies=[Depends(require_auth)])
+async def run_usage_checks(background: BackgroundTasks) -> JSONResponse:
     if not settings.usage_check_enabled:
         raise HTTPException(status_code=409, detail="Periodic usage checks are disabled")
     if not settings.allow_paid_runs:
         raise HTTPException(status_code=409, detail="Paid provider execution is disabled")
     cycle_id = f"USAGE-{secrets.token_hex(5).upper()}"
-    background.add_task(usage_monitor.run_once, True, cycle_id)
-    return {"status": "accepted", "cycle_id": cycle_id}
+    plan = await usage_monitor.reserve_manual_cycle(cycle_id)
+    payload = plan.model_dump(mode="json")
+    if plan.status == UsageCheckRunStatus.ACCEPTED:
+        background.add_task(usage_monitor.run_once, True, cycle_id)
+        return JSONResponse(status_code=202, content=payload)
+    if plan.status == UsageCheckRunStatus.NOT_DUE:
+        # Explicit cooldown response: never advertise an accepted cycle with zero records.
+        return JSONResponse(status_code=200, content=payload)
+    return JSONResponse(status_code=409, content=payload)
 
 
 @app.post("/v1/intake", response_model=TaskRecord, status_code=202, dependencies=[Depends(require_auth)])

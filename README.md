@@ -96,7 +96,13 @@ GET  /v1/usage-checks/latest
 POST /v1/usage-checks/run
 ```
 
-The manual POST respects both safety switches and the 15-minute minimum; it returns `409` while paid execution or periodic checks are disabled.
+The manual POST respects both safety switches and the 15-minute minimum. It returns a structured body:
+
+- `202` `accepted` with `cycle_id` and `scheduled_providers` when work will run
+- `200` `not_due` with `cooling_down_providers` when nothing is due under the minimum interval
+- `409` while paid execution or periodic checks are disabled, or when a cycle is already `busy`
+
+Callers must wait only for the providers listed in `scheduled_providers`, must treat `not_due` as an explicit no-new-work response, and must still prove every cooling primary provider has a recent `ok`/`prompted` record before claiming readiness.
 
 ## Execution profiles and handoffs
 
