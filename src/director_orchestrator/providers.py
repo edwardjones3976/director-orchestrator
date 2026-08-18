@@ -636,9 +636,16 @@ class PerplexityAdapter(ProviderAdapter):
     async def poll(self, run: ProviderRun) -> ProviderRun:
         raise ProviderError("Perplexity API responses are synchronous and cannot be polled")
 
-    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
-        del run
-        self._require_research_only()
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
+        del run, context
+        self._require_research_only(assignment)
         body = {"query": prompt, "max_results": self.settings.perplexity_max_results}
         async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
             response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)

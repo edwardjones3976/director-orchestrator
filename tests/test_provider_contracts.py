@@ -605,6 +605,49 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence["results"][0]["source_type"], "web_result")
         self.assertEqual(evidence["results"][0]["confidence"], "not_provided_by_search_api")
 
+    async def test_perplexity_revision_accepts_engine_contract_without_context_leak(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+            perplexity_max_results=5,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            kind=AssignmentKind.RESEARCH,
+            task="Find primary calibration sources",
+            acceptance=["Report URLs and unavailable evidence"],
+            estimated_cost_usd=0.25,
+        )
+        prior = ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            assignment_sequence=1,
+            run_id="search-1",
+            status="completed",
+            result="{}",
+        )
+        RecordingAsyncClient.responses = [{"id": "search-2", "results": []}]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            revised = await PerplexityAdapter(settings).revise(
+                prior,
+                "Find one primary source for each named metric",
+                assignment=assignment,
+                context="PRIVATE REPOSITORY CONTEXT",
+            )
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(
+            request["json"],
+            {
+                "query": "Find one primary source for each named metric",
+                "max_results": 5,
+            },
+        )
+        self.assertNotIn("PRIVATE REPOSITORY CONTEXT", json.dumps(request))
+        self.assertEqual(revised.run_id, "search-2")
+
     async def test_perplexity_dispatch_fails_closed_when_research_policy_is_not_ready(self):
         assignment = Assignment(
             sequence=1,
