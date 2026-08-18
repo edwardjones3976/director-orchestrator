@@ -22,7 +22,7 @@ NO_NEWLINE_MARKER = "\\ No newline at end of file"
 _REGULAR_FILE_MODES = frozenset({"100644", "100755"})
 _HUNK_HEADER_PREFIX = "@@ "
 _DIFF_GIT_PREFIX = "diff --git a/"
-_GIT_OID = re.compile(r"[0-9a-f]{4,64}")
+_GIT_OID = re.compile(r"[0-9a-f]{4,40}")
 
 
 class OracleDiffError(RuntimeError):

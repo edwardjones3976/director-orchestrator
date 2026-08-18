@@ -480,20 +480,38 @@ class CompareDiffParserTests(unittest.TestCase):
         with self.assertRaisesRegex(OracleDiffError, "unsupported rename"):
             parse_compare_diff(text)
 
-    def test_full_and_abbreviated_lowercase_oids_are_accepted(self) -> None:
-        full = "a" * 40
-        sha256 = "b" * 64
-        text = (
+    def _index_section(self, index_line: str) -> str:
+        return (
             "diff --git a/oracle/a.py b/oracle/a.py\n"
-            f"index {full}..{sha256} 100644\n"
+            f"{index_line}"
             "--- a/oracle/a.py\n"
             "+++ b/oracle/a.py\n"
             "@@ -1 +1 @@\n"
             "-old\n"
             "+new\n"
         )
-        parsed = parse_compare_diff(text)
+
+    def test_abbreviated_sha1_index_pair_is_accepted(self) -> None:
+        parsed = parse_compare_diff(self._index_section("index 11111111..22222222 100644\n"))
         self.assertEqual(parsed[0].added_lines, ("new",))
+
+    def test_full_sha1_index_pair_is_accepted(self) -> None:
+        parsed = parse_compare_diff(
+            self._index_section(f"index {'a' * 40}..{'b' * 40} 100644\n")
+        )
+        self.assertEqual(parsed[0].added_lines, ("new",))
+
+    def test_64_hex_index_object_id_is_rejected(self) -> None:
+        with self.assertRaisesRegex(OracleDiffError, "malformed"):
+            parse_compare_diff(
+                self._index_section(f"index {'a' * 64}..{'b' * 64} 100644\n")
+            )
+
+    def test_mixed_sha1_and_64_hex_index_pair_is_rejected(self) -> None:
+        with self.assertRaisesRegex(OracleDiffError, "malformed"):
+            parse_compare_diff(
+                self._index_section(f"index {'a' * 40}..{'b' * 64} 100644\n")
+            )
 
 
 class BindCompleteDiffTests(unittest.TestCase):

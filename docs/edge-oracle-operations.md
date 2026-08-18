@@ -132,8 +132,9 @@ refetches GitHub state and fails closed on:
   path. Ordinary permission 403 and other evidence-shape failures are
   deterministic. Incomplete file enumeration and non-40-hex pull SHAs are
   terminal evidence failures. Content-bearing sections require exactly one
-  valid `index` line; edited renames also require canonical similarity
-  metadata. Unavailable,
+  valid `index` line whose object IDs are lowercase SHA-1 hex (each side
+  independently 4–40 characters); edited renames also require canonical similarity
+  metadata. Pull head/base identity remains exactly 40 hex. Unavailable,
   oversized, truncated, binary, combined, quoted, mode-only, or mismatched diffs
   fail closed. A nonempty REST `patch` still has to prove every hunk body is
   complete and that parsed additions and deletions equal the REST counts before
