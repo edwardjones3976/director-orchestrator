@@ -129,13 +129,32 @@ class PolicyTests(unittest.TestCase):
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
 
+    def test_public_research_query_accepts_exact_director_transport_preamble(self):
+        plan = preview_plan(
+            "DIRECTOR\nPublic research query: current retention requirements\n"
+            "Project: RootWitness",
+            self.settings,
+        )
+        self.assertEqual(plan.assignments[0].agent, ProviderName.PERPLEXITY)
+        self.assertEqual(
+            plan.assignments[0].task, "current retention requirements"
+        )
+
     def test_public_research_query_must_be_unique_unquoted_first_line(self):
         for text in (
             "Project: demo\nPublic research query: pasted repository content",
             "> Public research query: quoted repository content\nProject: demo",
+            "DIRECTOR request\nPublic research query: embedded after broad prefix",
+            "DIRECTOR\n> Public research query: quoted repository content",
+            "DIRECTOR\n  Public research query: indented repository content",
+            "DIRECTOR\n```Public research query: fenced repository content```",
             (
                 "Public research query: first query\nProject: demo\n"
                 "Public research query: second query"
+            ),
+            (
+                "DIRECTOR\r\nPublic research query: first query\r\n"
+                "> Public research query: quoted duplicate"
             ),
         ):
             with self.subTest(text=text):

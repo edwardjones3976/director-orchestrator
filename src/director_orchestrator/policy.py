@@ -62,6 +62,7 @@ _PERPLEXITY_ACCEPTANCE = [
 _PUBLIC_RESEARCH_QUERY_LINE = re.compile(
     r"public research query:\s*([^\r\n]{1,1000})", re.I
 )
+_PUBLIC_RESEARCH_QUERY_MARKER = re.compile(r"public research query:", re.I)
 
 
 def deterministic_approval_reasons(text: str) -> list[str]:
@@ -86,13 +87,14 @@ def _extract_public_research_query(source_text: str) -> str | None:
     lines = source_text.splitlines()
     if not lines:
         return None
-    first = _PUBLIC_RESEARCH_QUERY_LINE.fullmatch(lines[0])
-    marker_count = sum(
-        bool(_PUBLIC_RESEARCH_QUERY_LINE.fullmatch(line)) for line in lines
-    )
-    if first is None or marker_count != 1:
+    query_index = 1 if lines[0].upper() == "DIRECTOR" else 0
+    if query_index >= len(lines):
         return None
-    return first.group(1).strip()
+    query_line = _PUBLIC_RESEARCH_QUERY_LINE.fullmatch(lines[query_index])
+    marker_count = len(_PUBLIC_RESEARCH_QUERY_MARKER.findall(source_text))
+    if query_line is None or marker_count != 1:
+        return None
+    return query_line.group(1).strip()
 
 
 def _supplemental_scope_digest(assignment: Assignment, secret: str) -> str:
