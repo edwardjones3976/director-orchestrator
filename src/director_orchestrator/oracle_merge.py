@@ -1394,53 +1394,49 @@ class GitHubOracleGateway:
                 else self._token
             )
             request_headers = {**supplied_headers, "Authorization": f"Bearer {token}"}
-            response = self._client.request(method, path, headers=request_headers)
-            if (
-                response.status_code == 401
-                and self._token_provider is not None
-                and attempt == 0
-            ):
-                response.close()
-                self._token_provider.invalidate()
-                continue
-            if response.status_code == 406:
-                response.close()
-                raise OracleDiffError("complete compare diff exceeds the bounded evidence limit")
-            if response.status_code >= 500:
-                response.close()
-                raise RuntimeError(
-                    f"GitHub API {method} {path} failed with status {response.status_code}"
+            with self._client.stream(method, path, headers=request_headers) as response:
+                if (
+                    response.status_code == 401
+                    and self._token_provider is not None
+                    and attempt == 0
+                ):
+                    self._token_provider.invalidate()
+                    continue
+                if response.status_code == 406:
+                    raise OracleDiffError(
+                        "complete compare diff exceeds the bounded evidence limit"
+                    )
+                if response.status_code >= 500:
+                    raise RuntimeError(
+                        f"GitHub API {method} {path} failed with status {response.status_code}"
+                    )
+                if response.status_code >= 400:
+                    raise OracleDiffError("complete compare diff is unavailable")
+                content_type = (
+                    (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
                 )
-            if response.status_code >= 400:
-                response.close()
-                raise OracleDiffError("complete compare diff is unavailable")
-            content_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-            if content_type in {"application/json", "application/vnd.github+json"}:
-                response.close()
-                raise OracleDiffError("complete compare diff is malformed")
-            declared = response.headers.get("content-length")
-            if declared is not None:
-                try:
-                    length = int(declared)
-                except ValueError as exc:
-                    response.close()
-                    raise OracleDiffError("complete compare diff is truncated") from exc
-                if length > max_bytes:
-                    response.close()
-                    raise OracleDiffError("complete compare diff exceeds the bounded evidence limit")
-            collected = bytearray()
-            try:
+                if content_type in {"application/json", "application/vnd.github+json"}:
+                    raise OracleDiffError("complete compare diff is malformed")
+                declared = response.headers.get("content-length")
+                if declared is not None:
+                    try:
+                        length = int(declared)
+                    except ValueError as exc:
+                        raise OracleDiffError("complete compare diff is truncated") from exc
+                    if length > max_bytes:
+                        raise OracleDiffError(
+                            "complete compare diff exceeds the bounded evidence limit"
+                        )
+                collected = bytearray()
                 for chunk in response.iter_bytes():
                     collected.extend(chunk)
                     if len(collected) > max_bytes:
                         raise OracleDiffError(
                             "complete compare diff exceeds the bounded evidence limit"
                         )
-            finally:
-                response.close()
-            if declared is not None and int(declared) != len(collected):
-                raise OracleDiffError("complete compare diff is truncated")
-            return bytes(collected)
+                if declared is not None and int(declared) != len(collected):
+                    raise OracleDiffError("complete compare diff is truncated")
+                return bytes(collected)
         raise RuntimeError(f"GitHub API {method} {path} authentication failed")
 
     def _complete_missing_patches(

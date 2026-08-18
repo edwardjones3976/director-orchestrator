@@ -34,6 +34,27 @@ BASE_SHA = "d" * 40
 REVIEW_SECRET = "test-only-oracle-review-secret"
 
 
+class _RecordingByteStream(httpx.SyncByteStream):
+    def __init__(self, chunks: tuple[bytes, ...]) -> None:
+        self._chunks = chunks
+        self.chunks_yielded = 0
+        self.bytes_yielded = 0
+        self.closed = False
+
+    @property
+    def chunks_remaining(self) -> int:
+        return len(self._chunks) - self.chunks_yielded
+
+    def __iter__(self):
+        for chunk in self._chunks:
+            self.chunks_yielded += 1
+            self.bytes_yielded += len(chunk)
+            yield chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+
 WRONG_HEAD_SHA = "c" * 40
 CREDENTIAL_ASSIGNMENT = "ORACLE_API_KEY=test-fixture-not-a-real-secret"
 PLUSPLUS_SAFETY_LINE = "++ enable automated funded bet execution"
@@ -625,6 +646,37 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(OracleDiffError, "unsupported metadata"):
             self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+
+    def test_oversized_stream_stops_at_the_cap_without_consuming_the_rest(self) -> None:
+        chunk = b"01234567"
+        leftover_chunks = 8
+        stream = _RecordingByteStream((chunk,) * (3 + leftover_chunks))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.headers.get("accept"), "application/vnd.github.diff")
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/vnd.github.diff"},
+                stream=stream,
+            )
+
+        gateway = GitHubOracleGateway(
+            "repo-scoped-token",
+            transport=httpx.MockTransport(handler),
+            max_compare_diff_bytes=16,
+        )
+        with self.assertRaisesRegex(OracleDiffError, "bounded evidence limit") as raised:
+            gateway._request_bounded_bytes(
+                "GET",
+                f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+                max_bytes=16,
+                headers={"Accept": "application/vnd.github.diff"},
+            )
+        self.assertNotIn(chunk.decode("ascii"), str(raised.exception))
+        self.assertTrue(stream.closed)
+        self.assertEqual(stream.chunks_yielded, 3)
+        self.assertEqual(stream.bytes_yielded, 24)
+        self.assertEqual(stream.chunks_remaining, leftover_chunks)
 
     def test_compare_http_5xx_is_transport_failure_not_evidence_error(self) -> None:
         def server_error(request: httpx.Request) -> httpx.Response:
