@@ -59,6 +59,7 @@ class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
                 task="Analyze",
                 acceptance=["Claude evidence is complete"],
                 repository="example/demo",
+                supplemental_scope_token="a" * 64,
             ),
             Assignment(
                 sequence=2,
@@ -96,6 +97,9 @@ class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(director.captured["is_final_specialist_assignment"])
         self.assertEqual(director.captured["current_assignment"]["sequence"], 1)
+        self.assertNotIn(
+            "supplemental_scope_token", director.captured["current_assignment"]
+        )
         self.assertEqual(director.captured["final_acceptance"], [])
         self.assertIn("Do not require future assignments", director.captured["instruction"])
         self.assertIn("do not reject or escalate", director.captured["instruction"])

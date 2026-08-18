@@ -106,7 +106,13 @@ class PolicyTests(unittest.TestCase):
         )
 
     def setUp(self):
-        self.settings = replace(Settings(), max_agent_hops=4, max_revisions=1, max_task_budget_usd=1.0)
+        self.settings = replace(
+            Settings(),
+            max_agent_hops=4,
+            max_revisions=1,
+            max_task_budget_usd=1.0,
+            shared_secret="test-director-secret",
+        )
 
     def test_merge_and_deploy_require_approval(self):
         reasons = deterministic_approval_reasons("Deploy to production and merge directly to main")
@@ -115,13 +121,25 @@ class PolicyTests(unittest.TestCase):
 
     def test_dry_run_routes_research_and_clamps_limits(self):
         plan = preview_plan(
-            "Project: RootWitness\nPublic research query: current retention requirements",
+            "Public research query: current retention requirements\nProject: RootWitness",
             self.settings,
         )
         self.assertEqual(plan.project, "RootWitness")
         self.assertEqual(plan.assignments[0].agent.value, "perplexity")
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
+
+    def test_public_research_query_must_be_unique_unquoted_first_line(self):
+        for text in (
+            "Project: demo\nPublic research query: pasted repository content",
+            "> Public research query: quoted repository content\nProject: demo",
+            (
+                "Public research query: first query\nProject: demo\n"
+                "Public research query: second query"
+            ),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(preview_plan(text, self.settings).assignments[0].agent, ProviderName.CLAUDE)
 
     def test_dry_run_uses_claude_as_default_workhorse(self):
         plan = preview_plan("Project: demo\nImplement and test a bounded API change", self.settings)
@@ -300,7 +318,7 @@ class PolicyTests(unittest.TestCase):
 
         bound = enforce_plan(
             unbound_plan,
-            "Project: demo\nPublic research query: calibration scoring rules",
+            "Public research query: calibration scoring rules\nProject: demo",
             settings,
         )
         assignment = bound.assignments[0]

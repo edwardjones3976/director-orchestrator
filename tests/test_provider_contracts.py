@@ -16,6 +16,10 @@ from director_orchestrator.providers import (
     PerplexityAdapter,
     ProviderError,
 )
+from director_orchestrator.policy import bind_supplemental_scope
+
+
+SCOPE_SECRET = "test-director-secret"
 
 
 class FakeResponse:
@@ -361,19 +365,20 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def gemini_assignment() -> Assignment:
-        return Assignment(
+        return bind_supplemental_scope(Assignment(
             sequence=1,
             agent=ProviderName.GEMINI,
             kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
             task="Generate low-level mechanical prototype boilerplate in an isolated sandbox",
             acceptance=["Report the isolated evidence"],
             repository="example/demo",
-        )
+        ), SCOPE_SECRET)
 
     async def test_gemini_dispatch_uses_antigravity_interactions_contract(self):
         settings = replace(
             Settings(),
             gemini_api_key="test-gemini",
+            shared_secret=SCOPE_SECRET,
             gemini_api_revision="2026-05-20",
             gemini_agent="antigravity-preview-05-2026",
         )
@@ -400,7 +405,9 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.session_id, "environment-1")
 
     async def test_gemini_poll_extracts_text_from_interaction_steps(self):
-        settings = replace(Settings(), gemini_api_key="test-gemini")
+        settings = replace(
+            Settings(), gemini_api_key="test-gemini", shared_secret=SCOPE_SECRET
+        )
         prior = ProviderRun(
             provider=ProviderName.GEMINI,
             assignment_sequence=2,
@@ -437,6 +444,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         settings = replace(
             Settings(),
             gemini_api_key="test-gemini",
+            shared_secret=SCOPE_SECRET,
             gemini_agent="antigravity-preview-05-2026",
         )
         prior = ProviderRun(
@@ -473,6 +481,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         settings = replace(
             Settings(),
             gemini_api_key="test-gemini",
+            shared_secret=SCOPE_SECRET,
             gemini_agent="antigravity-preview-05-2026",
         )
         prior = ProviderRun(
@@ -497,7 +506,9 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(RecordingAsyncClient.calls, [])
 
     async def test_gemini_dispatch_rejects_primary_authority_and_unbound_scope(self):
-        settings = replace(Settings(), gemini_api_key="test-gemini")
+        settings = replace(
+            Settings(), gemini_api_key="test-gemini", shared_secret=SCOPE_SECRET
+        )
         assignments = (
             self.gemini_assignment().model_copy(update={"kind": AssignmentKind.GENERAL}),
             self.gemini_assignment().model_copy(
@@ -540,7 +551,12 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(ProviderError, "Director-authenticated"):
-            await GeminiAdapter(settings).dispatch(self.gemini_assignment(), "context")
+            await GeminiAdapter(settings).dispatch(
+                self.gemini_assignment().model_copy(
+                    update={"supplemental_scope_token": None}
+                ),
+                "context",
+            )
 
         self.assertEqual(RecordingAsyncClient.calls, [])
 
@@ -548,6 +564,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         settings = replace(
             Settings(),
             gemini_api_key="test-gemini",
+            shared_secret=SCOPE_SECRET,
             gemini_api_revision="2026-05-20",
             gemini_usage_model="gemini-3.5-flash-lite",
         )
@@ -573,6 +590,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             Settings(),
             perplexity_enabled=True,
             perplexity_api_key="test-perplexity",
+            shared_secret=SCOPE_SECRET,
             perplexity_preset="fast-search",
         )
         RecordingAsyncClient.responses = [
@@ -600,16 +618,17 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             Settings(),
             perplexity_enabled=True,
             perplexity_api_key="test-perplexity",
+            shared_secret=SCOPE_SECRET,
             perplexity_max_results=7,
         )
-        assignment = Assignment(
+        assignment = bind_supplemental_scope(Assignment(
             sequence=1,
             agent=ProviderName.PERPLEXITY,
             kind=AssignmentKind.RESEARCH,
             task="Find current primary sources about calibration metrics",
             acceptance=["Report sources and contradictions"],
             estimated_cost_usd=0.25,
-        )
+        ), SCOPE_SECRET)
         RecordingAsyncClient.responses = [
             {
                 "id": "search-1",
@@ -652,16 +671,17 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             Settings(),
             perplexity_enabled=True,
             perplexity_api_key="test-perplexity",
+            shared_secret=SCOPE_SECRET,
             perplexity_max_results=5,
         )
-        assignment = Assignment(
+        assignment = bind_supplemental_scope(Assignment(
             sequence=1,
             agent=ProviderName.PERPLEXITY,
             kind=AssignmentKind.RESEARCH,
             task="Find primary calibration sources",
             acceptance=["Report URLs and unavailable evidence"],
             estimated_cost_usd=0.25,
-        )
+        ), SCOPE_SECRET)
         prior = ProviderRun(
             provider=ProviderName.PERPLEXITY,
             assignment_sequence=1,
@@ -754,23 +774,39 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             Settings(),
             perplexity_enabled=True,
             perplexity_api_key="test-perplexity",
+            shared_secret=SCOPE_SECRET,
             perplexity_daily_budget_usd=2.0,
         )
-        base = Assignment(
+        base = bind_supplemental_scope(Assignment(
             sequence=1,
             agent=ProviderName.PERPLEXITY,
             kind=AssignmentKind.RESEARCH,
             task="Find sources",
             acceptance=["Report URLs"],
             requires_approval=True,
-        )
+        ), SCOPE_SECRET)
 
         for assignment in (
-            base.model_copy(update={"allow_draft_pr": True}),
-            base.model_copy(update={"estimated_cost_usd": 2.01}),
-            base.model_copy(update={"kind": AssignmentKind.EXACT_SHA_REVIEW}),
-            base.model_copy(update={"repository": "example/private"}),
-            base.model_copy(update={"acceptance": ["Recommend approval of the PR"]}),
+            bind_supplemental_scope(
+                base.model_copy(update={"allow_draft_pr": True}), SCOPE_SECRET
+            ),
+            bind_supplemental_scope(
+                base.model_copy(update={"estimated_cost_usd": 2.01}), SCOPE_SECRET
+            ),
+            bind_supplemental_scope(
+                base.model_copy(update={"kind": AssignmentKind.EXACT_SHA_REVIEW}),
+                SCOPE_SECRET,
+            ),
+            bind_supplemental_scope(
+                base.model_copy(update={"repository": "example/private"}),
+                SCOPE_SECRET,
+            ),
+            bind_supplemental_scope(
+                base.model_copy(
+                    update={"acceptance": ["Recommend approval of the PR"]}
+                ),
+                SCOPE_SECRET,
+            ),
         ):
             with self.subTest(assignment=assignment):
                 with self.assertRaises(ProviderError):

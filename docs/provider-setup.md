@@ -90,8 +90,9 @@ PERPLEXITY_ALLOW_REPOSITORY_WRITE=false
 PERPLEXITY_ALLOW_REVIEW_VERDICT=false
 ```
 
-Normal assignments use `POST /search`. The owner must provide a single-line
-`Public research query: ...` field in the intake. The Director extracts only that
+Normal assignments use `POST /search`. The owner must provide exactly one
+`Public research query: ...` field as the first line of the intake, with no
+indentation or quoting. The Director extracts only that
 line, replaces the model-authored assignment with canonical research acceptance
 criteria, removes repository and draft-PR fields, and HMAC-binds the resulting
 scope. The adapter refuses a missing or altered token. It sends only that explicit

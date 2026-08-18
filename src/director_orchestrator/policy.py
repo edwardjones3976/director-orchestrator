@@ -59,8 +59,8 @@ _PERPLEXITY_ACCEPTANCE = [
     "Return public source URLs, titles, dates when available, and supporting excerpts",
     "Report contradictions, unavailable evidence, and uncertainty explicitly",
 ]
-_PUBLIC_RESEARCH_QUERY = re.compile(
-    r"(?im)^\s*public research query\s*:\s*([^\r\n]{1,1000})\s*$"
+_PUBLIC_RESEARCH_QUERY_LINE = re.compile(
+    r"public research query:\s*([^\r\n]{1,1000})", re.I
 )
 
 
@@ -80,6 +80,19 @@ def canonical_repository(value: str) -> str:
     if candidate.lower().endswith(".git"):
         candidate = candidate[:-4]
     return candidate.strip("/").lower()
+
+
+def _extract_public_research_query(source_text: str) -> str | None:
+    lines = source_text.splitlines()
+    if not lines:
+        return None
+    first = _PUBLIC_RESEARCH_QUERY_LINE.fullmatch(lines[0])
+    marker_count = sum(
+        bool(_PUBLIC_RESEARCH_QUERY_LINE.fullmatch(line)) for line in lines
+    )
+    if first is None or marker_count != 1:
+        return None
+    return first.group(1).strip()
 
 
 def _supplemental_scope_digest(assignment: Assignment, secret: str) -> str:
@@ -199,9 +212,7 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                     "Claude or Cursor implementation assignment that explicitly independently "
                     "verifies and integrates or rejects the artifact"
                 )
-            if settings.shared_secret and not supplemental_scope_is_valid(
-                assignment, settings.shared_secret
-            ):
+            if not supplemental_scope_is_valid(assignment, settings.shared_secret):
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity supplemental scope "
                     "is not Director-authenticated"
@@ -209,9 +220,7 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
         if assignment.agent == ProviderName.PERPLEXITY:
             for error in perplexity_assignment_errors(assignment):
                 errors.add(f"assignment {assignment.sequence}: Perplexity {error}")
-            if settings.shared_secret and not supplemental_scope_is_valid(
-                assignment, settings.shared_secret
-            ):
+            if not supplemental_scope_is_valid(assignment, settings.shared_secret):
                 errors.add(
                     f"assignment {assignment.sequence}: Perplexity supplemental scope "
                     "is not Director-authenticated"
@@ -275,8 +284,7 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
             for item in safe.assignments
         ]
 
-    public_query_match = _PUBLIC_RESEARCH_QUERY.search(source_text)
-    public_query = public_query_match.group(1).strip() if public_query_match else None
+    public_query = _extract_public_research_query(source_text)
     canonical_assignments: list[Assignment] = []
     for assignment in safe.assignments:
         current = assignment.model_copy(update={"supplemental_scope_token": None})
@@ -321,7 +329,7 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
 
 def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     lowered = text.lower()
-    if _PUBLIC_RESEARCH_QUERY.search(text):
+    if _extract_public_research_query(text):
         provider = ProviderName.PERPLEXITY
     elif _ANTIGRAVITY_SCOPE.search(text):
         provider = ProviderName.GEMINI

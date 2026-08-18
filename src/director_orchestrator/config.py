@@ -165,6 +165,7 @@ class Settings:
         return {
             "enabled": self.perplexity_enabled,
             "credential_configured": bool(self.perplexity_api_key),
+            "scope_signing_secret_configured": bool(self.shared_secret),
             "research_only_mode": self.perplexity_mode == "research_only",
             "result_limit_valid": 1 <= self.perplexity_max_results <= 20,
             "search_context_size_valid": self.perplexity_search_context_size
@@ -178,6 +179,7 @@ class Settings:
     def antigravity_subordinate_readiness(self) -> dict[str, bool]:
         return {
             "credential_configured": bool(self.gemini_api_key),
+            "scope_signing_secret_configured": bool(self.shared_secret),
             "managed_agent_configured": self.gemini_agent.startswith("antigravity-"),
             "subordinate_mode": self.gemini_mode == "antigravity_subordinate",
             "review_verdict_disabled": not self.gemini_allow_review_verdict,

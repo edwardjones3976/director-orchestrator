@@ -140,7 +140,9 @@ class OpenAIDirector:
                 ),
             },
             "current_assignment": (
-                current_assignment.model_dump(mode="json")
+                current_assignment.model_dump(
+                    mode="json", exclude={"supplemental_scope_token"}
+                )
                 if current_assignment
                 else None
             ),

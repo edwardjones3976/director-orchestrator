@@ -412,9 +412,7 @@ class GeminiAdapter(ProviderAdapter):
 
     def _require_subordinate(self, assignment: Assignment) -> None:
         self._require_profile()
-        if self.settings.shared_secret and not supplemental_scope_is_valid(
-            assignment, self.settings.shared_secret
-        ):
+        if not supplemental_scope_is_valid(assignment, self.settings.shared_secret):
             raise ProviderError(
                 "Antigravity assignment lacks a Director-authenticated supplemental scope"
             )
@@ -594,9 +592,7 @@ class PerplexityAdapter(ProviderAdapter):
         if assignment_required and assignment is None:
             raise ProviderError("Perplexity research execution requires the bound assignment")
         if assignment is not None:
-            if self.settings.shared_secret and not supplemental_scope_is_valid(
-                assignment, self.settings.shared_secret
-            ):
+            if not supplemental_scope_is_valid(assignment, self.settings.shared_secret):
                 raise ProviderError(
                     "Perplexity assignment lacks a Director-authenticated supplemental scope"
                 )
