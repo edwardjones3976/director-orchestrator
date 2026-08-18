@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from director_orchestrator.config import Settings
+from director_orchestrator.callbacks import apply_manual_run_completion
 from director_orchestrator.oracle_merge import (
     OracleChangedFile,
     OracleCheckRun,
@@ -30,6 +31,7 @@ from director_orchestrator.models import (
     AssignmentOutcome,
     ClaudeCallback,
     DirectorPlan,
+    ManualRunCompletion,
     ProviderName,
     ProviderRun,
     RiskLevel,
@@ -353,9 +355,17 @@ class OracleMergeGateTests(unittest.TestCase):
 
     def test_manual_claude_completion_cannot_authenticate_review_artifact(self):
         record = self.callback_record()
-        run = record.provider_runs[0].model_copy(
-            update={"status": "FINISHED", "provider_authenticated": False}
+        artifact_result = record.provider_runs[0].result or ""
+        record.status = TaskStatus.FAILED
+        record.provider_runs[0] = record.provider_runs[0].model_copy(
+            update={"status": "WAITING_CALLBACK", "result": None}
         )
+        apply_manual_run_completion(
+            record,
+            "claude-review-callback",
+            ManualRunCompletion(owner_user_id="U123", result=artifact_result),
+        )
+        run = record.provider_runs[0]
 
         with self.assertRaisesRegex(ValueError, "provider-authenticated"):
             authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
@@ -372,9 +382,7 @@ class OracleMergeGateTests(unittest.TestCase):
             provider=ProviderName.CURSOR,
             assignment_sequence=2,
             run_id="cursor-review-run",
-            status="FINISHED",
-            result=json.dumps(payload),
-            provider_authenticated=False,
+            status="CREATING",
         )
         base_record = self.callback_record()
         record = base_record.model_copy(
@@ -398,8 +406,17 @@ class OracleMergeGateTests(unittest.TestCase):
                         update={"provider": ProviderName.CLAUDE}
                     )
                 ],
+                "status": TaskStatus.FAILED,
             }
         )
+        apply_manual_run_completion(
+            record,
+            "cursor-review-run",
+            ManualRunCompletion(
+                owner_user_id="U123", result=json.dumps(payload)
+            ),
+        )
+        run = record.provider_runs[0]
 
         with self.assertRaisesRegex(ValueError, "provider-authenticated"):
             authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
