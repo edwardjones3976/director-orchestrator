@@ -17,6 +17,7 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.policy import (
+    antigravity_assignment_errors,
     deterministic_approval_reasons,
     execution_policy_errors,
     preview_plan,
@@ -25,6 +26,21 @@ from director_orchestrator.store import TaskStore
 
 
 class PolicyTests(unittest.TestCase):
+    def test_antigravity_scope_allows_non_authority_words_in_low_level_code(self):
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+            task=(
+                "Create non-authoritative low-level boilerplate for a merge utility "
+                "and approve workflow; a later Claude assignment verifies the result"
+            ),
+            acceptance=["Produce mechanical fixtures only"],
+            repository="example/demo",
+        )
+
+        self.assertEqual(antigravity_assignment_errors(assignment), [])
+
     def test_openai_runtime_cannot_be_an_assignment_target(self):
         settings = replace(
             Settings(),

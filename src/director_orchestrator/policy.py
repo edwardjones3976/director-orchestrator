@@ -25,7 +25,8 @@ _ANTIGRAVITY_SCOPE = re.compile(
 )
 _ANTIGRAVITY_AUTHORITY = re.compile(
     r"\b(exact[- ]sha|independent review|review verdict|review (?:the|this|a) (?:pr|pull request)|"
-    r"final acceptance|approve|approval authority|merge|authoritative|source of truth|"
+    r"final acceptance|(?:approve|merge) (?:the|this|a) (?:pr|pull request|change|branch)|"
+    r"approval authority|authoritative (?:verdict|decision|review|contract|methodology)|source of truth|"
     r"define(?:s|d|ing)? .{0,40}\bcontract|decide(?:s|d|ing)? .{0,40}\bmethodology|"
     r"certif(?:y|ies|ied|ication)|sign[- ]?off|adjudicat(?:e|es|ed|ion))\b",
     re.I | re.S,

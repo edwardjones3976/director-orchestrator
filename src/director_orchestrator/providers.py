@@ -510,10 +510,14 @@ class GeminiAdapter(ProviderAdapter):
         if assignment is None:
             raise ProviderError("Antigravity revision requires the bound assignment")
         self._require_subordinate(assignment)
+        if not run.session_id:
+            raise ProviderError(
+                "Antigravity revision requires the prior sandbox environment ID"
+            )
         body = {
             "agent": self.settings.gemini_agent,
             "previous_interaction_id": run.run_id,
-            "environment": run.session_id or "remote",
+            "environment": run.session_id,
             "input": f"{self._NON_AUTHORITATIVE_NOTICE}\n\n{prompt}",
             "background": True,
             "store": True,

@@ -465,6 +465,33 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.session_id, "environment-1")
         self.assertEqual(run.assignment_sequence, 1)
 
+    async def test_gemini_revision_requires_prior_sandbox_id(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_agent="antigravity-preview-05-2026",
+        )
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            session_id=None,
+            status="completed",
+        )
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaisesRegex(
+                ProviderError, "prior sandbox environment ID"
+            ):
+                await GeminiAdapter(settings).revise(
+                    prior,
+                    "Add exact evidence",
+                    assignment=self.gemini_assignment(),
+                    context="context",
+                )
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
     async def test_gemini_dispatch_rejects_primary_authority_and_unbound_scope(self):
         settings = replace(Settings(), gemini_api_key="test-gemini")
         assignments = (
