@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import httpx
 
@@ -19,7 +21,9 @@ from director_orchestrator.oracle_merge import (
     OracleChangedFile,
     OracleCheckRun,
     OracleMergePolicy,
+    OracleMergeService,
     OracleMergeStatus,
+    OracleMergeStore,
     OraclePullRequestSnapshot,
     OracleReviewArtifact,
     OracleReviewVerdict,
@@ -567,6 +571,74 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.changed_files[0].added_lines, ["research_only = True"])
         self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
+    def test_deletion_only_empty_patch_fetches_compare(self) -> None:
+        self.files = [
+            {
+                "filename": "oracle/gone.py",
+                "status": "removed",
+                "additions": 0,
+                "deletions": 2,
+                "patch": "",
+            }
+        ]
+        self.compare_diff = _removed_diff("oracle/gone.py", "old_one", "old_two")
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        changed = snapshot.changed_files[0]
+        self.assertEqual(changed.status, "removed")
+        self.assertEqual(changed.added_lines, [])
+        self.assertIsNotNone(changed.patch)
+        self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
+
+    def test_zero_count_empty_patch_rename_is_proven_by_compare_diff(self) -> None:
+        self.files = [
+            {
+                "filename": "oracle/new.py",
+                "previous_filename": "oracle/old.py",
+                "status": "renamed",
+                "additions": 0,
+                "deletions": 0,
+                "patch": "",
+            }
+        ]
+        self.compare_diff = _pure_rename_diff("oracle/old.py", "oracle/new.py")
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        changed = snapshot.changed_files[0]
+        self.assertEqual(changed.status, "renamed")
+        self.assertEqual(changed.previous_filename, "oracle/old.py")
+        self.assertEqual(changed.added_lines, [])
+        self.assertEqual(changed.patch, "")
+
+    def test_zero_count_empty_patch_mode_only_diff_rejects(self) -> None:
+        self.files = [
+            {
+                "filename": "oracle/a.py",
+                "status": "modified",
+                "additions": 0,
+                "deletions": 0,
+                "patch": "",
+            }
+        ]
+        self.compare_diff = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "old mode 100644\n"
+            "new mode 100755\n"
+        )
+        with self.assertRaisesRegex(OracleDiffError, "unsupported metadata"):
+            self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+
+    def test_compare_http_5xx_is_transport_failure_not_evidence_error(self) -> None:
+        def server_error(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                return httpx.Response(503)
+            return self.handler(request)
+
+        with self.assertRaises(RuntimeError) as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(server_error)
+            ).snapshot("edwardjones3976/edge_engine", 23)
+        self.assertNotIsInstance(raised.exception, OracleDiffError)
+        self.assertIn("503", str(raised.exception))
+
     def test_incomplete_rest_enumeration_does_not_fetch_compare(self) -> None:
         self.pull["changed_files"] = 2
         with self.assertRaisesRegex(RuntimeError, "file enumeration is incomplete"):
@@ -790,6 +862,117 @@ class PolicyCompleteDiffScanTests(unittest.TestCase):
             OracleMergePolicy._added_patch_text(_Snapshot()),
             "research_only = True",
         )
+
+
+class RestPatchIncompletePredicateTests(unittest.TestCase):
+    def test_null_or_empty_patch_is_incomplete_regardless_of_counts(self) -> None:
+        cases = (
+            ({"patch": None, "additions": 0, "deletions": 0}, True),
+            ({"patch": "", "additions": 0, "deletions": 2}, True),
+            ({"patch": "", "additions": 0, "deletions": 0}, True),
+            ({"patch": "@@ -0,0 +1 @@\n+x", "additions": 1, "deletions": 0}, False),
+        )
+        for item, expected in cases:
+            with self.subTest(item=item):
+                self.assertEqual(GitHubOracleGateway._rest_patch_incomplete(item), expected)
+
+
+class DeterministicEvidenceFailureTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.settings = Settings(
+            sqlite_path=str(Path(self.temporary.name) / "oracle.sqlite3"),
+            oracle_automerge_enabled=True,
+            oracle_automerge_kill_switch=False,
+            oracle_automerge_project="edge-oracle",
+            oracle_automerge_repository="edwardjones3976/edge_engine",
+            oracle_automerge_base_ref="main",
+            oracle_automerge_branch_prefix="oracle/",
+            oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
+            oracle_automerge_required_checks=("ci", "security"),
+            oracle_automerge_required_check_app="github-actions",
+            oracle_automerge_review_secret=REVIEW_SECRET,
+        )
+        self.artifact = OracleReviewArtifact.model_validate(
+            {
+                "artifact_type": "edge_oracle_exact_sha_review/v1",
+                "artifact_id": "review-artifact-evidence",
+                "assignment_id": "assignment-evidence",
+                "project": "edge-oracle",
+                "repository": "edwardjones3976/edge_engine",
+                "pull_number": 101,
+                "base_ref": "main",
+                "base_sha": BASE_SHA,
+                "head_ref": "oracle/revival-phase-1",
+                "head_sha": HEAD_SHA,
+                "implementation_provider": "cursor",
+                "implementation_actor": "cursor-agent",
+                "reviewer_provider": "claude",
+                "review_run_id": "claude-review-evidence",
+                "verdict": OracleReviewVerdict.ACCEPT,
+                "summary": "Exact-SHA review accepted the bounded Oracle change.",
+                "evidence": ["Tests and changed paths reviewed at the exact SHA."],
+                "acceptance_checks": ["ci", "security"],
+                "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+                "signature": "0" * 64,
+            }
+        ).sign(REVIEW_SECRET)
+
+    def test_deterministic_evidence_failure_is_not_a_transient_read(self) -> None:
+        class _GitHub:
+            def __init__(self) -> None:
+                self.snapshot_calls = 0
+
+            def snapshot(self, repository: str, pull_number: int):
+                self.snapshot_calls += 1
+                raise OracleDiffError("complete compare diff contains a binary file")
+
+            def merge(self, *args, **kwargs):
+                raise AssertionError("merge must not run after evidence failure")
+
+            def mark_ready(self, *args, **kwargs):
+                raise AssertionError("ready transition must not run after evidence failure")
+
+        github = _GitHub()
+        result = OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            github,
+            sleep=lambda _: None,
+        ).process(self.artifact)
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertEqual(github.snapshot_calls, 1)
+        self.assertTrue(any("complete compare-diff evidence failed closed" in item for item in result.reasons))
+        self.assertFalse(any("transient" in item for item in result.reasons))
+        self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+
+    def test_transport_timeout_stays_on_the_bounded_transient_path(self) -> None:
+        class _GitHub:
+            def __init__(self) -> None:
+                self.snapshot_calls = 0
+
+            def snapshot(self, repository: str, pull_number: int):
+                self.snapshot_calls += 1
+                raise TimeoutError("transient 504")
+
+            def merge(self, *args, **kwargs):
+                raise AssertionError("merge must not run after transport failure")
+
+            def mark_ready(self, *args, **kwargs):
+                raise AssertionError("ready transition must not run after transport failure")
+
+        github = _GitHub()
+        result = OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            github,
+            sleep=lambda _: None,
+        ).process(self.artifact)
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertTrue(any("transient read failures" in item for item in result.reasons))
+        self.assertTrue(any("remains retryable" in item for item in result.reasons))
 
 
 if __name__ == "__main__":

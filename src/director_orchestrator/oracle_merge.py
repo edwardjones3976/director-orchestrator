@@ -964,6 +964,8 @@ class OracleMergeService:
                     self.github.snapshot(artifact.repository, artifact.pull_number),
                     None,
                 )
+            except OracleDiffError as exc:
+                return None, self._complete_evidence_failure(artifact, exc)
             except Exception as exc:
                 read_failure_allowance -= 1
                 last_read_failure = exc
@@ -1025,6 +1027,8 @@ class OracleMergeService:
                 snapshot = self.github.snapshot(
                     artifact.repository, artifact.pull_number
                 )
+            except OracleDiffError as exc:
+                return None, self._complete_evidence_failure(artifact, exc)
             except Exception as exc:
                 # A read that never produced a snapshot proves nothing about
                 # mergeability, so it spends only the read-failure allowance.
@@ -1070,6 +1074,21 @@ class OracleMergeService:
             artifact,
             f"GitHub mergeability was unresolved after {self._poll_attempts} bounded "
             "re-reads and remains retryable",
+        )
+
+    def _complete_evidence_failure(
+        self, artifact: OracleReviewArtifact, exc: OracleDiffError
+    ) -> OracleMergeResult:
+        return self.store.complete(
+            OracleMergeResult(
+                artifact_id=artifact.artifact_id,
+                artifact_digest=artifact.digest(),
+                status=OracleMergeStatus.ERROR,
+                repository=self.policy.repository,
+                pull_number=artifact.pull_number,
+                reviewed_sha=artifact.head_sha,
+                reasons=[f"complete compare-diff evidence failed closed: {exc}"],
+            )
         )
 
     def _release_for_retry(
@@ -1295,9 +1314,7 @@ class GitHubOracleGateway:
     @staticmethod
     def _rest_patch_incomplete(item: dict) -> bool:
         patch = item.get("patch")
-        if patch is None:
-            return True
-        return patch == "" and int(item.get("additions", 0)) > 0
+        return patch is None or patch == ""
 
     @staticmethod
     def _require_complete_file_enumeration(pull: dict, files: list[dict]) -> None:
@@ -1389,6 +1406,11 @@ class GitHubOracleGateway:
             if response.status_code == 406:
                 response.close()
                 raise OracleDiffError("complete compare diff exceeds the bounded evidence limit")
+            if response.status_code >= 500:
+                response.close()
+                raise RuntimeError(
+                    f"GitHub API {method} {path} failed with status {response.status_code}"
+                )
             if response.status_code >= 400:
                 response.close()
                 raise OracleDiffError("complete compare diff is unavailable")
@@ -1419,7 +1441,7 @@ class GitHubOracleGateway:
             if declared is not None and int(declared) != len(collected):
                 raise OracleDiffError("complete compare diff is truncated")
             return bytes(collected)
-        raise OracleDiffError("complete compare diff is unavailable")
+        raise RuntimeError(f"GitHub API {method} {path} authentication failed")
 
     def _complete_missing_patches(
         self,
@@ -1438,7 +1460,7 @@ class GitHubOracleGateway:
         self._require_complete_file_enumeration(after_pull, after_files)
         after = self._pull_identity(repository, pull_number, after_pull)
         if before != after or before_files != self._file_set(after_files):
-            raise RuntimeError("pull request identity changed during complete-diff retrieval")
+            raise OracleDiffError("pull request identity changed during complete-diff retrieval")
         bound = bind_complete_diff_evidence(
             after_files,
             parse_compare_diff(diff_text, max_bytes=self._max_compare_diff_bytes),

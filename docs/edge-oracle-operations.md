@@ -111,7 +111,8 @@ refetches GitHub state and fails closed on:
 - missing, pending, failed, ambiguous, wrong-producer, or wrong-SHA checks;
 - any current or previous rename path outside `oracle/**`, `docs/oracle/**`, or
   `tests/oracle/**`, or any file whose complete scan evidence cannot be proven.
-  When the pull-request files REST response omits a `patch`, the gate fetches the
+  When the pull-request files REST response omits a `patch` or returns an empty
+  string, the gate fetches the
   immutable compare diff for the snapshot's exact 40-hex base and head SHAs
   (`GET /repos/{repo}/compare/{base}...{head}` with
   `Accept: application/vnd.github.diff`), parses it structurally, and binds
