@@ -121,8 +121,9 @@ refetches GitHub state and fails closed on:
   diff is not a completeness source. The pull is re-read after that fetch; any
   drift in title, body, draft, state, merged flag, base/head refs and SHAs, head
   repository, author, changed-file count, or file set fails closed. The compare
-  response `Content-Type` base media type must be `application/vnd.github.diff`;
-  a `charset` parameter is accepted and any other type fails closed. A
+  response `Content-Type` base media type must be `application/vnd.github.diff`.
+  A charset parameter is omitted or `utf-8` only, case-insensitively; duplicate
+  or non-UTF-8 charset declarations fail closed. A
   non-identity `Content-Encoding` fails closed so `Content-Length` is the
   uncompressed body. HTTP 429 and 403 with explicit rate-limit evidence
   (`Retry-After` or `X-RateLimit-Remaining: 0`) release the review artifact
@@ -136,10 +137,12 @@ refetches GitHub state and fails closed on:
   independently 4–40 characters); edited renames also require canonical similarity
   metadata. Pull head/base identity remains exactly 40 hex. Unavailable,
   oversized, truncated, binary, combined, quoted, mode-only, or mismatched diffs
-  fail closed. A nonempty REST `patch` still has to prove every hunk body is
-  complete and that parsed additions and deletions equal the REST counts before
-  the snapshot is eligible. `patch=None` remains incomplete when no bound
-  evidence is supplied;
+  fail closed. A nonempty REST `patch` still has to prove at least one complete
+  hunk with at least one added or deleted source line, and that parsed additions
+  and deletions equal the REST counts, before the snapshot is eligible.
+  Header-only or zero-change REST patches are incomplete and use the exact-SHA
+  compare fallback. `patch=None` remains incomplete when no bound evidence is
+  supplied;
 - deterministic serious-safety signals or committed credential material;
 - GitHub or branch-protection refusal.
 

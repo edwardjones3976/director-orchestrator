@@ -1337,7 +1337,13 @@ class GitHubOracleGateway:
     @staticmethod
     def _rest_patch_incomplete(item: dict) -> bool:
         patch = item.get("patch")
-        return patch is None or patch == ""
+        if patch is None or patch == "":
+            return True
+        try:
+            parse_hunk_patch(patch)
+        except OracleDiffError as exc:
+            return "does not prove a content change" in str(exc)
+        return False
 
     @staticmethod
     def _changed_files_from_rest(files: list[dict]) -> list[OracleChangedFile]:

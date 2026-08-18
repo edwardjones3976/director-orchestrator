@@ -68,7 +68,9 @@ def parse_hunk_patch(patch: str) -> ParsedHunkPatch:
     File headers are recognized only before the first hunk. Once a hunk is
     open, a line beginning with ``+`` is always added source content, even if
     the source itself begins with ``++``. Old/new hunk counts are enforced, and
-    the returned totals are the counted added and deleted body lines.
+    the returned totals are the counted added and deleted body lines. A
+    nonempty patch must contain at least one complete hunk and at least one
+    added or deleted source line.
     """
     if patch == "":
         return ParsedHunkPatch(added_lines=(), additions=0, deletions=0)
@@ -126,6 +128,8 @@ def parse_hunk_patch(patch: str) -> ParsedHunkPatch:
         raise OracleDiffError("changed-file patch evidence is malformed")
     if in_hunk and not hunk_complete:
         raise OracleDiffError("changed-file patch evidence is truncated")
+    if not in_hunk or (additions == 0 and deletions == 0):
+        raise OracleDiffError("changed-file patch evidence does not prove a content change")
     return ParsedHunkPatch(
         added_lines=tuple(added),
         additions=additions,
@@ -144,10 +148,15 @@ def require_github_diff_content_type(content_type: str | None) -> None:
     parts = [part.strip() for part in raw.split(";")]
     if parts[0].lower() != GITHUB_DIFF_MEDIA_TYPE:
         raise OracleDiffError("complete compare diff is malformed")
+    seen_charset = False
     for param in parts[1:]:
         name, separator, value = param.partition("=")
-        if separator != "=" or name.strip().lower() != "charset" or not value.strip():
+        charset = value.strip().strip("\"'").lower()
+        if separator != "=" or name.strip().lower() != "charset" or charset != "utf-8":
             raise OracleDiffError("complete compare diff is malformed")
+        if seen_charset:
+            raise OracleDiffError("complete compare diff is malformed")
+        seen_charset = True
 
 
 def require_identity_content_encoding(content_encoding: str | None) -> None:

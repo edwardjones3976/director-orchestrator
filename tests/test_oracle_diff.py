@@ -203,12 +203,39 @@ class RestHunkCompletenessTests(unittest.TestCase):
         )
         self.assertEqual(bound.added_lines, ["safe = True", "also_safe = True"])
 
+    def test_header_only_rest_patch_is_rejected(self) -> None:
+        patch = "--- a/oracle/a.py\n+++ b/oracle/a.py"
+        with self.assertRaisesRegex(OracleDiffError, "does not prove a content change"):
+            parse_hunk_patch(patch)
+        with self.assertRaisesRegex(ValidationError, "does not prove a content change"):
+            OracleChangedFile(
+                filename="oracle/a.py",
+                status="modified",
+                additions=0,
+                deletions=0,
+                patch=patch,
+            )
+
+    def test_zero_change_hunk_rest_patch_is_rejected(self) -> None:
+        patch = "@@ -0,0 +0,0 @@"
+        with self.assertRaisesRegex(OracleDiffError, "does not prove a content change"):
+            parse_hunk_patch(patch)
+        with self.assertRaisesRegex(ValidationError, "does not prove a content change"):
+            OracleChangedFile(
+                filename="oracle/a.py",
+                status="modified",
+                additions=0,
+                deletions=0,
+                patch=patch,
+            )
+
 
 class GithubDiffContentTypeTests(unittest.TestCase):
-    def test_accepts_github_diff_media_type_with_charset(self) -> None:
+    def test_accepts_github_diff_media_type_with_utf8_or_no_charset(self) -> None:
         require_github_diff_content_type("application/vnd.github.diff")
         require_github_diff_content_type("application/vnd.github.diff; charset=utf-8")
         require_github_diff_content_type("Application/VND.GitHub.diff; Charset=UTF-8")
+        require_github_diff_content_type('application/vnd.github.diff; charset="utf-8"')
 
     def test_rejects_json_plain_text_and_unknown_parameters(self) -> None:
         for value in (
@@ -219,6 +246,9 @@ class GithubDiffContentTypeTests(unittest.TestCase):
             "application/vnd.github+json",
             "application/vnd.github.diff; boundary=x",
             "application/vnd.github.diff; charset=",
+            "application/vnd.github.diff; charset=iso-8859-1",
+            "application/vnd.github.diff; charset=utf-8; charset=utf-8",
+            "application/vnd.github.diff; charset=utf-8; charset=iso-8859-1",
         ):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(OracleDiffError, "malformed"):
@@ -754,6 +784,18 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.changed_files[0].added_lines, ["safe = True", "also_safe = True"])
         self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
 
+    def test_header_only_rest_patch_uses_exact_sha_compare_fallback(self) -> None:
+        self.files[0]["patch"] = "--- a/oracle/large.py\n+++ b/oracle/large.py"
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.changed_files[0].added_lines, ["research_only = True"])
+        self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
+
+    def test_zero_change_hunk_rest_patch_uses_exact_sha_compare_fallback(self) -> None:
+        self.files[0]["patch"] = "@@ -0,0 +0,0 @@"
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.changed_files[0].added_lines, ["research_only = True"])
+        self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
+
     def test_unavailable_malformed_and_oversized_compare_diffs_reject(self) -> None:
         def unavailable(_: httpx.Request) -> httpx.Response:
             return httpx.Response(404)
@@ -955,6 +997,24 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
             headers={"Accept": "application/vnd.github.diff"},
         )
         self.assertTrue(body.startswith(b"diff --git "))
+
+        def latin1(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=_modified_diff("oracle/a.py").encode("utf-8"),
+                headers={"content-type": "application/vnd.github.diff; charset=iso-8859-1"},
+            )
+
+        with self.assertRaisesRegex(OracleDiffError, "malformed"):
+            GitHubOracleGateway(
+                "repo-scoped-token",
+                transport=httpx.MockTransport(latin1),
+            )._request_bounded_bytes(
+                "GET",
+                f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+                max_bytes=MAX_COMPARE_DIFF_BYTES,
+                headers={"Accept": "application/vnd.github.diff"},
+            )
 
     def test_gzip_compare_body_is_rejected_without_reading_and_sends_identity(self) -> None:
         stream = _RecordingByteStream((b"\x1f\x8bnot-a-real-gzip-payload",))
@@ -1287,6 +1347,8 @@ class RestPatchIncompletePredicateTests(unittest.TestCase):
             ({"patch": "", "additions": 0, "deletions": 2}, True),
             ({"patch": "", "additions": 0, "deletions": 0}, True),
             ({"patch": "@@ -0,0 +1 @@\n+x", "additions": 1, "deletions": 0}, False),
+            ({"patch": "--- a/oracle/a.py\n+++ b/oracle/a.py", "additions": 0, "deletions": 0}, True),
+            ({"patch": "@@ -0,0 +0,0 @@", "additions": 0, "deletions": 0}, True),
         )
         for item, expected in cases:
             with self.subTest(item=item):
