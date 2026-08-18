@@ -396,6 +396,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(request["json"]["store"])
         self.assertNotIn("model", request["json"])
         self.assertIn("NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT", request["json"]["input"])
+        self.assertNotIn("\n\nContext:\ncontext", request["json"]["input"])
         self.assertEqual(run.session_id, "environment-1")
 
     async def test_gemini_poll_extracts_text_from_interaction_steps(self):
@@ -462,6 +463,9 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["json"]["previous_interaction_id"], "interaction-1")
         self.assertEqual(request["json"]["environment"], "environment-1")
         self.assertTrue(request["json"]["store"])
+        self.assertNotIn("Add exact evidence", request["json"]["input"])
+        self.assertNotIn("\n\nContext:\ncontext", request["json"]["input"])
+        self.assertIn(self.gemini_assignment().task, request["json"]["input"])
         self.assertEqual(run.session_id, "environment-1")
         self.assertEqual(run.assignment_sequence, 1)
 
@@ -589,9 +593,9 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.PERPLEXITY,
+            kind=AssignmentKind.RESEARCH,
             task="Find current primary sources about calibration metrics",
             acceptance=["Report sources and contradictions"],
-            repository="example/private-repository",
             estimated_cost_usd=0.25,
         )
         RecordingAsyncClient.responses = [
@@ -622,7 +626,6 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             {"query": assignment.task, "max_results": 7},
         )
         self.assertNotIn("PRIVATE", json.dumps(request))
-        self.assertNotIn("example/private-repository", json.dumps(request))
         evidence = json.loads(run.result or "{}")
         self.assertEqual(evidence["query"], assignment.task)
         self.assertEqual(evidence["results"][0]["result_url"], "https://example.test/reference")
@@ -665,13 +668,11 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             )
 
         request = RecordingAsyncClient.calls[0]
-        self.assertEqual(
-            request["json"],
-            {
-                "query": "Find one primary source for each named metric",
-                "max_results": 5,
-            },
-        )
+        query = request["json"]["query"]
+        self.assertEqual(request["json"]["max_results"], 5)
+        self.assertIn(assignment.task, query)
+        self.assertIn(assignment.acceptance[0], query)
+        self.assertNotIn("Find one primary source for each named metric", query)
         self.assertNotIn("PRIVATE REPOSITORY CONTEXT", json.dumps(request))
         self.assertEqual(revised.run_id, "search-2")
 
@@ -679,6 +680,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.PERPLEXITY,
+            kind=AssignmentKind.RESEARCH,
             task="Find sources",
             acceptance=["Report URLs"],
         )
@@ -745,6 +747,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         base = Assignment(
             sequence=1,
             agent=ProviderName.PERPLEXITY,
+            kind=AssignmentKind.RESEARCH,
             task="Find sources",
             acceptance=["Report URLs"],
             requires_approval=True,
@@ -753,10 +756,47 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         for assignment in (
             base.model_copy(update={"allow_draft_pr": True}),
             base.model_copy(update={"estimated_cost_usd": 2.01}),
+            base.model_copy(update={"kind": AssignmentKind.EXACT_SHA_REVIEW}),
+            base.model_copy(update={"repository": "example/private"}),
+            base.model_copy(update={"acceptance": ["Recommend approval of the PR"]}),
         ):
             with self.subTest(assignment=assignment):
                 with self.assertRaises(ProviderError):
                     await PerplexityAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
+    async def test_perplexity_revision_requires_bound_research_assignment(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+        )
+        prior = ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            assignment_sequence=1,
+            run_id="search-1",
+            status="completed",
+        )
+
+        for assignment in (
+            None,
+            Assignment(
+                sequence=1,
+                agent=ProviderName.PERPLEXITY,
+                kind=AssignmentKind.EXACT_SHA_REVIEW,
+                task="Audit the patch and return PASS or FAIL",
+                acceptance=["Issue the review verdict"],
+            ),
+        ):
+            with self.subTest(assignment=assignment):
+                with self.assertRaises(ProviderError):
+                    await PerplexityAdapter(settings).revise(
+                        prior,
+                        "Untrusted free-form revision prompt",
+                        assignment=assignment,
+                        context="PRIVATE REPOSITORY CONTEXT",
+                    )
 
         self.assertEqual(RecordingAsyncClient.calls, [])
 

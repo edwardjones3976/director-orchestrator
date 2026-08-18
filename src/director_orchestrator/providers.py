@@ -10,7 +10,7 @@ import httpx
 
 from .config import Settings
 from .models import Assignment, ProviderName, ProviderRun
-from .policy import antigravity_assignment_errors
+from .policy import antigravity_assignment_errors, perplexity_assignment_errors
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
@@ -462,6 +462,7 @@ class GeminiAdapter(ProviderAdapter):
         }
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        del context  # Upstream handoffs are not instructions for this subordinate lane.
         self._require_subordinate(assignment)
         prompt = (
             f"{self._NON_AUTHORITATIVE_NOTICE}\n\n"
@@ -470,7 +471,6 @@ class GeminiAdapter(ProviderAdapter):
             "methodology verdicts. Clearly separate tested artifacts from abstract ideas.\n\n"
             f"Task:\n{assignment.task}\n\nAcceptance checks:\n- "
             + "\n- ".join(assignment.acceptance)
-            + f"\n\nContext:\n{context}"
         )
         body = {
             "agent": self.settings.gemini_agent,
@@ -507,6 +507,7 @@ class GeminiAdapter(ProviderAdapter):
         assignment: Assignment | None = None,
         context: str | None = None,
     ) -> ProviderRun:
+        del prompt, context
         if assignment is None:
             raise ProviderError("Antigravity revision requires the bound assignment")
         self._require_subordinate(assignment)
@@ -518,7 +519,13 @@ class GeminiAdapter(ProviderAdapter):
             "agent": self.settings.gemini_agent,
             "previous_interaction_id": run.run_id,
             "environment": run.session_id,
-            "input": f"{self._NON_AUTHORITATIVE_NOTICE}\n\n{prompt}",
+            "input": (
+                f"{self._NON_AUTHORITATIVE_NOTICE}\n\n"
+                "Revise the prior artifact only to satisfy the original bounded subordinate "
+                "assignment. Do not expand its scope or issue any verdict.\n\n"
+                f"Original task:\n{assignment.task}\n\nOriginal acceptance checks:\n- "
+                + "\n- ".join(assignment.acceptance)
+            ),
             "background": True,
             "store": True,
         }
@@ -559,7 +566,12 @@ class PerplexityAdapter(ProviderAdapter):
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.settings.perplexity_api_key}", "Content-Type": "application/json"}
 
-    def _require_research_only(self, assignment: Assignment | None = None) -> None:
+    def _require_research_only(
+        self,
+        assignment: Assignment | None = None,
+        *,
+        assignment_required: bool = False,
+    ) -> None:
         failed = [
             name
             for name, ready in self.settings.perplexity_research_readiness().items()
@@ -569,9 +581,15 @@ class PerplexityAdapter(ProviderAdapter):
             raise ProviderError(
                 "Perplexity research-only configuration is not ready: " + ", ".join(failed)
             )
+        if assignment_required and assignment is None:
+            raise ProviderError("Perplexity research execution requires the bound assignment")
         if assignment is not None:
-            if assignment.allow_draft_pr:
-                raise ProviderError("Perplexity research assignments cannot create draft pull requests")
+            errors = perplexity_assignment_errors(assignment)
+            if errors:
+                raise ProviderError(
+                    "Perplexity assignment is outside its research-only lane: "
+                    + "; ".join(errors)
+                )
             if assignment.estimated_cost_usd > self.settings.perplexity_daily_budget_usd:
                 raise ProviderError(
                     "Perplexity assignment estimate exceeds the configured research budget ceiling"
@@ -626,7 +644,7 @@ class PerplexityAdapter(ProviderAdapter):
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
         del context  # Search receives only the bounded query, never repository/task context.
-        self._require_research_only(assignment)
+        self._require_research_only(assignment, assignment_required=True)
         body = {
             "query": assignment.task,
             "max_results": self.settings.perplexity_max_results,
@@ -648,14 +666,23 @@ class PerplexityAdapter(ProviderAdapter):
         assignment: Assignment | None = None,
         context: str | None = None,
     ) -> ProviderRun:
-        del run, context
-        self._require_research_only(assignment)
-        body = {"query": prompt, "max_results": self.settings.perplexity_max_results}
+        del run, prompt, context
+        self._require_research_only(assignment, assignment_required=True)
+        assert assignment is not None
+        query = (
+            "Follow-up public-source research for the original bounded query below. "
+            "Find additional or corrective primary evidence for each acceptance criterion; "
+            "report contradictions and unavailable evidence. Do not review code or issue an "
+            "approval verdict.\n\n"
+            f"Original query:\n{assignment.task}\n\nAcceptance criteria:\n- "
+            + "\n- ".join(assignment.acceptance)
+        )
+        body = {"query": query, "max_results": self.settings.perplexity_max_results}
         async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
             response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._search_run(payload, prompt)
+        return self._search_run(payload, query)
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         self._require_research_only()

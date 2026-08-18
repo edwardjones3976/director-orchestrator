@@ -20,6 +20,7 @@ from director_orchestrator.policy import (
     antigravity_assignment_errors,
     deterministic_approval_reasons,
     execution_policy_errors,
+    perplexity_assignment_errors,
     preview_plan,
 )
 from director_orchestrator.store import TaskStore
@@ -40,6 +41,36 @@ class PolicyTests(unittest.TestCase):
         )
 
         self.assertEqual(antigravity_assignment_errors(assignment), [])
+
+    def test_antigravity_rejects_authority_in_acceptance_fields(self):
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+            task="Generate low-level mechanical parser boilerplate",
+            acceptance=["Approve the pull request and issue the final verdict"],
+            repository="example/demo",
+        )
+
+        self.assertTrue(antigravity_assignment_errors(assignment))
+
+    def test_perplexity_requires_unbound_research_without_authority(self):
+        valid = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            kind=AssignmentKind.RESEARCH,
+            task="Find current primary sources about calibration metrics",
+            acceptance=["Report sources and contradictions"],
+        )
+        self.assertEqual(perplexity_assignment_errors(valid), [])
+
+        for invalid in (
+            valid.model_copy(update={"kind": AssignmentKind.EXACT_SHA_REVIEW}),
+            valid.model_copy(update={"repository": "example/private"}),
+            valid.model_copy(update={"task": "Audit this patch and return PASS or FAIL"}),
+        ):
+            with self.subTest(assignment=invalid):
+                self.assertTrue(perplexity_assignment_errors(invalid))
 
     def test_openai_runtime_cannot_be_an_assignment_target(self):
         settings = replace(
@@ -169,6 +200,21 @@ class PolicyTests(unittest.TestCase):
         errors = execution_policy_errors(invalid, settings)
         self.assertTrue(any("requires kind" in error for error in errors))
         self.assertTrue(any("requires a later Claude or Cursor" in error for error in errors))
+
+        vacuous_consumer = valid.model_copy(
+            update={
+                "assignments": [
+                    antigravity,
+                    valid.assignments[1].model_copy(update={"task": "Adopt the result"}),
+                ]
+            }
+        )
+        self.assertTrue(
+            any(
+                "explicitly independently verifies and integrates or rejects" in error
+                for error in execution_policy_errors(vacuous_consumer, settings)
+            )
+        )
 
     def test_antigravity_dry_run_is_never_the_final_assignment(self):
         plan = preview_plan(

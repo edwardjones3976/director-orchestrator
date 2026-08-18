@@ -27,8 +27,18 @@ _ANTIGRAVITY_AUTHORITY = re.compile(
     r"\b(exact[- ]sha|independent review|review verdict|review (?:the|this|a) (?:pr|pull request)|"
     r"final acceptance|(?:approve|merge) (?:the|this|a) (?:pr|pull request|change|branch)|"
     r"approval authority|authoritative (?:verdict|decision|review|contract|methodology)|source of truth|"
+    r"audit (?:the|this|a) (?:patch|pr|pull request|commit|sha|code)|"
+    r"pass\s*(?:or|/)\s*fail|(?:accept|authorize) "
+    r"(?:the|this|a) (?:pr|pull request|change|branch)|"
+    r"recommend(?:s|ed|ing)? approval (?:of )?(?:the|this|a) "
+    r"(?:pr|pull request|change|branch)|"
     r"define(?:s|d|ing)? .{0,40}\bcontract|decide(?:s|d|ing)? .{0,40}\bmethodology|"
     r"certif(?:y|ies|ied|ication)|sign[- ]?off|adjudicat(?:e|es|ed|ion))\b",
+    re.I | re.S,
+)
+_ANTIGRAVITY_CONSUMER = re.compile(
+    r"\bindependently verify\b.{0,120}\b(?:integrate|reject)\b|"
+    r"\b(?:integrate|reject)\b.{0,120}\bindependently verify\b",
     re.I | re.S,
 )
 _ANTIGRAVITY_KINDS = {
@@ -69,12 +79,27 @@ def antigravity_assignment_errors(assignment: Assignment) -> list[str]:
             "requires explicit subordinate boilerplate, scaffolding, low-level, "
             "mechanical, or alternate-ideation scope"
         )
-    if _ANTIGRAVITY_AUTHORITY.search(assignment.task):
+    prompt_fields = [assignment.task, *assignment.acceptance]
+    if any(_ANTIGRAVITY_AUTHORITY.search(value) for value in prompt_fields):
         errors.append(
             "cannot receive review, acceptance, merge, contract, or methodology authority"
         )
     if assignment.allow_draft_pr:
         errors.append("cannot create a draft pull request")
+    return errors
+
+
+def perplexity_assignment_errors(assignment: Assignment) -> list[str]:
+    errors: list[str] = []
+    if assignment.kind != AssignmentKind.RESEARCH:
+        errors.append("requires kind research")
+    if assignment.repository:
+        errors.append("cannot receive a repository binding or repository context")
+    if assignment.allow_draft_pr:
+        errors.append("cannot create a draft pull request")
+    prompt_fields = [assignment.task, *assignment.acceptance]
+    if any(_ANTIGRAVITY_AUTHORITY.search(value) for value in prompt_fields):
+        errors.append("cannot receive code-review, approval, acceptance, or merge authority")
     return errors
 
 
@@ -120,6 +145,19 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
                     "Claude or Cursor integration assignment with a direct dependency"
                 )
+            elif not any(
+                consumer.kind == AssignmentKind.IMPLEMENTATION
+                and _ANTIGRAVITY_CONSUMER.search(consumer.task)
+                for consumer in consumers
+            ):
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity output requires a later "
+                    "Claude or Cursor implementation assignment that explicitly independently "
+                    "verifies and integrates or rejects the artifact"
+                )
+        if assignment.agent == ProviderName.PERPLEXITY:
+            for error in perplexity_assignment_errors(assignment):
+                errors.add(f"assignment {assignment.sequence}: Perplexity {error}")
         if assignment.allow_draft_pr and not assignment.requires_approval:
             errors.add(
                 f"assignment {assignment.sequence}: draft PR creation requires assignment approval"
