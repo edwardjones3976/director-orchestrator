@@ -1537,18 +1537,23 @@ class GitHubOracleGateway:
             after_files,
             parse_compare_diff(diff_text, max_bytes=self._max_compare_diff_bytes),
         )
-        return after_pull, [
-            OracleChangedFile(
-                filename=item.filename,
-                previous_filename=item.previous_filename,
-                status=item.status,
-                additions=item.additions,
-                deletions=item.deletions,
-                patch=item.patch,
-                added_lines=list(item.added_lines),
-            )
-            for item in bound
-        ]
+        try:
+            return after_pull, [
+                OracleChangedFile(
+                    filename=item.filename,
+                    previous_filename=item.previous_filename,
+                    status=item.status,
+                    additions=item.additions,
+                    deletions=item.deletions,
+                    patch=item.patch,
+                    added_lines=list(item.added_lines),
+                )
+                for item in bound
+            ]
+        except ValidationError as exc:
+            raise OracleDiffError(
+                "compare file evidence is incomplete or disagrees with structured hunk evidence"
+            ) from exc
 
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         repository = canonical_repository(repository)
