@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -315,6 +316,23 @@ class CompareDiffParserTests(unittest.TestCase):
         self.assertEqual(parsed[0].status, "removed")
         self.assertEqual(parsed[0].added_lines, ())
         self.assertEqual(parsed[0].additions, 0)
+
+    def test_5000_digit_hunk_count_is_malformed_without_raw_digits(self) -> None:
+        huge = "1" * 5_000
+        text = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            f"@@ -1 +1,{huge} @@\n"
+            "+x\n"
+        )
+        with self.assertRaisesRegex(OracleDiffError, "malformed") as raised:
+            parse_compare_diff(text)
+        self.assertNotIn(huge[:32], str(raised.exception))
+        with self.assertRaisesRegex(OracleDiffError, "malformed") as raised:
+            parse_hunk_patch(f"@@ -1 +1,{huge} @@\n+x")
+        self.assertNotIn(huge[:32], str(raised.exception))
 
     def test_empty_new_file_is_complete(self) -> None:
         text = (
@@ -741,35 +759,49 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.changed_files[0].added_lines, ["from_diff = True"])
         self.assertEqual(snapshot.changed_files[1].added_lines, ["fallback_only = True"])
 
-    def test_rest_only_incomplete_hunk_fails_closed_without_compare(self) -> None:
+    def test_incomplete_rest_hunk_still_binds_exact_sha_compare(self) -> None:
         self.files = [
             {
-                "filename": "oracle/a.py",
+                "filename": "oracle/large.py",
                 "status": "modified",
-                "additions": 2,
-                "deletions": 0,
+                "additions": 1,
+                "deletions": 1,
                 "patch": "@@ -0,0 +1,2 @@\n+only_one",
             }
         ]
-        with self.assertRaisesRegex(OracleDiffError, "incomplete or disagrees"):
-            self.gateway().snapshot("edwardjones3976/edge_engine", 23)
-        self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.changed_files[0].added_lines, ["research_only = True"])
+        self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
-    def test_rest_only_complete_patch_with_disagreeing_counts_fails_closed(self) -> None:
+    def test_complete_rest_patch_still_binds_exact_sha_compare(self) -> None:
+        self.files[0]["patch"] = (
+            "@@ -1,2 +1,2 @@\n context = True\n-old = True\n+REST_ONLY = True"
+        )
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.changed_files[0].added_lines, ["research_only = True"])
+        self.assertNotIn("REST_ONLY = True", snapshot.changed_files[0].added_lines or [])
+        compare_requests = [item for item in self.requests if "/compare/" in item.url.path]
+        self.assertEqual(len(compare_requests), 1)
+        self.assertEqual(
+            compare_requests[0].url.path,
+            f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+        )
+
+    def test_rest_counts_that_disagree_with_compare_fail_closed(self) -> None:
         self.files = [
             {
-                "filename": "oracle/a.py",
+                "filename": "oracle/large.py",
                 "status": "modified",
                 "additions": 2,
                 "deletions": 1,
                 "patch": "@@ -1 +1 @@\n-old\n+safe",
             }
         ]
-        with self.assertRaisesRegex(OracleDiffError, "incomplete or disagrees"):
+        with self.assertRaisesRegex(OracleDiffError, "does not match the complete compare diff"):
             self.gateway().snapshot("edwardjones3976/edge_engine", 23)
-        self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+        self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
-    def test_rest_only_valid_multi_hunk_binds_exact_totals(self) -> None:
+    def test_valid_multi_hunk_compare_binds_exact_totals(self) -> None:
         self.files = [
             {
                 "filename": "oracle/a.py",
@@ -787,9 +819,22 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
                 ),
             }
         ]
+        self.compare_diff = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " context = True\n"
+            "-old = True\n"
+            "+safe = True\n"
+            "@@ -10,1 +10,2 @@\n"
+            " keep = True\n"
+            "+also_safe = True\n"
+        )
         snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
         self.assertEqual(snapshot.changed_files[0].added_lines, ["safe = True", "also_safe = True"])
-        self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+        self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
     def test_header_only_rest_patch_uses_exact_sha_compare_fallback(self) -> None:
         self.files[0]["patch"] = "--- a/oracle/large.py\n+++ b/oracle/large.py"
@@ -983,6 +1028,113 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(stream.chunks_yielded, 3)
         self.assertEqual(stream.bytes_yielded, 24)
         self.assertEqual(stream.chunks_remaining, leftover_chunks)
+
+    def test_one_oversized_chunk_is_rejected_before_copying_past_the_cap(self) -> None:
+        stream = _RecordingByteStream((b"0123456789abcdef01234567", b"leftover-not-read"))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/vnd.github.diff"},
+                stream=stream,
+            )
+
+        with self.assertRaisesRegex(OracleDiffError, "bounded evidence limit") as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token",
+                transport=httpx.MockTransport(handler),
+                max_compare_diff_bytes=16,
+            )._request_bounded_bytes(
+                "GET",
+                f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+                max_bytes=16,
+                headers={"Accept": "application/vnd.github.diff"},
+            )
+        self.assertNotIn("0123456789abcdef", str(raised.exception))
+        self.assertTrue(stream.closed)
+        self.assertEqual(stream.chunks_yielded, 1)
+        self.assertEqual(stream.chunks_remaining, 1)
+
+    def test_http_206_prefix_is_terminal_incomplete_evidence(self) -> None:
+        prefix = (
+            "diff --git a/oracle/empty.py b/oracle/empty.py\n"
+            "new file mode 100644\n"
+            "index 0000000..deadbee"
+        )
+
+        def partial(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            return httpx.Response(
+                206,
+                text=prefix + "\n",
+                headers={"content-type": "application/vnd.github.diff"},
+            )
+
+        with self.assertRaisesRegex(OracleDiffError, "incomplete") as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(partial)
+            )._fetch_compare_diff("edwardjones3976/edge_engine", BASE_SHA, HEAD_SHA)
+        self.assertNotIn("deadbee", str(raised.exception))
+        self.assertNotIn(prefix, str(raised.exception))
+
+        self.requests.clear()
+
+        def snapshot_partial(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                return httpx.Response(
+                    206,
+                    text=prefix + "\n",
+                    headers={"content-type": "application/vnd.github.diff"},
+                )
+            return self.handler(request)
+
+        with self.assertRaisesRegex(OracleDiffError, "incomplete"):
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(snapshot_partial)
+            ).snapshot("edwardjones3976/edge_engine", 23)
+        parsed = parse_compare_diff(prefix + "\n")
+        self.assertEqual(parsed[0].status, "added")
+        self.assertEqual(parsed[0].added_lines, ())
+
+    def test_changed_files_must_be_a_non_bool_integer_count(self) -> None:
+        cases = (
+            {"omit": True},
+            {"changed_files": True},
+            {"changed_files": False},
+            {"changed_files": "1"},
+            {"changed_files": -1},
+            {"changed_files": 2},
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                self.requests.clear()
+                pull = dict(self.pull)
+                if case.get("omit"):
+                    pull.pop("changed_files")
+                else:
+                    pull["changed_files"] = case["changed_files"]
+                self.pull = pull
+                with self.assertRaisesRegex(OracleDiffError, "file enumeration is incomplete"):
+                    self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+                self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+        self.pull = {
+            **self.pull,
+            "changed_files": 1,
+            "title": "Bounded Oracle change",
+        }
+
+    def test_missing_rest_filename_or_status_is_malformed_evidence(self) -> None:
+        cases = (
+            {"status": "modified", "additions": 1, "deletions": 1, "patch": None},
+            {"filename": "oracle/large.py", "additions": 1, "deletions": 1, "patch": None},
+        )
+        for item in cases:
+            with self.subTest(item=item):
+                self.requests.clear()
+                self.files = [item]
+                with self.assertRaisesRegex(OracleDiffError, "malformed"):
+                    self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+                self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
 
     def test_compare_content_type_must_be_github_diff_media_type(self) -> None:
         def plain_text(request: httpx.Request) -> httpx.Response:
@@ -1363,19 +1515,17 @@ class PolicyCompleteDiffScanTests(unittest.TestCase):
         )
 
 
-class RestPatchIncompletePredicateTests(unittest.TestCase):
-    def test_null_or_empty_patch_is_incomplete_regardless_of_counts(self) -> None:
-        cases = (
-            ({"patch": None, "additions": 0, "deletions": 0}, True),
-            ({"patch": "", "additions": 0, "deletions": 2}, True),
-            ({"patch": "", "additions": 0, "deletions": 0}, True),
-            ({"patch": "@@ -0,0 +1 @@\n+x", "additions": 1, "deletions": 0}, False),
-            ({"patch": "--- a/oracle/a.py\n+++ b/oracle/a.py", "additions": 0, "deletions": 0}, True),
-            ({"patch": "@@ -0,0 +0,0 @@", "additions": 0, "deletions": 0}, True),
-        )
-        for item, expected in cases:
-            with self.subTest(item=item):
-                self.assertEqual(GitHubOracleGateway._rest_patch_incomplete(item), expected)
+class FileEnumerationContractTests(unittest.TestCase):
+    def test_changed_files_rejects_missing_bool_string_negative_and_mismatch(self) -> None:
+        files = [{"filename": "oracle/a.py", "status": "added"}]
+        cases = (None, True, False, "1", -1, 2)
+        for raw in cases:
+            with self.subTest(changed_files=raw):
+                pull = {} if raw is None else {"changed_files": raw}
+                with self.assertRaisesRegex(OracleDiffError, "file enumeration is incomplete"):
+                    GitHubOracleGateway._require_complete_file_enumeration(pull, files)
+        GitHubOracleGateway._require_complete_file_enumeration({"changed_files": 1}, files)
+        GitHubOracleGateway._require_complete_file_enumeration({"changed_files": 0}, [])
 
 
 class DeterministicEvidenceFailureTests(unittest.TestCase):
@@ -1695,6 +1845,196 @@ class CompareRateLimitServiceTests(unittest.TestCase):
         self.assertTrue(any("complete compare-diff evidence failed closed" in item for item in result.reasons))
         self.assertFalse(any("retryable" in item for item in result.reasons))
         self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+
+    def test_rate_limit_window_blocks_immediate_duplicate_process(self) -> None:
+        reset = str(int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()))
+        cases = (
+            (429, {"retry-after": "3600"}),
+            (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": reset}),
+        )
+        for status, headers in cases:
+            with self.subTest(status=status, headers=headers):
+                self.harness.requests.clear()
+                artifact = self._artifact(f"hold-{status}-{sorted(headers.items())}")
+                store = OracleMergeStore(self.settings.sqlite_path)
+
+                def handler(request: httpx.Request) -> httpx.Response:
+                    if request.method == "GET" and "/compare/" in request.url.path:
+                        self.harness.requests.append(request)
+                        return httpx.Response(status, headers=headers)
+                    return self.harness.handler(request)
+
+                service = OracleMergeService(
+                    OracleMergePolicy(self.settings),
+                    store,
+                    GitHubOracleGateway(
+                        "repo-scoped-token", transport=httpx.MockTransport(handler)
+                    ),
+                    sleep=lambda _: None,
+                )
+                first = service.process(artifact)
+                second = service.process(artifact)
+                self.assertEqual(first.status, OracleMergeStatus.ERROR)
+                self.assertEqual(second.status, OracleMergeStatus.ERROR)
+                self.assertEqual(self._compare_calls(), 1)
+                self.assertEqual(self._merge_or_ready_calls(), 0)
+                self.assertTrue(any("rate limit" in item for item in first.reasons))
+                self.assertTrue(any("remains retryable" in item for item in first.reasons))
+                self.assertTrue(any("rate limit" in item for item in second.reasons))
+                self.assertTrue(any("remains retryable" in item for item in second.reasons))
+                connection = sqlite3.connect(self.settings.sqlite_path)
+                try:
+                    row = connection.execute(
+                        "SELECT status, result_json, retry_not_before "
+                        "FROM oracle_merge_attempts WHERE artifact_id = ?",
+                        (artifact.artifact_id,),
+                    ).fetchone()
+                finally:
+                    connection.close()
+                self.assertEqual(row[0], "RECOVERABLE")
+                self.assertIsNone(row[1])
+                self.assertIsNotNone(row[2])
+
+
+class MalformedEvidenceProcessTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.harness = GitHubCompleteDiffGatewayTests()
+        self.harness.setUp()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.settings = Settings(
+            sqlite_path=str(Path(self.temporary.name) / "oracle.sqlite3"),
+            oracle_automerge_enabled=True,
+            oracle_automerge_kill_switch=False,
+            oracle_automerge_project="edge-oracle",
+            oracle_automerge_repository="edwardjones3976/edge_engine",
+            oracle_automerge_base_ref="main",
+            oracle_automerge_branch_prefix="oracle/",
+            oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
+            oracle_automerge_required_checks=("ci", "security"),
+            oracle_automerge_required_check_app="github-actions",
+            oracle_automerge_review_secret=REVIEW_SECRET,
+        )
+
+    def _artifact(self, suffix: str) -> OracleReviewArtifact:
+        return OracleReviewArtifact.model_validate(
+            {
+                "artifact_type": "edge_oracle_exact_sha_review/v1",
+                "artifact_id": f"review-artifact-malformed-{suffix}",
+                "assignment_id": f"assignment-malformed-{suffix}",
+                "project": "edge-oracle",
+                "repository": "edwardjones3976/edge_engine",
+                "pull_number": 23,
+                "base_ref": "main",
+                "base_sha": BASE_SHA,
+                "head_ref": "oracle/test",
+                "head_sha": HEAD_SHA,
+                "implementation_provider": "cursor",
+                "implementation_actor": "cursor-agent",
+                "reviewer_provider": "claude",
+                "review_run_id": f"claude-review-malformed-{suffix}",
+                "verdict": OracleReviewVerdict.ACCEPT,
+                "summary": "Exact-SHA review accepted the bounded Oracle change.",
+                "evidence": ["Tests and changed paths reviewed at the exact SHA."],
+                "acceptance_checks": ["ci", "security"],
+                "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+                "signature": "0" * 64,
+            }
+        ).sign(REVIEW_SECRET)
+
+    def _process(self, artifact: OracleReviewArtifact) -> tuple[OracleMergeResult, int]:
+        inner = self.harness.gateway()
+
+        class _CountingGateway:
+            def __init__(self) -> None:
+                self.snapshot_calls = 0
+                self.merge_calls = 0
+                self.ready_calls = 0
+
+            def snapshot(self, repository: str, pull_number: int):
+                self.snapshot_calls += 1
+                return inner.snapshot(repository, pull_number)
+
+            def merge(self, *args, **kwargs):
+                self.merge_calls += 1
+                return inner.merge(*args, **kwargs)
+
+            def mark_ready(self, *args, **kwargs):
+                self.ready_calls += 1
+                return inner.mark_ready(*args, **kwargs)
+
+        github = _CountingGateway()
+        result = OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            github,
+            sleep=lambda _: None,
+        ).process(artifact)
+        self.assertEqual(github.snapshot_calls, 1)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.ready_calls, 0)
+        return result, github.snapshot_calls
+
+    def _assert_terminal_one_snapshot(self, result: OracleMergeResult) -> None:
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertTrue(
+            any("complete compare-diff evidence failed closed" in item for item in result.reasons)
+        )
+        self.assertFalse(any("transient" in item for item in result.reasons))
+        self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+        connection = sqlite3.connect(self.settings.sqlite_path)
+        try:
+            row = connection.execute(
+                "SELECT status, result_json FROM oracle_merge_attempts WHERE artifact_id = ?",
+                (result.artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertNotEqual(row[0], "RECOVERABLE")
+        self.assertIsNotNone(row[1])
+
+    def test_missing_rest_status_is_one_terminal_snapshot(self) -> None:
+        self.harness.files = [
+            {"filename": "oracle/large.py", "additions": 1, "deletions": 1, "patch": None}
+        ]
+        result, _ = self._process(self._artifact("missing-status"))
+        self._assert_terminal_one_snapshot(result)
+        self.assertEqual(
+            sum(1 for item in self.harness.requests if item.url.path.endswith("/pulls/23")),
+            1,
+        )
+        self.assertFalse(any("/compare/" in item.url.path for item in self.harness.requests))
+        self.assertNotIn("oracle/large.py", " ".join(result.reasons))
+
+    def test_missing_rest_filename_is_one_terminal_snapshot(self) -> None:
+        self.harness.files = [
+            {"status": "modified", "additions": 1, "deletions": 1, "patch": None}
+        ]
+        result, _ = self._process(self._artifact("missing-filename"))
+        self._assert_terminal_one_snapshot(result)
+        self.assertEqual(
+            sum(1 for item in self.harness.requests if item.url.path.endswith("/pulls/23")),
+            1,
+        )
+        self.assertFalse(any("/compare/" in item.url.path for item in self.harness.requests))
+
+    def test_5000_digit_hunk_count_is_one_terminal_snapshot(self) -> None:
+        huge = "1" * 5_000
+        self.harness.compare_diff = (
+            "diff --git a/oracle/large.py b/oracle/large.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/oracle/large.py\n"
+            "+++ b/oracle/large.py\n"
+            f"@@ -1 +1,{huge} @@\n"
+            "+x\n"
+        )
+        result, _ = self._process(self._artifact("huge-hunk"))
+        self._assert_terminal_one_snapshot(result)
+        self.assertEqual(
+            sum(1 for item in self.harness.requests if "/compare/" in item.url.path),
+            1,
+        )
+        self.assertNotIn(huge[:32], " ".join(result.reasons))
 
 
 if __name__ == "__main__":

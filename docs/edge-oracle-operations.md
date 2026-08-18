@@ -111,39 +111,41 @@ refetches GitHub state and fails closed on:
 - missing, pending, failed, ambiguous, wrong-producer, or wrong-SHA checks;
 - any current or previous rename path outside `oracle/**`, `docs/oracle/**`, or
   `tests/oracle/**`, or any file whose complete scan evidence cannot be proven.
-  When the pull-request files REST response omits a `patch` or returns an empty
-  string, the gate fetches the
-  immutable compare diff for the snapshot's exact 40-hex base and head SHAs
+  Every snapshot binds changed-file scan evidence from the immutable compare
+  diff for the snapshot's exact 40-hex base and head SHAs
   (`GET /repos/{repo}/compare/{base}...{head}` with
   `Accept: application/vnd.github.diff` and `Accept-Encoding: identity`),
-  parses it structurally, and binds
-  added-line evidence for every REST file. A number-addressed `/pulls/{number}`
-  diff is not a completeness source. The pull is re-read after that fetch; any
-  drift in title, body, draft, state, merged flag, base/head refs and SHAs, head
-  repository, author, changed-file count, or file set fails closed. The compare
-  response `Content-Type` base media type must be `application/vnd.github.diff`.
+  not from number-addressed `/pulls/{number}/files` patch bodies. Those REST
+  patches are not exact-SHA evidence and can race A-to-B-to-A. The pull is
+  re-read after that fetch; any drift in title, body, draft, state, merged flag,
+  base/head refs and SHAs, head repository, author, changed-file count, or file
+  set fails closed. Compare evidence is accepted only on HTTP 200; a 206 prefix
+  is terminal incomplete evidence. Each streamed chunk is checked against the
+  remaining size cap before it is copied. The compare response `Content-Type`
+  base media type must be `application/vnd.github.diff`.
   A charset parameter is omitted, the unquoted token `utf-8`, or a matched
   double-quoted `"utf-8"` only, case-insensitively; single quotes, mismatched
   quotes, escapes, and duplicate or non-UTF-8 charset declarations fail closed. A
   non-identity `Content-Encoding` fails closed so `Content-Length` is the
   uncompressed body. HTTP 429 and 403 with explicit rate-limit evidence
-  (`Retry-After` or `X-RateLimit-Remaining: 0`) release the review artifact
-  after one compare fetch so a later authenticated retry can honor GitHub's
-  `Retry-After` / `X-RateLimit-Reset` window; the generic two-read loop is not
-  spent. HTTP 408 and other transport timeouts stay on the bounded read-retry
-  path. Ordinary permission 403 and other evidence-shape failures are
-  deterministic. Incomplete file enumeration and non-40-hex pull SHAs are
-  terminal evidence failures. Content-bearing sections require exactly one
-  valid `index` line whose object IDs are lowercase SHA-1 hex (each side
-  independently 4–40 characters); edited renames also require canonical similarity
-  metadata. Pull head/base identity remains exactly 40 hex. Unavailable,
-  oversized, truncated, binary, combined, quoted, mode-only, or mismatched diffs
-  fail closed. A nonempty REST `patch` still has to prove at least one complete
-  hunk with at least one added or deleted source line, and that parsed additions
-  and deletions equal the REST counts, before the snapshot is eligible.
-  Header-only or zero-change REST patches are incomplete and use the exact-SHA
-  compare fallback. `patch=None` remains incomplete when no bound evidence is
-  supplied;
+  (`Retry-After` or `X-RateLimit-Remaining: 0`) persist a not-before deadline
+  from `Retry-After` / `X-RateLimit-Reset` and release the review artifact
+  after one compare fetch; a later `process()` for the same artifact makes no
+  compare request until that deadline. The generic two-read loop is not spent
+  and the provider request does not sleep. HTTP 408 and other transport timeouts
+  stay on the bounded read-retry path. Ordinary permission 403 and other
+  evidence-shape failures are deterministic. `changed_files` must be present as
+  a non-bool integer `>= 0` and equal the file list length. Missing REST
+  filename/status, oversized hunk counts, and other malformed evidence raise
+  `OracleDiffError` with no raw content. Incomplete file enumeration and
+  non-40-hex pull SHAs are terminal evidence failures. Content-bearing sections
+  require exactly one valid `index` line whose object IDs are lowercase SHA-1
+  hex (each side independently 4–40 characters); edited renames also require
+  canonical similarity metadata. Pull head/base identity remains exactly 40 hex.
+  Unavailable, oversized, truncated, binary, combined, quoted, mode-only, or
+  mismatched diffs fail closed. Bound compare additions and deletions must
+  equal the REST counts. `patch=None` remains incomplete when no bound evidence
+  is supplied;
 - deterministic serious-safety signals or committed credential material;
 - GitHub or branch-protection refusal.
 

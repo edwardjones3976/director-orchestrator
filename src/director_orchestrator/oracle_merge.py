@@ -12,6 +12,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Callable, Iterator, Literal, Protocol
@@ -585,7 +586,8 @@ class OracleMergeStore:
                     status TEXT NOT NULL,
                     result_json TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    retry_not_before TEXT
                 )
                 """
             )
@@ -618,13 +620,22 @@ class OracleMergeStore:
                 BEGIN SELECT RAISE(ABORT, 'oracle merge audit is append-only'); END
                 """
             )
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(oracle_merge_attempts)")
+            }
+            if "retry_not_before" not in columns:
+                connection.execute(
+                    "ALTER TABLE oracle_merge_attempts ADD COLUMN retry_not_before TEXT"
+                )
 
     def reserve(self, artifact: OracleReviewArtifact) -> OracleMergeResult | None:
         digest = artifact.digest()
         now = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connect() as connection:
             existing = connection.execute(
-                "SELECT artifact_digest, status, result_json FROM oracle_merge_attempts WHERE artifact_id = ?",
+                "SELECT artifact_digest, status, result_json, retry_not_before "
+                "FROM oracle_merge_attempts WHERE artifact_id = ?",
                 (artifact.artifact_id,),
             ).fetchone()
             if existing:
@@ -634,13 +645,17 @@ class OracleMergeStore:
                     return OracleMergeResult.model_validate_json(existing["result_json"])
                 if existing["status"] != self._RECOVERABLE:
                     raise RuntimeError("the review artifact is already being evaluated")
+                hold = self._retry_hold_result(artifact, digest, existing["retry_not_before"])
+                if hold is not None:
+                    return hold
                 # A released attempt failed closed on a transient condition without
                 # reaching a terminal result, so the identical artifact may retry.
                 # Compare-and-swap on RECOVERABLE so separate service or CLI
                 # processes cannot both re-arm the same one-shot authority after
                 # observing the same released reservation.
                 rearmed = connection.execute(
-                    "UPDATE oracle_merge_attempts SET status = ?, updated_at = ? "
+                    "UPDATE oracle_merge_attempts SET status = ?, updated_at = ?, "
+                    "retry_not_before = NULL "
                     "WHERE artifact_id = ? AND status = ? AND result_json IS NULL",
                     (
                         self._EVALUATING,
@@ -681,7 +696,10 @@ class OracleMergeStore:
                 raise ValueError("review run was reused for another merge artifact")
             try:
                 connection.execute(
-                    "INSERT INTO oracle_merge_attempts VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+                    "INSERT INTO oracle_merge_attempts("
+                    "artifact_id, artifact_digest, assignment_id, review_run_id, "
+                    "status, result_json, created_at, updated_at, retry_not_before"
+                    ") VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL)",
                     (
                         artifact.artifact_id,
                         digest,
@@ -746,7 +764,41 @@ class OracleMergeStore:
             )
         return result
 
-    def release(self, result: OracleMergeResult) -> OracleMergeResult:
+    def _retry_hold_result(
+        self,
+        artifact: OracleReviewArtifact,
+        digest: str,
+        retry_not_before: str | None,
+    ) -> OracleMergeResult | None:
+        if not retry_not_before:
+            return None
+        try:
+            deadline = datetime.fromisoformat(retry_not_before)
+        except ValueError:
+            return None
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) >= deadline:
+            return None
+        return OracleMergeResult(
+            artifact_id=artifact.artifact_id,
+            artifact_digest=digest,
+            status=OracleMergeStatus.ERROR,
+            repository=canonical_repository(artifact.repository),
+            pull_number=artifact.pull_number,
+            reviewed_sha=artifact.head_sha,
+            reasons=[
+                "GitHub compare-diff rate limit requires a later retry and remains "
+                "retryable: OracleRateLimitError"
+            ],
+        )
+
+    def release(
+        self,
+        result: OracleMergeResult,
+        *,
+        retry_not_before: datetime | None = None,
+    ) -> OracleMergeResult:
         """Record a fail-closed outcome that the same artifact may retry.
 
         The attempt keeps its artifact, assignment, and review-run reservation, so no
@@ -756,11 +808,13 @@ class OracleMergeStore:
         """
         with self._lock, self._connect() as connection:
             released = connection.execute(
-                "UPDATE oracle_merge_attempts SET status = ?, updated_at = ? "
+                "UPDATE oracle_merge_attempts SET status = ?, updated_at = ?, "
+                "retry_not_before = ? "
                 "WHERE artifact_id = ? AND result_json IS NULL",
                 (
                     self._RECOVERABLE,
                     datetime.now(timezone.utc).isoformat(),
+                    retry_not_before.isoformat() if retry_not_before is not None else None,
                     result.artifact_id,
                 ),
             ).rowcount
@@ -1108,10 +1162,20 @@ class OracleMergeService:
     def _release_for_rate_limit(
         self, artifact: OracleReviewArtifact, exc: OracleRateLimitError
     ) -> OracleMergeResult:
-        return self._release_for_retry(
-            artifact,
-            "GitHub compare-diff rate limit requires a later retry and remains "
-            f"retryable: {type(exc).__name__}",
+        return self.store.release(
+            OracleMergeResult(
+                artifact_id=artifact.artifact_id,
+                artifact_digest=artifact.digest(),
+                status=OracleMergeStatus.ERROR,
+                repository=self.policy.repository,
+                pull_number=artifact.pull_number,
+                reviewed_sha=artifact.head_sha,
+                reasons=[
+                    "GitHub compare-diff rate limit requires a later retry and remains "
+                    f"retryable: {type(exc).__name__}"
+                ],
+            ),
+            retry_not_before=exc.retry_not_before,
         )
 
     def _release_for_retry(
@@ -1217,6 +1281,43 @@ class GitHubAppInstallationTokenProvider:
             self._token = token
             self._expires_at = parsed_expiry.astimezone(timezone.utc)
             return token
+
+
+def _rate_limit_not_before(response: httpx.Response) -> datetime:
+    now = datetime.now(timezone.utc)
+    deadlines = []
+    retry_after = _parse_retry_after((response.headers.get("retry-after") or "").strip(), now)
+    reset = _parse_rate_limit_reset((response.headers.get("x-ratelimit-reset") or "").strip())
+    if retry_after is not None:
+        deadlines.append(retry_after)
+    if reset is not None:
+        deadlines.append(reset)
+    if not deadlines:
+        return now + timedelta(seconds=1)
+    return max(deadlines)
+
+
+def _parse_retry_after(raw: str, now: datetime) -> datetime | None:
+    if not raw:
+        return None
+    if raw.isdigit() and 1 <= len(raw) <= 7:
+        return now + timedelta(seconds=int(raw))
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_rate_limit_reset(raw: str) -> datetime | None:
+    if not raw.isdigit() or not (1 <= len(raw) <= 12):
+        return None
+    try:
+        return datetime.fromtimestamp(int(raw), tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 class GitHubOracleGateway:
@@ -1335,39 +1436,25 @@ class GitHubOracleGateway:
         return payload
 
     @staticmethod
-    def _rest_patch_incomplete(item: dict) -> bool:
-        patch = item.get("patch")
-        if patch is None or patch == "":
-            return True
-        try:
-            parse_hunk_patch(patch)
-        except OracleDiffError as exc:
-            return "does not prove a content change" in str(exc)
-        return False
-
-    @staticmethod
-    def _changed_files_from_rest(files: list[dict]) -> list[OracleChangedFile]:
-        try:
-            return [
-                OracleChangedFile(
-                    filename=item["filename"],
-                    previous_filename=item.get("previous_filename"),
-                    status=item["status"],
-                    additions=item.get("additions", 0),
-                    deletions=item.get("deletions", 0),
-                    patch=item.get("patch"),
-                )
-                for item in files
-            ]
-        except ValidationError as exc:
-            raise OracleDiffError(
-                "REST file patch is incomplete or disagrees with REST counts"
-            ) from exc
-
-    @staticmethod
     def _require_complete_file_enumeration(pull: dict, files: list[dict]) -> None:
-        if len(files) != int(pull.get("changed_files", len(files))):
+        if "changed_files" not in pull:
             raise OracleDiffError("GitHub file enumeration is incomplete")
+        raw = pull["changed_files"]
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0 or raw != len(files):
+            raise OracleDiffError("GitHub file enumeration is incomplete")
+
+    @staticmethod
+    def _require_rest_file_identities(files: list[dict]) -> None:
+        for item in files:
+            filename = item.get("filename")
+            status = item.get("status")
+            if (
+                not isinstance(filename, str)
+                or not filename
+                or not isinstance(status, str)
+                or not status
+            ):
+                raise OracleDiffError("GitHub pull request evidence is malformed")
 
     @staticmethod
     def _require_sha40(value: str) -> str:
@@ -1395,18 +1482,21 @@ class GitHubOracleGateway:
 
     @staticmethod
     def _file_set(files: list[dict]) -> tuple[tuple[object, ...], ...]:
-        return tuple(
-            sorted(
-                (
-                    item["filename"],
-                    item.get("previous_filename"),
-                    item["status"],
-                    int(item.get("additions", 0)),
-                    int(item.get("deletions", 0)),
+        try:
+            return tuple(
+                sorted(
+                    (
+                        item["filename"],
+                        item.get("previous_filename"),
+                        item["status"],
+                        int(item.get("additions", 0)),
+                        int(item.get("deletions", 0)),
+                    )
+                    for item in files
                 )
-                for item in files
             )
-        )
+        except (KeyError, ValueError, TypeError) as exc:
+            raise OracleDiffError("GitHub pull request evidence is malformed") from exc
 
     def _fetch_compare_diff(self, repository: str, base_sha: str, head_sha: str) -> str:
         base_sha = self._require_sha40(base_sha)
@@ -1463,14 +1553,17 @@ class GitHubOracleGateway:
                     )
                 if self._is_rate_limited_compare_status(response):
                     raise OracleRateLimitError(
-                        f"GitHub API {method} {path} is rate limited"
+                        f"GitHub API {method} {path} is rate limited",
+                        retry_not_before=_rate_limit_not_before(response),
                     )
                 if self._is_transient_compare_status(response):
                     raise RuntimeError(
                         f"GitHub API {method} {path} failed with status {response.status_code}"
                     )
-                if response.status_code >= 400:
-                    raise OracleDiffError("complete compare diff is unavailable")
+                if response.status_code != 200:
+                    if response.status_code >= 400:
+                        raise OracleDiffError("complete compare diff is unavailable")
+                    raise OracleDiffError("complete compare diff is incomplete")
                 require_github_diff_content_type(response.headers.get("content-type"))
                 require_identity_content_encoding(response.headers.get("content-encoding"))
                 declared = response.headers.get("content-length")
@@ -1485,11 +1578,11 @@ class GitHubOracleGateway:
                         )
                 collected = bytearray()
                 for chunk in response.iter_bytes():
-                    collected.extend(chunk)
-                    if len(collected) > max_bytes:
+                    if len(chunk) > max_bytes - len(collected):
                         raise OracleDiffError(
                             "complete compare diff exceeds the bounded evidence limit"
                         )
+                    collected.extend(chunk)
                 if declared is not None and int(declared) != len(collected):
                     raise OracleDiffError("complete compare diff is truncated")
                 return bytes(collected)
@@ -1515,7 +1608,7 @@ class GitHubOracleGateway:
     def _is_transient_compare_status(response: httpx.Response) -> bool:
         return response.status_code >= 500 or response.status_code == 408
 
-    def _complete_missing_patches(
+    def _bind_exact_sha_compare(
         self,
         repository: str,
         pull_number: int,
@@ -1530,6 +1623,7 @@ class GitHubOracleGateway:
         after_pull = self._get_pull(repository, pull_number)
         after_files = self._get_files(repository, pull_number)
         self._require_complete_file_enumeration(after_pull, after_files)
+        self._require_rest_file_identities(after_files)
         after = self._pull_identity(repository, pull_number, after_pull)
         if before != after or before_files != self._file_set(after_files):
             raise OracleDiffError("pull request identity changed during complete-diff retrieval")
@@ -1558,17 +1652,20 @@ class GitHubOracleGateway:
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         repository = canonical_repository(repository)
         owner, name = repository.split("/", 1)
-        pull = self._get_pull(repository, pull_number)
-        self._require_sha40(str(pull["base"]["sha"]))
-        self._require_sha40(str(pull["head"]["sha"]))
-        files = self._get_files(repository, pull_number)
-        self._require_complete_file_enumeration(pull, files)
-        if any(self._rest_patch_incomplete(item) for item in files):
-            pull, changed_files = self._complete_missing_patches(
+        try:
+            pull = self._get_pull(repository, pull_number)
+            self._require_sha40(str(pull["base"]["sha"]))
+            self._require_sha40(str(pull["head"]["sha"]))
+            files = self._get_files(repository, pull_number)
+            self._require_complete_file_enumeration(pull, files)
+            self._require_rest_file_identities(files)
+            pull, changed_files = self._bind_exact_sha_compare(
                 repository, pull_number, pull, files
             )
-        else:
-            changed_files = self._changed_files_from_rest(files)
+        except (OracleDiffError, OracleRateLimitError):
+            raise
+        except (KeyError, ValueError, TypeError, ValidationError) as exc:
+            raise OracleDiffError("GitHub pull request evidence is malformed") from exc
         checks_payload = self._request(
             "GET",
             f"/repos/{repository}/commits/{pull['head']['sha']}/check-runs",

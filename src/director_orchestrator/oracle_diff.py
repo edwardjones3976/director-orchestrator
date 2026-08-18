@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 
@@ -17,6 +18,7 @@ from typing import Any, Mapping, Sequence
 # sections; the two largest textual sections were 124,813 and 115,828 bytes.
 MAX_COMPARE_DIFF_BYTES = 1_048_576
 MAX_FILE_PATCH_CHARS = 200_000
+MAX_HUNK_COUNT_DIGITS = 6
 GITHUB_DIFF_MEDIA_TYPE = "application/vnd.github.diff"
 NO_NEWLINE_MARKER = "\\ No newline at end of file"
 _REGULAR_FILE_MODES = frozenset({"100644", "100755"})
@@ -31,6 +33,15 @@ class OracleDiffError(RuntimeError):
 
 class OracleRateLimitError(RuntimeError):
     """GitHub rate limit that must release for a later retry, not an immediate re-read."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_not_before: datetime | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retry_not_before = retry_not_before
 
 
 @dataclass(frozen=True)
@@ -204,46 +215,51 @@ def bind_complete_diff_evidence(
     rest_files: Sequence[Mapping[str, Any]],
     parsed: Sequence[ParsedDiffFile],
 ) -> tuple[BoundFileEvidence, ...]:
-    rest_names = [str(item["filename"]) for item in rest_files]
-    if len(set(rest_names)) != len(rest_names):
-        raise OracleDiffError("REST file enumeration contains duplicate paths")
-    if len(rest_files) != len(parsed):
-        raise OracleDiffError("REST file enumeration does not match the complete compare diff")
+    try:
+        rest_names = [str(item["filename"]) for item in rest_files]
+        if len(set(rest_names)) != len(rest_names):
+            raise OracleDiffError("REST file enumeration contains duplicate paths")
+        if len(rest_files) != len(parsed):
+            raise OracleDiffError("REST file enumeration does not match the complete compare diff")
 
-    parsed_by_name: dict[str, ParsedDiffFile] = {}
-    for section in parsed:
-        if section.filename in parsed_by_name:
-            raise OracleDiffError("complete compare diff has duplicate file sections")
-        parsed_by_name[section.filename] = section
-    if set(rest_names) != set(parsed_by_name):
-        raise OracleDiffError("REST file enumeration does not match the complete compare diff")
+        parsed_by_name: dict[str, ParsedDiffFile] = {}
+        for section in parsed:
+            if section.filename in parsed_by_name:
+                raise OracleDiffError("complete compare diff has duplicate file sections")
+            parsed_by_name[section.filename] = section
+        if set(rest_names) != set(parsed_by_name):
+            raise OracleDiffError("REST file enumeration does not match the complete compare diff")
 
-    bound: list[BoundFileEvidence] = []
-    for item in rest_files:
-        section = parsed_by_name[str(item["filename"])]
-        previous = item.get("previous_filename")
-        if previous != section.previous_filename:
-            raise OracleDiffError("REST file enumeration does not match the complete compare diff")
-        if str(item["status"]) != section.status:
-            raise OracleDiffError("REST file enumeration does not match the complete compare diff")
-        if int(item.get("additions", 0)) != section.additions:
-            raise OracleDiffError("REST file enumeration does not match the complete compare diff")
-        if int(item.get("deletions", 0)) != section.deletions:
-            raise OracleDiffError("REST file enumeration does not match the complete compare diff")
-        if len(section.patch) > MAX_FILE_PATCH_CHARS:
-            raise OracleDiffError("complete compare diff exceeds the bounded per-file evidence limit")
-        bound.append(
-            BoundFileEvidence(
-                filename=section.filename,
-                previous_filename=section.previous_filename,
-                status=section.status,
-                additions=section.additions,
-                deletions=section.deletions,
-                patch=section.patch,
-                added_lines=section.added_lines,
+        bound: list[BoundFileEvidence] = []
+        for item in rest_files:
+            section = parsed_by_name[str(item["filename"])]
+            previous = item.get("previous_filename")
+            if previous != section.previous_filename:
+                raise OracleDiffError("REST file enumeration does not match the complete compare diff")
+            if str(item["status"]) != section.status:
+                raise OracleDiffError("REST file enumeration does not match the complete compare diff")
+            if int(item.get("additions", 0)) != section.additions:
+                raise OracleDiffError("REST file enumeration does not match the complete compare diff")
+            if int(item.get("deletions", 0)) != section.deletions:
+                raise OracleDiffError("REST file enumeration does not match the complete compare diff")
+            if len(section.patch) > MAX_FILE_PATCH_CHARS:
+                raise OracleDiffError("complete compare diff exceeds the bounded per-file evidence limit")
+            bound.append(
+                BoundFileEvidence(
+                    filename=section.filename,
+                    previous_filename=section.previous_filename,
+                    status=section.status,
+                    additions=section.additions,
+                    deletions=section.deletions,
+                    patch=section.patch,
+                    added_lines=section.added_lines,
+                )
             )
-        )
-    return tuple(bound)
+        return tuple(bound)
+    except OracleDiffError:
+        raise
+    except (KeyError, ValueError, TypeError) as exc:
+        raise OracleDiffError("REST file enumeration does not match the complete compare diff") from exc
 
 
 def _parse_hunk_header(line: str) -> tuple[int, int]:
@@ -267,12 +283,16 @@ def _parse_hunk_header(line: str) -> tuple[int, int]:
 def _hunk_count(spec: str) -> int:
     if "," in spec:
         start, count = spec.split(",", 1)
-        if not start.isdigit() or not count.isdigit():
+        if not _is_bounded_hunk_digits(start) or not _is_bounded_hunk_digits(count):
             raise OracleDiffError("complete compare diff is malformed")
         return int(count)
-    if not spec.isdigit():
+    if not _is_bounded_hunk_digits(spec):
         raise OracleDiffError("complete compare diff is malformed")
     return 1
+
+
+def _is_bounded_hunk_digits(value: str) -> bool:
+    return value.isdigit() and 1 <= len(value) <= MAX_HUNK_COUNT_DIGITS
 
 
 def _safe_repo_path(path: str) -> str:
