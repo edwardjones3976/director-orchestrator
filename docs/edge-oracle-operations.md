@@ -131,10 +131,17 @@ refetches GitHub state and fails closed on:
   (`Retry-After` or `X-RateLimit-Remaining: 0`) persist an absolute UTC
   not-before deadline from bounded `Retry-After` seconds / `X-RateLimit-Reset`
   on the live `oracle_merge_attempts` row via an idempotent PRAGMA/ALTER
-  migration that is safe for concurrent initializers. Every pre-mutation GitHub
+  migration that is safe for concurrent initializers.   Every pre-mutation GitHub
   read — pull, files, exact-SHA compare, check-runs, the review-thread GraphQL
   query, and pre-mutation GETs inside `mark_ready`/`merge` — raises
-  `OracleRateLimitError` and takes that durable hold. A later `process()`
+  `OracleRateLimitError` and takes that durable hold. GitHub can return GraphQL
+  primary and secondary rate limits as HTTP 200 with top-level `errors` whose
+  `type` or `extensions.code` is `RATE_LIMITED` or `RATE_LIMIT`, and/or with
+  exhausted `X-RateLimit-Remaining: 0` or `Retry-After`. Those documented
+  GraphQL 200 rate limits also raise `OracleRateLimitError` with the bounded
+  persisted deadline. Other GraphQL errors fail closed as incomplete
+  review-thread evidence with sanitized text; GitHub messages and payloads are
+  never copied into the exception, reasons, or audit. A later `process()`
   returns a nonterminal deferred ERROR without rearming or calling GitHub until
   that deadline, including zero compare calls. Concurrent `release()` calls
   serialize the deadline read so a later window cannot be overwritten by an
@@ -171,8 +178,17 @@ refetches GitHub state and fails closed on:
 - deterministic serious-safety signals or committed credential material;
 - GitHub or branch-protection refusal.
 
-The merge request includes the reviewed SHA, so a head advance is rejected by GitHub even
-after the final read. SQLite reserves each artifact, assignment, and provider review run
+Immediately before the merge mutation, the gate takes one complete final snapshot and
+runs the full `OracleMergePolicy` evaluation. A changed review thread, review decision,
+check, title/body safety signal, path/file evidence, or SHA blocks and consumes the
+artifact. Unresolved `mergeable: null` on that mutation-boundary read is terminal; the
+gate does not start another poll. Bounded read-failure retries and rate-limit holds still
+apply to that snapshot. The gateway then re-GETs the pull and rechecks base and head SHAs
+as defense in depth before `PUT /merge`. The merge request includes the reviewed SHA, so
+GitHub rejects a head advance even after the final read. Residual platform limitation:
+GitHub's REST merge endpoint binds the expected head SHA but has no atomic expected-base
+parameter, so repository rules or a merge queue are required for mutation-boundary
+enforcement of the base. SQLite reserves each artifact, assignment, and provider review run
 once, makes
 retry delivery idempotent after a terminal result, and records an append-only audit with
 the artifact digest, assignment/review identifiers, changed paths, check run/suite IDs,
@@ -197,7 +213,9 @@ reviewed change. The gate classifies the state instead:
   Backoff is one second doubling to an eight-second cap. Each read spends the allowance for
   every transient condition it exhibits, so overlapping conditions shorten the wait. The
   poll performs at most eight reads over about thirty-nine seconds, and the whole gate at
-  most ten GitHub reads over about forty seconds. Every successful read
+  most twelve GitHub snapshot reads over about forty-one seconds, including the first read
+  and one complete final snapshot immediately before merge, each with the same two-read
+  failure allowance. Every successful read
   revalidates the
   repository, pull-request identity, open and unmerged state, expected base SHA, exact head
   SHA, checks, review threads, paths, and safety signals before the wait continues. The

@@ -74,6 +74,8 @@ MALFORMED_RETRY_DEADLINE = "zzz-not-an-iso-deadline"
 LOW_GARBAGE_RETRY_DEADLINE = "0"
 COMPARE_401_LEAK = "compare-401-body-must-not-leak"
 COMPARE_404_LEAK = "compare-404-body-must-not-leak"
+GRAPHQL_RATE_LIMIT_LEAK = "graphql-rate-limit-body-must-not-leak"
+GRAPHQL_NOT_FOUND_LEAK = "graphql-not-found-body-must-not-leak"
 
 
 class _FakeGitHubTokenProvider:
@@ -1631,6 +1633,122 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
             1,
         )
 
+    def _review_thread_graphql(self, request: httpx.Request) -> bool:
+        return (
+            request.method == "POST"
+            and request.url.path.endswith("/graphql")
+            and b"markPullRequestReadyForReview" not in request.content
+        )
+
+    def test_graphql_http_200_rate_limit_types_raise_oracle_rate_limit_error(self) -> None:
+        reset = str(int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()))
+        cases = (
+            "RATE_LIMITED",
+            "RATE_LIMIT",
+        )
+        for error_type in cases:
+            with self.subTest(error_type=error_type):
+                self.requests.clear()
+
+                def throttled(
+                    request: httpx.Request, error_type=error_type
+                ) -> httpx.Response:
+                    if self._review_thread_graphql(request):
+                        self.requests.append(request)
+                        return httpx.Response(
+                            200,
+                            json={
+                                "errors": [
+                                    {
+                                        "type": error_type,
+                                        "message": GRAPHQL_RATE_LIMIT_LEAK,
+                                    }
+                                ]
+                            },
+                            headers={
+                                "x-ratelimit-remaining": "0",
+                                "x-ratelimit-reset": reset,
+                            },
+                        )
+                    return self.handler(request)
+
+                with self.assertRaises(OracleRateLimitError) as raised:
+                    GitHubOracleGateway(
+                        "repo-scoped-token", transport=httpx.MockTransport(throttled)
+                    ).snapshot("edwardjones3976/edge_engine", 23)
+                self.assertNotIsInstance(raised.exception, OracleDiffError)
+                self.assertNotIn(GRAPHQL_RATE_LIMIT_LEAK, str(raised.exception))
+                self.assertNotIn(reset, str(raised.exception))
+                self.assertIsNotNone(raised.exception.retry_not_before)
+                self.assertEqual(
+                    sum(1 for item in self.requests if self._review_thread_graphql(item)),
+                    1,
+                )
+
+    def test_graphql_http_200_exhausted_remaining_is_oracle_rate_limit_error(self) -> None:
+        def throttled(request: httpx.Request) -> httpx.Response:
+            if self._review_thread_graphql(request):
+                self.requests.append(request)
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewDecision": "APPROVED",
+                                    "reviewThreads": {
+                                        "nodes": [],
+                                        "pageInfo": {"hasNextPage": False},
+                                    },
+                                }
+                            }
+                        }
+                    },
+                    headers={"x-ratelimit-remaining": "0", "retry-after": "3600"},
+                )
+            return self.handler(request)
+
+        with self.assertRaises(OracleRateLimitError) as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(throttled)
+            ).snapshot("edwardjones3976/edge_engine", 23)
+        self.assertNotIsInstance(raised.exception, OracleDiffError)
+        self.assertNotIn("3600", str(raised.exception))
+        self.assertEqual(
+            sum(1 for item in self.requests if self._review_thread_graphql(item)),
+            1,
+        )
+
+    def test_graphql_non_rate_limit_errors_fail_closed_without_payload_leak(self) -> None:
+        def incomplete(request: httpx.Request) -> httpx.Response:
+            if self._review_thread_graphql(request):
+                self.requests.append(request)
+                return httpx.Response(
+                    200,
+                    json={
+                        "errors": [
+                            {
+                                "type": "NOT_FOUND",
+                                "message": GRAPHQL_NOT_FOUND_LEAK,
+                            }
+                        ]
+                    },
+                )
+            return self.handler(request)
+
+        with self.assertRaisesRegex(
+            OracleDiffError, "GitHub review-thread evidence is incomplete"
+        ) as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(incomplete)
+            ).snapshot("edwardjones3976/edge_engine", 23)
+        self.assertNotIsInstance(raised.exception, OracleRateLimitError)
+        self.assertNotIn(GRAPHQL_NOT_FOUND_LEAK, str(raised.exception))
+        self.assertEqual(
+            sum(1 for item in self.requests if self._review_thread_graphql(item)),
+            1,
+        )
+
     def test_bool_string_fractional_and_negative_rest_counts_are_malformed(self) -> None:
         cases = (
             {"additions": True, "deletions": 1},
@@ -2467,6 +2585,203 @@ class CompareRateLimitServiceTests(unittest.TestCase):
                 self.assertEqual(self._merge_or_ready_calls(), 0)
 
 
+class GraphQLReviewThreadRateLimitTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.harness = GitHubCompleteDiffGatewayTests()
+        self.harness.setUp()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.settings = Settings(
+            sqlite_path=str(Path(self.temporary.name) / "oracle.sqlite3"),
+            oracle_automerge_enabled=True,
+            oracle_automerge_kill_switch=False,
+            oracle_automerge_project="edge-oracle",
+            oracle_automerge_repository="edwardjones3976/edge_engine",
+            oracle_automerge_base_ref="main",
+            oracle_automerge_branch_prefix="oracle/",
+            oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
+            oracle_automerge_required_checks=("ci", "security"),
+            oracle_automerge_required_check_app="github-actions",
+            oracle_automerge_review_secret=REVIEW_SECRET,
+        )
+
+    def _artifact(self, suffix: str) -> OracleReviewArtifact:
+        return OracleReviewArtifact.model_validate(
+            {
+                "artifact_type": "edge_oracle_exact_sha_review/v1",
+                "artifact_id": f"review-artifact-graphql-{suffix}",
+                "assignment_id": f"assignment-graphql-{suffix}",
+                "project": "edge-oracle",
+                "repository": "edwardjones3976/edge_engine",
+                "pull_number": 23,
+                "base_ref": "main",
+                "base_sha": BASE_SHA,
+                "head_ref": "oracle/test",
+                "head_sha": HEAD_SHA,
+                "implementation_provider": "cursor",
+                "implementation_actor": "cursor-agent",
+                "reviewer_provider": "claude",
+                "review_run_id": f"claude-review-graphql-{suffix}",
+                "verdict": OracleReviewVerdict.ACCEPT,
+                "summary": "Exact-SHA review accepted the bounded Oracle change.",
+                "evidence": ["Tests and changed paths reviewed at the exact SHA."],
+                "acceptance_checks": ["ci", "security"],
+                "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+                "signature": "0" * 64,
+            }
+        ).sign(REVIEW_SECRET)
+
+    def _review_thread_graphql(self, request: httpx.Request) -> bool:
+        return (
+            request.method == "POST"
+            and request.url.path.endswith("/graphql")
+            and b"markPullRequestReadyForReview" not in request.content
+        )
+
+    def _compare_calls(self) -> int:
+        return sum(1 for item in self.harness.requests if "/compare/" in item.url.path)
+
+    def _graphql_calls(self) -> int:
+        return sum(1 for item in self.harness.requests if self._review_thread_graphql(item))
+
+    def _process_review_thread_graphql(
+        self,
+        artifact: OracleReviewArtifact,
+        payload: dict,
+        headers: dict[str, str] | None = None,
+    ) -> OracleMergeResult:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if self._review_thread_graphql(request):
+                self.harness.requests.append(request)
+                return httpx.Response(200, json=payload, headers=headers or {})
+            return self.harness.handler(request)
+
+        return OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(handler)
+            ),
+            sleep=lambda _: None,
+        ).process(artifact)
+
+    def test_http_200_rate_limit_holds_and_duplicate_makes_zero_github_calls(self) -> None:
+        reset = str(int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()))
+        cases = (
+            ("RATE_LIMITED", {"x-ratelimit-remaining": "0", "x-ratelimit-reset": reset}),
+            ("RATE_LIMIT", {"x-ratelimit-remaining": "0", "x-ratelimit-reset": reset}),
+        )
+        for error_type, headers in cases:
+            with self.subTest(error_type=error_type):
+                self.harness.requests.clear()
+                artifact = self._artifact(error_type.lower())
+                store = OracleMergeStore(self.settings.sqlite_path)
+
+                def handler(
+                    request: httpx.Request, error_type=error_type, headers=headers
+                ) -> httpx.Response:
+                    if self._review_thread_graphql(request):
+                        self.harness.requests.append(request)
+                        return httpx.Response(
+                            200,
+                            json={
+                                "errors": [
+                                    {
+                                        "type": error_type,
+                                        "message": GRAPHQL_RATE_LIMIT_LEAK,
+                                    }
+                                ]
+                            },
+                            headers=headers,
+                        )
+                    return self.harness.handler(request)
+
+                service = OracleMergeService(
+                    OracleMergePolicy(self.settings),
+                    store,
+                    GitHubOracleGateway(
+                        "repo-scoped-token", transport=httpx.MockTransport(handler)
+                    ),
+                    sleep=lambda _: None,
+                )
+                first = service.process(artifact)
+                first_calls = len(self.harness.requests)
+                first_compares = self._compare_calls()
+                first_graphql = self._graphql_calls()
+                self.assertEqual(first.status, OracleMergeStatus.ERROR)
+                self.assertEqual(first_compares, 1)
+                self.assertEqual(first_graphql, 1)
+                self.assertTrue(any("rate limit" in item for item in first.reasons))
+                self.assertTrue(any("remains retryable" in item for item in first.reasons))
+                self.assertFalse(any("transient read failures" in item for item in first.reasons))
+                joined = " ".join(first.reasons)
+                self.assertNotIn(GRAPHQL_RATE_LIMIT_LEAK, joined)
+                self.assertNotIn(reset, joined)
+                second = service.process(artifact)
+                self.assertEqual(second.status, OracleMergeStatus.ERROR)
+                self.assertEqual(len(self.harness.requests), first_calls)
+                self.assertEqual(self._compare_calls(), 1)
+                self.assertEqual(self._graphql_calls(), 1)
+                self.assertTrue(any("deferred" in item for item in second.reasons))
+                self.assertTrue(any("remains retryable" in item for item in second.reasons))
+                connection = sqlite3.connect(self.settings.sqlite_path)
+                try:
+                    row = connection.execute(
+                        "SELECT status, result_json, retry_not_before "
+                        "FROM oracle_merge_attempts WHERE artifact_id = ?",
+                        (artifact.artifact_id,),
+                    ).fetchone()
+                finally:
+                    connection.close()
+                self.assertEqual(row[0], "RECOVERABLE")
+                self.assertIsNone(row[1])
+                self.assertIsNotNone(row[2])
+
+    def test_non_rate_limit_graphql_errors_are_terminal_without_payload_leak(self) -> None:
+        artifact = self._artifact("not-found")
+        result = self._process_review_thread_graphql(
+            artifact,
+            {
+                "errors": [
+                    {"type": "NOT_FOUND", "message": GRAPHQL_NOT_FOUND_LEAK},
+                ]
+            },
+        )
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertTrue(
+            any("complete compare-diff evidence failed closed" in item for item in result.reasons)
+        )
+        self.assertTrue(
+            any("review-thread evidence is incomplete" in item for item in result.reasons)
+        )
+        self.assertFalse(any("retryable" in item for item in result.reasons))
+        self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+        self.assertNotIn(GRAPHQL_NOT_FOUND_LEAK, " ".join(result.reasons))
+        connection = sqlite3.connect(self.settings.sqlite_path)
+        try:
+            row = connection.execute(
+                "SELECT status, result_json FROM oracle_merge_attempts "
+                "WHERE artifact_id = ?",
+                (artifact.artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertNotEqual(row[0], "RECOVERABLE")
+        self.assertIsNotNone(row[1])
+        first_calls = len(self.harness.requests)
+        duplicate = OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            GitHubOracleGateway(
+                "repo-scoped-token",
+                transport=httpx.MockTransport(self.harness.handler),
+            ),
+            sleep=lambda _: None,
+        ).process(artifact)
+        self.assertEqual(duplicate, result)
+        self.assertEqual(len(self.harness.requests), first_calls)
+
+
 class WriteMutationRateLimitTests(unittest.TestCase):
     def setUp(self) -> None:
         self.harness = GitHubCompleteDiffGatewayTests()
@@ -2567,7 +2882,7 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             if (
                 request.method == "GET"
                 and request.url.path.endswith("/pulls/23")
-                and self.harness.pull_reads >= 2
+                and self.harness.pull_reads >= 4
             ):
                 self.harness.requests.append(request)
                 return httpx.Response(429, headers={"retry-after": "3600"})

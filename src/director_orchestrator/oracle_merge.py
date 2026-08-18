@@ -1047,7 +1047,7 @@ class OracleMergeService:
                 )
             )
 
-        snapshot, unreadable = self._initial_snapshot(artifact)
+        snapshot, unreadable = self._read_snapshot(artifact)
         if unreadable is not None:
             return unreadable
         transitioned_from_draft = snapshot.draft
@@ -1101,6 +1101,20 @@ class OracleMergeService:
         if decision.reasons or decision.serious_safety_reasons:
             return self.store.complete(decision)
 
+        # The first evaluation can race the mutation. Take one complete snapshot
+        # and re-run the full policy immediately before GitHub merge; a changed
+        # thread, review decision, check, title/body safety signal, path/file
+        # evidence, or SHA must block. Unresolved mergeability here is terminal.
+        # Bounded read retries and rate-limit holds still apply. The merge
+        # mutation itself is never retried if the result is ambiguous. The
+        # gateway still rechecks base/head SHAs as defense in depth.
+        final_snapshot, unreadable = self._read_snapshot(artifact)
+        if unreadable is not None:
+            return unreadable
+        decision = self.policy.evaluate(artifact, final_snapshot)
+        if decision.reasons or decision.serious_safety_reasons:
+            return self.store.complete(decision)
+
         try:
             merged = self.github.merge(
                 self.policy.repository,
@@ -1125,16 +1139,17 @@ class OracleMergeService:
         decision.actor = merged.actor
         return self.store.complete(decision)
 
-    def _initial_snapshot(
+    def _read_snapshot(
         self, artifact: OracleReviewArtifact
     ) -> tuple[OraclePullRequestSnapshot | None, OracleMergeResult | None]:
-        """Take the first read, tolerating the same transient failures as the poll.
+        """Take one complete GitHub snapshot, with bounded read-failure handling.
 
         A read that never produced a snapshot proves nothing about the pull request, so
-        the first read gets the same bounded read-failure allowance as every later one.
-        Recording a terminal verdict here would spend a correctly reviewed artifact on a
-        network blip; exhausting the allowance releases it for an authenticated retry
-        instead. Nothing is merged from here, so nothing ambiguous is retried.
+        each snapshot site — the first read and the final pre-mutation read — gets the
+        same bounded read-failure allowance. Recording a terminal verdict here would
+        spend a correctly reviewed artifact on a network blip; exhausting the allowance
+        releases it for an authenticated retry instead. Nothing is merged from here, so
+        nothing ambiguous is retried.
         """
         read_failure_allowance = self._poll_read_failures
         last_read_failure: Exception | None = None
@@ -1786,6 +1801,70 @@ class GitHubOracleGateway:
         except ValueError:
             return False
 
+    _GRAPHQL_RATE_LIMIT_CODES = frozenset({"RATE_LIMITED", "RATE_LIMIT"})
+
+    @classmethod
+    def _graphql_has_rate_limit_error(cls, payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        errors = payload.get("errors")
+        if not isinstance(errors, list):
+            return False
+        for item in errors:
+            if not isinstance(item, dict):
+                continue
+            tokens = [item.get("type")]
+            extensions = item.get("extensions")
+            if isinstance(extensions, dict):
+                tokens.append(extensions.get("code"))
+            if any(token in cls._GRAPHQL_RATE_LIMIT_CODES for token in tokens):
+                return True
+        return False
+
+    @classmethod
+    def _is_graphql_rate_limited(cls, response: httpx.Response, payload: object) -> bool:
+        if cls._graphql_has_rate_limit_error(payload):
+            return True
+        if (response.headers.get("retry-after") or "").strip():
+            return True
+        remaining = response.headers.get("x-ratelimit-remaining")
+        if remaining is None:
+            return False
+        try:
+            return int(remaining.strip()) == 0
+        except ValueError:
+            return False
+
+    def _review_thread_evidence(
+        self, response: httpx.Response
+    ) -> tuple[dict, object, int]:
+        payload: object
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if self._is_graphql_rate_limited(response, payload if payload is not None else {}):
+            raise OracleRateLimitError(
+                "GitHub API POST /graphql is rate limited",
+                retry_not_before=_rate_limit_not_before(response),
+            )
+        if not isinstance(payload, dict) or payload.get("errors"):
+            raise OracleDiffError("GitHub review-thread evidence is incomplete")
+        try:
+            pull_request = payload["data"]["repository"]["pullRequest"]
+            threads = pull_request["reviewThreads"]
+            review_decision = pull_request.get("reviewDecision")
+            blocking = sum(
+                1
+                for node in threads["nodes"]
+                if not node["isResolved"] and not node["isOutdated"]
+            )
+            if "hasNextPage" not in threads["pageInfo"]:
+                raise KeyError("hasNextPage")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise OracleDiffError("GitHub review-thread evidence is incomplete") from exc
+        return threads, review_decision, blocking
+
     @staticmethod
     def _is_transient_compare_status(response: httpx.Response) -> bool:
         return response.status_code >= 500 or response.status_code in {404, 408}
@@ -1869,16 +1948,12 @@ class GitHubOracleGateway:
           }
         }
         """
-        graph = self._request(
+        graph_response = self._request(
             "POST",
             "/graphql",
             json={"query": query, "variables": {"owner": owner, "name": name, "number": pull_number}},
-        ).json()
-        threads = graph["data"]["repository"]["pullRequest"]["reviewThreads"]
-        review_decision = graph["data"]["repository"]["pullRequest"].get("reviewDecision")
-        blocking = sum(
-            1 for node in threads["nodes"] if not node["isResolved"] and not node["isOutdated"]
         )
+        threads, review_decision, blocking = self._review_thread_evidence(graph_response)
 
         return OraclePullRequestSnapshot(
             repository=repository,
@@ -1921,6 +1996,9 @@ class GitHubOracleGateway:
         expected_base_sha: str,
     ) -> OracleGitHubMerge:
         repository = canonical_repository(repository)
+        # Defense in depth after the service's final full-policy snapshot. GitHub's
+        # REST merge binds the expected head SHA but has no atomic expected-base
+        # parameter; this preflight still rejects a drifted base or head before PUT.
         pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
         if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
             raise RuntimeError("GitHub pull request changed during final merge validation")
