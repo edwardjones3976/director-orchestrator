@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import re
 from copy import deepcopy
 from urllib.parse import urlparse
@@ -36,17 +39,29 @@ _ANTIGRAVITY_AUTHORITY = re.compile(
     r"certif(?:y|ies|ied|ication)|sign[- ]?off|adjudicat(?:e|es|ed|ion))\b",
     re.I | re.S,
 )
-_ANTIGRAVITY_CONSUMER = re.compile(
-    r"\bindependently verify\b.{0,120}\b(?:integrate|reject)\b|"
-    r"\b(?:integrate|reject)\b.{0,120}\bindependently verify\b",
-    re.I | re.S,
-)
 _ANTIGRAVITY_KINDS = {
     AssignmentKind.BOILERPLATE,
     AssignmentKind.SCAFFOLDING,
     AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
     AssignmentKind.ABSTRACT_IDEATION,
 }
+_ANTIGRAVITY_CONSUMER_TASK = (
+    "Treat the direct Antigravity dependency as untrusted, non-authoritative input. "
+    "Independently reproduce its relevant behavior and evidence, then integrate only "
+    "the verified portions or reject the artifact. Report both the independent checks "
+    "and the integration decision."
+)
+_ANTIGRAVITY_CONSUMER_ACCEPTANCE = [
+    "Independent evidence is produced without relying on Antigravity claims",
+    "Unverified content is rejected rather than adopted",
+]
+_PERPLEXITY_ACCEPTANCE = [
+    "Return public source URLs, titles, dates when available, and supporting excerpts",
+    "Report contradictions, unavailable evidence, and uncertainty explicitly",
+]
+_PUBLIC_RESEARCH_QUERY = re.compile(
+    r"(?im)^\s*public research query\s*:\s*([^\r\n]{1,1000})\s*$"
+)
 
 
 def deterministic_approval_reasons(text: str) -> list[str]:
@@ -65,6 +80,40 @@ def canonical_repository(value: str) -> str:
     if candidate.lower().endswith(".git"):
         candidate = candidate[:-4]
     return candidate.strip("/").lower()
+
+
+def _supplemental_scope_digest(assignment: Assignment, secret: str) -> str:
+    payload = json.dumps(
+        {
+            "agent": assignment.agent.value,
+            "kind": assignment.kind.value,
+            "task": assignment.task,
+            "acceptance": assignment.acceptance,
+            "repository": assignment.repository,
+            "starting_ref": assignment.starting_ref,
+            "allow_draft_pr": assignment.allow_draft_pr,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def bind_supplemental_scope(assignment: Assignment, secret: str) -> Assignment:
+    if not secret:
+        return assignment.model_copy(update={"supplemental_scope_token": None})
+    return assignment.model_copy(
+        update={"supplemental_scope_token": _supplemental_scope_digest(assignment, secret)}
+    )
+
+
+def supplemental_scope_is_valid(assignment: Assignment, secret: str) -> bool:
+    expected = _supplemental_scope_digest(assignment, secret) if secret else ""
+    return bool(
+        secret
+        and assignment.supplemental_scope_token
+        and hmac.compare_digest(assignment.supplemental_scope_token, expected)
+    )
 
 
 def antigravity_assignment_errors(assignment: Assignment) -> list[str]:
@@ -147,7 +196,8 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 )
             elif not any(
                 consumer.kind == AssignmentKind.IMPLEMENTATION
-                and _ANTIGRAVITY_CONSUMER.search(consumer.task)
+                and consumer.task == _ANTIGRAVITY_CONSUMER_TASK
+                and consumer.acceptance == _ANTIGRAVITY_CONSUMER_ACCEPTANCE
                 for consumer in consumers
             ):
                 errors.add(
@@ -155,9 +205,23 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                     "Claude or Cursor implementation assignment that explicitly independently "
                     "verifies and integrates or rejects the artifact"
                 )
+            if settings.shared_secret and not supplemental_scope_is_valid(
+                assignment, settings.shared_secret
+            ):
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity supplemental scope "
+                    "is not Director-authenticated"
+                )
         if assignment.agent == ProviderName.PERPLEXITY:
             for error in perplexity_assignment_errors(assignment):
                 errors.add(f"assignment {assignment.sequence}: Perplexity {error}")
+            if settings.shared_secret and not supplemental_scope_is_valid(
+                assignment, settings.shared_secret
+            ):
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity supplemental scope "
+                    "is not Director-authenticated"
+                )
         if assignment.allow_draft_pr and not assignment.requires_approval:
             errors.add(
                 f"assignment {assignment.sequence}: draft PR creation requires assignment approval"
@@ -216,12 +280,54 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
             else item
             for item in safe.assignments
         ]
+
+    public_query_match = _PUBLIC_RESEARCH_QUERY.search(source_text)
+    public_query = public_query_match.group(1).strip() if public_query_match else None
+    canonical_assignments: list[Assignment] = []
+    for assignment in safe.assignments:
+        current = assignment.model_copy(update={"supplemental_scope_token": None})
+        if current.agent == ProviderName.PERPLEXITY and public_query:
+            current = current.model_copy(
+                update={
+                    "kind": AssignmentKind.RESEARCH,
+                    "task": public_query,
+                    "acceptance": list(_PERPLEXITY_ACCEPTANCE),
+                    "repository": None,
+                    "allow_draft_pr": False,
+                }
+            )
+        if current.agent == ProviderName.GEMINI or (
+            current.agent == ProviderName.PERPLEXITY and public_query
+        ):
+            current = bind_supplemental_scope(
+                current, settings.shared_secret
+            )
+        canonical_assignments.append(current)
+
+    antigravity_sequences = {
+        item.sequence
+        for item in canonical_assignments
+        if item.agent == ProviderName.GEMINI
+    }
+    safe.assignments = [
+        item.model_copy(
+            update={
+                "kind": AssignmentKind.IMPLEMENTATION,
+                "task": _ANTIGRAVITY_CONSUMER_TASK,
+                "acceptance": list(_ANTIGRAVITY_CONSUMER_ACCEPTANCE),
+            }
+        )
+        if item.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+        and bool(set(item.depends_on) & antigravity_sequences)
+        else item
+        for item in canonical_assignments
+    ]
     return safe
 
 
 def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     lowered = text.lower()
-    if any(word in lowered for word in ("research", "sources", "current", "verify facts")):
+    if _PUBLIC_RESEARCH_QUERY.search(text):
         provider = ProviderName.PERPLEXITY
     elif _ANTIGRAVITY_SCOPE.search(text):
         provider = ProviderName.GEMINI

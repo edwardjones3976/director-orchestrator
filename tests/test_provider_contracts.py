@@ -532,6 +532,18 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(RecordingAsyncClient.calls, [])
 
+    async def test_gemini_rejects_unsigned_supplemental_scope(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            shared_secret="test-director-secret",
+        )
+
+        with self.assertRaisesRegex(ProviderError, "Director-authenticated"):
+            await GeminiAdapter(settings).dispatch(self.gemini_assignment(), "context")
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
     async def test_gemini_usage_check_is_stateless_and_never_launches_an_agent(self):
         settings = replace(
             Settings(),
@@ -763,6 +775,26 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(assignment=assignment):
                 with self.assertRaises(ProviderError):
                     await PerplexityAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
+    async def test_perplexity_rejects_unsigned_supplemental_scope(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+            shared_secret="test-director-secret",
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            kind=AssignmentKind.RESEARCH,
+            task="Find public calibration sources",
+            acceptance=["Report URLs"],
+        )
+
+        with self.assertRaisesRegex(ProviderError, "Director-authenticated"):
+            await PerplexityAdapter(settings).dispatch(assignment, "context")
 
         self.assertEqual(RecordingAsyncClient.calls, [])
 

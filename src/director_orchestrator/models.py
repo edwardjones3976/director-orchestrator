@@ -89,6 +89,9 @@ class Assignment(BaseModel):
     requires_approval: bool = False
     allow_draft_pr: bool = False
     estimated_cost_usd: float = Field(default=0, ge=0, le=1_000)
+    supplemental_scope_token: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
 
 
 class DirectorPlan(BaseModel):

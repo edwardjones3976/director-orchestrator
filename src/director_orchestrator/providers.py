@@ -10,7 +10,11 @@ import httpx
 
 from .config import Settings
 from .models import Assignment, ProviderName, ProviderRun
-from .policy import antigravity_assignment_errors, perplexity_assignment_errors
+from .policy import (
+    antigravity_assignment_errors,
+    perplexity_assignment_errors,
+    supplemental_scope_is_valid,
+)
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
@@ -408,6 +412,12 @@ class GeminiAdapter(ProviderAdapter):
 
     def _require_subordinate(self, assignment: Assignment) -> None:
         self._require_profile()
+        if self.settings.shared_secret and not supplemental_scope_is_valid(
+            assignment, self.settings.shared_secret
+        ):
+            raise ProviderError(
+                "Antigravity assignment lacks a Director-authenticated supplemental scope"
+            )
         errors = antigravity_assignment_errors(assignment)
         if errors:
             raise ProviderError(
@@ -584,6 +594,12 @@ class PerplexityAdapter(ProviderAdapter):
         if assignment_required and assignment is None:
             raise ProviderError("Perplexity research execution requires the bound assignment")
         if assignment is not None:
+            if self.settings.shared_secret and not supplemental_scope_is_valid(
+                assignment, self.settings.shared_secret
+            ):
+                raise ProviderError(
+                    "Perplexity assignment lacks a Director-authenticated supplemental scope"
+                )
             errors = perplexity_assignment_errors(assignment)
             if errors:
                 raise ProviderError(
