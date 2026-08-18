@@ -169,6 +169,144 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(RecordingAsyncClient.calls), 1)
         sleep.assert_not_awaited()
 
+    async def test_cursor_dispatch_retries_deleted_working_branch_on_allowlisted_ref(self):
+        settings = replace(
+            Settings(),
+            cursor_api_key="test-cursor",
+            allowed_starting_refs=("main",),
+            cursor_dispatch_max_attempts=1,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Continue Edge Oracle research",
+            acceptance=["Return evidence"],
+            repository="edwardjones3976/edge_engine",
+            starting_ref="cursor/director-task-1-f90c",
+        )
+        missing = FakeResponse(
+            {
+                "message": (
+                    'GitHub branch not found: The starting branch or commit '
+                    '"cursor/director-task-1-f90c" does not exist in '
+                    "edwardjones3976/edge_engine. It may have been deleted after "
+                    "its pull request merged. Choose an existing branch and try again."
+                )
+            },
+            status_code=400,
+        )
+        RecordingAsyncClient.responses = [
+            missing,
+            {"run": {"id": "run-main", "status": "RUNNING"}, "agent": {"id": "agent-main"}},
+        ]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep") as sleep,
+        ):
+            run = await CursorAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(run.run_id, "run-main")
+        self.assertEqual(len(RecordingAsyncClient.calls), 2)
+        self.assertEqual(
+            RecordingAsyncClient.calls[0]["json"]["repos"][0]["startingRef"],
+            "cursor/director-task-1-f90c",
+        )
+        self.assertEqual(
+            RecordingAsyncClient.calls[1]["json"]["repos"][0]["startingRef"],
+            "main",
+        )
+        sleep.assert_not_awaited()
+
+    async def test_cursor_dispatch_does_not_rewrite_a_missing_durable_ref(self):
+        settings = replace(Settings(), cursor_api_key="test-cursor", allowed_starting_refs=("main",))
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Review exact SHA",
+            acceptance=["Return evidence"],
+            repository="edwardjones3976/edge_engine",
+            starting_ref="main",
+        )
+        RecordingAsyncClient.responses = [
+            FakeResponse(
+                {
+                    "message": (
+                        'GitHub branch not found: The starting branch or commit "main" '
+                        "does not exist in edwardjones3976/edge_engine. Choose an "
+                        "existing branch and try again."
+                    )
+                },
+                status_code=400,
+            )
+        ]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep") as sleep,
+        ):
+            with self.assertRaises(httpx.HTTPStatusError):
+                await CursorAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(len(RecordingAsyncClient.calls), 1)
+        sleep.assert_not_awaited()
+
+    async def test_cursor_revision_starts_a_new_agent_when_working_branch_is_gone(self):
+        settings = replace(Settings(), cursor_api_key="test-cursor", allowed_starting_refs=("main",))
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Continue Edge Oracle research",
+            acceptance=["Return evidence"],
+            repository="edwardjones3976/edge_engine",
+            starting_ref="main",
+        )
+        prior = ProviderRun(
+            provider=ProviderName.CURSOR,
+            run_id="run-old",
+            session_id="agent-old",
+            status="FINISHED",
+            url="https://cursor.example/agent-old",
+        )
+        RecordingAsyncClient.responses = [
+            FakeResponse(
+                {
+                    "message": (
+                        'GitHub branch not found: The starting branch or commit '
+                        '"cursor/director-task-1-f90c" does not exist in '
+                        "edwardjones3976/edge_engine. It may have been deleted after "
+                        "its pull request merged. Choose an existing branch and try again."
+                    )
+                },
+                status_code=400,
+            ),
+            {
+                "run": {"id": "run-fresh", "status": "RUNNING"},
+                "agent": {"id": "agent-fresh", "url": "https://cursor.example/agent-fresh"},
+            },
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await CursorAdapter(settings).revise(
+                prior,
+                "Address the failed acceptance checks",
+                assignment=assignment,
+                context="bounded-context",
+            )
+
+        self.assertEqual(run.run_id, "run-fresh")
+        self.assertEqual(run.session_id, "agent-fresh")
+        self.assertTrue(RecordingAsyncClient.calls[0]["url"].endswith("/v1/agents/agent-old/runs"))
+        self.assertTrue(RecordingAsyncClient.calls[1]["url"].endswith("/v1/agents"))
+        self.assertEqual(
+            RecordingAsyncClient.calls[1]["json"]["repos"][0]["startingRef"],
+            "main",
+        )
+        self.assertIn(
+            "working branch was deleted",
+            RecordingAsyncClient.calls[1]["json"]["prompt"]["text"],
+        )
+
     async def test_claude_revision_fires_a_bounded_callback_run(self):
         settings = replace(
             Settings(),
