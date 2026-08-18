@@ -149,6 +149,44 @@ class PolicyTests(unittest.TestCase):
             execution_policy_errors(plan, settings),
         )
 
+    def test_cursor_working_branch_starting_ref_is_rejected_unless_allowlisted(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("edge-oracle",),
+            repository_allowlist=("edwardjones3976/edge_engine",),
+            allowed_starting_refs=("main",),
+        )
+        plan = DirectorPlan(
+            project="edge-oracle",
+            normalized_outcome="Continue research from the prior Cursor branch",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.CURSOR,
+                    task="Continue research",
+                    acceptance=["Evidence exists"],
+                    repository="edwardjones3976/edge_engine",
+                    starting_ref="cursor/director-task-1-f90c",
+                )
+            ],
+            final_acceptance=["Accepted"],
+        )
+
+        errors = execution_policy_errors(plan, settings)
+        self.assertTrue(
+            any("Cursor working branch that is deleted after merge" in item for item in errors)
+        )
+
+        allowlisted = replace(
+            settings,
+            allowed_starting_refs=("main", "cursor/director-task-1-f90c"),
+        )
+        self.assertEqual(execution_policy_errors(plan, allowlisted), [])
+
     def test_draft_pr_capability_requires_assignment_approval(self):
         settings = replace(
             self.settings,
