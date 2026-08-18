@@ -359,7 +359,17 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.run_id, "claude-revision")
         self.assertEqual(run.status, "WAITING_CALLBACK")
 
-    async def test_gemini_usage_check_uses_current_interactions_contract(self):
+    @staticmethod
+    def gemini_assignment() -> Assignment:
+        return Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            task="Validate the prototype in an isolated sandbox",
+            acceptance=["Report the isolated evidence"],
+            repository="example/demo",
+        )
+
+    async def test_gemini_dispatch_uses_antigravity_interactions_contract(self):
         settings = replace(
             Settings(),
             gemini_api_key="test-gemini",
@@ -367,18 +377,113 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             gemini_agent="antigravity-preview-05-2026",
         )
         RecordingAsyncClient.responses = [
-            {"id": "interaction-1", "status": "completed", "output_text": "STATUS=OK"}
+            {
+                "id": "interaction-1",
+                "environment_id": "environment-1",
+                "status": "in_progress",
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await GeminiAdapter(settings).dispatch(self.gemini_assignment(), "context")
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(request["headers"]["Api-Revision"], "2026-05-20")
+        self.assertEqual(request["json"]["agent"], "antigravity-preview-05-2026")
+        self.assertEqual(request["json"]["environment"], "remote")
+        self.assertTrue(request["json"]["background"])
+        self.assertTrue(request["json"]["store"])
+        self.assertNotIn("model", request["json"])
+        self.assertEqual(run.session_id, "environment-1")
+
+    async def test_gemini_poll_extracts_text_from_interaction_steps(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=2,
+            run_id="interaction-1",
+            session_id="environment-1",
+            status="in_progress",
+        )
+        RecordingAsyncClient.responses = [
+            {
+                "id": "interaction-1",
+                "status": "completed",
+                "steps": [
+                    {"type": "thought", "content": [{"type": "text", "text": "hidden"}]},
+                    {
+                        "type": "model_output",
+                        "content": [
+                            {"type": "text", "text": "Evidence "},
+                            {"type": "text", "text": "complete."},
+                        ],
+                    },
+                ],
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await GeminiAdapter(settings).poll(prior)
+
+        self.assertEqual(run.result, "Evidence complete.")
+        self.assertEqual(run.session_id, "environment-1")
+        self.assertEqual(run.assignment_sequence, 2)
+
+    async def test_gemini_revision_reuses_interaction_environment(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_agent="antigravity-preview-05-2026",
+        )
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            session_id="environment-1",
+            status="completed",
+        )
+        RecordingAsyncClient.responses = [
+            {"id": "interaction-2", "status": "in_progress"}
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await GeminiAdapter(settings).revise(
+                prior,
+                "Add exact evidence",
+                assignment=self.gemini_assignment(),
+                context="context",
+            )
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(request["json"]["agent"], "antigravity-preview-05-2026")
+        self.assertEqual(request["json"]["previous_interaction_id"], "interaction-1")
+        self.assertEqual(request["json"]["environment"], "environment-1")
+        self.assertTrue(request["json"]["store"])
+        self.assertEqual(run.session_id, "environment-1")
+        self.assertEqual(run.assignment_sequence, 1)
+
+    async def test_gemini_usage_check_is_stateless_and_never_launches_an_agent(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_api_revision="2026-05-20",
+            gemini_usage_model="gemini-3.5-flash-lite",
+        )
+        RecordingAsyncClient.responses = [
+            {"status": "completed", "output_text": "STATUS=OK"}
         ]
 
         with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
             run = await GeminiAdapter(settings).usage_check("probe")
 
         request = RecordingAsyncClient.calls[0]
-        self.assertEqual(request["headers"]["Api-Revision"], "2026-05-20")
-        self.assertEqual(request["json"]["model"], "antigravity-preview-05-2026")
-        self.assertEqual(request["json"]["environment"], "remote")
+        self.assertEqual(request["json"]["model"], "gemini-3.5-flash-lite")
         self.assertFalse(request["json"]["store"])
         self.assertNotIn("agent", request["json"])
+        self.assertNotIn("background", request["json"])
+        self.assertNotIn("environment", request["json"])
+        self.assertNotIn("tools", request["json"])
+        self.assertEqual(run.run_id, "gemini-stateless-usage-check")
         self.assertEqual(run.status, "completed")
 
     async def test_perplexity_usage_check_uses_synchronous_agent_contract(self):

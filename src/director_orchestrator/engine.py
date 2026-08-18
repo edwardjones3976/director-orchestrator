@@ -428,7 +428,18 @@ class OrchestrationEngine:
     async def _wait(self, adapter, run: ProviderRun) -> ProviderRun:
         if run.status == "WAITING_CALLBACK":
             return run
-        terminal = {"FINISHED", "ERROR", "CANCELLED", "EXPIRED", "completed", "failed", "cancelled", "incomplete"}
+        terminal = {
+            "FINISHED",
+            "ERROR",
+            "CANCELLED",
+            "EXPIRED",
+            "completed",
+            "failed",
+            "cancelled",
+            "incomplete",
+            "requires_action",
+            "budget_exceeded",
+        }
         deadline = time.monotonic() + self.settings.provider_timeout_seconds
         current = run
         while current.status not in terminal:
@@ -436,6 +447,15 @@ class OrchestrationEngine:
                 raise TimeoutError(f"{current.provider.value} run timed out")
             await asyncio.sleep(self.settings.provider_poll_seconds)
             current = await adapter.poll(current)
-        if current.status in {"ERROR", "CANCELLED", "EXPIRED", "failed", "cancelled", "incomplete"}:
+        if current.status in {
+            "ERROR",
+            "CANCELLED",
+            "EXPIRED",
+            "failed",
+            "cancelled",
+            "incomplete",
+            "requires_action",
+            "budget_exceeded",
+        }:
             raise ProviderError(f"{current.provider.value} ended with status {current.status}")
         return current

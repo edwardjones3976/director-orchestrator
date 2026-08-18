@@ -54,6 +54,26 @@ class UsageNormalizationTests(unittest.TestCase):
 
 
 class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_interactions_budget_exceeded_fails_closed_without_polling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            monitor = UsageMonitor(
+                replace(Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")),
+                store,
+                adapters={},
+            )
+            record = monitor._record_from_run(
+                "USAGE-BUDGET",
+                "gemini",
+                ProviderRun(
+                    provider=ProviderName.GEMINI,
+                    run_id="interaction-budget",
+                    status="budget_exceeded",
+                ),
+            )
+            self.assertEqual(record.status, UsageCheckStatus.ERROR)
+            self.assertIn("budget_exceeded", record.error)
+
     async def test_unknown_provider_terminal_status_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
