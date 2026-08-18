@@ -115,13 +115,22 @@ refetches GitHub state and fails closed on:
   string, the gate fetches the
   immutable compare diff for the snapshot's exact 40-hex base and head SHAs
   (`GET /repos/{repo}/compare/{base}...{head}` with
-  `Accept: application/vnd.github.diff`), parses it structurally, and binds
+  `Accept: application/vnd.github.diff` and `Accept-Encoding: identity`),
+  parses it structurally, and binds
   added-line evidence for every REST file. A number-addressed `/pulls/{number}`
   diff is not a completeness source. The pull is re-read after that fetch; any
   drift in title, body, draft, state, merged flag, base/head refs and SHAs, head
   repository, author, changed-file count, or file set fails closed. The compare
   response `Content-Type` base media type must be `application/vnd.github.diff`;
-  a `charset` parameter is accepted and any other type fails closed. Unavailable,
+  a `charset` parameter is accepted and any other type fails closed. A
+  non-identity `Content-Encoding` fails closed so `Content-Length` is the
+  uncompressed body. HTTP 429, 408, and 403 with explicit rate-limit evidence
+  (`Retry-After` or `X-RateLimit-Remaining: 0`) stay on the bounded transient
+  path; ordinary permission 403 and other evidence-shape failures are
+  deterministic. Incomplete file enumeration and non-40-hex pull SHAs are
+  terminal evidence failures. Content-bearing sections require exactly one
+  valid `index` line; edited renames also require canonical similarity
+  metadata. Unavailable,
   oversized, truncated, binary, combined, quoted, mode-only, or mismatched diffs
   fail closed. A nonempty REST `patch` still has to prove every hunk body is
   complete and that parsed additions and deletions equal the REST counts before

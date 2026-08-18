@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ from director_orchestrator.oracle_diff import (
     parse_compare_diff,
     parse_hunk_patch,
     require_github_diff_content_type,
+    require_identity_content_encoding,
 )
 from director_orchestrator.config import Settings
 from director_orchestrator.oracle_merge import (
@@ -24,6 +26,7 @@ from director_orchestrator.oracle_merge import (
     OracleChangedFile,
     OracleCheckRun,
     OracleMergePolicy,
+    OracleMergeResult,
     OracleMergeService,
     OracleMergeStatus,
     OracleMergeStore,
@@ -116,6 +119,7 @@ def _edited_rename_diff(old: str, new: str) -> str:
         "similarity index 90%\n"
         f"rename from {old}\n"
         f"rename to {new}\n"
+        "index 1111111..2222222 100644\n"
         f"--- a/{old}\n"
         f"+++ b/{new}\n"
         "@@ -1,2 +1,2 @@\n"
@@ -218,6 +222,20 @@ class GithubDiffContentTypeTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(OracleDiffError, "malformed"):
                     require_github_diff_content_type(value)
+
+
+class IdentityContentEncodingTests(unittest.TestCase):
+    def test_accepts_missing_or_identity_encoding(self) -> None:
+        require_identity_content_encoding(None)
+        require_identity_content_encoding("")
+        require_identity_content_encoding("identity")
+        require_identity_content_encoding("Identity")
+
+    def test_rejects_gzip_and_mixed_encodings(self) -> None:
+        for value in ("gzip", "x-gzip", "identity, gzip", "br"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(OracleDiffError, "malformed"):
+                    require_identity_content_encoding(value)
 
 
 class CompareDiffParserTests(unittest.TestCase):
@@ -400,6 +418,82 @@ class CompareDiffParserTests(unittest.TestCase):
         with self.assertRaisesRegex(OracleDiffError, "bounded evidence limit"):
             parse_compare_diff(text, max_bytes=len(text.encode("utf-8")) - 1)
 
+    def test_content_bearing_section_without_index_is_rejected(self) -> None:
+        text = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        with self.assertRaisesRegex(OracleDiffError, "malformed"):
+            parse_compare_diff(text)
+
+    def test_malformed_index_object_id_is_rejected(self) -> None:
+        cases = (
+            "index NOTHEX!!..2222222 100644\n",
+            "index DEADBEE..2222222 100644\n",
+            "index abc..2222222 100644\n",
+        )
+        for index_lines in cases:
+            text = (
+                "diff --git a/oracle/a.py b/oracle/a.py\n"
+                f"{index_lines}"
+                "--- a/oracle/a.py\n"
+                "+++ b/oracle/a.py\n"
+                "@@ -1 +1 @@\n"
+                "-old\n"
+                "+new\n"
+            )
+            with self.subTest(index_lines=index_lines):
+                with self.assertRaisesRegex(OracleDiffError, "malformed"):
+                    parse_compare_diff(text)
+
+    def test_duplicate_index_metadata_is_rejected(self) -> None:
+        text = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "index 1111111..2222222 100644\n"
+            "index aaaa111..bbbb222 100644\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        with self.assertRaisesRegex(OracleDiffError, "malformed"):
+            parse_compare_diff(text)
+
+    def test_edited_rename_without_similarity_is_rejected(self) -> None:
+        text = (
+            "diff --git a/oracle/old.py b/oracle/new.py\n"
+            "rename from oracle/old.py\n"
+            "rename to oracle/new.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/oracle/old.py\n"
+            "+++ b/oracle/new.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        with self.assertRaisesRegex(OracleDiffError, "unsupported rename"):
+            parse_compare_diff(text)
+
+    def test_full_and_abbreviated_lowercase_oids_are_accepted(self) -> None:
+        full = "a" * 40
+        sha256 = "b" * 64
+        text = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            f"index {full}..{sha256} 100644\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        parsed = parse_compare_diff(text)
+        self.assertEqual(parsed[0].added_lines, ("new",))
+
 
 class BindCompleteDiffTests(unittest.TestCase):
     def test_exact_rest_agreement_binds_every_file_from_diff(self) -> None:
@@ -492,6 +586,7 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
             return httpx.Response(200, json=self.files)
         if request.method == "GET" and "/compare/" in path:
             self.assertEqual(accept, "application/vnd.github.diff")
+            self.assertEqual(request.headers.get("accept-encoding"), "identity")
             return httpx.Response(
                 200,
                 text=self.compare_diff,
@@ -780,6 +875,7 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.headers.get("accept"), "application/vnd.github.diff")
+            self.assertEqual(request.headers.get("accept-encoding"), "identity")
             return httpx.Response(
                 200,
                 headers={"content-type": "application/vnd.github.diff"},
@@ -841,6 +937,69 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         )
         self.assertTrue(body.startswith(b"diff --git "))
 
+    def test_gzip_compare_body_is_rejected_without_reading_and_sends_identity(self) -> None:
+        stream = _RecordingByteStream((b"\x1f\x8bnot-a-real-gzip-payload",))
+
+        def gzip_response(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.headers.get("accept-encoding"), "identity")
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "application/vnd.github.diff",
+                    "content-encoding": "gzip",
+                    "content-length": "8",
+                },
+                stream=stream,
+            )
+
+        with self.assertRaisesRegex(OracleDiffError, "malformed") as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token",
+                transport=httpx.MockTransport(gzip_response),
+            )._request_bounded_bytes(
+                "GET",
+                f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+                max_bytes=MAX_COMPARE_DIFF_BYTES,
+                headers={"Accept": "application/vnd.github.diff"},
+            )
+        self.assertNotIn("not-a-real-gzip-payload", str(raised.exception))
+        self.assertEqual(stream.chunks_yielded, 0)
+        self.assertTrue(stream.closed)
+
+    def test_compare_throttling_is_transport_failure_not_evidence_error(self) -> None:
+        cases = (
+            (429, {}),
+            (408, {}),
+            (403, {"retry-after": "1"}),
+            (403, {"x-ratelimit-remaining": "0"}),
+        )
+        for status, headers in cases:
+            with self.subTest(status=status, headers=headers):
+                self.requests.clear()
+
+                def throttled(request: httpx.Request, status=status, headers=headers) -> httpx.Response:
+                    if request.method == "GET" and "/compare/" in request.url.path:
+                        return httpx.Response(status, headers=headers)
+                    return self.handler(request)
+
+                with self.assertRaises(RuntimeError) as raised:
+                    GitHubOracleGateway(
+                        "repo-scoped-token", transport=httpx.MockTransport(throttled)
+                    ).snapshot("edwardjones3976/edge_engine", 23)
+                self.assertNotIsInstance(raised.exception, OracleDiffError)
+                self.assertIn(str(status), str(raised.exception))
+
+    def test_ordinary_permission_403_is_deterministic_evidence_failure(self) -> None:
+        def forbidden(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                return httpx.Response(403)
+            return self.handler(request)
+
+        with self.assertRaisesRegex(OracleDiffError, "unavailable"):
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(forbidden)
+            ).snapshot("edwardjones3976/edge_engine", 23)
+
     def test_compare_http_5xx_is_transport_failure_not_evidence_error(self) -> None:
         def server_error(request: httpx.Request) -> httpx.Response:
             if request.method == "GET" and "/compare/" in request.url.path:
@@ -856,7 +1015,13 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
 
     def test_incomplete_rest_enumeration_does_not_fetch_compare(self) -> None:
         self.pull["changed_files"] = 2
-        with self.assertRaisesRegex(RuntimeError, "file enumeration is incomplete"):
+        with self.assertRaisesRegex(OracleDiffError, "file enumeration is incomplete"):
+            self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+
+    def test_non_hex_pull_sha_is_deterministic_evidence_failure(self) -> None:
+        self.pull["head"]["sha"] = "not-a-40-hex-digest"
+        with self.assertRaisesRegex(OracleDiffError, "pinned 40-hex digest"):
             self.gateway().snapshot("edwardjones3976/edge_engine", 23)
         self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
 
@@ -1188,6 +1353,104 @@ class DeterministicEvidenceFailureTests(unittest.TestCase):
         self.assertEqual(github.snapshot_calls, 2)
         self.assertTrue(any("transient read failures" in item for item in result.reasons))
         self.assertTrue(any("remains retryable" in item for item in result.reasons))
+
+    def _stub_github(self, exc: Exception):
+        class _GitHub:
+            def __init__(self) -> None:
+                self.snapshot_calls = 0
+
+            def snapshot(self, repository: str, pull_number: int):
+                self.snapshot_calls += 1
+                raise exc
+
+            def merge(self, *args, **kwargs):
+                raise AssertionError("merge must not run after snapshot failure")
+
+            def mark_ready(self, *args, **kwargs):
+                raise AssertionError("ready transition must not run after snapshot failure")
+
+        return _GitHub()
+
+    def _process(self, github) -> OracleMergeResult:
+        return OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            github,
+            sleep=lambda _: None,
+        ).process(self.artifact)
+
+    def _attempt_row(self) -> tuple[str, str | None]:
+        connection = sqlite3.connect(self.settings.sqlite_path)
+        try:
+            return connection.execute(
+                "SELECT status, result_json FROM oracle_merge_attempts WHERE artifact_id = ?",
+                (self.artifact.artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+
+    def test_rate_limited_compare_is_released_and_never_eligible(self) -> None:
+        cases = (
+            RuntimeError("GitHub API GET /compare failed with status 429"),
+            RuntimeError("GitHub API GET /compare failed with status 408"),
+            RuntimeError("GitHub API GET /compare failed with status 403"),
+        )
+        for index, exc in enumerate(cases):
+            with self.subTest(error=str(exc)):
+                self.artifact = self.artifact.model_copy(
+                    update={
+                        "artifact_id": f"review-artifact-throttle-{index}",
+                        "assignment_id": f"assignment-throttle-{index}",
+                        "review_run_id": f"claude-review-throttle-{index}",
+                    }
+                ).sign(REVIEW_SECRET)
+                github = self._stub_github(exc)
+                result = self._process(github)
+                self.assertEqual(result.status, OracleMergeStatus.ERROR)
+                self.assertEqual(github.snapshot_calls, 2)
+                self.assertTrue(any("transient read failures" in item for item in result.reasons))
+                self.assertTrue(any("remains retryable" in item for item in result.reasons))
+                self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+                self.assertEqual(self._attempt_row(), ("RECOVERABLE", None))
+
+    def test_permission_403_consumes_evidence_and_is_never_eligible(self) -> None:
+        github = self._stub_github(OracleDiffError("complete compare diff is unavailable"))
+        result = self._process(github)
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertEqual(github.snapshot_calls, 1)
+        self.assertTrue(any("complete compare-diff evidence failed closed" in item for item in result.reasons))
+        self.assertFalse(any("transient" in item for item in result.reasons))
+        self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+        status, payload = self._attempt_row()
+        self.assertNotEqual(status, "RECOVERABLE")
+        self.assertIsNotNone(payload)
+
+    def test_incomplete_enumeration_and_bad_sha_are_terminal_evidence_failures(self) -> None:
+        cases = (
+            OracleDiffError("GitHub file enumeration is incomplete"),
+            OracleDiffError("GitHub pull request SHA is not a pinned 40-hex digest"),
+        )
+        for index, exc in enumerate(cases):
+            with self.subTest(error=str(exc)):
+                self.artifact = self.artifact.model_copy(
+                    update={
+                        "artifact_id": f"review-artifact-shape-{index}",
+                        "assignment_id": f"assignment-shape-{index}",
+                        "review_run_id": f"claude-review-shape-{index}",
+                    }
+                ).sign(REVIEW_SECRET)
+                github = self._stub_github(exc)
+                result = self._process(github)
+                self.assertEqual(result.status, OracleMergeStatus.ERROR)
+                self.assertEqual(github.snapshot_calls, 1)
+                self.assertTrue(
+                    any("complete compare-diff evidence failed closed" in item for item in result.reasons)
+                )
+                self.assertFalse(any("transient" in item for item in result.reasons))
+                self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+                status, payload = self._attempt_row()
+                self.assertNotEqual(status, "RECOVERABLE")
+                self.assertIsNotNone(payload)
 
 
 if __name__ == "__main__":

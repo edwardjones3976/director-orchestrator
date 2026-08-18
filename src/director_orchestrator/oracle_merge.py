@@ -31,6 +31,7 @@ from .oracle_diff import (
     parse_compare_diff,
     parse_hunk_patch,
     require_github_diff_content_type,
+    require_identity_content_encoding,
 )
 from .policy import canonical_repository
 
@@ -1313,10 +1314,10 @@ class GitHubOracleGateway:
             params={"per_page": 100},
         ).json()
         if not isinstance(payload, list):
-            raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
+            raise OracleDiffError("GitHub file enumeration is incomplete")
         names = [item.get("filename") for item in payload]
         if len(set(names)) != len(names):
-            raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
+            raise OracleDiffError("GitHub file enumeration is incomplete")
         return payload
 
     @staticmethod
@@ -1346,12 +1347,12 @@ class GitHubOracleGateway:
     @staticmethod
     def _require_complete_file_enumeration(pull: dict, files: list[dict]) -> None:
         if len(files) != int(pull.get("changed_files", len(files))):
-            raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
+            raise OracleDiffError("GitHub file enumeration is incomplete")
 
     @staticmethod
     def _require_sha40(value: str) -> str:
         if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
-            raise RuntimeError("GitHub pull request SHA is not a pinned 40-hex digest")
+            raise OracleDiffError("GitHub pull request SHA is not a pinned 40-hex digest")
         return value
 
     def _pull_identity(self, repository: str, pull_number: int, pull: dict) -> dict[str, object]:
@@ -1395,7 +1396,10 @@ class GitHubOracleGateway:
             "GET",
             path,
             max_bytes=self._max_compare_diff_bytes,
-            headers={"Accept": GITHUB_DIFF_MEDIA_TYPE},
+            headers={
+                "Accept": GITHUB_DIFF_MEDIA_TYPE,
+                "Accept-Encoding": "identity",
+            },
         )
         try:
             text = body.decode("utf-8")
@@ -1420,7 +1424,11 @@ class GitHubOracleGateway:
                 if self._token_provider is not None
                 else self._token
             )
-            request_headers = {**supplied_headers, "Authorization": f"Bearer {token}"}
+            request_headers = {
+                **supplied_headers,
+                "Authorization": f"Bearer {token}",
+                "Accept-Encoding": "identity",
+            }
             with self._client.stream(method, path, headers=request_headers) as response:
                 if (
                     response.status_code == 401
@@ -1433,13 +1441,14 @@ class GitHubOracleGateway:
                     raise OracleDiffError(
                         "complete compare diff exceeds the bounded evidence limit"
                     )
-                if response.status_code >= 500:
+                if self._is_transient_compare_status(response):
                     raise RuntimeError(
                         f"GitHub API {method} {path} failed with status {response.status_code}"
                     )
                 if response.status_code >= 400:
                     raise OracleDiffError("complete compare diff is unavailable")
                 require_github_diff_content_type(response.headers.get("content-type"))
+                require_identity_content_encoding(response.headers.get("content-encoding"))
                 declared = response.headers.get("content-length")
                 if declared is not None:
                     try:
@@ -1461,6 +1470,22 @@ class GitHubOracleGateway:
                     raise OracleDiffError("complete compare diff is truncated")
                 return bytes(collected)
         raise RuntimeError(f"GitHub API {method} {path} authentication failed")
+
+    @staticmethod
+    def _is_transient_compare_status(response: httpx.Response) -> bool:
+        if response.status_code >= 500 or response.status_code in {408, 429}:
+            return True
+        if response.status_code != 403:
+            return False
+        if (response.headers.get("retry-after") or "").strip():
+            return True
+        remaining = response.headers.get("x-ratelimit-remaining")
+        if remaining is None:
+            return False
+        try:
+            return int(remaining.strip()) == 0
+        except ValueError:
+            return False
 
     def _complete_missing_patches(
         self,
@@ -1501,6 +1526,8 @@ class GitHubOracleGateway:
         repository = canonical_repository(repository)
         owner, name = repository.split("/", 1)
         pull = self._get_pull(repository, pull_number)
+        self._require_sha40(str(pull["base"]["sha"]))
+        self._require_sha40(str(pull["head"]["sha"]))
         files = self._get_files(repository, pull_number)
         self._require_complete_file_enumeration(pull, files)
         if any(self._rest_patch_incomplete(item) for item in files):

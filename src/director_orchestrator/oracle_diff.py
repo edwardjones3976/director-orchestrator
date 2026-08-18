@@ -8,6 +8,7 @@ Error messages never include file content or matched credential text.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -21,6 +22,7 @@ NO_NEWLINE_MARKER = "\\ No newline at end of file"
 _REGULAR_FILE_MODES = frozenset({"100644", "100755"})
 _HUNK_HEADER_PREFIX = "@@ "
 _DIFF_GIT_PREFIX = "diff --git a/"
+_GIT_OID = re.compile(r"[0-9a-f]{4,64}")
 
 
 class OracleDiffError(RuntimeError):
@@ -142,6 +144,15 @@ def require_github_diff_content_type(content_type: str | None) -> None:
         name, separator, value = param.partition("=")
         if separator != "=" or name.strip().lower() != "charset" or not value.strip():
             raise OracleDiffError("complete compare diff is malformed")
+
+
+def require_identity_content_encoding(content_encoding: str | None) -> None:
+    raw = (content_encoding or "").strip()
+    if not raw:
+        return
+    parts = [part.strip().lower() for part in raw.split(",") if part.strip()]
+    if parts != ["identity"]:
+        raise OracleDiffError("complete compare diff is malformed")
 
 
 def parse_compare_diff(
@@ -366,6 +377,8 @@ class _FileSection:
             self.rename_to = _safe_repo_path(line[len("rename to ") :])
             return
         if line.startswith("similarity index "):
+            if self.similarity is not None:
+                raise OracleDiffError("complete compare diff is malformed")
             self.similarity = _parse_similarity(line)
             return
         if line.startswith("index "):
@@ -431,6 +444,7 @@ class _FileSection:
         if self.in_hunk and not self.hunk_complete:
             raise OracleDiffError("complete compare diff is truncated")
         filename, previous, status = self._identity()
+        self._require_index_metadata(status)
         if len("\n".join(self.hunk_lines)) > MAX_FILE_PATCH_CHARS:
             raise OracleDiffError("complete compare diff exceeds the bounded per-file evidence limit")
         return ParsedDiffFile(
@@ -456,6 +470,8 @@ class _FileSection:
             self.hunk_complete = True
 
     def _parse_index(self, line: str) -> None:
+        if self.saw_index:
+            raise OracleDiffError("complete compare diff is malformed")
         payload = line[len("index ") :]
         if "," in payload.split(" ", 1)[0]:
             raise OracleDiffError("complete compare diff contains a combined diff")
@@ -465,9 +481,18 @@ class _FileSection:
         elif len(parts) != 1:
             raise OracleDiffError("complete compare diff is malformed")
         shas = parts[0].split("..")
-        if len(shas) != 2 or not all(shas):
+        if len(shas) != 2 or not all(_GIT_OID.fullmatch(item) for item in shas):
             raise OracleDiffError("complete compare diff is malformed")
         self.saw_index = True
+
+    def _require_index_metadata(self, status: str) -> None:
+        pure_rename = (
+            status == "renamed" and not self.hunk_lines and self.similarity == 100
+        )
+        if pure_rename:
+            return
+        if not self.saw_index:
+            raise OracleDiffError("complete compare diff is malformed")
 
     def _parse_old_header(self, line: str) -> None:
         if self.old_path is not None or self.old_is_dev_null:
@@ -518,7 +543,7 @@ class _FileSection:
         if self.git_line != expected:
             raise OracleDiffError("complete compare diff has an unsupported rename")
         if self.hunk_lines:
-            if self.similarity == 100:
+            if self.similarity is None or self.similarity == 100:
                 raise OracleDiffError("complete compare diff has an unsupported rename")
             if self.old_is_dev_null or self.new_is_dev_null:
                 raise OracleDiffError("complete compare diff has an unsupported rename")
