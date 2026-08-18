@@ -18,7 +18,7 @@ from typing import Callable, Iterator, Literal, Protocol
 
 import httpx
 import jwt
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .config import Settings
 from .models import ClaudeCallback, ProviderName, ProviderRun, TaskRecord
@@ -27,9 +27,10 @@ from .oracle_diff import (
     MAX_COMPARE_DIFF_BYTES,
     MAX_FILE_PATCH_CHARS,
     OracleDiffError,
-    added_lines_from_hunk_patch,
     bind_complete_diff_evidence,
     parse_compare_diff,
+    parse_hunk_patch,
+    require_github_diff_content_type,
 )
 from .policy import canonical_repository
 
@@ -224,11 +225,18 @@ class OracleChangedFile(BaseModel):
     def bind_structured_added_lines(self) -> OracleChangedFile:
         if self.patch is None:
             return self
-        extracted = added_lines_from_hunk_patch(self.patch)
+        try:
+            parsed = parse_hunk_patch(self.patch)
+        except OracleDiffError as exc:
+            raise ValueError(str(exc)) from exc
+        if parsed.additions != self.additions or parsed.deletions != self.deletions:
+            raise ValueError(
+                "changed-file patch totals do not match REST addition and deletion counts"
+            )
         if self.added_lines is None:
-            self.added_lines = list(extracted)
+            self.added_lines = list(parsed.added_lines)
             return self
-        if tuple(self.added_lines) != extracted:
+        if tuple(self.added_lines) != parsed.added_lines:
             raise ValueError("changed-file added_lines do not match structured hunk evidence")
         return self
 
@@ -1317,6 +1325,25 @@ class GitHubOracleGateway:
         return patch is None or patch == ""
 
     @staticmethod
+    def _changed_files_from_rest(files: list[dict]) -> list[OracleChangedFile]:
+        try:
+            return [
+                OracleChangedFile(
+                    filename=item["filename"],
+                    previous_filename=item.get("previous_filename"),
+                    status=item["status"],
+                    additions=item.get("additions", 0),
+                    deletions=item.get("deletions", 0),
+                    patch=item.get("patch"),
+                )
+                for item in files
+            ]
+        except ValidationError as exc:
+            raise OracleDiffError(
+                "REST file patch is incomplete or disagrees with REST counts"
+            ) from exc
+
+    @staticmethod
     def _require_complete_file_enumeration(pull: dict, files: list[dict]) -> None:
         if len(files) != int(pull.get("changed_files", len(files))):
             raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
@@ -1412,11 +1439,7 @@ class GitHubOracleGateway:
                     )
                 if response.status_code >= 400:
                     raise OracleDiffError("complete compare diff is unavailable")
-                content_type = (
-                    (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-                )
-                if content_type in {"application/json", "application/vnd.github+json"}:
-                    raise OracleDiffError("complete compare diff is malformed")
+                require_github_diff_content_type(response.headers.get("content-type"))
                 declared = response.headers.get("content-length")
                 if declared is not None:
                     try:
@@ -1485,17 +1508,7 @@ class GitHubOracleGateway:
                 repository, pull_number, pull, files
             )
         else:
-            changed_files = [
-                OracleChangedFile(
-                    filename=item["filename"],
-                    previous_filename=item.get("previous_filename"),
-                    status=item["status"],
-                    additions=item.get("additions", 0),
-                    deletions=item.get("deletions", 0),
-                    patch=item.get("patch"),
-                )
-                for item in files
-            ]
+            changed_files = self._changed_files_from_rest(files)
         checks_payload = self._request(
             "GET",
             f"/repos/{repository}/commits/{pull['head']['sha']}/check-runs",

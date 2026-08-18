@@ -569,7 +569,8 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assert_rejected(
             snapshot=self.snapshot(changed_files=[OracleChangedFile(
                 filename="oracle/moved.py", previous_filename="scheduler.py",
-                status="renamed", patch="@@ -1 +1 @@\n-old = True\n+research = True"
+                status="renamed", additions=1, deletions=1,
+                patch="@@ -1 +1 @@\n-old = True\n+research = True"
             )]),
             reason="scheduler.py",
         )
@@ -626,8 +627,8 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_material_deletion_is_a_serious_safety_stop(self):
         self.assert_rejected(
             snapshot=self.snapshot(changed_files=[OracleChangedFile(
-                filename="oracle/archive.py", status="removed", deletions=4,
-                patch="@@ -1,4 +0,0 @@\n-old = True"
+                filename="oracle/archive.py", status="removed", deletions=1,
+                patch="@@ -1 +0,0 @@\n-old = True"
             )]),
             reason="material deletion",
         )
@@ -989,7 +990,8 @@ class OracleMergeGateTests(unittest.TestCase):
                         OracleChangedFile(
                             filename="scheduler.py",
                             status="modified",
-                            patch="@@ -1 +1 @@\n+x = 1",
+                            additions=1,
+                            patch="@@ -0,0 +1 @@\n+x = 1",
                         )
                     ],
                 },

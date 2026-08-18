@@ -49,39 +49,99 @@ class BoundFileEvidence:
     added_lines: tuple[str, ...]
 
 
-def added_lines_from_hunk_patch(patch: str) -> tuple[str, ...]:
-    """Return source lines after stripping exactly one hunk ``+`` marker.
+@dataclass(frozen=True)
+class ParsedHunkPatch:
+    added_lines: tuple[str, ...]
+    additions: int
+    deletions: int
+
+
+def parse_hunk_patch(patch: str) -> ParsedHunkPatch:
+    """Parse REST-style hunks and prove every hunk body is complete.
 
     File headers are recognized only before the first hunk. Once a hunk is
     open, a line beginning with ``+`` is always added source content, even if
-    the source itself begins with ``++``.
+    the source itself begins with ``++``. Old/new hunk counts are enforced, and
+    the returned totals are the counted added and deleted body lines.
     """
     if patch == "":
-        return ()
+        return ParsedHunkPatch(added_lines=(), additions=0, deletions=0)
     if "\x00" in patch:
         raise OracleDiffError("changed-file patch evidence is malformed")
     added: list[str] = []
+    additions = 0
+    deletions = 0
     in_hunk = False
+    hunk_complete = True
+    old_remaining = 0
+    new_remaining = 0
     for line in patch.splitlines():
         if line.startswith("@@"):
-            _parse_hunk_header(line)
+            if in_hunk and not hunk_complete:
+                raise OracleDiffError("changed-file patch evidence is truncated")
+            old_count, new_count = _parse_hunk_header(line)
             in_hunk = True
+            old_remaining = old_count
+            new_remaining = new_count
+            hunk_complete = old_count == 0 and new_count == 0
             continue
         if not in_hunk:
             if line.startswith("---") or line.startswith("+++"):
                 continue
             raise OracleDiffError("changed-file patch evidence is malformed")
+        if hunk_complete:
+            if line == NO_NEWLINE_MARKER:
+                continue
+            raise OracleDiffError("changed-file patch evidence is malformed")
         if line == NO_NEWLINE_MARKER:
             continue
         if line.startswith("+"):
+            if new_remaining <= 0:
+                raise OracleDiffError("changed-file patch evidence is malformed")
             added.append(line[1:])
+            additions += 1
+            new_remaining -= 1
+            hunk_complete = old_remaining == 0 and new_remaining == 0
             continue
-        if line.startswith("-") or line.startswith(" "):
+        if line.startswith("-"):
+            if old_remaining <= 0:
+                raise OracleDiffError("changed-file patch evidence is malformed")
+            deletions += 1
+            old_remaining -= 1
+            hunk_complete = old_remaining == 0 and new_remaining == 0
+            continue
+        if line.startswith(" "):
+            if old_remaining <= 0 or new_remaining <= 0:
+                raise OracleDiffError("changed-file patch evidence is malformed")
+            old_remaining -= 1
+            new_remaining -= 1
+            hunk_complete = old_remaining == 0 and new_remaining == 0
             continue
         raise OracleDiffError("changed-file patch evidence is malformed")
-    if not in_hunk:
-        raise OracleDiffError("changed-file patch evidence is malformed")
-    return tuple(added)
+    if in_hunk and not hunk_complete:
+        raise OracleDiffError("changed-file patch evidence is truncated")
+    return ParsedHunkPatch(
+        added_lines=tuple(added),
+        additions=additions,
+        deletions=deletions,
+    )
+
+
+def added_lines_from_hunk_patch(patch: str) -> tuple[str, ...]:
+    return parse_hunk_patch(patch).added_lines
+
+
+def require_github_diff_content_type(content_type: str | None) -> None:
+    raw = (content_type or "").strip()
+    if not raw:
+        raise OracleDiffError("complete compare diff is malformed")
+    parts = [part.strip() for part in raw.split(";")]
+    if parts[0].lower() != GITHUB_DIFF_MEDIA_TYPE:
+        raise OracleDiffError("complete compare diff is malformed")
+    for param in parts[1:]:
+        name, separator, value = param.partition("=")
+        if separator != "=" or name.strip().lower() != "charset" or not value.strip():
+            raise OracleDiffError("complete compare diff is malformed")
 
 
 def parse_compare_diff(

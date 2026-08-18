@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import httpx
+from pydantic import ValidationError
 
 from director_orchestrator.oracle_diff import (
     MAX_COMPARE_DIFF_BYTES,
@@ -14,6 +15,8 @@ from director_orchestrator.oracle_diff import (
     added_lines_from_hunk_patch,
     bind_complete_diff_evidence,
     parse_compare_diff,
+    parse_hunk_patch,
+    require_github_diff_content_type,
 )
 from director_orchestrator.config import Settings
 from director_orchestrator.oracle_merge import (
@@ -142,6 +145,79 @@ class AddedLineExtractionTests(unittest.TestCase):
     def test_file_headers_are_not_added_source(self) -> None:
         patch = "--- a/oracle/a.py\n+++ b/oracle/a.py\n@@ -0,0 +1 @@\n+research_only = True"
         self.assertEqual(added_lines_from_hunk_patch(patch), ("research_only = True",))
+
+
+class RestHunkCompletenessTests(unittest.TestCase):
+    def test_incomplete_hunk_body_is_rejected(self) -> None:
+        with self.assertRaisesRegex(OracleDiffError, "truncated"):
+            parse_hunk_patch("@@ -0,0 +1,2 @@\n+only_one")
+        with self.assertRaisesRegex(ValidationError, "truncated"):
+            OracleChangedFile(
+                filename="oracle/a.py",
+                status="modified",
+                additions=2,
+                deletions=0,
+                patch="@@ -0,0 +1,2 @@\n+only_one",
+            )
+
+    def test_complete_patch_with_disagreeing_rest_counts_is_rejected(self) -> None:
+        patch = "@@ -1 +1 @@\n-old\n+safe"
+        parsed = parse_hunk_patch(patch)
+        self.assertEqual(parsed.additions, 1)
+        self.assertEqual(parsed.deletions, 1)
+        self.assertEqual(parsed.added_lines, ("safe",))
+        with self.assertRaisesRegex(ValidationError, "do not match REST"):
+            OracleChangedFile(
+                filename="oracle/a.py",
+                status="modified",
+                additions=2,
+                deletions=1,
+                patch=patch,
+            )
+
+    def test_valid_multi_hunk_rest_patch_binds_exact_totals(self) -> None:
+        patch = (
+            "@@ -1,2 +1,2 @@\n"
+            " context = True\n"
+            "-old = True\n"
+            "+safe = True\n"
+            "@@ -10,1 +10,2 @@\n"
+            " keep = True\n"
+            "+also_safe = True"
+        )
+        parsed = parse_hunk_patch(patch)
+        self.assertEqual(parsed.additions, 2)
+        self.assertEqual(parsed.deletions, 1)
+        self.assertEqual(parsed.added_lines, ("safe = True", "also_safe = True"))
+        bound = OracleChangedFile(
+            filename="oracle/a.py",
+            status="modified",
+            additions=2,
+            deletions=1,
+            patch=patch,
+        )
+        self.assertEqual(bound.added_lines, ["safe = True", "also_safe = True"])
+
+
+class GithubDiffContentTypeTests(unittest.TestCase):
+    def test_accepts_github_diff_media_type_with_charset(self) -> None:
+        require_github_diff_content_type("application/vnd.github.diff")
+        require_github_diff_content_type("application/vnd.github.diff; charset=utf-8")
+        require_github_diff_content_type("Application/VND.GitHub.diff; Charset=UTF-8")
+
+    def test_rejects_json_plain_text_and_unknown_parameters(self) -> None:
+        for value in (
+            None,
+            "",
+            "text/plain",
+            "application/json",
+            "application/vnd.github+json",
+            "application/vnd.github.diff; boundary=x",
+            "application/vnd.github.diff; charset=",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(OracleDiffError, "malformed"):
+                    require_github_diff_content_type(value)
 
 
 class CompareDiffParserTests(unittest.TestCase):
@@ -514,6 +590,56 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.changed_files[0].added_lines, ["from_diff = True"])
         self.assertEqual(snapshot.changed_files[1].added_lines, ["fallback_only = True"])
 
+    def test_rest_only_incomplete_hunk_fails_closed_without_compare(self) -> None:
+        self.files = [
+            {
+                "filename": "oracle/a.py",
+                "status": "modified",
+                "additions": 2,
+                "deletions": 0,
+                "patch": "@@ -0,0 +1,2 @@\n+only_one",
+            }
+        ]
+        with self.assertRaisesRegex(OracleDiffError, "incomplete or disagrees"):
+            self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+
+    def test_rest_only_complete_patch_with_disagreeing_counts_fails_closed(self) -> None:
+        self.files = [
+            {
+                "filename": "oracle/a.py",
+                "status": "modified",
+                "additions": 2,
+                "deletions": 1,
+                "patch": "@@ -1 +1 @@\n-old\n+safe",
+            }
+        ]
+        with self.assertRaisesRegex(OracleDiffError, "incomplete or disagrees"):
+            self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+
+    def test_rest_only_valid_multi_hunk_binds_exact_totals(self) -> None:
+        self.files = [
+            {
+                "filename": "oracle/a.py",
+                "status": "modified",
+                "additions": 2,
+                "deletions": 1,
+                "patch": (
+                    "@@ -1,2 +1,2 @@\n"
+                    " context = True\n"
+                    "-old = True\n"
+                    "+safe = True\n"
+                    "@@ -10,1 +10,2 @@\n"
+                    " keep = True\n"
+                    "+also_safe = True"
+                ),
+            }
+        ]
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.changed_files[0].added_lines, ["safe = True", "also_safe = True"])
+        self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+
     def test_unavailable_malformed_and_oversized_compare_diffs_reject(self) -> None:
         def unavailable(_: httpx.Request) -> httpx.Response:
             return httpx.Response(404)
@@ -677,6 +803,43 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(stream.chunks_yielded, 3)
         self.assertEqual(stream.bytes_yielded, 24)
         self.assertEqual(stream.chunks_remaining, leftover_chunks)
+
+    def test_compare_content_type_must_be_github_diff_media_type(self) -> None:
+        def plain_text(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                text=_modified_diff("oracle/a.py"),
+                headers={"content-type": "text/plain"},
+            )
+
+        with self.assertRaisesRegex(OracleDiffError, "malformed"):
+            GitHubOracleGateway(
+                "repo-scoped-token",
+                transport=httpx.MockTransport(plain_text),
+            )._request_bounded_bytes(
+                "GET",
+                f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+                max_bytes=MAX_COMPARE_DIFF_BYTES,
+                headers={"Accept": "application/vnd.github.diff"},
+            )
+
+        def charset_ok(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=b"diff --git a/oracle/a.py b/oracle/a.py\n",
+                headers={"content-type": "application/vnd.github.diff; charset=utf-8"},
+            )
+
+        body = GitHubOracleGateway(
+            "repo-scoped-token",
+            transport=httpx.MockTransport(charset_ok),
+        )._request_bounded_bytes(
+            "GET",
+            f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+            max_bytes=MAX_COMPARE_DIFF_BYTES,
+            headers={"Accept": "application/vnd.github.diff"},
+        )
+        self.assertTrue(body.startswith(b"diff --git "))
 
     def test_compare_http_5xx_is_transport_failure_not_evidence_error(self) -> None:
         def server_error(request: httpx.Request) -> httpx.Response:

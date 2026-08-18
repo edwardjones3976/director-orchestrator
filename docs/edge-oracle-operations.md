@@ -119,9 +119,14 @@ refetches GitHub state and fails closed on:
   added-line evidence for every REST file. A number-addressed `/pulls/{number}`
   diff is not a completeness source. The pull is re-read after that fetch; any
   drift in title, body, draft, state, merged flag, base/head refs and SHAs, head
-  repository, author, changed-file count, or file set fails closed. Unavailable,
+  repository, author, changed-file count, or file set fails closed. The compare
+  response `Content-Type` base media type must be `application/vnd.github.diff`;
+  a `charset` parameter is accepted and any other type fails closed. Unavailable,
   oversized, truncated, binary, combined, quoted, mode-only, or mismatched diffs
-  fail closed. `patch=None` remains incomplete when no bound evidence is supplied;
+  fail closed. A nonempty REST `patch` still has to prove every hunk body is
+  complete and that parsed additions and deletions equal the REST counts before
+  the snapshot is eligible. `patch=None` remains incomplete when no bound
+  evidence is supplied;
 - deterministic serious-safety signals or committed credential material;
 - GitHub or branch-protection refusal.
 
