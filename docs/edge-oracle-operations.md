@@ -122,8 +122,9 @@ refetches GitHub state and fails closed on:
   drift in title, body, draft, state, merged flag, base/head refs and SHAs, head
   repository, author, changed-file count, or file set fails closed. The compare
   response `Content-Type` base media type must be `application/vnd.github.diff`.
-  A charset parameter is omitted or `utf-8` only, case-insensitively; duplicate
-  or non-UTF-8 charset declarations fail closed. A
+  A charset parameter is omitted, the unquoted token `utf-8`, or a matched
+  double-quoted `"utf-8"` only, case-insensitively; single quotes, mismatched
+  quotes, escapes, and duplicate or non-UTF-8 charset declarations fail closed. A
   non-identity `Content-Encoding` fails closed so `Content-Length` is the
   uncompressed body. HTTP 429 and 403 with explicit rate-limit evidence
   (`Retry-After` or `X-RateLimit-Remaining: 0`) release the review artifact

@@ -141,6 +141,15 @@ def added_lines_from_hunk_patch(patch: str) -> tuple[str, ...]:
     return parse_hunk_patch(patch).added_lines
 
 
+def _is_allowed_utf8_charset(value: str) -> bool:
+    raw = value.strip()
+    if not raw or "\\" in raw:
+        return False
+    if raw.startswith('"'):
+        return raw.endswith('"') and raw[1:-1].lower() == "utf-8"
+    return raw.lower() == "utf-8" and "'" not in raw and '"' not in raw
+
+
 def require_github_diff_content_type(content_type: str | None) -> None:
     raw = (content_type or "").strip()
     if not raw:
@@ -151,8 +160,11 @@ def require_github_diff_content_type(content_type: str | None) -> None:
     seen_charset = False
     for param in parts[1:]:
         name, separator, value = param.partition("=")
-        charset = value.strip().strip("\"'").lower()
-        if separator != "=" or name.strip().lower() != "charset" or charset != "utf-8":
+        if (
+            separator != "="
+            or name.strip().lower() != "charset"
+            or not _is_allowed_utf8_charset(value)
+        ):
             raise OracleDiffError("complete compare diff is malformed")
         if seen_charset:
             raise OracleDiffError("complete compare diff is malformed")

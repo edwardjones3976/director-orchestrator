@@ -236,6 +236,7 @@ class GithubDiffContentTypeTests(unittest.TestCase):
         require_github_diff_content_type("application/vnd.github.diff; charset=utf-8")
         require_github_diff_content_type("Application/VND.GitHub.diff; Charset=UTF-8")
         require_github_diff_content_type('application/vnd.github.diff; charset="utf-8"')
+        require_github_diff_content_type('application/vnd.github.diff; charset="UTF-8"')
 
     def test_rejects_json_plain_text_and_unknown_parameters(self) -> None:
         for value in (
@@ -249,6 +250,12 @@ class GithubDiffContentTypeTests(unittest.TestCase):
             "application/vnd.github.diff; charset=iso-8859-1",
             "application/vnd.github.diff; charset=utf-8; charset=utf-8",
             "application/vnd.github.diff; charset=utf-8; charset=iso-8859-1",
+            "application/vnd.github.diff; charset='utf-8'",
+            "application/vnd.github.diff; charset='utf-8\"",
+            "application/vnd.github.diff; charset=\"utf-8'",
+            "application/vnd.github.diff; charset=\"utf-8",
+            "application/vnd.github.diff; charset=utf-8\"",
+            r'application/vnd.github.diff; charset="utf\-8"',
         ):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(OracleDiffError, "malformed"):
