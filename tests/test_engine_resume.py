@@ -108,6 +108,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 run_id="cursor-review-run",
                 status="FINISHED",
                 result=json.dumps(payload),
+                provider_authenticated=True,
             )
             record = TaskRecord(
                 task_id="DIR-CURSOR-MERGE",

@@ -259,6 +259,7 @@ class OracleMergeGateTests(unittest.TestCase):
                 run_id="claude-review-callback",
                 status="completed",
                 result=self.callback().result,
+                provider_authenticated=True,
             )],
             assignment_outcomes=[AssignmentOutcome(
                 assignment_sequence=1,
@@ -303,6 +304,7 @@ class OracleMergeGateTests(unittest.TestCase):
             run_id="cursor-review-run",
             status="FINISHED",
             result=json.dumps(payload),
+            provider_authenticated=True,
         )
         base_record = self.callback_record()
         record = base_record.model_copy(
@@ -351,9 +353,55 @@ class OracleMergeGateTests(unittest.TestCase):
 
     def test_manual_claude_completion_cannot_authenticate_review_artifact(self):
         record = self.callback_record()
-        run = record.provider_runs[0].model_copy(update={"status": "FINISHED"})
+        run = record.provider_runs[0].model_copy(
+            update={"status": "FINISHED", "provider_authenticated": False}
+        )
 
-        with self.assertRaisesRegex(ValueError, "successful provider run"):
+        with self.assertRaisesRegex(ValueError, "provider-authenticated"):
+            authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
+
+    def test_manual_cursor_completion_cannot_authenticate_review_artifact(self):
+        payload = self.artifact(
+            implementation_provider="claude",
+            implementation_actor="claude-agent",
+            reviewer_provider="cursor",
+            review_run_id="cursor-review-run",
+        ).model_dump(mode="json", exclude={"signature"})
+        payload["assignment_id"] = "DIR-CURSOR:2"
+        run = ProviderRun(
+            provider=ProviderName.CURSOR,
+            assignment_sequence=2,
+            run_id="cursor-review-run",
+            status="FINISHED",
+            result=json.dumps(payload),
+            provider_authenticated=False,
+        )
+        base_record = self.callback_record()
+        record = base_record.model_copy(
+            update={
+                "task_id": "DIR-CURSOR",
+                "plan": base_record.plan.model_copy(
+                    update={
+                        "assignments": [
+                            base_record.plan.assignments[0].model_copy(
+                                update={"agent": ProviderName.CLAUDE}
+                            ),
+                            base_record.plan.assignments[1].model_copy(
+                                update={"agent": ProviderName.CURSOR}
+                            ),
+                        ]
+                    }
+                ),
+                "provider_runs": [run],
+                "assignment_outcomes": [
+                    base_record.assignment_outcomes[0].model_copy(
+                        update={"provider": ProviderName.CLAUDE}
+                    )
+                ],
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "provider-authenticated"):
             authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
 
     def test_review_provider_must_match_authenticated_run(self):

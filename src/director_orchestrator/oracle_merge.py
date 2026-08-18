@@ -114,6 +114,8 @@ def authenticate_provider_review_artifact(
         "edge_oracle_exact_sha_review/v1"
     ):
         return None
+    if not run.provider_authenticated:
+        raise ValueError("review completion is not provider-authenticated")
     if run.status not in successful_statuses[run.provider]:
         raise ValueError("only a successful provider run can authenticate a review")
     if "signature" in payload:
@@ -131,6 +133,8 @@ def authenticate_provider_review_artifact(
     if len(matching_runs) != 1 or matching_runs[0].assignment_sequence is None:
         raise ValueError("provider review output is not bound to one stored assignment")
     stored_run = matching_runs[0]
+    if not stored_run.provider_authenticated:
+        raise ValueError("stored review completion is not provider-authenticated")
     if stored_run.status not in successful_statuses[run.provider]:
         raise ValueError("stored provider review run is not successful")
     if not hmac.compare_digest(stored_run.result or "", run.result):

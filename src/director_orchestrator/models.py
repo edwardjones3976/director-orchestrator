@@ -113,6 +113,7 @@ class ProviderRun(BaseModel):
     session_id: str | None = None
     url: str | None = None
     result: str | None = None
+    provider_authenticated: bool = False
     raw: dict[str, Any] = Field(default_factory=dict)
 
 

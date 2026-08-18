@@ -208,7 +208,14 @@ class CursorAdapter(ProviderAdapter):
             )
             response.raise_for_status()
         payload = response.json()
-        return run.model_copy(update={"status": payload["status"], "result": payload.get("result"), "raw": payload})
+        return run.model_copy(
+            update={
+                "status": payload["status"],
+                "result": payload.get("result"),
+                "provider_authenticated": payload["status"] in {"FINISHED", "completed"},
+                "raw": payload,
+            }
+        )
 
     async def revise(
         self,

@@ -103,6 +103,7 @@ class ClaudeCallbackTests(unittest.TestCase):
         self.assertEqual(record.status, TaskStatus.QUEUED)
         self.assertEqual(record.provider_runs[0].status, "FINISHED")
         self.assertEqual(record.provider_runs[0].result, "Independent review completed.")
+        self.assertFalse(record.provider_runs[0].provider_authenticated)
         with self.assertRaises(CallbackConflict):
             apply_manual_run_completion(
                 record,
