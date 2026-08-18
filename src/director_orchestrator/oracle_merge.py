@@ -34,6 +34,7 @@ from .oracle_diff import (
     parse_hunk_patch,
     require_github_diff_content_type,
     require_identity_content_encoding,
+    require_rest_nonnegative_int,
 )
 from .policy import canonical_repository
 
@@ -565,12 +566,22 @@ class OracleMergeStore:
         self._initialize()
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
+    def _connect(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
         try:
-            with connection:
-                yield connection
+            if immediate:
+                connection.isolation_level = None
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    yield connection
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+            else:
+                with connection:
+                    yield connection
         finally:
             connection.close()
 
@@ -634,9 +645,21 @@ class OracleMergeStore:
             for row in connection.execute("PRAGMA table_info(oracle_merge_attempts)")
         }
         if "retry_not_before" not in columns:
-            connection.execute(
-                "ALTER TABLE oracle_merge_attempts ADD COLUMN retry_not_before TEXT"
-            )
+            try:
+                connection.execute(
+                    "ALTER TABLE oracle_merge_attempts ADD COLUMN retry_not_before TEXT"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+                columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(oracle_merge_attempts)"
+                    )
+                }
+                if "retry_not_before" not in columns:
+                    raise
 
     def reserve(self, artifact: OracleReviewArtifact) -> OracleMergeResult | None:
         digest = artifact.digest()
@@ -813,7 +836,7 @@ class OracleMergeStore:
             pull_number=artifact.pull_number,
             reviewed_sha=artifact.head_sha,
             reasons=[
-                "GitHub compare-diff rate limit is deferred until the persisted "
+                "GitHub rate limit is deferred until the persisted "
                 "not-before deadline and remains retryable: OracleRateLimitError"
             ],
         )
@@ -891,7 +914,7 @@ class OracleMergeStore:
         not-before deadline is never moved backward, including when this release
         carries no new deadline.
         """
-        with self._lock, self._connect() as connection:
+        with self._lock, self._connect(immediate=True) as connection:
             current = connection.execute(
                 "SELECT retry_not_before FROM oracle_merge_attempts "
                 "WHERE artifact_id = ? AND result_json IS NULL",
@@ -1057,6 +1080,8 @@ class OracleMergeService:
                 )
                 if not ready:
                     raise RuntimeError("GitHub refused to mark the pull request ready")
+            except OracleRateLimitError as exc:
+                return self._release_for_rate_limit(artifact, exc)
             except Exception as exc:
                 preflight.status = OracleMergeStatus.ERROR
                 preflight.reasons = [
@@ -1083,6 +1108,8 @@ class OracleMergeService:
                 artifact.head_sha,
                 artifact.base_sha,
             )
+        except OracleRateLimitError as exc:
+            return self._release_for_rate_limit(artifact, exc)
         except Exception as exc:
             decision.status = OracleMergeStatus.ERROR
             decision.reasons = [f"GitHub merge failed closed: {type(exc).__name__}"]
@@ -1266,7 +1293,7 @@ class OracleMergeService:
                 pull_number=artifact.pull_number,
                 reviewed_sha=artifact.head_sha,
                 reasons=[
-                    "GitHub compare-diff rate limit requires a later retry and remains "
+                    "GitHub rate limit requires a later retry and remains "
                     f"retryable: {type(exc).__name__}"
                 ],
             ),
@@ -1536,7 +1563,9 @@ class GitHubOracleGateway:
             )
         raise ValueError("GitHub credential is not configured")
 
-    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    def _request(
+        self, method: str, path: str, *, mutate: bool = False, **kwargs
+    ) -> httpx.Response:
         supplied_headers = dict(kwargs.pop("headers", {}))
         for attempt in range(2):
             token = (
@@ -1556,6 +1585,11 @@ class GitHubOracleGateway:
                 response.close()
                 self._token_provider.invalidate()
                 continue
+            if not mutate and self._is_rate_limited_status(response):
+                raise OracleRateLimitError(
+                    f"GitHub API {method} {path} is rate limited",
+                    retry_not_before=_rate_limit_not_before(response),
+                )
             if response.status_code >= 400:
                 raise RuntimeError(
                     f"GitHub API {method} {path} failed with status {response.status_code}"
@@ -1601,6 +1635,8 @@ class GitHubOracleGateway:
                 or not status
             ):
                 raise OracleDiffError("GitHub pull request evidence is malformed")
+            require_rest_nonnegative_int(item.get("additions"))
+            require_rest_nonnegative_int(item.get("deletions"))
 
     @staticmethod
     def _require_sha40(value: str) -> str:
@@ -1635,12 +1671,14 @@ class GitHubOracleGateway:
                         item["filename"],
                         item.get("previous_filename"),
                         item["status"],
-                        int(item.get("additions", 0)),
-                        int(item.get("deletions", 0)),
+                        require_rest_nonnegative_int(item["additions"]),
+                        require_rest_nonnegative_int(item["deletions"]),
                     )
                     for item in files
                 )
             )
+        except OracleDiffError:
+            raise
         except (KeyError, ValueError, TypeError) as exc:
             raise OracleDiffError("GitHub pull request evidence is malformed") from exc
 
@@ -1695,7 +1733,7 @@ class GitHubOracleGateway:
                     raise OracleDiffError(
                         "complete compare diff exceeds the bounded evidence limit"
                     )
-                if self._is_rate_limited_compare_status(response):
+                if self._is_rate_limited_status(response):
                     raise OracleRateLimitError(
                         f"GitHub API {method} {path} is rate limited",
                         retry_not_before=_rate_limit_not_before(response),
@@ -1733,7 +1771,7 @@ class GitHubOracleGateway:
         raise RuntimeError(f"GitHub API {method} {path} authentication failed")
 
     @staticmethod
-    def _is_rate_limited_compare_status(response: httpx.Response) -> bool:
+    def _is_rate_limited_status(response: httpx.Response) -> bool:
         if response.status_code == 429:
             return True
         if response.status_code != 403:
@@ -1895,6 +1933,7 @@ class GitHubOracleGateway:
         payload = self._request(
             "PUT",
             f"/repos/{repository}/pulls/{pull_number}/merge",
+            mutate=True,
             json={"sha": expected_sha, "merge_method": "merge"},
         ).json()
         return OracleGitHubMerge(
@@ -1926,6 +1965,7 @@ class GitHubOracleGateway:
         payload = self._request(
             "POST",
             "/graphql",
+            mutate=True,
             json={"query": query, "variables": {"pullRequestId": pull["node_id"]}},
         ).json()
         if payload.get("errors"):

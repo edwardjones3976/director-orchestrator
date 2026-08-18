@@ -131,9 +131,16 @@ refetches GitHub state and fails closed on:
   (`Retry-After` or `X-RateLimit-Remaining: 0`) persist an absolute UTC
   not-before deadline from bounded `Retry-After` seconds / `X-RateLimit-Reset`
   on the live `oracle_merge_attempts` row via an idempotent PRAGMA/ALTER
-  migration. A later `process()` returns a nonterminal deferred ERROR without
-  rearming or calling GitHub until that deadline; the stored deadline is never
-  moved backward. A 429 or limited 403 without a usable value uses a
+  migration that is safe for concurrent initializers. Every pre-mutation GitHub
+  read — pull, files, exact-SHA compare, check-runs, the review-thread GraphQL
+  query, and pre-mutation GETs inside `mark_ready`/`merge` — raises
+  `OracleRateLimitError` and takes that durable hold. A later `process()`
+  returns a nonterminal deferred ERROR without rearming or calling GitHub until
+  that deadline, including zero compare calls. Concurrent `release()` calls
+  serialize the deadline read so a later window cannot be overwritten by an
+  earlier one. Mutation responses (`PUT /merge` and the ready-for-review
+  GraphQL mutation) stay fail-closed even on 429. A 429 or limited 403 without
+  a usable value uses a
   conservative fallback window. Header values are not echoed. The generic
   two-read loop is not spent and the provider request does not sleep. HTTP 408,
   compare 404, and an exhausted compare 401 (the first static-token 401, or a
@@ -141,13 +148,16 @@ refetches GitHub state and fails closed on:
   `RuntimeError` so the artifact is released; response bodies are not copied
   into the error. Ordinary permission 403, 406, 206/204/3xx, and malformed
   bodies remain deterministic `OracleDiffError`. An unparseable nonempty stored
-  `retry_not_before` is replaced inside the reservation transaction with a
+  `retry_not_before`, including lexically high garbage and low garbage such as
+  `"0"`, is replaced inside the reservation transaction with a
   conservative UTC now+60s deadline via compare-and-swap, audited without the
   raw value, and held as the same deferred nonterminal ERROR without calling
   GitHub. A valid deadline is never rewritten or moved backward.
   `changed_files` must be present as
   a non-bool integer `>= 0` and equal the file list length. Missing REST
-  filename/status, a list of non-object REST file entries, oversized hunk
+  filename/status, a list of non-object REST file entries, REST
+  additions/deletions that are missing, bool, string, fractional, or negative,
+  oversized hunk
   counts, and other malformed evidence raise
   `OracleDiffError` with no raw content. Incomplete file enumeration and
   non-40-hex pull SHAs are terminal evidence failures. Content-bearing sections

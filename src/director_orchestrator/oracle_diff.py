@@ -45,6 +45,13 @@ class OracleRateLimitError(RuntimeError):
         self.retry_not_before = retry_not_before
 
 
+def require_rest_nonnegative_int(value: object) -> int:
+    """Require a real JSON integer count, not a bool, string, or float."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise OracleDiffError("GitHub pull request evidence is malformed")
+    return value
+
+
 @dataclass(frozen=True)
 class ParsedDiffFile:
     filename: str
@@ -217,6 +224,8 @@ def bind_complete_diff_evidence(
     parsed: Sequence[ParsedDiffFile],
 ) -> tuple[BoundFileEvidence, ...]:
     try:
+        if any(not isinstance(item, Mapping) for item in rest_files):
+            raise OracleDiffError("GitHub pull request evidence is malformed")
         rest_names = [str(item["filename"]) for item in rest_files]
         if len(set(rest_names)) != len(rest_names):
             raise OracleDiffError("REST file enumeration contains duplicate paths")
@@ -233,15 +242,22 @@ def bind_complete_diff_evidence(
 
         bound: list[BoundFileEvidence] = []
         for item in rest_files:
+            if not isinstance(item, Mapping):
+                raise OracleDiffError("GitHub pull request evidence is malformed")
             section = parsed_by_name[str(item["filename"])]
             previous = item.get("previous_filename")
             if previous != section.previous_filename:
                 raise OracleDiffError("REST file enumeration does not match the complete compare diff")
             if str(item["status"]) != section.status:
                 raise OracleDiffError("REST file enumeration does not match the complete compare diff")
-            if int(item.get("additions", 0)) != section.additions:
+            try:
+                additions = require_rest_nonnegative_int(item["additions"])
+                deletions = require_rest_nonnegative_int(item["deletions"])
+            except KeyError as exc:
+                raise OracleDiffError("GitHub pull request evidence is malformed") from exc
+            if additions != section.additions:
                 raise OracleDiffError("REST file enumeration does not match the complete compare diff")
-            if int(item.get("deletions", 0)) != section.deletions:
+            if deletions != section.deletions:
                 raise OracleDiffError("REST file enumeration does not match the complete compare diff")
             if len(section.patch) > MAX_FILE_PATCH_CHARS:
                 raise OracleDiffError("complete compare diff exceeds the bounded per-file evidence limit")

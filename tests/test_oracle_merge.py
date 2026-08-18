@@ -1235,8 +1235,8 @@ class OracleMergeGateTests(unittest.TestCase):
 
         class BarrierStore(OracleMergeStore):
             @contextmanager
-            def _connect(self):
-                with super()._connect() as connection:
+            def _connect(self, *, immediate: bool = False):
+                with super()._connect(immediate=immediate) as connection:
                     yield BarrierConnection(connection)
 
         outcomes = []
