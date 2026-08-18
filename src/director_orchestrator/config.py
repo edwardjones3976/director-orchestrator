@@ -131,9 +131,37 @@ class Settings:
     gemini_agent: str = os.getenv("GEMINI_AGENT", "antigravity-preview-05-2026")
     gemini_api_revision: str = os.getenv("GEMINI_API_REVISION", "2026-05-20")
 
+    perplexity_enabled: bool = _bool("PERPLEXITY_ENABLED", False)
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
     perplexity_api_base: str = os.getenv("PERPLEXITY_API_BASE", "https://api.perplexity.ai")
     perplexity_preset: str = os.getenv("PERPLEXITY_PRESET", "fast-search")
+    perplexity_mode: str = os.getenv("PERPLEXITY_MODE", "research_only").strip().lower()
+    perplexity_max_results: int = _int("PERPLEXITY_MAX_RESULTS", 10)
+    perplexity_search_context_size: str = os.getenv(
+        "PERPLEXITY_SEARCH_CONTEXT_SIZE", "high"
+    ).strip().lower()
+    perplexity_timeout_seconds: int = _int("PERPLEXITY_TIMEOUT_SECONDS", 180)
+    perplexity_daily_budget_usd: float = _float("PERPLEXITY_DAILY_BUDGET_USD", 2.0)
+    perplexity_allow_repository_write: bool = _bool(
+        "PERPLEXITY_ALLOW_REPOSITORY_WRITE", False
+    )
+    perplexity_allow_review_verdict: bool = _bool(
+        "PERPLEXITY_ALLOW_REVIEW_VERDICT", False
+    )
+
+    def perplexity_research_readiness(self) -> dict[str, bool]:
+        return {
+            "enabled": self.perplexity_enabled,
+            "credential_configured": bool(self.perplexity_api_key),
+            "research_only_mode": self.perplexity_mode == "research_only",
+            "result_limit_valid": 1 <= self.perplexity_max_results <= 20,
+            "search_context_size_valid": self.perplexity_search_context_size
+            in {"low", "medium", "high"},
+            "timeout_valid": 1 <= self.perplexity_timeout_seconds <= 1_800,
+            "budget_valid": 0 < self.perplexity_daily_budget_usd <= 1_000,
+            "repository_write_disabled": not self.perplexity_allow_repository_write,
+            "review_verdict_disabled": not self.perplexity_allow_review_verdict,
+        }
 
     def readiness(self) -> dict[str, bool]:
         return {
@@ -142,7 +170,7 @@ class Settings:
             "cursor": bool(self.cursor_api_key),
             "claude": bool(self.claude_routine_url and self.claude_routine_token),
             "gemini": bool(self.gemini_api_key),
-            "perplexity": bool(self.perplexity_api_key),
+            "perplexity": all(self.perplexity_research_readiness().values()),
         }
 
     def usage_check_readiness(self) -> dict[str, bool]:

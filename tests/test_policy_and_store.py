@@ -85,6 +85,18 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(strategy["gemini"]["team"], "supplemental")
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
 
+    def test_perplexity_readiness_requires_the_complete_research_only_profile(self):
+        key_only = replace(self.settings, perplexity_api_key="test-perplexity")
+        ready = replace(key_only, perplexity_enabled=True)
+        unsafe = replace(ready, perplexity_allow_review_verdict=True)
+
+        self.assertFalse(key_only.readiness()["perplexity"])
+        self.assertTrue(ready.readiness()["perplexity"])
+        self.assertFalse(unsafe.readiness()["perplexity"])
+        self.assertFalse(
+            unsafe.perplexity_research_readiness()["review_verdict_disabled"]
+        )
+
     def test_execution_targets_and_dependencies_are_strictly_allowlisted(self):
         settings = replace(
             self.settings,

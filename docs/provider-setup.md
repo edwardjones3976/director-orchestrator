@@ -38,7 +38,50 @@ Practical operating patterns:
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
 | Supplemental — sandbox/prototype | Gemini Antigravity Managed Agent | `GEMINI_API_KEY` | Poll background Interaction |
-| Supplemental — current research | Perplexity Agent API | `PERPLEXITY_API_KEY` | Synchronous response |
+| Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
+
+## Perplexity research-only profile
+
+Use a dedicated Perplexity API Platform key, not a browser session or consumer
+subscription credential. Keep the key only in the ignored deployment `.env` and
+start with `PERPLEXITY_ENABLED=false`:
+
+```dotenv
+PERPLEXITY_ENABLED=false
+PERPLEXITY_API_KEY=
+PERPLEXITY_API_BASE=https://api.perplexity.ai
+PERPLEXITY_PRESET=fast-search
+PERPLEXITY_MODE=research_only
+PERPLEXITY_MAX_RESULTS=10
+PERPLEXITY_SEARCH_CONTEXT_SIZE=high
+PERPLEXITY_TIMEOUT_SECONDS=180
+PERPLEXITY_DAILY_BUDGET_USD=2.00
+PERPLEXITY_ALLOW_REPOSITORY_WRITE=false
+PERPLEXITY_ALLOW_REVIEW_VERDICT=false
+```
+
+Normal assignments use `POST /search`. The adapter sends only the assignment's
+bounded research query and result limit; it does not send repository context,
+acceptance authority, credentials, or Slack state. Results are normalized with
+the query, retrieval time, URL, page title, available publication/update dates,
+supporting excerpt, source type, and explicit markers where confidence or
+contradiction evidence is unavailable. OpenAI or another primary-team model
+evaluates that evidence; Perplexity does not issue approval, review, or merge
+verdicts.
+
+`PERPLEXITY_SEARCH_CONTEXT_SIZE` is validated now for compatibility with an
+optional future Agent API research lane, where the web-search tool supports
+`low`, `medium`, or `high`. The raw Search API does not accept that field, so the
+current adapter does not send it. The existing no-tools Agent API call is used
+only for the bounded availability/usage prompt.
+
+The adapter refuses to run unless every research-only control is valid. It also
+rejects draft-PR authority and any assignment whose estimated cost exceeds
+`PERPLEXITY_DAILY_BUDGET_USD`. That value is a fail-closed per-assignment ceiling,
+not aggregate billing telemetry; configure an API Platform budget/credit control
+as the authoritative daily spend backstop. Only after billing and the dedicated
+key are ready should an operator set `PERPLEXITY_ENABLED=true` and include
+`perplexity` in `USAGE_CHECK_PROVIDERS` if periodic checks are desired.
 
 ## Label-triggered Codex security review
 
@@ -77,4 +120,6 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Claude Code Routines: https://docs.anthropic.com/en/docs/claude-code/routines
 - Claude Cowork scheduled tasks: https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork
 - Gemini Managed Agents: https://ai.google.dev/gemini-api/docs/managed-agents-quickstart
+- Perplexity Search API: https://docs.perplexity.ai/api-reference/search-post
 - Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart
+- Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security

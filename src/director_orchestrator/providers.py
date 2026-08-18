@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -470,6 +471,53 @@ class PerplexityAdapter(ProviderAdapter):
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.settings.perplexity_api_key}", "Content-Type": "application/json"}
 
+    def _require_research_only(self, assignment: Assignment | None = None) -> None:
+        failed = [
+            name
+            for name, ready in self.settings.perplexity_research_readiness().items()
+            if not ready
+        ]
+        if failed:
+            raise ProviderError(
+                "Perplexity research-only configuration is not ready: " + ", ".join(failed)
+            )
+        if assignment is not None:
+            if assignment.allow_draft_pr:
+                raise ProviderError("Perplexity research assignments cannot create draft pull requests")
+            if assignment.estimated_cost_usd > self.settings.perplexity_daily_budget_usd:
+                raise ProviderError(
+                    "Perplexity assignment estimate exceeds the configured research budget ceiling"
+                )
+
+    @staticmethod
+    def _search_run(payload: dict[str, Any], query: str) -> ProviderRun:
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+        evidence = {
+            "query": query,
+            "retrieved_at": retrieved_at,
+            "results": [
+                {
+                    "result_url": item.get("url"),
+                    "page_title": item.get("title"),
+                    "publication_date": item.get("date"),
+                    "last_updated": item.get("last_updated"),
+                    "supporting_excerpt": item.get("snippet"),
+                    "source_type": "web_result",
+                    "confidence": "not_provided_by_search_api",
+                    "contradictions_and_unavailable_evidence": "not_evaluated_in_raw_search",
+                }
+                for item in payload.get("results", [])
+                if isinstance(item, dict)
+            ],
+        }
+        return ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            run_id=payload["id"],
+            status="completed",
+            result=json.dumps(evidence, sort_keys=True),
+            raw=payload,
+        )
+
     @staticmethod
     def _run(payload: dict[str, Any]) -> ProviderRun:
         result = payload.get("output_text")
@@ -489,36 +537,40 @@ class PerplexityAdapter(ProviderAdapter):
         )
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        del context  # Search receives only the bounded query, never repository/task context.
+        self._require_research_only(assignment)
         body = {
-            "preset": self.settings.perplexity_preset,
-            "input": f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}",
-            "tools": [{"type": "web_search"}],
+            "query": assignment.task,
+            "max_results": self.settings.perplexity_max_results,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f"{self.settings.perplexity_api_base}/v1/agent", headers=self.headers, json=body)
+        async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
+            response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload)
+        return self._search_run(payload, assignment.task)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
-        raise ProviderError("Perplexity Agent API responses are synchronous and cannot be polled")
+        raise ProviderError("Perplexity API responses are synchronous and cannot be polled")
 
     async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
-        body = {"preset": self.settings.perplexity_preset, "previous_response_id": run.run_id, "input": prompt}
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f"{self.settings.perplexity_api_base}/v1/agent", headers=self.headers, json=body)
+        del run
+        self._require_research_only()
+        body = {"query": prompt, "max_results": self.settings.perplexity_max_results}
+        async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
+            response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload)
+        return self._search_run(payload, prompt)
 
     async def usage_check(self, prompt: str) -> ProviderRun:
+        self._require_research_only()
         body = {
             "preset": self.settings.perplexity_preset,
             "input": prompt,
             "max_output_tokens": self.settings.usage_check_max_output_tokens,
             "tools": [],
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
             response = await client.post(
                 f"{self.settings.perplexity_api_base}/v1/agent",
                 headers=self.headers,
