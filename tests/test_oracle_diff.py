@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -68,6 +70,31 @@ CREDENTIAL_ASSIGNMENT = "ORACLE_API_KEY=test-fixture-not-a-real-secret"
 PLUSPLUS_SAFETY_LINE = "++ enable automated funded bet execution"
 EDGE_PR39_DIFF_BYTES = 381_950
 EDGE_PR39_LARGEST_SECTION = 124_813
+MALFORMED_RETRY_DEADLINE = "zzz-not-an-iso-deadline"
+COMPARE_401_LEAK = "compare-401-body-must-not-leak"
+COMPARE_404_LEAK = "compare-404-body-must-not-leak"
+
+
+class _FakeGitHubTokenProvider:
+    def __init__(
+        self,
+        tokens: tuple[str, ...] = ("installation-token-1", "installation-token-2"),
+    ) -> None:
+        self.tokens = tokens
+        self.invalidations = 0
+        self.get_token_calls = 0
+
+    @property
+    def actor(self) -> str:
+        return "github-app-installation:1"
+
+    def get_token(self) -> str:
+        self.get_token_calls += 1
+        index = min(self.invalidations, len(self.tokens) - 1)
+        return self.tokens[index]
+
+    def invalidate(self) -> None:
+        self.invalidations += 1
 
 
 def _modified_diff(
@@ -946,13 +973,16 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
     def test_unavailable_malformed_and_oversized_compare_diffs_reject(self) -> None:
-        def unavailable(_: httpx.Request) -> httpx.Response:
-            return httpx.Response(404)
+        def not_found(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={"message": COMPARE_404_LEAK})
 
-        with self.assertRaisesRegex(OracleDiffError, "unavailable"):
+        with self.assertRaises(RuntimeError) as raised:
             GitHubOracleGateway(
-                "repo-scoped-token", transport=httpx.MockTransport(unavailable)
+                "repo-scoped-token", transport=httpx.MockTransport(not_found)
             )._fetch_compare_diff("edwardjones3976/edge_engine", BASE_SHA, HEAD_SHA)
+        self.assertNotIsInstance(raised.exception, OracleDiffError)
+        self.assertIn("404", str(raised.exception))
+        self.assertNotIn(COMPARE_404_LEAK, str(raised.exception))
 
         original = self.compare_diff
         self.compare_diff = '{"message":"not a diff"}'
@@ -1217,6 +1247,14 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
                     self.gateway().snapshot("edwardjones3976/edge_engine", 23)
                 self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
 
+    def test_scalar_rest_file_list_is_malformed_evidence(self) -> None:
+        self.files = ["oracle/a.py"]
+        with self.assertRaisesRegex(OracleDiffError, "malformed") as raised:
+            self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertNotIsInstance(raised.exception, AttributeError)
+        self.assertNotIn("oracle/a.py", str(raised.exception))
+        self.assertFalse(any("/compare/" in item.url.path for item in self.requests))
+
     def test_compare_content_type_must_be_github_diff_media_type(self) -> None:
         def plain_text(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
@@ -1340,6 +1378,69 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertNotIsInstance(raised.exception, OracleRateLimitError)
         self.assertNotIsInstance(raised.exception, OracleDiffError)
         self.assertIn("408", str(raised.exception))
+
+    def test_static_token_compare_401_is_authentication_failure(self) -> None:
+        def unauthorized(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                self.requests.append(request)
+                return httpx.Response(401, json={"message": COMPARE_401_LEAK})
+            return self.handler(request)
+
+        with self.assertRaisesRegex(RuntimeError, "authentication failed") as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(unauthorized)
+            ).snapshot("edwardjones3976/edge_engine", 23)
+        self.assertNotIsInstance(raised.exception, OracleDiffError)
+        self.assertNotIn(COMPARE_401_LEAK, str(raised.exception))
+        self.assertEqual(
+            sum(1 for item in self.requests if "/compare/" in item.url.path),
+            1,
+        )
+
+    def test_app_compare_401_refreshes_once_then_authentication_fails(self) -> None:
+        provider = _FakeGitHubTokenProvider()
+
+        def unauthorized(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                self.requests.append(request)
+                return httpx.Response(401, json={"message": COMPARE_401_LEAK})
+            return self.handler(request)
+
+        with self.assertRaisesRegex(RuntimeError, "authentication failed") as raised:
+            GitHubOracleGateway(
+                token_provider=provider,
+                transport=httpx.MockTransport(unauthorized),
+            ).snapshot("edwardjones3976/edge_engine", 23)
+        self.assertNotIsInstance(raised.exception, OracleDiffError)
+        self.assertEqual(provider.invalidations, 1)
+        self.assertEqual(provider.get_token_calls, 4)
+        self.assertEqual(
+            sum(1 for item in self.requests if "/compare/" in item.url.path),
+            2,
+        )
+        self.assertNotIn(COMPARE_401_LEAK, str(raised.exception))
+        self.assertEqual(
+            [
+                item.headers.get("authorization")
+                for item in self.requests
+                if "/compare/" in item.url.path
+            ],
+            ["Bearer installation-token-1", "Bearer installation-token-2"],
+        )
+
+    def test_compare_404_is_ordinary_transport_failure(self) -> None:
+        def not_found(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                return httpx.Response(404, json={"message": COMPARE_404_LEAK})
+            return self.handler(request)
+
+        with self.assertRaises(RuntimeError) as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(not_found)
+            ).snapshot("edwardjones3976/edge_engine", 23)
+        self.assertNotIsInstance(raised.exception, OracleDiffError)
+        self.assertIn("404", str(raised.exception))
+        self.assertNotIn(COMPARE_404_LEAK, str(raised.exception))
 
     def test_ordinary_permission_403_is_deterministic_evidence_failure(self) -> None:
         def forbidden(request: httpx.Request) -> httpx.Response:
@@ -1927,6 +2028,99 @@ class CompareRateLimitServiceTests(unittest.TestCase):
         self.assertFalse(any("retryable" in item for item in result.reasons))
         self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
 
+    def _process_compare_json_status(
+        self,
+        status: int,
+        payload: dict,
+        *,
+        suffix: str,
+        token_provider: _FakeGitHubTokenProvider | None = None,
+    ) -> OracleMergeResult:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                self.harness.requests.append(request)
+                return httpx.Response(status, json=payload)
+            return self.harness.handler(request)
+
+        if token_provider is None:
+            gateway = GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(handler)
+            )
+        else:
+            gateway = GitHubOracleGateway(
+                token_provider=token_provider,
+                transport=httpx.MockTransport(handler),
+            )
+        return OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            gateway,
+            sleep=lambda _: None,
+        ).process(self._artifact(suffix))
+
+    def _assert_recoverable_transient(
+        self, result: OracleMergeResult, leak: str, artifact_id: str
+    ) -> None:
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertEqual(self._merge_or_ready_calls(), 0)
+        self.assertTrue(any("transient read failures" in item for item in result.reasons))
+        self.assertTrue(any("remains retryable" in item for item in result.reasons))
+        self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+        self.assertNotIn(leak, " ".join(result.reasons))
+        connection = sqlite3.connect(self.settings.sqlite_path)
+        try:
+            row = connection.execute(
+                "SELECT status, result_json FROM oracle_merge_attempts "
+                "WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, ("RECOVERABLE", None))
+
+    def test_static_token_compare_401_releases_without_terminal_result(self) -> None:
+        result = self._process_compare_json_status(
+            401,
+            {"message": COMPARE_401_LEAK},
+            suffix="static-401",
+        )
+        self._assert_recoverable_transient(
+            result,
+            COMPARE_401_LEAK,
+            "review-artifact-compare-static-401",
+        )
+        self.assertEqual(self._compare_calls(), 2)
+
+    def test_app_refresh_then_401_releases_without_terminal_result(self) -> None:
+        provider = _FakeGitHubTokenProvider()
+        result = self._process_compare_json_status(
+            401,
+            {"message": COMPARE_401_LEAK},
+            suffix="app-401",
+            token_provider=provider,
+        )
+        self._assert_recoverable_transient(
+            result,
+            COMPARE_401_LEAK,
+            "review-artifact-compare-app-401",
+        )
+        self.assertGreaterEqual(provider.invalidations, 1)
+        self.assertEqual(self._compare_calls(), 4)
+        self.assertEqual(self._merge_or_ready_calls(), 0)
+
+    def test_compare_404_releases_without_terminal_result(self) -> None:
+        result = self._process_compare_json_status(
+            404,
+            {"message": COMPARE_404_LEAK},
+            suffix="compare-404",
+        )
+        self._assert_recoverable_transient(
+            result,
+            COMPARE_404_LEAK,
+            "review-artifact-compare-compare-404",
+        )
+        self.assertEqual(self._compare_calls(), 2)
+
     def test_rate_limit_window_blocks_immediate_duplicate_process(self) -> None:
         reset = str(int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()))
         cases = (
@@ -2264,6 +2458,366 @@ class MalformedEvidenceProcessTests(unittest.TestCase):
             1,
         )
         self.assertNotIn(huge[:32], " ".join(result.reasons))
+
+    def test_scalar_rest_file_list_is_one_terminal_snapshot(self) -> None:
+        self.harness.files = ["oracle/a.py"]
+        result, _ = self._process(self._artifact("scalar-files"))
+        self._assert_terminal_one_snapshot(result)
+        self.assertNotIn("oracle/a.py", " ".join(result.reasons))
+        self.assertFalse(any("/compare/" in item.url.path for item in self.harness.requests))
+
+
+class MalformedRetryDeadlineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.path = str(Path(self.temporary.name) / "legacy-oracle.sqlite3")
+        self.settings = Settings(
+            sqlite_path=self.path,
+            oracle_automerge_enabled=True,
+            oracle_automerge_kill_switch=False,
+            oracle_automerge_project="edge-oracle",
+            oracle_automerge_repository="edwardjones3976/edge_engine",
+            oracle_automerge_base_ref="main",
+            oracle_automerge_branch_prefix="oracle/",
+            oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
+            oracle_automerge_required_checks=("ci", "security"),
+            oracle_automerge_required_check_app="github-actions",
+            oracle_automerge_review_secret=REVIEW_SECRET,
+        )
+
+    def _artifact(self, suffix: str) -> OracleReviewArtifact:
+        return OracleReviewArtifact.model_validate(
+            {
+                "artifact_type": "edge_oracle_exact_sha_review/v1",
+                "artifact_id": f"review-artifact-deadline-{suffix}",
+                "assignment_id": f"assignment-deadline-{suffix}",
+                "project": "edge-oracle",
+                "repository": "edwardjones3976/edge_engine",
+                "pull_number": 23,
+                "base_ref": "main",
+                "base_sha": BASE_SHA,
+                "head_ref": "oracle/test",
+                "head_sha": HEAD_SHA,
+                "implementation_provider": "cursor",
+                "implementation_actor": "cursor-agent",
+                "reviewer_provider": "claude",
+                "review_run_id": f"claude-review-deadline-{suffix}",
+                "verdict": OracleReviewVerdict.ACCEPT,
+                "summary": "Exact-SHA review accepted the bounded Oracle change.",
+                "evidence": ["Tests and changed paths reviewed at the exact SHA."],
+                "acceptance_checks": ["ci", "security"],
+                "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+                "signature": "0" * 64,
+            }
+        ).sign(REVIEW_SECRET)
+
+    def _create_legacy_attempts_table(self) -> None:
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE oracle_merge_attempts (
+                    artifact_id TEXT PRIMARY KEY,
+                    artifact_digest TEXT NOT NULL,
+                    assignment_id TEXT NOT NULL UNIQUE,
+                    review_run_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _insert_recoverable(
+        self, artifact: OracleReviewArtifact, retry_not_before: str | None
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "INSERT INTO oracle_merge_attempts("
+                "artifact_id, artifact_digest, assignment_id, review_run_id, "
+                "status, result_json, created_at, updated_at, retry_not_before"
+                ") VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                (
+                    artifact.artifact_id,
+                    artifact.digest(),
+                    artifact.assignment_id,
+                    artifact.review_run_id,
+                    "RECOVERABLE",
+                    now,
+                    now,
+                    retry_not_before,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _attempt_row(self, artifact_id: str) -> tuple:
+        connection = sqlite3.connect(self.path)
+        try:
+            return connection.execute(
+                "SELECT status, result_json, retry_not_before "
+                "FROM oracle_merge_attempts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+
+    def _set_deadline(self, artifact_id: str, retry_not_before: str) -> None:
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                "UPDATE oracle_merge_attempts SET retry_not_before = ? "
+                "WHERE artifact_id = ?",
+                (retry_not_before, artifact_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _assert_deferred_hold(self, hold: OracleMergeResult, raw: str) -> None:
+        self.assertEqual(hold.status, OracleMergeStatus.ERROR)
+        self.assertTrue(any("deferred" in item for item in hold.reasons))
+        self.assertTrue(any("remains retryable" in item for item in hold.reasons))
+        self.assertNotIn(raw, " ".join(hold.reasons))
+        self.assertNotEqual(hold.status, OracleMergeStatus.ELIGIBLE)
+
+    def test_existing_schema_malformed_deadline_is_repaired(self) -> None:
+        self._create_legacy_attempts_table()
+        artifact = self._artifact("legacy-malformed")
+        store = OracleMergeStore(self.path)
+        self._insert_recoverable(artifact, MALFORMED_RETRY_DEADLINE)
+
+        hold = store.reserve(artifact)
+        self.assertIsNotNone(hold)
+        self._assert_deferred_hold(hold, MALFORMED_RETRY_DEADLINE)
+        status, payload, stored = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(status, "RECOVERABLE")
+        self.assertIsNone(payload)
+        deadline = datetime.fromisoformat(stored)
+        self.assertIsNotNone(deadline.tzinfo)
+        self.assertGreater(deadline, datetime.now(timezone.utc))
+        self.assertLessEqual(
+            deadline,
+            datetime.now(timezone.utc) + timedelta(seconds=90),
+        )
+        self.assertNotEqual(stored, MALFORMED_RETRY_DEADLINE)
+
+    def test_malformed_deadline_immediate_repeat_does_not_rearm(self) -> None:
+        store = OracleMergeStore(self.path)
+        artifact = self._artifact("immediate-repeat")
+        self._insert_recoverable(artifact, MALFORMED_RETRY_DEADLINE)
+        first = store.reserve(artifact)
+        stored_after_repair = self._attempt_row(artifact.artifact_id)[2]
+        second = store.reserve(artifact)
+        self._assert_deferred_hold(first, MALFORMED_RETRY_DEADLINE)
+        self._assert_deferred_hold(second, MALFORMED_RETRY_DEADLINE)
+        status, payload, stored = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(status, "RECOVERABLE")
+        self.assertIsNone(payload)
+        self.assertEqual(stored, stored_after_repair)
+        self.assertEqual(
+            [
+                event["event_type"]
+                for event in store.audit_events(artifact.artifact_id)
+            ].count("retry_not_before_repaired"),
+            1,
+        )
+
+    def test_malformed_deadline_due_rearms_exactly_once(self) -> None:
+        store = OracleMergeStore(self.path)
+        artifact = self._artifact("due-rearm")
+        self._insert_recoverable(artifact, "!!!")
+        hold = store.reserve(artifact)
+        self._assert_deferred_hold(hold, "!!!")
+        self._set_deadline(
+            artifact.artifact_id,
+            (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+        )
+        self.assertIsNone(store.reserve(artifact))
+        status, payload, stored = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(status, "EVALUATING")
+        self.assertIsNone(payload)
+        self.assertIsNone(stored)
+        with self.assertRaisesRegex(RuntimeError, "already being evaluated"):
+            store.reserve(artifact)
+        self.assertEqual(
+            [
+                event["event_type"]
+                for event in store.audit_events(artifact.artifact_id)
+            ].count("review_artifact_retried"),
+            1,
+        )
+
+    def test_malformed_deadline_audit_omits_raw_value(self) -> None:
+        store = OracleMergeStore(self.path)
+        artifact = self._artifact("audit")
+        self._insert_recoverable(artifact, MALFORMED_RETRY_DEADLINE)
+        store.reserve(artifact)
+        events = [
+            event
+            for event in store.audit_events(artifact.artifact_id)
+            if event["event_type"] == "retry_not_before_repaired"
+        ]
+        self.assertEqual(len(events), 1)
+        payload = json.dumps(events[0]["payload"])
+        self.assertNotIn(MALFORMED_RETRY_DEADLINE, payload)
+        self.assertNotIn("zzz", payload)
+        self.assertIn("unparseable nonempty", events[0]["payload"]["reason"])
+
+    def test_valid_future_deadline_is_not_rewritten(self) -> None:
+        store = OracleMergeStore(self.path)
+        artifact = self._artifact("valid-future")
+        future = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        self._insert_recoverable(artifact, future)
+        hold = store.reserve(artifact)
+        self._assert_deferred_hold(hold, future)
+        status, payload, stored = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(status, "RECOVERABLE")
+        self.assertIsNone(payload)
+        self.assertEqual(stored, future)
+        self.assertEqual(
+            [
+                event["event_type"]
+                for event in store.audit_events(artifact.artifact_id)
+            ].count("retry_not_before_repaired"),
+            0,
+        )
+
+    def test_malformed_deadline_process_makes_no_github_request_until_due(self) -> None:
+        store = OracleMergeStore(self.path)
+        artifact = self._artifact("process-hold")
+        self._insert_recoverable(artifact, MALFORMED_RETRY_DEADLINE)
+
+        class _GitHub:
+            def __init__(self) -> None:
+                self.snapshot_calls = 0
+                self.merge_calls = 0
+                self.ready_calls = 0
+
+            def snapshot(self, repository: str, pull_number: int):
+                self.snapshot_calls += 1
+                raise RuntimeError("GitHub must not run while the deadline is held")
+
+            def merge(self, *args, **kwargs):
+                self.merge_calls += 1
+                raise AssertionError("merge must not run while the deadline is held")
+
+            def mark_ready(self, *args, **kwargs):
+                self.ready_calls += 1
+                raise AssertionError("ready transition must not run while the deadline is held")
+
+        github = _GitHub()
+        service = OracleMergeService(
+            OracleMergePolicy(self.settings),
+            store,
+            github,
+            sleep=lambda _: None,
+        )
+        first = service.process(artifact)
+        second = service.process(artifact)
+        self._assert_deferred_hold(first, MALFORMED_RETRY_DEADLINE)
+        self._assert_deferred_hold(second, MALFORMED_RETRY_DEADLINE)
+        self.assertEqual(github.snapshot_calls, 0)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.ready_calls, 0)
+        self._set_deadline(
+            artifact.artifact_id,
+            (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+        )
+        third = service.process(artifact)
+        self.assertEqual(third.status, OracleMergeStatus.ERROR)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertTrue(any("transient read failures" in item for item in third.reasons))
+        self.assertTrue(any("remains retryable" in item for item in third.reasons))
+        status, payload, _stored = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(status, "RECOVERABLE")
+        self.assertIsNone(payload)
+
+    def test_malformed_deadline_repair_is_exclusive_across_store_instances(self) -> None:
+        store = OracleMergeStore(self.path)
+        artifact = self._artifact("repair-race")
+        self._insert_recoverable(artifact, MALFORMED_RETRY_DEADLINE)
+        barrier = threading.Barrier(2)
+
+        class BarrierCursor:
+            def __init__(self, cursor):
+                self.cursor = cursor
+
+            def fetchone(self):
+                row = self.cursor.fetchone()
+                if row is not None and row["retry_not_before"] == MALFORMED_RETRY_DEADLINE:
+                    barrier.wait(timeout=5)
+                return row
+
+            def __getattr__(self, name):
+                return getattr(self.cursor, name)
+
+        class BarrierConnection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, sql, parameters=()):
+                cursor = self.connection.execute(sql, parameters)
+                if "SELECT artifact_digest, status, result_json, retry_not_before" in sql:
+                    return BarrierCursor(cursor)
+                return cursor
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+        class BarrierStore(OracleMergeStore):
+            @contextmanager
+            def _connect(self):
+                with super()._connect() as connection:
+                    yield BarrierConnection(connection)
+
+        outcomes: list[OracleMergeResult | None] = []
+        errors: list[Exception] = []
+
+        def reserve_once(candidate_store: OracleMergeStore) -> None:
+            try:
+                outcomes.append(candidate_store.reserve(artifact))
+            except Exception as exc:
+                errors.append(exc)
+
+        contenders = [BarrierStore(self.path), BarrierStore(self.path)]
+        threads = [
+            threading.Thread(target=reserve_once, args=(candidate,))
+            for candidate in contenders
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(outcomes), 2)
+        for hold in outcomes:
+            self.assertIsNotNone(hold)
+            self._assert_deferred_hold(hold, MALFORMED_RETRY_DEADLINE)
+        status, payload, stored = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(status, "RECOVERABLE")
+        self.assertIsNone(payload)
+        datetime.fromisoformat(stored)
+        self.assertNotEqual(stored, MALFORMED_RETRY_DEADLINE)
+        self.assertEqual(
+            [
+                event["event_type"]
+                for event in store.audit_events(artifact.artifact_id)
+            ].count("retry_not_before_repaired"),
+            1,
+        )
 
 
 if __name__ == "__main__":

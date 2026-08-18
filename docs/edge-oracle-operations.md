@@ -135,11 +135,20 @@ refetches GitHub state and fails closed on:
   rearming or calling GitHub until that deadline; the stored deadline is never
   moved backward. A 429 or limited 403 without a usable value uses a
   conservative fallback window. Header values are not echoed. The generic
-  two-read loop is not spent and the provider request does not sleep. HTTP 408 and other transport timeouts
-  stay on the bounded read-retry path. Ordinary permission 403 and other
-  evidence-shape failures are deterministic. `changed_files` must be present as
+  two-read loop is not spent and the provider request does not sleep. HTTP 408,
+  compare 404, and an exhausted compare 401 (the first static-token 401, or a
+  GitHub App 401 after one refresh) stay on the bounded read-retry path as
+  `RuntimeError` so the artifact is released; response bodies are not copied
+  into the error. Ordinary permission 403, 406, 206/204/3xx, and malformed
+  bodies remain deterministic `OracleDiffError`. An unparseable nonempty stored
+  `retry_not_before` is replaced inside the reservation transaction with a
+  conservative UTC now+60s deadline via compare-and-swap, audited without the
+  raw value, and held as the same deferred nonterminal ERROR without calling
+  GitHub. A valid deadline is never rewritten or moved backward.
+  `changed_files` must be present as
   a non-bool integer `>= 0` and equal the file list length. Missing REST
-  filename/status, oversized hunk counts, and other malformed evidence raise
+  filename/status, a list of non-object REST file entries, oversized hunk
+  counts, and other malformed evidence raise
   `OracleDiffError` with no raw content. Incomplete file enumeration and
   non-40-hex pull SHAs are terminal evidence failures. Content-bearing sections
   require exactly one valid `index` line whose object IDs are lowercase SHA-1

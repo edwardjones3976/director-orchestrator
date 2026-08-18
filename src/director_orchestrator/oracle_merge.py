@@ -654,6 +654,17 @@ class OracleMergeStore:
                     return OracleMergeResult.model_validate_json(existing["result_json"])
                 if existing["status"] != self._RECOVERABLE:
                     raise RuntimeError("the review artifact is already being evaluated")
+                if _is_unparseable_nonempty_deadline(existing["retry_not_before"]):
+                    repaired = self._repair_unparseable_retry_deadline(
+                        connection,
+                        artifact,
+                        digest,
+                        existing["retry_not_before"],
+                        now,
+                    )
+                    if repaired is not None:
+                        return repaired
+                    raise RuntimeError("the review artifact is already being evaluated")
                 hold = self._retry_hold_result(
                     artifact, digest, existing["retry_not_before"]
                 )
@@ -805,6 +816,64 @@ class OracleMergeStore:
                 "GitHub compare-diff rate limit is deferred until the persisted "
                 "not-before deadline and remains retryable: OracleRateLimitError"
             ],
+        )
+
+    def _repair_unparseable_retry_deadline(
+        self,
+        connection: sqlite3.Connection,
+        artifact: OracleReviewArtifact,
+        digest: str,
+        stored_deadline: str,
+        now: str,
+    ) -> OracleMergeResult | None:
+        """Replace an unparseable nonempty deadline without calling GitHub.
+
+        A garbage TEXT value can sort after ISO-8601 `now`, fail Python parsing,
+        and then fail the SQL due comparison so reserve() raises forever. Repair
+        is compare-and-swap on the current malformed value, uses the same
+        conservative 60-second fallback window as an unusable rate-limit header,
+        and never rewrites a parseable deadline.
+        """
+        repair = _utc_deadline_text(
+            datetime.now(timezone.utc)
+            + timedelta(seconds=_RATE_LIMIT_FALLBACK_SECONDS)
+        )
+        repaired = connection.execute(
+            "UPDATE oracle_merge_attempts SET retry_not_before = ?, updated_at = ? "
+            "WHERE artifact_id = ? AND status = ? AND result_json IS NULL "
+            "AND retry_not_before = ?",
+            (
+                repair,
+                now,
+                artifact.artifact_id,
+                self._RECOVERABLE,
+                stored_deadline,
+            ),
+        ).rowcount
+        if repaired == 1:
+            self._append(
+                connection,
+                artifact.artifact_id,
+                "retry_not_before_repaired",
+                {
+                    "reason": (
+                        "unparseable nonempty retry_not_before was replaced "
+                        "with a conservative UTC deadline"
+                    )
+                },
+            )
+            return self._retry_hold_result(artifact, digest, repair)
+        raced = connection.execute(
+            "SELECT result_json, retry_not_before FROM oracle_merge_attempts "
+            "WHERE artifact_id = ?",
+            (artifact.artifact_id,),
+        ).fetchone()
+        if raced and raced["result_json"]:
+            return OracleMergeResult.model_validate_json(raced["result_json"])
+        return self._retry_hold_result(
+            artifact,
+            digest,
+            raced["retry_not_before"] if raced else None,
         )
 
     def release(
@@ -1377,6 +1446,10 @@ def _parse_stored_deadline(raw: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _is_unparseable_nonempty_deadline(raw: str | None) -> bool:
+    return bool(raw) and _parse_stored_deadline(raw) is None
+
+
 def _utc_deadline_text(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()
 
@@ -1501,6 +1574,8 @@ class GitHubOracleGateway:
         ).json()
         if not isinstance(payload, list):
             raise OracleDiffError("GitHub file enumeration is incomplete")
+        if not all(isinstance(item, dict) for item in payload):
+            raise OracleDiffError("GitHub pull request evidence is malformed")
         names = [item.get("filename") for item in payload]
         if len(set(names)) != len(names):
             raise OracleDiffError("GitHub file enumeration is incomplete")
@@ -1611,13 +1686,11 @@ class GitHubOracleGateway:
                 "Accept-Encoding": "identity",
             }
             with self._client.stream(method, path, headers=request_headers) as response:
-                if (
-                    response.status_code == 401
-                    and self._token_provider is not None
-                    and attempt == 0
-                ):
-                    self._token_provider.invalidate()
-                    continue
+                if response.status_code == 401:
+                    if self._token_provider is not None and attempt == 0:
+                        self._token_provider.invalidate()
+                        continue
+                    break
                 if response.status_code == 406:
                     raise OracleDiffError(
                         "complete compare diff exceeds the bounded evidence limit"
@@ -1677,7 +1750,7 @@ class GitHubOracleGateway:
 
     @staticmethod
     def _is_transient_compare_status(response: httpx.Response) -> bool:
-        return response.status_code >= 500 or response.status_code == 408
+        return response.status_code >= 500 or response.status_code in {404, 408}
 
     def _bind_exact_sha_compare(
         self,
