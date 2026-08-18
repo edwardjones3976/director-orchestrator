@@ -1850,6 +1850,7 @@ class CompareRateLimitServiceTests(unittest.TestCase):
         reset = str(int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()))
         cases = (
             (429, {"retry-after": "3600"}),
+            (429, {}),
             (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": reset}),
         )
         for status, headers in cases:
@@ -1881,7 +1882,11 @@ class CompareRateLimitServiceTests(unittest.TestCase):
                 self.assertTrue(any("rate limit" in item for item in first.reasons))
                 self.assertTrue(any("remains retryable" in item for item in first.reasons))
                 self.assertTrue(any("rate limit" in item for item in second.reasons))
+                self.assertTrue(any("deferred" in item for item in second.reasons))
                 self.assertTrue(any("remains retryable" in item for item in second.reasons))
+                joined = " ".join([*first.reasons, *second.reasons])
+                self.assertNotIn("3600", joined)
+                self.assertNotIn(reset, joined)
                 connection = sqlite3.connect(self.settings.sqlite_path)
                 try:
                     row = connection.execute(
@@ -1889,11 +1894,154 @@ class CompareRateLimitServiceTests(unittest.TestCase):
                         "FROM oracle_merge_attempts WHERE artifact_id = ?",
                         (artifact.artifact_id,),
                     ).fetchone()
+                    connection.execute(
+                        "UPDATE oracle_merge_attempts SET retry_not_before = ? "
+                        "WHERE artifact_id = ?",
+                        (
+                            (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                            artifact.artifact_id,
+                        ),
+                    )
+                    connection.commit()
                 finally:
                     connection.close()
                 self.assertEqual(row[0], "RECOVERABLE")
                 self.assertIsNone(row[1])
                 self.assertIsNotNone(row[2])
+                deadline = datetime.fromisoformat(row[2])
+                self.assertIsNotNone(deadline.tzinfo)
+                third = service.process(artifact)
+                self.assertEqual(third.status, OracleMergeStatus.ERROR)
+                self.assertEqual(self._compare_calls(), 2)
+                self.assertEqual(self._merge_or_ready_calls(), 0)
+
+
+class OracleMergeStoreSchemaTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.path = str(Path(self.temporary.name) / "legacy-oracle.sqlite3")
+        self.settings = Settings(
+            sqlite_path=self.path,
+            oracle_automerge_enabled=True,
+            oracle_automerge_kill_switch=False,
+            oracle_automerge_project="edge-oracle",
+            oracle_automerge_repository="edwardjones3976/edge_engine",
+            oracle_automerge_base_ref="main",
+            oracle_automerge_branch_prefix="oracle/",
+            oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
+            oracle_automerge_required_checks=("ci", "security"),
+            oracle_automerge_required_check_app="github-actions",
+            oracle_automerge_review_secret=REVIEW_SECRET,
+        )
+        self.artifact = OracleReviewArtifact.model_validate(
+            {
+                "artifact_type": "edge_oracle_exact_sha_review/v1",
+                "artifact_id": "review-artifact-schema-migration",
+                "assignment_id": "assignment-schema-migration",
+                "project": "edge-oracle",
+                "repository": "edwardjones3976/edge_engine",
+                "pull_number": 23,
+                "base_ref": "main",
+                "base_sha": BASE_SHA,
+                "head_ref": "oracle/test",
+                "head_sha": HEAD_SHA,
+                "implementation_provider": "cursor",
+                "implementation_actor": "cursor-agent",
+                "reviewer_provider": "claude",
+                "review_run_id": "claude-review-schema-migration",
+                "verdict": OracleReviewVerdict.ACCEPT,
+                "summary": "Exact-SHA review accepted the bounded Oracle change.",
+                "evidence": ["Tests and changed paths reviewed at the exact SHA."],
+                "acceptance_checks": ["ci", "security"],
+                "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+                "signature": "0" * 64,
+            }
+        ).sign(REVIEW_SECRET)
+
+    def _columns(self) -> set[str]:
+        connection = sqlite3.connect(self.path)
+        try:
+            return {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(oracle_merge_attempts)")
+            }
+        finally:
+            connection.close()
+
+    def test_existing_attempts_schema_gains_retry_not_before(self) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE oracle_merge_attempts (
+                    artifact_id TEXT PRIMARY KEY,
+                    artifact_digest TEXT NOT NULL,
+                    assignment_id TEXT NOT NULL UNIQUE,
+                    review_run_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO oracle_merge_attempts VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+                (
+                    self.artifact.artifact_id,
+                    self.artifact.digest(),
+                    self.artifact.assignment_id,
+                    self.artifact.review_run_id,
+                    "EVALUATING",
+                    now,
+                    now,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        self.assertNotIn("retry_not_before", self._columns())
+
+        store = OracleMergeStore(self.path)
+        self.assertIn("retry_not_before", self._columns())
+        OracleMergeStore(self.path)
+        self.assertIn("retry_not_before", self._columns())
+
+        later = datetime.now(timezone.utc) + timedelta(hours=2)
+        earlier = datetime.now(timezone.utc) + timedelta(minutes=5)
+        result = OracleMergeResult(
+            artifact_id=self.artifact.artifact_id,
+            artifact_digest=self.artifact.digest(),
+            status=OracleMergeStatus.ERROR,
+            repository=self.settings.oracle_automerge_repository,
+            pull_number=self.artifact.pull_number,
+            reviewed_sha=self.artifact.head_sha,
+            reasons=["GitHub compare-diff rate limit requires a later retry and remains retryable"],
+        )
+        store.release(result, retry_not_before=later)
+        store.release(result, retry_not_before=earlier)
+        store.release(result)
+        hold = store.reserve(self.artifact)
+        self.assertIsNotNone(hold)
+        self.assertEqual(hold.status, OracleMergeStatus.ERROR)
+        self.assertTrue(any("deferred" in item for item in hold.reasons))
+        self.assertTrue(any("remains retryable" in item for item in hold.reasons))
+        connection = sqlite3.connect(self.path)
+        try:
+            row = connection.execute(
+                "SELECT status, result_json, retry_not_before "
+                "FROM oracle_merge_attempts WHERE artifact_id = ?",
+                (self.artifact.artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row[0], "RECOVERABLE")
+        self.assertIsNone(row[1])
+        stored = datetime.fromisoformat(row[2])
+        self.assertGreaterEqual(stored, later - timedelta(seconds=1))
+        self.assertGreater(stored, earlier)
 
 
 class MalformedEvidenceProcessTests(unittest.TestCase):

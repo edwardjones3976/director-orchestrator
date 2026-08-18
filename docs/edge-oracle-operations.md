@@ -128,11 +128,14 @@ refetches GitHub state and fails closed on:
   quotes, escapes, and duplicate or non-UTF-8 charset declarations fail closed. A
   non-identity `Content-Encoding` fails closed so `Content-Length` is the
   uncompressed body. HTTP 429 and 403 with explicit rate-limit evidence
-  (`Retry-After` or `X-RateLimit-Remaining: 0`) persist a not-before deadline
-  from `Retry-After` / `X-RateLimit-Reset` and release the review artifact
-  after one compare fetch; a later `process()` for the same artifact makes no
-  compare request until that deadline. The generic two-read loop is not spent
-  and the provider request does not sleep. HTTP 408 and other transport timeouts
+  (`Retry-After` or `X-RateLimit-Remaining: 0`) persist an absolute UTC
+  not-before deadline from bounded `Retry-After` seconds / `X-RateLimit-Reset`
+  on the live `oracle_merge_attempts` row via an idempotent PRAGMA/ALTER
+  migration. A later `process()` returns a nonterminal deferred ERROR without
+  rearming or calling GitHub until that deadline; the stored deadline is never
+  moved backward. A 429 or limited 403 without a usable value uses a
+  conservative fallback window. Header values are not echoed. The generic
+  two-read loop is not spent and the provider request does not sleep. HTTP 408 and other transport timeouts
   stay on the bounded read-retry path. Ordinary permission 403 and other
   evidence-shape failures are deterministic. `changed_files` must be present as
   a non-bool integer `>= 0` and equal the file list length. Missing REST

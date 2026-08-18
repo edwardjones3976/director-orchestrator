@@ -586,8 +586,7 @@ class OracleMergeStore:
                     status TEXT NOT NULL,
                     result_json TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    retry_not_before TEXT
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -620,14 +619,24 @@ class OracleMergeStore:
                 BEGIN SELECT RAISE(ABORT, 'oracle merge audit is append-only'); END
                 """
             )
-            columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(oracle_merge_attempts)")
-            }
-            if "retry_not_before" not in columns:
-                connection.execute(
-                    "ALTER TABLE oracle_merge_attempts ADD COLUMN retry_not_before TEXT"
-                )
+            self._ensure_retry_not_before_column(connection)
+
+    @staticmethod
+    def _ensure_retry_not_before_column(connection: sqlite3.Connection) -> None:
+        """Add retry_not_before on live DBs whose CREATE TABLE already ran.
+
+        CREATE TABLE IF NOT EXISTS cannot add columns to an existing
+        oracle_merge_attempts table. PRAGMA + ALTER is therefore the live
+        migration and must stay idempotent.
+        """
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(oracle_merge_attempts)")
+        }
+        if "retry_not_before" not in columns:
+            connection.execute(
+                "ALTER TABLE oracle_merge_attempts ADD COLUMN retry_not_before TEXT"
+            )
 
     def reserve(self, artifact: OracleReviewArtifact) -> OracleMergeResult | None:
         digest = artifact.digest()
@@ -645,28 +654,33 @@ class OracleMergeStore:
                     return OracleMergeResult.model_validate_json(existing["result_json"])
                 if existing["status"] != self._RECOVERABLE:
                     raise RuntimeError("the review artifact is already being evaluated")
-                hold = self._retry_hold_result(artifact, digest, existing["retry_not_before"])
+                hold = self._retry_hold_result(
+                    artifact, digest, existing["retry_not_before"]
+                )
                 if hold is not None:
                     return hold
                 # A released attempt failed closed on a transient condition without
                 # reaching a terminal result, so the identical artifact may retry.
                 # Compare-and-swap on RECOVERABLE so separate service or CLI
                 # processes cannot both re-arm the same one-shot authority after
-                # observing the same released reservation.
+                # observing the same released reservation. Clear the deadline only
+                # when it is due; a still-future deadline must not rearm.
                 rearmed = connection.execute(
                     "UPDATE oracle_merge_attempts SET status = ?, updated_at = ?, "
                     "retry_not_before = NULL "
-                    "WHERE artifact_id = ? AND status = ? AND result_json IS NULL",
+                    "WHERE artifact_id = ? AND status = ? AND result_json IS NULL "
+                    "AND (retry_not_before IS NULL OR retry_not_before <= ?)",
                     (
                         self._EVALUATING,
                         now,
                         artifact.artifact_id,
                         self._RECOVERABLE,
+                        now,
                     ),
                 ).rowcount
                 if rearmed != 1:
                     raced = connection.execute(
-                        "SELECT result_json FROM oracle_merge_attempts "
+                        "SELECT result_json, retry_not_before FROM oracle_merge_attempts "
                         "WHERE artifact_id = ?",
                         (artifact.artifact_id,),
                     ).fetchone()
@@ -674,6 +688,13 @@ class OracleMergeStore:
                         return OracleMergeResult.model_validate_json(
                             raced["result_json"]
                         )
+                    raced_hold = self._retry_hold_result(
+                        artifact,
+                        digest,
+                        raced["retry_not_before"] if raced else None,
+                    )
+                    if raced_hold is not None:
+                        return raced_hold
                     raise RuntimeError("the review artifact is already being evaluated")
                 self._append(
                     connection,
@@ -770,15 +791,8 @@ class OracleMergeStore:
         digest: str,
         retry_not_before: str | None,
     ) -> OracleMergeResult | None:
-        if not retry_not_before:
-            return None
-        try:
-            deadline = datetime.fromisoformat(retry_not_before)
-        except ValueError:
-            return None
-        if deadline.tzinfo is None:
-            deadline = deadline.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) >= deadline:
+        deadline = _parse_stored_deadline(retry_not_before)
+        if deadline is None or datetime.now(timezone.utc) >= deadline:
             return None
         return OracleMergeResult(
             artifact_id=artifact.artifact_id,
@@ -788,8 +802,8 @@ class OracleMergeStore:
             pull_number=artifact.pull_number,
             reviewed_sha=artifact.head_sha,
             reasons=[
-                "GitHub compare-diff rate limit requires a later retry and remains "
-                "retryable: OracleRateLimitError"
+                "GitHub compare-diff rate limit is deferred until the persisted "
+                "not-before deadline and remains retryable: OracleRateLimitError"
             ],
         )
 
@@ -804,9 +818,21 @@ class OracleMergeStore:
         The attempt keeps its artifact, assignment, and review-run reservation, so no
         other review can claim them, but it stores no terminal result: the identical
         artifact can be delivered again once the transient condition clears. Only an
-        attempt that has not reached a terminal result can be released.
+        attempt that has not reached a terminal result can be released. A stored
+        not-before deadline is never moved backward, including when this release
+        carries no new deadline.
         """
         with self._lock, self._connect() as connection:
+            current = connection.execute(
+                "SELECT retry_not_before FROM oracle_merge_attempts "
+                "WHERE artifact_id = ? AND result_json IS NULL",
+                (result.artifact_id,),
+            ).fetchone()
+            if current is None:
+                raise RuntimeError(
+                    "only an unresolved merge attempt can be released for retry"
+                )
+            stored = _later_deadline_text(current["retry_not_before"], retry_not_before)
             released = connection.execute(
                 "UPDATE oracle_merge_attempts SET status = ?, updated_at = ?, "
                 "retry_not_before = ? "
@@ -814,7 +840,7 @@ class OracleMergeStore:
                 (
                     self._RECOVERABLE,
                     datetime.now(timezone.utc).isoformat(),
-                    retry_not_before.isoformat() if retry_not_before is not None else None,
+                    stored,
                     result.artifact_id,
                 ),
             ).rowcount
@@ -1283,41 +1309,86 @@ class GitHubAppInstallationTokenProvider:
             return token
 
 
+_RATE_LIMIT_FALLBACK_SECONDS = 60
+_MAX_RATE_LIMIT_WINDOW_SECONDS = 7 * 24 * 60 * 60
+
+
 def _rate_limit_not_before(response: httpx.Response) -> datetime:
     now = datetime.now(timezone.utc)
     deadlines = []
     retry_after = _parse_retry_after((response.headers.get("retry-after") or "").strip(), now)
-    reset = _parse_rate_limit_reset((response.headers.get("x-ratelimit-reset") or "").strip())
+    reset = _parse_rate_limit_reset((response.headers.get("x-ratelimit-reset") or "").strip(), now)
     if retry_after is not None:
         deadlines.append(retry_after)
     if reset is not None:
         deadlines.append(reset)
     if not deadlines:
-        return now + timedelta(seconds=1)
+        return now + timedelta(seconds=_RATE_LIMIT_FALLBACK_SECONDS)
     return max(deadlines)
 
 
 def _parse_retry_after(raw: str, now: datetime) -> datetime | None:
     if not raw:
         return None
-    if raw.isdigit() and 1 <= len(raw) <= 7:
-        return now + timedelta(seconds=int(raw))
+    if raw.isdigit():
+        if not (1 <= len(raw) <= 7):
+            return None
+        seconds = int(raw)
+        if seconds < 1 or seconds > _MAX_RATE_LIMIT_WINDOW_SECONDS:
+            return None
+        return now + timedelta(seconds=seconds)
     try:
         parsed = parsedate_to_datetime(raw)
     except (TypeError, ValueError, IndexError, OverflowError):
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
+    return _bounded_future_deadline(parsed.astimezone(timezone.utc), now)
+
+
+def _parse_rate_limit_reset(raw: str, now: datetime) -> datetime | None:
+    if not raw.isdigit() or not (9 <= len(raw) <= 11):
+        return None
+    try:
+        parsed = datetime.fromtimestamp(int(raw), tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return _bounded_future_deadline(parsed, now)
+
+
+def _bounded_future_deadline(parsed: datetime, now: datetime) -> datetime | None:
+    if parsed <= now:
+        return None
+    latest = now + timedelta(seconds=_MAX_RATE_LIMIT_WINDOW_SECONDS)
+    if parsed > latest:
+        return latest
+    return parsed
+
+
+def _parse_stored_deadline(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
 
-def _parse_rate_limit_reset(raw: str) -> datetime | None:
-    if not raw.isdigit() or not (1 <= len(raw) <= 12):
-        return None
-    try:
-        return datetime.fromtimestamp(int(raw), tz=timezone.utc)
-    except (OverflowError, OSError, ValueError):
-        return None
+def _utc_deadline_text(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _later_deadline_text(existing: str | None, proposed: datetime | None) -> str | None:
+    current = _parse_stored_deadline(existing)
+    if proposed is None:
+        return _utc_deadline_text(current) if current is not None else existing
+    proposed_utc = proposed.astimezone(timezone.utc)
+    if current is None or proposed_utc > current:
+        return _utc_deadline_text(proposed_utc)
+    return _utc_deadline_text(current)
 
 
 class GitHubOracleGateway:
