@@ -37,6 +37,7 @@ TERMINAL_STATUSES = {
     "cancelled",
     "incomplete",
     "requires_action",
+    "budget_exceeded",
     "prompted",
 }
 SUCCESS_STATUSES = {"FINISHED", "completed", "prompted"}

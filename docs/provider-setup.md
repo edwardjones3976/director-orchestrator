@@ -37,7 +37,7 @@ Practical operating patterns:
 | Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
-| Supplemental — sandbox/prototype | Gemini Antigravity Managed Agent | `GEMINI_API_KEY` | Poll background Interaction |
+| Supplemental — sandbox/prototype | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
 
 ## Perplexity research-only profile
@@ -83,6 +83,36 @@ as the authoritative daily spend backstop. Only after billing and the dedicated
 key are ready should an operator set `PERPLEXITY_ENABLED=true` and include
 `perplexity` in `USAGE_CHECK_PROVIDERS` if periodic checks are desired.
 
+## Gemini Interactions API contract
+
+The Gemini adapter uses the REST Interactions API; it does not call the legacy
+`generateContent` endpoint. `GEMINI_AGENT` names the managed Antigravity agent and
+is sent as the request's `agent` field. New runs use `environment=remote`, while a
+revision reuses the `environment_id` returned by the prior interaction together
+with `previous_interaction_id`.
+
+All Gemini calls are bounded background interactions with `store=true`. Google
+requires stored state for background polling. Terminal output is read from the
+`model_output` entries in the Interaction `steps` timeline, with `output_text`
+accepted only as an SDK-compatible convenience field. `requires_action` and
+`budget_exceeded` fail closed; the Director never loops indefinitely or treats
+those statuses as successful completion.
+
+Gemini remains an optional supplemental specialist. Installing its developer
+documentation tooling does not configure `GEMINI_API_KEY`, enable Gemini usage
+checks, add Gemini to the primary team, or open the paid-run gate.
+
+For coding agents that support MCP and portable skills, install Google's current
+documentation tools outside the repository:
+
+```powershell
+codex mcp add gemini-docs --url https://gemini-api-docs-mcp.dev
+npx skills add google-gemini/gemini-skills --skill gemini-interactions-api --global
+```
+
+Restart the coding-agent session after installation so it discovers the new MCP
+server and skill. Confirm the MCP is enabled with `codex mcp get gemini-docs`.
+
 ## Label-triggered Codex security review
 
 The optional `.github/workflows/codex-security-review.yml` lane runs only when
@@ -119,7 +149,10 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Cursor Cloud Agents API: https://cursor.com/docs/cloud-agent/api/endpoints
 - Claude Code Routines: https://docs.anthropic.com/en/docs/claude-code/routines
 - Claude Cowork scheduled tasks: https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork
-- Gemini Managed Agents: https://ai.google.dev/gemini-api/docs/managed-agents-quickstart
+- Gemini Interactions API: https://ai.google.dev/gemini-api/docs/interactions-overview
+- Gemini Antigravity Agent: https://ai.google.dev/gemini-api/docs/antigravity-agent
+- Gemini coding-agent setup: https://ai.google.dev/gemini-api/docs/coding-agents
+- Gemini `generateContent` migration: https://ai.google.dev/gemini-api/docs/migrate-to-interactions
 - Perplexity Search API: https://docs.perplexity.ai/api-reference/search-post
 - Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart
 - Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security

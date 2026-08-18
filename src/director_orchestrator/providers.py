@@ -390,6 +390,31 @@ class ClaudeAdapter(ProviderAdapter):
 class GeminiAdapter(ProviderAdapter):
     name = ProviderName.GEMINI
 
+    @staticmethod
+    def _output_text(payload: dict[str, Any]) -> str | None:
+        output_text = payload.get("output_text")
+        if isinstance(output_text, str) and output_text:
+            return output_text
+
+        chunks: list[str] = []
+        for step in payload.get("steps", []):
+            if not isinstance(step, dict) or step.get("type") != "model_output":
+                continue
+            for content in step.get("content", []):
+                if isinstance(content, dict) and isinstance(content.get("text"), str):
+                    chunks.append(content["text"])
+        return "".join(chunks) or None
+
+    def _run(self, payload: dict[str, Any], *, session_id: str | None = None) -> ProviderRun:
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["id"],
+            session_id=payload.get("environment_id") or session_id,
+            status=payload.get("status", "in_progress"),
+            result=self._output_text(payload),
+            raw=payload,
+        )
+
     @property
     def headers(self) -> dict[str, str]:
         return {
@@ -401,51 +426,59 @@ class GeminiAdapter(ProviderAdapter):
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
         prompt = f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"
         body = {
-            "model": self.settings.gemini_agent,
+            "agent": self.settings.gemini_agent,
             "input": prompt,
             "environment": "remote",
             "background": True,
+            "store": True,
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return ProviderRun(
-            provider=self.name,
-            run_id=payload["id"],
-            session_id=payload.get("environment_id"),
-            status=payload.get("status", "in_progress"),
-            raw=payload,
-        )
+        return self._run(payload)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.get(f"{self.settings.gemini_api_base}/interactions/{run.run_id}", headers=self.headers)
             response.raise_for_status()
         payload = response.json()
-        return run.model_copy(update={"status": payload.get("status", run.status), "result": payload.get("output_text"), "raw": payload})
+        return self._run(payload, session_id=run.session_id).model_copy(
+            update={"assignment_sequence": run.assignment_sequence}
+        )
 
-    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
         body = {
-            "model": self.settings.gemini_agent,
+            "agent": self.settings.gemini_agent,
             "previous_interaction_id": run.run_id,
-            "environment": "remote",
+            "environment": run.session_id or "remote",
             "input": prompt,
             "background": True,
+            "store": True,
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return ProviderRun(provider=self.name, run_id=payload["id"], session_id=payload.get("environment_id", run.session_id), status=payload.get("status", "in_progress"), raw=payload)
+        return self._run(payload, session_id=run.session_id).model_copy(
+            update={"assignment_sequence": run.assignment_sequence}
+        )
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         body = {
-            "model": self.settings.gemini_agent,
+            "agent": self.settings.gemini_agent,
             "input": prompt,
             "environment": "remote",
             "background": True,
-            "store": False,
+            # Background Interactions must be stored so the returned ID remains pollable.
+            "store": True,
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
@@ -455,13 +488,7 @@ class GeminiAdapter(ProviderAdapter):
             )
             response.raise_for_status()
         payload = response.json()
-        return ProviderRun(
-            provider=self.name,
-            run_id=payload["id"],
-            session_id=payload.get("environment_id"),
-            status=payload.get("status", "in_progress"),
-            raw=payload,
-        )
+        return self._run(payload)
 
 
 class PerplexityAdapter(ProviderAdapter):

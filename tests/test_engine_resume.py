@@ -23,6 +23,7 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.oracle_merge import OracleMergeResult, OracleMergeStatus
+from director_orchestrator.providers import ProviderError
 from director_orchestrator.store import TaskStore
 
 
@@ -48,6 +49,27 @@ class NoRedispatchAdapter:
 
 
 class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_interactions_non_success_terminal_states_fail_without_polling(self):
+        class NeverPollAdapter:
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal Interactions status must not be polled")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            engine = OrchestrationEngine(
+                replace(Settings(), sqlite_path=database),
+                TaskStore(database),
+            )
+            for status in ("requires_action", "budget_exceeded"):
+                with self.subTest(status=status):
+                    run = ProviderRun(
+                        provider=ProviderName.GEMINI,
+                        run_id=f"interaction-{status}",
+                        status=status,
+                    )
+                    with self.assertRaisesRegex(ProviderError, status):
+                        await engine._wait(NeverPollAdapter(), run)
+
     async def test_cursor_exact_sha_review_reaches_deterministic_merge_after_acceptance(self):
         base_sha = "d" * 40
         head_sha = "a" * 40
