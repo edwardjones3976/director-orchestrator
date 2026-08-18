@@ -29,6 +29,10 @@ class OracleDiffError(RuntimeError):
     """Fail-closed complete-diff error that must not embed file content."""
 
 
+class OracleRateLimitError(RuntimeError):
+    """GitHub rate limit that must release for a later retry, not an immediate re-read."""
+
+
 @dataclass(frozen=True)
 class ParsedDiffFile:
     filename: str

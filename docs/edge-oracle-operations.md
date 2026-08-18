@@ -124,9 +124,12 @@ refetches GitHub state and fails closed on:
   response `Content-Type` base media type must be `application/vnd.github.diff`;
   a `charset` parameter is accepted and any other type fails closed. A
   non-identity `Content-Encoding` fails closed so `Content-Length` is the
-  uncompressed body. HTTP 429, 408, and 403 with explicit rate-limit evidence
-  (`Retry-After` or `X-RateLimit-Remaining: 0`) stay on the bounded transient
-  path; ordinary permission 403 and other evidence-shape failures are
+  uncompressed body. HTTP 429 and 403 with explicit rate-limit evidence
+  (`Retry-After` or `X-RateLimit-Remaining: 0`) release the review artifact
+  after one compare fetch so a later authenticated retry can honor GitHub's
+  `Retry-After` / `X-RateLimit-Reset` window; the generic two-read loop is not
+  spent. HTTP 408 and other transport timeouts stay on the bounded read-retry
+  path. Ordinary permission 403 and other evidence-shape failures are
   deterministic. Incomplete file enumeration and non-40-hex pull SHAs are
   terminal evidence failures. Content-bearing sections require exactly one
   valid `index` line; edited renames also require canonical similarity

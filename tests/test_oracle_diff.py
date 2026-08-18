@@ -13,6 +13,7 @@ from director_orchestrator.oracle_diff import (
     MAX_COMPARE_DIFF_BYTES,
     MAX_FILE_PATCH_CHARS,
     OracleDiffError,
+    OracleRateLimitError,
     added_lines_from_hunk_patch,
     bind_complete_diff_evidence,
     parse_compare_diff,
@@ -966,10 +967,9 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(stream.chunks_yielded, 0)
         self.assertTrue(stream.closed)
 
-    def test_compare_throttling_is_transport_failure_not_evidence_error(self) -> None:
+    def test_compare_rate_limit_is_dedicated_and_does_not_reread(self) -> None:
         cases = (
             (429, {}),
-            (408, {}),
             (403, {"retry-after": "1"}),
             (403, {"x-ratelimit-remaining": "0"}),
         )
@@ -979,15 +979,33 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
 
                 def throttled(request: httpx.Request, status=status, headers=headers) -> httpx.Response:
                     if request.method == "GET" and "/compare/" in request.url.path:
+                        self.requests.append(request)
                         return httpx.Response(status, headers=headers)
                     return self.handler(request)
 
-                with self.assertRaises(RuntimeError) as raised:
+                with self.assertRaises(OracleRateLimitError) as raised:
                     GitHubOracleGateway(
                         "repo-scoped-token", transport=httpx.MockTransport(throttled)
                     ).snapshot("edwardjones3976/edge_engine", 23)
                 self.assertNotIsInstance(raised.exception, OracleDiffError)
-                self.assertIn(str(status), str(raised.exception))
+                self.assertEqual(
+                    sum(1 for item in self.requests if "/compare/" in item.url.path),
+                    1,
+                )
+
+    def test_compare_408_is_ordinary_transport_failure(self) -> None:
+        def timed_out(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                return httpx.Response(408)
+            return self.handler(request)
+
+        with self.assertRaises(RuntimeError) as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(timed_out)
+            ).snapshot("edwardjones3976/edge_engine", 23)
+        self.assertNotIsInstance(raised.exception, OracleRateLimitError)
+        self.assertNotIsInstance(raised.exception, OracleDiffError)
+        self.assertIn("408", str(raised.exception))
 
     def test_ordinary_permission_403_is_deterministic_evidence_failure(self) -> None:
         def forbidden(request: httpx.Request) -> httpx.Response:
@@ -1358,15 +1376,19 @@ class DeterministicEvidenceFailureTests(unittest.TestCase):
         class _GitHub:
             def __init__(self) -> None:
                 self.snapshot_calls = 0
+                self.merge_calls = 0
+                self.ready_calls = 0
 
             def snapshot(self, repository: str, pull_number: int):
                 self.snapshot_calls += 1
                 raise exc
 
             def merge(self, *args, **kwargs):
+                self.merge_calls += 1
                 raise AssertionError("merge must not run after snapshot failure")
 
             def mark_ready(self, *args, **kwargs):
+                self.ready_calls += 1
                 raise AssertionError("ready transition must not run after snapshot failure")
 
         return _GitHub()
@@ -1389,35 +1411,40 @@ class DeterministicEvidenceFailureTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_rate_limited_compare_is_released_and_never_eligible(self) -> None:
-        cases = (
-            RuntimeError("GitHub API GET /compare failed with status 429"),
-            RuntimeError("GitHub API GET /compare failed with status 408"),
-            RuntimeError("GitHub API GET /compare failed with status 403"),
+    def test_rate_limited_compare_releases_after_one_snapshot_and_never_eligible(self) -> None:
+        github = self._stub_github(OracleRateLimitError("GitHub API GET /compare is rate limited"))
+        result = self._process(github)
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertEqual(github.snapshot_calls, 1)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertTrue(any("rate limit" in item for item in result.reasons))
+        self.assertTrue(any("remains retryable" in item for item in result.reasons))
+        self.assertFalse(any("transient read failures" in item for item in result.reasons))
+        self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+        self.assertEqual(self._attempt_row(), ("RECOVERABLE", None))
+
+    def test_compare_408_stays_on_the_bounded_read_retry_path(self) -> None:
+        github = self._stub_github(
+            RuntimeError("GitHub API GET /compare failed with status 408")
         )
-        for index, exc in enumerate(cases):
-            with self.subTest(error=str(exc)):
-                self.artifact = self.artifact.model_copy(
-                    update={
-                        "artifact_id": f"review-artifact-throttle-{index}",
-                        "assignment_id": f"assignment-throttle-{index}",
-                        "review_run_id": f"claude-review-throttle-{index}",
-                    }
-                ).sign(REVIEW_SECRET)
-                github = self._stub_github(exc)
-                result = self._process(github)
-                self.assertEqual(result.status, OracleMergeStatus.ERROR)
-                self.assertEqual(github.snapshot_calls, 2)
-                self.assertTrue(any("transient read failures" in item for item in result.reasons))
-                self.assertTrue(any("remains retryable" in item for item in result.reasons))
-                self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
-                self.assertEqual(self._attempt_row(), ("RECOVERABLE", None))
+        result = self._process(github)
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertTrue(any("transient read failures" in item for item in result.reasons))
+        self.assertTrue(any("remains retryable" in item for item in result.reasons))
+        self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+        self.assertEqual(self._attempt_row(), ("RECOVERABLE", None))
 
     def test_permission_403_consumes_evidence_and_is_never_eligible(self) -> None:
         github = self._stub_github(OracleDiffError("complete compare diff is unavailable"))
         result = self._process(github)
         self.assertEqual(result.status, OracleMergeStatus.ERROR)
         self.assertEqual(github.snapshot_calls, 1)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.ready_calls, 0)
         self.assertTrue(any("complete compare-diff evidence failed closed" in item for item in result.reasons))
         self.assertFalse(any("transient" in item for item in result.reasons))
         self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
@@ -1451,6 +1478,120 @@ class DeterministicEvidenceFailureTests(unittest.TestCase):
                 status, payload = self._attempt_row()
                 self.assertNotEqual(status, "RECOVERABLE")
                 self.assertIsNotNone(payload)
+
+
+class CompareRateLimitServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.harness = GitHubCompleteDiffGatewayTests()
+        self.harness.setUp()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.settings = Settings(
+            sqlite_path=str(Path(self.temporary.name) / "oracle.sqlite3"),
+            oracle_automerge_enabled=True,
+            oracle_automerge_kill_switch=False,
+            oracle_automerge_project="edge-oracle",
+            oracle_automerge_repository="edwardjones3976/edge_engine",
+            oracle_automerge_base_ref="main",
+            oracle_automerge_branch_prefix="oracle/",
+            oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
+            oracle_automerge_required_checks=("ci", "security"),
+            oracle_automerge_required_check_app="github-actions",
+            oracle_automerge_review_secret=REVIEW_SECRET,
+        )
+
+    def _artifact(self, suffix: str) -> OracleReviewArtifact:
+        return OracleReviewArtifact.model_validate(
+            {
+                "artifact_type": "edge_oracle_exact_sha_review/v1",
+                "artifact_id": f"review-artifact-compare-{suffix}",
+                "assignment_id": f"assignment-compare-{suffix}",
+                "project": "edge-oracle",
+                "repository": "edwardjones3976/edge_engine",
+                "pull_number": 23,
+                "base_ref": "main",
+                "base_sha": BASE_SHA,
+                "head_ref": "oracle/test",
+                "head_sha": HEAD_SHA,
+                "implementation_provider": "cursor",
+                "implementation_actor": "cursor-agent",
+                "reviewer_provider": "claude",
+                "review_run_id": f"claude-review-compare-{suffix}",
+                "verdict": OracleReviewVerdict.ACCEPT,
+                "summary": "Exact-SHA review accepted the bounded Oracle change.",
+                "evidence": ["Tests and changed paths reviewed at the exact SHA."],
+                "acceptance_checks": ["ci", "security"],
+                "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+                "signature": "0" * 64,
+            }
+        ).sign(REVIEW_SECRET)
+
+    def _process_compare_status(self, status: int, headers: dict[str, str] | None = None) -> OracleMergeResult:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "/compare/" in request.url.path:
+                self.harness.requests.append(request)
+                return httpx.Response(status, headers=headers or {})
+            return self.harness.handler(request)
+
+        return OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(handler)
+            ),
+            sleep=lambda _: None,
+        ).process(self._artifact(f"{status}-{sorted((headers or {}).items())}"))
+
+    def _compare_calls(self) -> int:
+        return sum(1 for item in self.harness.requests if "/compare/" in item.url.path)
+
+    def _merge_or_ready_calls(self) -> int:
+        return sum(
+            1
+            for item in self.harness.requests
+            if (item.method == "PUT" and item.url.path.endswith("/merge"))
+            or (
+                item.method == "POST"
+                and item.url.path.endswith("/graphql")
+                and b"markPullRequestReadyForReview" in item.content
+            )
+        )
+
+    def test_429_and_rate_limited_403_make_one_compare_call_and_stay_retryable(self) -> None:
+        cases = (
+            (429, {}),
+            (403, {"retry-after": "1"}),
+            (403, {"x-ratelimit-remaining": "0"}),
+        )
+        for status, headers in cases:
+            with self.subTest(status=status, headers=headers):
+                self.harness.requests.clear()
+                result = self._process_compare_status(status, headers)
+                self.assertEqual(result.status, OracleMergeStatus.ERROR)
+                self.assertEqual(self._compare_calls(), 1)
+                self.assertEqual(self._merge_or_ready_calls(), 0)
+                self.assertTrue(any("rate limit" in item for item in result.reasons))
+                self.assertTrue(any("remains retryable" in item for item in result.reasons))
+                self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
+                connection = sqlite3.connect(self.settings.sqlite_path)
+                try:
+                    row = connection.execute(
+                        "SELECT status, result_json FROM oracle_merge_attempts "
+                        "WHERE artifact_id = ?",
+                        (f"review-artifact-compare-{status}-{sorted(headers.items())}",),
+                    ).fetchone()
+                finally:
+                    connection.close()
+                self.assertEqual(row, ("RECOVERABLE", None))
+
+    def test_permission_403_is_terminal_after_one_compare_call(self) -> None:
+        result = self._process_compare_status(403)
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertEqual(self._compare_calls(), 1)
+        self.assertEqual(self._merge_or_ready_calls(), 0)
+        self.assertTrue(any("complete compare-diff evidence failed closed" in item for item in result.reasons))
+        self.assertFalse(any("retryable" in item for item in result.reasons))
+        self.assertNotEqual(result.status, OracleMergeStatus.ELIGIBLE)
 
 
 if __name__ == "__main__":

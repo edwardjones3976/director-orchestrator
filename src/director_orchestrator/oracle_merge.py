@@ -27,6 +27,7 @@ from .oracle_diff import (
     MAX_COMPARE_DIFF_BYTES,
     MAX_FILE_PATCH_CHARS,
     OracleDiffError,
+    OracleRateLimitError,
     bind_complete_diff_evidence,
     parse_compare_diff,
     parse_hunk_patch,
@@ -975,6 +976,8 @@ class OracleMergeService:
                 )
             except OracleDiffError as exc:
                 return None, self._complete_evidence_failure(artifact, exc)
+            except OracleRateLimitError as exc:
+                return None, self._release_for_rate_limit(artifact, exc)
             except Exception as exc:
                 read_failure_allowance -= 1
                 last_read_failure = exc
@@ -1038,6 +1041,8 @@ class OracleMergeService:
                 )
             except OracleDiffError as exc:
                 return None, self._complete_evidence_failure(artifact, exc)
+            except OracleRateLimitError as exc:
+                return None, self._release_for_rate_limit(artifact, exc)
             except Exception as exc:
                 # A read that never produced a snapshot proves nothing about
                 # mergeability, so it spends only the read-failure allowance.
@@ -1098,6 +1103,15 @@ class OracleMergeService:
                 reviewed_sha=artifact.head_sha,
                 reasons=[f"complete compare-diff evidence failed closed: {exc}"],
             )
+        )
+
+    def _release_for_rate_limit(
+        self, artifact: OracleReviewArtifact, exc: OracleRateLimitError
+    ) -> OracleMergeResult:
+        return self._release_for_retry(
+            artifact,
+            "GitHub compare-diff rate limit requires a later retry and remains "
+            f"retryable: {type(exc).__name__}",
         )
 
     def _release_for_retry(
@@ -1441,6 +1455,10 @@ class GitHubOracleGateway:
                     raise OracleDiffError(
                         "complete compare diff exceeds the bounded evidence limit"
                     )
+                if self._is_rate_limited_compare_status(response):
+                    raise OracleRateLimitError(
+                        f"GitHub API {method} {path} is rate limited"
+                    )
                 if self._is_transient_compare_status(response):
                     raise RuntimeError(
                         f"GitHub API {method} {path} failed with status {response.status_code}"
@@ -1472,8 +1490,8 @@ class GitHubOracleGateway:
         raise RuntimeError(f"GitHub API {method} {path} authentication failed")
 
     @staticmethod
-    def _is_transient_compare_status(response: httpx.Response) -> bool:
-        if response.status_code >= 500 or response.status_code in {408, 429}:
+    def _is_rate_limited_compare_status(response: httpx.Response) -> bool:
+        if response.status_code == 429:
             return True
         if response.status_code != 403:
             return False
@@ -1486,6 +1504,10 @@ class GitHubOracleGateway:
             return int(remaining.strip()) == 0
         except ValueError:
             return False
+
+    @staticmethod
+    def _is_transient_compare_status(response: httpx.Response) -> bool:
+        return response.status_code >= 500 or response.status_code == 408
 
     def _complete_missing_patches(
         self,
