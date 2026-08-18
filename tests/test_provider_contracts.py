@@ -218,6 +218,55 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         )
         sleep.assert_not_awaited()
 
+    async def test_cursor_dispatch_retries_deleted_working_branch_on_later_durable_ref(self):
+        settings = replace(
+            Settings(),
+            cursor_api_key="test-cursor",
+            allowed_starting_refs=(
+                "cursor/director-task-1-f90c",
+                "cursor/other-ephemeral",
+                "main",
+            ),
+            cursor_dispatch_max_attempts=1,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Continue Edge Oracle research",
+            acceptance=["Return evidence"],
+            repository="edwardjones3976/edge_engine",
+            starting_ref="cursor/director-task-1-f90c",
+        )
+        missing = FakeResponse(
+            {
+                "message": (
+                    'GitHub branch not found: The starting branch or commit '
+                    '"cursor/director-task-1-f90c" does not exist in '
+                    "edwardjones3976/edge_engine. It may have been deleted after "
+                    "its pull request merged. Choose an existing branch and try again."
+                )
+            },
+            status_code=400,
+        )
+        RecordingAsyncClient.responses = [
+            missing,
+            {"run": {"id": "run-main", "status": "RUNNING"}, "agent": {"id": "agent-main"}},
+        ]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep") as sleep,
+        ):
+            run = await CursorAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(run.run_id, "run-main")
+        self.assertEqual(len(RecordingAsyncClient.calls), 2)
+        self.assertEqual(
+            RecordingAsyncClient.calls[1]["json"]["repos"][0]["startingRef"],
+            "main",
+        )
+        sleep.assert_not_awaited()
+
     async def test_cursor_dispatch_does_not_rewrite_a_missing_durable_ref(self):
         settings = replace(Settings(), cursor_api_key="test-cursor", allowed_starting_refs=("main",))
         assignment = Assignment(

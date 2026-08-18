@@ -124,13 +124,10 @@ class CursorAdapter(ProviderAdapter):
     def _fallback_starting_ref(self, requested: str | None) -> str | None:
         if not requested or not _is_cursor_working_ref(requested):
             return None
-        allowed = [item for item in self.settings.allowed_starting_refs if item]
-        if not allowed:
-            return None
-        default = allowed[0]
-        if requested == default:
-            return None
-        return default
+        for item in self.settings.allowed_starting_refs:
+            if item and not _is_cursor_working_ref(item):
+                return item
+        return None
 
     def _apply_starting_ref_fallback(self, body: dict[str, Any]) -> bool:
         requested = self._body_starting_ref(body)
