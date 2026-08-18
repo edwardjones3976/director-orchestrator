@@ -19,6 +19,7 @@ from typing import Any, Mapping, Sequence
 MAX_COMPARE_DIFF_BYTES = 1_048_576
 MAX_FILE_PATCH_CHARS = 200_000
 MAX_HUNK_COUNT_DIGITS = 6
+MAX_HUNK_START_DIGITS = 10
 GITHUB_DIFF_MEDIA_TYPE = "application/vnd.github.diff"
 NO_NEWLINE_MARKER = "\\ No newline at end of file"
 _REGULAR_FILE_MODES = frozenset({"100644", "100755"})
@@ -283,16 +284,20 @@ def _parse_hunk_header(line: str) -> tuple[int, int]:
 def _hunk_count(spec: str) -> int:
     if "," in spec:
         start, count = spec.split(",", 1)
-        if not _is_bounded_hunk_digits(start) or not _is_bounded_hunk_digits(count):
+        if not _is_bounded_hunk_start(start) or not _is_bounded_hunk_count(count):
             raise OracleDiffError("complete compare diff is malformed")
         return int(count)
-    if not _is_bounded_hunk_digits(spec):
+    if not _is_bounded_hunk_start(spec):
         raise OracleDiffError("complete compare diff is malformed")
     return 1
 
 
-def _is_bounded_hunk_digits(value: str) -> bool:
+def _is_bounded_hunk_count(value: str) -> bool:
     return value.isdigit() and 1 <= len(value) <= MAX_HUNK_COUNT_DIGITS
+
+
+def _is_bounded_hunk_start(value: str) -> bool:
+    return value.isdigit() and 1 <= len(value) <= MAX_HUNK_START_DIGITS
 
 
 def _safe_repo_path(path: str) -> str:

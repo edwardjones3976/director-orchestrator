@@ -317,7 +317,65 @@ class CompareDiffParserTests(unittest.TestCase):
         self.assertEqual(parsed[0].added_lines, ())
         self.assertEqual(parsed[0].additions, 0)
 
+    def test_million_line_start_offset_with_small_hunk_is_complete(self) -> None:
+        text = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            "@@ -1000000,1 +1000000,1 @@\n"
+            "-old\n"
+            "+x\n"
+        )
+        parsed = parse_compare_diff(text)
+        self.assertEqual(parsed[0].added_lines, ("x",))
+        self.assertEqual(parsed[0].additions, 1)
+        self.assertEqual(parsed[0].deletions, 1)
+        patch = parse_hunk_patch("@@ -1000000 +1000000 @@\n-old\n+x")
+        self.assertEqual(patch.added_lines, ("x",))
+        self.assertEqual(patch.additions, 1)
+        self.assertEqual(patch.deletions, 1)
+
     def test_5000_digit_hunk_count_is_malformed_without_raw_digits(self) -> None:
+        huge = "1" * 5_000
+        seven_digit_count = "1000000"
+        text = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            f"@@ -1 +1,{huge} @@\n"
+            "+x\n"
+        )
+        with self.assertRaisesRegex(OracleDiffError, "malformed") as raised:
+            parse_compare_diff(text)
+        self.assertNotIn(huge[:32], str(raised.exception))
+        with self.assertRaisesRegex(OracleDiffError, "malformed") as raised:
+            parse_hunk_patch(f"@@ -1 +1,{huge} @@\n+x")
+        self.assertNotIn(huge[:32], str(raised.exception))
+        with self.assertRaisesRegex(OracleDiffError, "malformed"):
+            parse_hunk_patch(f"@@ -1 +1,{seven_digit_count} @@\n+x")
+
+    def test_pathological_hunk_start_is_malformed_without_raw_digits(self) -> None:
+        huge = "1" * 5_000
+        text = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            f"@@ -{huge},1 +1,1 @@\n"
+            "-old\n"
+            "+x\n"
+        )
+        with self.assertRaises(OracleDiffError) as raised:
+            parse_compare_diff(text)
+        self.assertRegex(str(raised.exception), "malformed")
+        self.assertNotIsInstance(raised.exception, ValueError)
+        self.assertNotIn(huge[:32], str(raised.exception))
+        with self.assertRaises(OracleDiffError) as raised:
+            parse_hunk_patch(f"@@ -{huge} +1 @@\n-old\n+x")
+        self.assertNotIsInstance(raised.exception, ValueError)
+        self.assertNotIn(huge[:32], str(raised.exception))
         huge = "1" * 5_000
         text = (
             "diff --git a/oracle/a.py b/oracle/a.py\n"
@@ -834,6 +892,29 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         )
         snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
         self.assertEqual(snapshot.changed_files[0].added_lines, ["safe = True", "also_safe = True"])
+        self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
+
+    def test_million_line_start_offset_binds_exact_sha_compare(self) -> None:
+        self.files = [
+            {
+                "filename": "oracle/a.py",
+                "status": "modified",
+                "additions": 1,
+                "deletions": 1,
+                "patch": None,
+            }
+        ]
+        self.compare_diff = (
+            "diff --git a/oracle/a.py b/oracle/a.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/oracle/a.py\n"
+            "+++ b/oracle/a.py\n"
+            "@@ -1000000,1 +1000000,1 @@\n"
+            "-old\n"
+            "+x\n"
+        )
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.changed_files[0].added_lines, ["x"])
         self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
     def test_header_only_rest_patch_uses_exact_sha_compare_fallback(self) -> None:
