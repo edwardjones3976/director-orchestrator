@@ -1213,6 +1213,105 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(stream.chunks_yielded, 1)
         self.assertEqual(stream.chunks_remaining, 1)
 
+    def test_stream_of_exactly_max_bytes_is_accepted(self) -> None:
+        max_bytes = 16
+        body = b"0123456789abcdef"
+        self.assertEqual(len(body), max_bytes)
+        stream = _RecordingByteStream((body,))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.headers.get("accept"), "application/vnd.github.diff")
+            self.assertEqual(request.headers.get("accept-encoding"), "identity")
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "application/vnd.github.diff",
+                    "content-length": str(max_bytes),
+                },
+                stream=stream,
+            )
+
+        stream = _RecordingByteStream((body,))
+        collected = GitHubOracleGateway(
+            "repo-scoped-token",
+            transport=httpx.MockTransport(handler),
+            max_compare_diff_bytes=max_bytes,
+        )._request_bounded_bytes(
+            "GET",
+            f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+            max_bytes=max_bytes,
+            headers={"Accept": "application/vnd.github.diff"},
+        )
+        self.assertEqual(collected, body)
+        self.assertEqual(len(collected), max_bytes)
+        self.assertTrue(stream.closed)
+        self.assertEqual(stream.chunks_yielded, 1)
+        self.assertEqual(stream.bytes_yielded, max_bytes)
+        self.assertEqual(stream.chunks_remaining, 0)
+
+    def test_stream_of_exactly_max_bytes_plus_one_is_rejected_before_retention(self) -> None:
+        max_bytes = 16
+        overflow = b"0123456789abcdefX"
+        leftover = b"excess-must-not-be-read"
+        self.assertEqual(len(overflow), max_bytes + 1)
+
+        stream = _RecordingByteStream((overflow, leftover))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/vnd.github.diff"},
+                stream=stream,
+            )
+
+        with self.assertRaisesRegex(OracleDiffError, "bounded evidence limit") as raised:
+            GitHubOracleGateway(
+                "repo-scoped-token",
+                transport=httpx.MockTransport(handler),
+                max_compare_diff_bytes=max_bytes,
+            )._request_bounded_bytes(
+                "GET",
+                f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+                max_bytes=max_bytes,
+                headers={"Accept": "application/vnd.github.diff"},
+            )
+        self.assertNotIn(overflow.decode("ascii"), str(raised.exception))
+        self.assertNotIn("excess-must-not-be-read", str(raised.exception))
+        self.assertTrue(stream.closed)
+        self.assertEqual(stream.chunks_yielded, 1)
+        self.assertEqual(stream.bytes_yielded, max_bytes + 1)
+        self.assertEqual(stream.chunks_remaining, 1)
+
+        declared = _RecordingByteStream((overflow, leftover))
+
+        def declared_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "application/vnd.github.diff",
+                    "content-length": str(max_bytes + 1),
+                },
+                stream=declared,
+            )
+
+        with self.assertRaisesRegex(OracleDiffError, "bounded evidence limit") as declared_raised:
+            GitHubOracleGateway(
+                "repo-scoped-token",
+                transport=httpx.MockTransport(declared_handler),
+                max_compare_diff_bytes=max_bytes,
+            )._request_bounded_bytes(
+                "GET",
+                f"/repos/edwardjones3976/edge_engine/compare/{BASE_SHA}...{HEAD_SHA}",
+                max_bytes=max_bytes,
+                headers={"Accept": "application/vnd.github.diff"},
+            )
+        self.assertNotIn(overflow.decode("ascii"), str(declared_raised.exception))
+        self.assertNotIn("excess-must-not-be-read", str(declared_raised.exception))
+        self.assertTrue(declared.closed)
+        self.assertEqual(declared.chunks_yielded, 0)
+        self.assertEqual(declared.bytes_yielded, 0)
+        self.assertEqual(declared.chunks_remaining, 2)
+
     def test_http_206_prefix_is_terminal_incomplete_evidence(self) -> None:
         prefix = (
             "diff --git a/oracle/empty.py b/oracle/empty.py\n"
