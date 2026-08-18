@@ -18,10 +18,19 @@ from typing import Callable, Iterator, Literal, Protocol
 
 import httpx
 import jwt
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import Settings
 from .models import ClaudeCallback, ProviderName, ProviderRun, TaskRecord
+from .oracle_diff import (
+    GITHUB_DIFF_MEDIA_TYPE,
+    MAX_COMPARE_DIFF_BYTES,
+    MAX_FILE_PATCH_CHARS,
+    OracleDiffError,
+    added_lines_from_hunk_patch,
+    bind_complete_diff_evidence,
+    parse_compare_diff,
+)
 from .policy import canonical_repository
 
 
@@ -208,7 +217,20 @@ class OracleChangedFile(BaseModel):
     status: str = Field(min_length=1, max_length=64)
     additions: int = Field(default=0, ge=0)
     deletions: int = Field(default=0, ge=0)
-    patch: str | None = Field(default=None, max_length=200_000)
+    patch: str | None = Field(default=None, max_length=MAX_FILE_PATCH_CHARS)
+    added_lines: list[str] | None = Field(default=None, max_length=20_000)
+
+    @model_validator(mode="after")
+    def bind_structured_added_lines(self) -> OracleChangedFile:
+        if self.patch is None:
+            return self
+        extracted = added_lines_from_hunk_patch(self.patch)
+        if self.added_lines is None:
+            self.added_lines = list(extracted)
+            return self
+        if tuple(self.added_lines) != extracted:
+            raise ValueError("changed-file added_lines do not match structured hunk evidence")
+        return self
 
 
 class OracleCheckRun(BaseModel):
@@ -363,13 +385,9 @@ class OracleMergePolicy:
     def _added_patch_text(snapshot: OraclePullRequestSnapshot) -> str:
         additions: list[str] = []
         for changed in snapshot.changed_files:
-            if changed.patch is None:
+            if changed.added_lines is None:
                 continue
-            additions.extend(
-                line[1:]
-                for line in changed.patch.splitlines()
-                if line.startswith("+") and not line.startswith("+++")
-            )
+            additions.extend(changed.added_lines)
         return "\n".join(additions)
 
     def evaluate(
@@ -1167,11 +1185,13 @@ class GitHubOracleGateway:
         *,
         token_provider: GitHubTokenProvider | None = None,
         transport: httpx.BaseTransport | None = None,
+        max_compare_diff_bytes: int = MAX_COMPARE_DIFF_BYTES,
     ):
         if bool(token) == bool(token_provider):
             raise ValueError("Configure exactly one GitHub authentication method")
         self._token = token
         self._token_provider = token_provider
+        self._max_compare_diff_bytes = max_compare_diff_bytes
         self._client = httpx.Client(
             base_url=api_base.rstrip("/"),
             timeout=30,
@@ -1256,15 +1276,208 @@ class GitHubOracleGateway:
             return response
         raise RuntimeError(f"GitHub API {method} {path} authentication failed")
 
+    def _get_pull(self, repository: str, pull_number: int) -> dict:
+        return self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
+
+    def _get_files(self, repository: str, pull_number: int) -> list[dict]:
+        payload = self._request(
+            "GET",
+            f"/repos/{repository}/pulls/{pull_number}/files",
+            params={"per_page": 100},
+        ).json()
+        if not isinstance(payload, list):
+            raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
+        names = [item.get("filename") for item in payload]
+        if len(set(names)) != len(names):
+            raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
+        return payload
+
+    @staticmethod
+    def _rest_patch_incomplete(item: dict) -> bool:
+        patch = item.get("patch")
+        if patch is None:
+            return True
+        return patch == "" and int(item.get("additions", 0)) > 0
+
+    @staticmethod
+    def _require_complete_file_enumeration(pull: dict, files: list[dict]) -> None:
+        if len(files) != int(pull.get("changed_files", len(files))):
+            raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
+
+    @staticmethod
+    def _require_sha40(value: str) -> str:
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise RuntimeError("GitHub pull request SHA is not a pinned 40-hex digest")
+        return value
+
+    def _pull_identity(self, repository: str, pull_number: int, pull: dict) -> dict[str, object]:
+        return {
+            "repository": canonical_repository(repository),
+            "pull_number": pull_number,
+            "title": pull.get("title") or "",
+            "body": pull.get("body") or "",
+            "draft": bool(pull["draft"]),
+            "state": pull["state"],
+            "merged": bool(pull.get("merged")),
+            "base_ref": pull["base"]["ref"],
+            "base_sha": self._require_sha40(pull["base"]["sha"]),
+            "head_ref": pull["head"]["ref"],
+            "head_sha": self._require_sha40(pull["head"]["sha"]),
+            "head_repository": canonical_repository(pull["head"]["repo"]["full_name"]),
+            "author": pull["user"]["login"],
+            "changed_files": int(pull["changed_files"]),
+        }
+
+    @staticmethod
+    def _file_set(files: list[dict]) -> tuple[tuple[object, ...], ...]:
+        return tuple(
+            sorted(
+                (
+                    item["filename"],
+                    item.get("previous_filename"),
+                    item["status"],
+                    int(item.get("additions", 0)),
+                    int(item.get("deletions", 0)),
+                )
+                for item in files
+            )
+        )
+
+    def _fetch_compare_diff(self, repository: str, base_sha: str, head_sha: str) -> str:
+        base_sha = self._require_sha40(base_sha)
+        head_sha = self._require_sha40(head_sha)
+        path = f"/repos/{repository}/compare/{base_sha}...{head_sha}"
+        body = self._request_bounded_bytes(
+            "GET",
+            path,
+            max_bytes=self._max_compare_diff_bytes,
+            headers={"Accept": GITHUB_DIFF_MEDIA_TYPE},
+        )
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise OracleDiffError("complete compare diff is malformed") from exc
+        if text.startswith("{") or text.startswith("["):
+            raise OracleDiffError("complete compare diff is malformed")
+        return text
+
+    def _request_bounded_bytes(
+        self,
+        method: str,
+        path: str,
+        *,
+        max_bytes: int,
+        headers: dict[str, str],
+    ) -> bytes:
+        supplied_headers = dict(headers)
+        for attempt in range(2):
+            token = (
+                self._token_provider.get_token()
+                if self._token_provider is not None
+                else self._token
+            )
+            request_headers = {**supplied_headers, "Authorization": f"Bearer {token}"}
+            response = self._client.request(method, path, headers=request_headers)
+            if (
+                response.status_code == 401
+                and self._token_provider is not None
+                and attempt == 0
+            ):
+                response.close()
+                self._token_provider.invalidate()
+                continue
+            if response.status_code == 406:
+                response.close()
+                raise OracleDiffError("complete compare diff exceeds the bounded evidence limit")
+            if response.status_code >= 400:
+                response.close()
+                raise OracleDiffError("complete compare diff is unavailable")
+            content_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+            if content_type in {"application/json", "application/vnd.github+json"}:
+                response.close()
+                raise OracleDiffError("complete compare diff is malformed")
+            declared = response.headers.get("content-length")
+            if declared is not None:
+                try:
+                    length = int(declared)
+                except ValueError as exc:
+                    response.close()
+                    raise OracleDiffError("complete compare diff is truncated") from exc
+                if length > max_bytes:
+                    response.close()
+                    raise OracleDiffError("complete compare diff exceeds the bounded evidence limit")
+            collected = bytearray()
+            try:
+                for chunk in response.iter_bytes():
+                    collected.extend(chunk)
+                    if len(collected) > max_bytes:
+                        raise OracleDiffError(
+                            "complete compare diff exceeds the bounded evidence limit"
+                        )
+            finally:
+                response.close()
+            if declared is not None and int(declared) != len(collected):
+                raise OracleDiffError("complete compare diff is truncated")
+            return bytes(collected)
+        raise OracleDiffError("complete compare diff is unavailable")
+
+    def _complete_missing_patches(
+        self,
+        repository: str,
+        pull_number: int,
+        pull: dict,
+        files: list[dict],
+    ) -> tuple[dict, list[OracleChangedFile]]:
+        before = self._pull_identity(repository, pull_number, pull)
+        before_files = self._file_set(files)
+        diff_text = self._fetch_compare_diff(
+            repository, str(before["base_sha"]), str(before["head_sha"])
+        )
+        after_pull = self._get_pull(repository, pull_number)
+        after_files = self._get_files(repository, pull_number)
+        self._require_complete_file_enumeration(after_pull, after_files)
+        after = self._pull_identity(repository, pull_number, after_pull)
+        if before != after or before_files != self._file_set(after_files):
+            raise RuntimeError("pull request identity changed during complete-diff retrieval")
+        bound = bind_complete_diff_evidence(
+            after_files,
+            parse_compare_diff(diff_text, max_bytes=self._max_compare_diff_bytes),
+        )
+        return after_pull, [
+            OracleChangedFile(
+                filename=item.filename,
+                previous_filename=item.previous_filename,
+                status=item.status,
+                additions=item.additions,
+                deletions=item.deletions,
+                patch=item.patch,
+                added_lines=list(item.added_lines),
+            )
+            for item in bound
+        ]
+
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         repository = canonical_repository(repository)
         owner, name = repository.split("/", 1)
-        pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
-        files = self._request(
-            "GET", f"/repos/{repository}/pulls/{pull_number}/files", params={"per_page": 100}
-        ).json()
-        if len(files) != int(pull.get("changed_files", len(files))):
-            raise RuntimeError("GitHub file enumeration is incomplete; merge failed closed")
+        pull = self._get_pull(repository, pull_number)
+        files = self._get_files(repository, pull_number)
+        self._require_complete_file_enumeration(pull, files)
+        if any(self._rest_patch_incomplete(item) for item in files):
+            pull, changed_files = self._complete_missing_patches(
+                repository, pull_number, pull, files
+            )
+        else:
+            changed_files = [
+                OracleChangedFile(
+                    filename=item["filename"],
+                    previous_filename=item.get("previous_filename"),
+                    status=item["status"],
+                    additions=item.get("additions", 0),
+                    deletions=item.get("deletions", 0),
+                    patch=item.get("patch"),
+                )
+                for item in files
+            ]
         checks_payload = self._request(
             "GET",
             f"/repos/{repository}/commits/{pull['head']['sha']}/check-runs",
@@ -1312,17 +1525,7 @@ class GitHubOracleGateway:
             head_sha=pull["head"]["sha"],
             head_repository=pull["head"]["repo"]["full_name"],
             author_login=pull["user"]["login"],
-            changed_files=[
-                OracleChangedFile(
-                    filename=item["filename"],
-                    previous_filename=item.get("previous_filename"),
-                    status=item["status"],
-                    additions=item.get("additions", 0),
-                    deletions=item.get("deletions", 0),
-                    patch=item.get("patch"),
-                )
-                for item in files
-            ],
+            changed_files=changed_files,
             checks=[
                 OracleCheckRun(
                     run_id=item["id"],

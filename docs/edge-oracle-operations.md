@@ -110,7 +110,17 @@ refetches GitHub state and fails closed on:
   and revalidated before merge;
 - missing, pending, failed, ambiguous, wrong-producer, or wrong-SHA checks;
 - any current or previous rename path outside `oracle/**`, `docs/oracle/**`, or
-  `tests/oracle/**`, or any file whose complete patch is unavailable;
+  `tests/oracle/**`, or any file whose complete scan evidence cannot be proven.
+  When the pull-request files REST response omits a `patch`, the gate fetches the
+  immutable compare diff for the snapshot's exact 40-hex base and head SHAs
+  (`GET /repos/{repo}/compare/{base}...{head}` with
+  `Accept: application/vnd.github.diff`), parses it structurally, and binds
+  added-line evidence for every REST file. A number-addressed `/pulls/{number}`
+  diff is not a completeness source. The pull is re-read after that fetch; any
+  drift in title, body, draft, state, merged flag, base/head refs and SHAs, head
+  repository, author, changed-file count, or file set fails closed. Unavailable,
+  oversized, truncated, binary, combined, quoted, mode-only, or mismatched diffs
+  fail closed. `patch=None` remains incomplete when no bound evidence is supplied;
 - deterministic serious-safety signals or committed credential material;
 - GitHub or branch-protection refusal.
 
