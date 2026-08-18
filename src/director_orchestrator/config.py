@@ -133,6 +133,15 @@ class Settings:
     gemini_usage_model: str = os.getenv(
         "GEMINI_USAGE_MODEL", "gemini-3.5-flash-lite"
     )
+    gemini_mode: str = os.getenv(
+        "GEMINI_MODE", "antigravity_subordinate"
+    ).strip().lower()
+    gemini_allow_review_verdict: bool = _bool(
+        "GEMINI_ALLOW_REVIEW_VERDICT", False
+    )
+    gemini_allow_primary_authority: bool = _bool(
+        "GEMINI_ALLOW_PRIMARY_AUTHORITY", False
+    )
 
     perplexity_enabled: bool = _bool("PERPLEXITY_ENABLED", False)
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
@@ -166,13 +175,22 @@ class Settings:
             "review_verdict_disabled": not self.perplexity_allow_review_verdict,
         }
 
+    def antigravity_subordinate_readiness(self) -> dict[str, bool]:
+        return {
+            "credential_configured": bool(self.gemini_api_key),
+            "managed_agent_configured": self.gemini_agent.startswith("antigravity-"),
+            "subordinate_mode": self.gemini_mode == "antigravity_subordinate",
+            "review_verdict_disabled": not self.gemini_allow_review_verdict,
+            "primary_authority_disabled": not self.gemini_allow_primary_authority,
+        }
+
     def readiness(self) -> dict[str, bool]:
         return {
             "slack": bool(self.slack_app_token and self.slack_bot_token),
             "openai_director": bool(self.openai_api_key),
             "cursor": bool(self.cursor_api_key),
             "claude": bool(self.claude_routine_url and self.claude_routine_token),
-            "gemini": bool(self.gemini_api_key),
+            "gemini": all(self.antigravity_subordinate_readiness().values()),
             "perplexity": all(self.perplexity_research_readiness().values()),
         }
 
@@ -247,9 +265,18 @@ class Settings:
             },
             "gemini": {
                 "team": "supplemental",
-                "priority": "optional_sandbox_and_prototype_specialist",
+                "priority": "subordinate_boilerplate_and_alternate_ideation",
                 "account_context": self.other_provider_account_context,
-                "strengths": ["sandbox execution", "visual/browser validation", "alternate prototypes"],
+                "strengths": [
+                    "bounded boilerplate and scaffolding",
+                    "low-level mechanical implementation",
+                    "non-authoritative alternate ideas",
+                ],
+                "constraints": [
+                    "must feed a later Claude or Cursor integration assignment",
+                    "cannot issue review or acceptance verdicts",
+                    "cannot define contract or methodology truth",
+                ],
             },
             "perplexity": {
                 "team": "supplemental",

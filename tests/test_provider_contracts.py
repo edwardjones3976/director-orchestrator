@@ -8,7 +8,7 @@ from unittest.mock import patch
 import httpx
 
 from director_orchestrator.config import Settings
-from director_orchestrator.models import Assignment, ProviderName, ProviderRun
+from director_orchestrator.models import Assignment, AssignmentKind, ProviderName, ProviderRun
 from director_orchestrator.providers import (
     ClaudeAdapter,
     CursorAdapter,
@@ -364,7 +364,8 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         return Assignment(
             sequence=1,
             agent=ProviderName.GEMINI,
-            task="Validate the prototype in an isolated sandbox",
+            kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+            task="Generate low-level mechanical prototype boilerplate in an isolated sandbox",
             acceptance=["Report the isolated evidence"],
             repository="example/demo",
         )
@@ -394,6 +395,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(request["json"]["background"])
         self.assertTrue(request["json"]["store"])
         self.assertNotIn("model", request["json"])
+        self.assertIn("NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT", request["json"]["input"])
         self.assertEqual(run.session_id, "environment-1")
 
     async def test_gemini_poll_extracts_text_from_interaction_steps(self):
@@ -425,7 +427,8 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
             run = await GeminiAdapter(settings).poll(prior)
 
-        self.assertEqual(run.result, "Evidence complete.")
+        self.assertIn("NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT", run.result or "")
+        self.assertTrue((run.result or "").endswith("Evidence complete."))
         self.assertEqual(run.session_id, "environment-1")
         self.assertEqual(run.assignment_sequence, 2)
 
@@ -461,6 +464,42 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(request["json"]["store"])
         self.assertEqual(run.session_id, "environment-1")
         self.assertEqual(run.assignment_sequence, 1)
+
+    async def test_gemini_dispatch_rejects_primary_authority_and_unbound_scope(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        assignments = (
+            self.gemini_assignment().model_copy(update={"kind": AssignmentKind.GENERAL}),
+            self.gemini_assignment().model_copy(
+                update={
+                    "kind": AssignmentKind.ABSTRACT_IDEATION,
+                    "task": "Perform the independent review and final acceptance",
+                }
+            ),
+            self.gemini_assignment().model_copy(
+                update={"allow_draft_pr": True, "requires_approval": True}
+            ),
+        )
+
+        for assignment in assignments:
+            with self.subTest(assignment=assignment):
+                with self.assertRaises(ProviderError):
+                    await GeminiAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
+    async def test_gemini_dispatch_fails_closed_for_unsafe_profile(self):
+        unsafe = (
+            replace(Settings(), gemini_api_key="test-gemini", gemini_mode="general"),
+            replace(Settings(), gemini_api_key="test-gemini", gemini_allow_review_verdict=True),
+            replace(Settings(), gemini_api_key="test-gemini", gemini_allow_primary_authority=True),
+        )
+
+        for settings in unsafe:
+            with self.subTest(settings=settings):
+                with self.assertRaises(ProviderError):
+                    await GeminiAdapter(settings).dispatch(self.gemini_assignment(), "context")
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
 
     async def test_gemini_usage_check_is_stateless_and_never_launches_an_agent(self):
         settings = replace(

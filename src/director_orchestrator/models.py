@@ -37,6 +37,18 @@ class ProviderName(StrEnum):
     OPENAI = "openai"
 
 
+class AssignmentKind(StrEnum):
+    GENERAL = "general"
+    IMPLEMENTATION = "implementation"
+    RESEARCH = "research"
+    INDEPENDENT_REVIEW = "independent_review"
+    EXACT_SHA_REVIEW = "exact_sha_review"
+    BOILERPLATE = "boilerplate"
+    SCAFFOLDING = "scaffolding"
+    LOW_LEVEL_IMPLEMENTATION = "low_level_implementation"
+    ABSTRACT_IDEATION = "abstract_ideation"
+
+
 class ReviewVerdict(StrEnum):
     ACCEPT = "accept"
     REVISE = "revise"
@@ -68,6 +80,7 @@ class Assignment(BaseModel):
 
     sequence: int = Field(ge=1, le=20)
     agent: ProviderName
+    kind: AssignmentKind = AssignmentKind.GENERAL
     task: str = Field(min_length=1, max_length=10_000)
     acceptance: list[str] = Field(min_length=1, max_length=20)
     repository: str | None = Field(default=None, max_length=2_000)

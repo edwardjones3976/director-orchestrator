@@ -23,13 +23,14 @@ An absent project allowlist blocks every live plan. Cursor cannot use an implici
 - **Claude Pro 20x is the primary workhorse.** Route coding implementation, repository-scale reasoning, code/document review, and Claude-strong analysis there first when its routine is configured and healthy.
 - **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
 - **Cursor is the third primary teammate.** Use it for repository automation, coding overflow, and independent implementation or review passes.
-- **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from the consumer subscription, and they are not included in the default periodic-check list.
+- **Gemini Antigravity and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from the consumer subscription, and they are not included in the default periodic-check list.
+- **Antigravity is subordinate, not a fourth primary model.** Use it for bounded boilerplate, scaffolding, low-level mechanical programming, and deliberately different or abstract ideas. A later Claude or Cursor assignment must directly consume its artifact and independently integrate or reject it.
 
 Practical operating patterns:
 
 1. **Claude-first coding lane:** Claude implements and tests; OpenAI reviews the acceptance evidence; the owner approves any gated action.
 2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
-3. **Optional specialist lane:** when materially useful, Perplexity gathers current sources, Gemini validates a prototype or browser/sandbox behavior, and the primary team integrates the findings.
+3. **Optional specialist lane:** when materially useful, Perplexity gathers current sources and Antigravity produces bounded boilerplate, scaffolding, low-level mechanical code, or alternate ideas. The primary team independently verifies and integrates or rejects every artifact.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
 
 | Role | Supported bridge in this package | Required values | Completion path |
@@ -37,8 +38,33 @@ Practical operating patterns:
 | Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
-| Supplemental — sandbox/prototype | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` | Poll stored background Interaction |
+| Supplemental — subordinate programming/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the fail-closed profile below | Poll stored background Interaction; Claude or Cursor consumes it next |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
+
+## Antigravity subordinate profile
+
+Antigravity runs through the Gemini Interactions API but is intentionally not a
+peer of OpenAI, Claude, or Cursor in this Director. Configure the profile as:
+
+```dotenv
+GEMINI_MODE=antigravity_subordinate
+GEMINI_ALLOW_REVIEW_VERDICT=false
+GEMINI_ALLOW_PRIMARY_AUTHORITY=false
+```
+
+The deterministic plan gate admits an Antigravity assignment only when its task
+explicitly names boilerplate, scaffolding, low-level or mechanical work, fixture
+generation, or alternate ideation. The assignment cannot create a draft pull
+request and must be followed by a Claude or Cursor assignment that directly
+depends on it. Antigravity cannot perform exact-SHA review, final acceptance,
+merge adjudication, or define contract or methodology truth. Its returned text
+is labeled `NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT` before it enters the handoff.
+
+This lane still does real programming: it can execute Bash, Python, and Node in
+its isolated Google-hosted environment and create files there. It does not
+receive primary-team authority merely because the managed agent can use those
+tools. Interesting ideas are hypotheses, not facts without independent
+verification.
 
 ## Perplexity research-only profile
 
@@ -101,7 +127,7 @@ accepted only as an SDK-compatible convenience field. `requires_action` and
 `budget_exceeded` fail closed; the Director never loops indefinitely or treats
 those statuses as successful completion.
 
-Gemini remains an optional supplemental specialist. Installing its developer
+Gemini Antigravity remains an optional subordinate specialist. Installing its developer
 documentation tooling does not configure `GEMINI_API_KEY`, enable Gemini usage
 checks, add Gemini to the primary team, or open the paid-run gate.
 

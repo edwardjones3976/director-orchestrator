@@ -5,7 +5,7 @@ from copy import deepcopy
 from urllib.parse import urlparse
 
 from .config import Settings
-from .models import Assignment, DirectorPlan, ProviderName, RiskLevel
+from .models import Assignment, AssignmentKind, DirectorPlan, ProviderName, RiskLevel
 
 
 _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -17,6 +17,25 @@ _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("sensitive data", re.compile(r"\b(ssn|social security|passport|medical|health|financial|bank|credit card|identity|genealogy evidence|dna|authentication data)\b", re.I)),
     ("credential or permission change", re.compile(r"\b(api key|token|password|secret|credential|oauth|permission|access scope|administrator|admin access)\b", re.I)),
 )
+
+_ANTIGRAVITY_SCOPE = re.compile(
+    r"\b(boilerplate|scaffold(?:ing)?|low[- ]level|mechanical|fixture generation|"
+    r"alternate ideas?|alternate ideation|brainstorm(?:ing)?)\b",
+    re.I,
+)
+_ANTIGRAVITY_AUTHORITY = re.compile(
+    r"\b(exact[- ]sha|independent review|review verdict|review (?:the|this|a) (?:pr|pull request)|"
+    r"final acceptance|approve|approval authority|merge|authoritative|source of truth|"
+    r"define(?:s|d|ing)? .{0,40}\bcontract|decide(?:s|d|ing)? .{0,40}\bmethodology|"
+    r"certif(?:y|ies|ied|ication)|sign[- ]?off|adjudicat(?:e|es|ed|ion))\b",
+    re.I | re.S,
+)
+_ANTIGRAVITY_KINDS = {
+    AssignmentKind.BOILERPLATE,
+    AssignmentKind.SCAFFOLDING,
+    AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+    AssignmentKind.ABSTRACT_IDEATION,
+}
 
 
 def deterministic_approval_reasons(text: str) -> list[str]:
@@ -37,8 +56,31 @@ def canonical_repository(value: str) -> str:
     return candidate.strip("/").lower()
 
 
+def antigravity_assignment_errors(assignment: Assignment) -> list[str]:
+    errors: list[str] = []
+    if assignment.kind not in _ANTIGRAVITY_KINDS:
+        errors.append(
+            "requires kind boilerplate, scaffolding, low_level_implementation, "
+            "or abstract_ideation"
+        )
+    if not _ANTIGRAVITY_SCOPE.search(assignment.task):
+        errors.append(
+            "requires explicit subordinate boilerplate, scaffolding, low-level, "
+            "mechanical, or alternate-ideation scope"
+        )
+    if _ANTIGRAVITY_AUTHORITY.search(assignment.task):
+        errors.append(
+            "cannot receive review, acceptance, merge, contract, or methodology authority"
+        )
+    if assignment.allow_draft_pr:
+        errors.append("cannot create a draft pull request")
+    return errors
+
+
 def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]:
     errors: set[str] = set()
+    if settings.primary_team != ("openai", "claude", "cursor"):
+        errors.add("primary team must be exactly openai, claude, cursor")
     allowed_projects = {item.strip().lower() for item in settings.project_allowlist}
     project = plan.project.strip().lower()
     if not allowed_projects:
@@ -62,6 +104,21 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             )
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
+        if assignment.agent == ProviderName.GEMINI:
+            for error in antigravity_assignment_errors(assignment):
+                errors.add(f"assignment {assignment.sequence}: Antigravity {error}")
+            consumers = [
+                later
+                for later in plan.assignments
+                if later.sequence > assignment.sequence
+                and later.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+                and assignment.sequence in later.depends_on
+            ]
+            if not consumers:
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity output requires a later "
+                    "Claude or Cursor integration assignment with a direct dependency"
+                )
         if assignment.allow_draft_pr and not assignment.requires_approval:
             errors.add(
                 f"assignment {assignment.sequence}: draft PR creation requires assignment approval"
@@ -127,7 +184,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     lowered = text.lower()
     if any(word in lowered for word in ("research", "sources", "current", "verify facts")):
         provider = ProviderName.PERPLEXITY
-    elif any(word in lowered for word in ("prototype", "browser", "visual", "alternate implementation")):
+    elif _ANTIGRAVITY_SCOPE.search(text):
         provider = ProviderName.GEMINI
     elif any(word in lowered for word in ("cursor", "background agent", "independent coding pass", "second coding pass")):
         provider = ProviderName.CURSOR
@@ -139,14 +196,46 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     if match:
         project = match.group(1).strip()[:255]
 
+    assignment_kind = AssignmentKind.GENERAL
+    if provider == ProviderName.PERPLEXITY:
+        assignment_kind = AssignmentKind.RESEARCH
+    elif provider == ProviderName.GEMINI:
+        if re.search(r"\bboilerplate\b", text, re.I):
+            assignment_kind = AssignmentKind.BOILERPLATE
+        elif re.search(r"\bscaffold(?:ing)?\b", text, re.I):
+            assignment_kind = AssignmentKind.SCAFFOLDING
+        elif re.search(r"\b(low[- ]level|mechanical|fixture generation)\b", text, re.I):
+            assignment_kind = AssignmentKind.LOW_LEVEL_IMPLEMENTATION
+        else:
+            assignment_kind = AssignmentKind.ABSTRACT_IDEATION
     assignment = Assignment(
         sequence=1,
         agent=provider,
+        kind=assignment_kind,
         task=text.strip(),
         acceptance=["Owner-defined outcome is demonstrably satisfied", "Evidence and unresolved risks are reported"],
         requires_approval=False,
         estimated_cost_usd=0,
     )
+    assignments = [assignment]
+    if provider == ProviderName.GEMINI:
+        assignments.append(
+            Assignment(
+                sequence=2,
+                agent=ProviderName.CLAUDE,
+                kind=AssignmentKind.IMPLEMENTATION,
+                task=(
+                    "Evaluate the non-authoritative Antigravity artifact, independently verify it, "
+                    "and integrate or reject it within the owner-defined scope"
+                ),
+                acceptance=[
+                    "Antigravity claims are independently checked",
+                    "Only verified work is adopted",
+                ],
+                depends_on=[1],
+                estimated_cost_usd=0,
+            )
+        )
     plan = DirectorPlan(
         project=project,
         normalized_outcome=text.strip(),
@@ -155,7 +244,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         approval_reasons=[],
         max_hops=min(3, settings.max_agent_hops),
         max_revisions=min(1, settings.max_revisions),
-        assignments=[assignment],
+        assignments=assignments,
         final_acceptance=["All assignment checks pass", "No approval gate was bypassed"],
         owner_question=None,
     )

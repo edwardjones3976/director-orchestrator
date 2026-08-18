@@ -10,6 +10,7 @@ import httpx
 
 from .config import Settings
 from .models import Assignment, ProviderName, ProviderRun
+from .policy import antigravity_assignment_errors
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
@@ -389,6 +390,30 @@ class ClaudeAdapter(ProviderAdapter):
 
 class GeminiAdapter(ProviderAdapter):
     name = ProviderName.GEMINI
+    _NON_AUTHORITATIVE_NOTICE = (
+        "NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT: This output is subordinate input. "
+        "Claude or Cursor must independently verify and integrate or reject it before use."
+    )
+
+    def _require_profile(self) -> None:
+        failed = [
+            name
+            for name, ready in self.settings.antigravity_subordinate_readiness().items()
+            if not ready
+        ]
+        if failed:
+            raise ProviderError(
+                "Antigravity subordinate configuration is not ready: " + ", ".join(failed)
+            )
+
+    def _require_subordinate(self, assignment: Assignment) -> None:
+        self._require_profile()
+        errors = antigravity_assignment_errors(assignment)
+        if errors:
+            raise ProviderError(
+                "Antigravity assignment is outside its subordinate lane: "
+                + "; ".join(errors)
+            )
 
     @staticmethod
     def _output_text(payload: dict[str, Any]) -> str | None:
@@ -411,16 +436,20 @@ class GeminiAdapter(ProviderAdapter):
         *,
         session_id: str | None = None,
         fallback_run_id: str | None = None,
+        subordinate_output: bool = False,
     ) -> ProviderRun:
         run_id = payload.get("id") or fallback_run_id
         if not run_id:
             raise ProviderError("Gemini Interaction response did not include an ID")
+        result = self._output_text(payload)
+        if subordinate_output and result:
+            result = f"{self._NON_AUTHORITATIVE_NOTICE}\n\n{result}"
         return ProviderRun(
             provider=self.name,
             run_id=run_id,
             session_id=payload.get("environment_id") or session_id,
             status=payload.get("status", "in_progress"),
-            result=self._output_text(payload),
+            result=result,
             raw=payload,
         )
 
@@ -433,7 +462,16 @@ class GeminiAdapter(ProviderAdapter):
         }
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
-        prompt = f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"
+        self._require_subordinate(assignment)
+        prompt = (
+            f"{self._NON_AUTHORITATIVE_NOTICE}\n\n"
+            "Stay within bounded boilerplate, scaffolding, low-level mechanical implementation, "
+            "or alternate ideation. Do not issue review, acceptance, merge, contract, or "
+            "methodology verdicts. Clearly separate tested artifacts from abstract ideas.\n\n"
+            f"Task:\n{assignment.task}\n\nAcceptance checks:\n- "
+            + "\n- ".join(assignment.acceptance)
+            + f"\n\nContext:\n{context}"
+        )
         body = {
             "agent": self.settings.gemini_agent,
             "input": prompt,
@@ -445,14 +483,19 @@ class GeminiAdapter(ProviderAdapter):
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload)
+        return self._run(payload, subordinate_output=True)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
+        self._require_profile()
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.get(f"{self.settings.gemini_api_base}/interactions/{run.run_id}", headers=self.headers)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload, session_id=run.session_id).model_copy(
+        return self._run(
+            payload,
+            session_id=run.session_id,
+            subordinate_output=True,
+        ).model_copy(
             update={"assignment_sequence": run.assignment_sequence}
         )
 
@@ -464,11 +507,14 @@ class GeminiAdapter(ProviderAdapter):
         assignment: Assignment | None = None,
         context: str | None = None,
     ) -> ProviderRun:
+        if assignment is None:
+            raise ProviderError("Antigravity revision requires the bound assignment")
+        self._require_subordinate(assignment)
         body = {
             "agent": self.settings.gemini_agent,
             "previous_interaction_id": run.run_id,
             "environment": run.session_id or "remote",
-            "input": prompt,
+            "input": f"{self._NON_AUTHORITATIVE_NOTICE}\n\n{prompt}",
             "background": True,
             "store": True,
         }
@@ -476,11 +522,16 @@ class GeminiAdapter(ProviderAdapter):
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload, session_id=run.session_id).model_copy(
+        return self._run(
+            payload,
+            session_id=run.session_id,
+            subordinate_output=True,
+        ).model_copy(
             update={"assignment_sequence": run.assignment_sequence}
         )
 
     async def usage_check(self, prompt: str) -> ProviderRun:
+        self._require_profile()
         body = {
             "model": self.settings.gemini_usage_model,
             "input": prompt,

@@ -8,6 +8,7 @@ from pathlib import Path
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
     Assignment,
+    AssignmentKind,
     DirectorPlan,
     ProviderName,
     RiskLevel,
@@ -84,6 +85,87 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(all(strategy[name]["team"] == "primary" for name in self.settings.primary_team))
         self.assertEqual(strategy["gemini"]["team"], "supplemental")
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
+
+    def test_primary_team_override_fails_closed(self):
+        settings = replace(
+            self.settings,
+            primary_team=("openai", "claude", "cursor", "gemini"),
+        )
+        plan = preview_plan("Project: demo\nImplement a bounded change", settings)
+
+        self.assertIn(
+            "primary team must be exactly openai, claude, cursor",
+            execution_policy_errors(plan, settings),
+        )
+
+    def test_antigravity_readiness_requires_subordinate_profile(self):
+        ready = replace(self.settings, gemini_api_key="test-gemini")
+        unsafe = replace(ready, gemini_allow_primary_authority=True)
+
+        self.assertTrue(ready.readiness()["gemini"])
+        self.assertFalse(unsafe.readiness()["gemini"])
+        self.assertFalse(
+            unsafe.antigravity_subordinate_readiness()["primary_authority_disabled"]
+        )
+
+    def test_antigravity_requires_subordinate_kind_and_primary_consumer(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        antigravity = Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+            task="Generate low-level mechanical parser boilerplate",
+            acceptance=["Return code and local test output"],
+            repository="example/demo",
+        )
+        valid = DirectorPlan(
+            project="demo",
+            normalized_outcome="Use subordinate boilerplate only after primary integration",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=2,
+            max_revisions=1,
+            assignments=[
+                antigravity,
+                Assignment(
+                    sequence=2,
+                    agent=ProviderName.CLAUDE,
+                    kind=AssignmentKind.IMPLEMENTATION,
+                    task="Independently verify and integrate or reject the artifact",
+                    acceptance=["Verified result is reported"],
+                    repository="example/demo",
+                    depends_on=[1],
+                ),
+            ],
+            final_acceptance=["Primary integration is verified"],
+        )
+
+        self.assertEqual(execution_policy_errors(valid, settings), [])
+
+        invalid = valid.model_copy(
+            update={"assignments": [antigravity.model_copy(update={"kind": AssignmentKind.GENERAL})]}
+        )
+        errors = execution_policy_errors(invalid, settings)
+        self.assertTrue(any("requires kind" in error for error in errors))
+        self.assertTrue(any("requires a later Claude or Cursor" in error for error in errors))
+
+    def test_antigravity_dry_run_is_never_the_final_assignment(self):
+        plan = preview_plan(
+            "Project: demo\nGenerate low-level mechanical boilerplate",
+            self.settings,
+        )
+
+        self.assertEqual(
+            [item.agent for item in plan.assignments],
+            [ProviderName.GEMINI, ProviderName.CLAUDE],
+        )
+        self.assertEqual(plan.assignments[0].kind, AssignmentKind.BOILERPLATE)
+        self.assertEqual(plan.assignments[1].depends_on, [1])
 
     def test_perplexity_readiness_requires_the_complete_research_only_profile(self):
         key_only = replace(self.settings, perplexity_api_key="test-perplexity")
