@@ -261,6 +261,10 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(
             supplemental_scope_is_valid(tampered, settings.shared_secret)
         )
+        cost_tampered = antigravity.model_copy(update={"estimated_cost_usd": 999})
+        self.assertFalse(
+            supplemental_scope_is_valid(cost_tampered, settings.shared_secret)
+        )
 
     def test_perplexity_scope_requires_explicit_owner_public_query(self):
         settings = replace(

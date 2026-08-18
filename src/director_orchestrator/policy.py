@@ -84,15 +84,9 @@ def canonical_repository(value: str) -> str:
 
 def _supplemental_scope_digest(assignment: Assignment, secret: str) -> str:
     payload = json.dumps(
-        {
-            "agent": assignment.agent.value,
-            "kind": assignment.kind.value,
-            "task": assignment.task,
-            "acceptance": assignment.acceptance,
-            "repository": assignment.repository,
-            "starting_ref": assignment.starting_ref,
-            "allow_draft_pr": assignment.allow_draft_pr,
-        },
+        assignment.model_dump(
+            mode="json", exclude={"supplemental_scope_token"}
+        ),
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
