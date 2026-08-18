@@ -335,6 +335,27 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(artifact.reviewer_provider, "cursor")
         self.assertTrue(artifact.signature_is_valid(REVIEW_SECRET))
 
+    def test_manual_claude_handoff_is_classified_before_review_authentication(self):
+        record = self.callback_record()
+        for result in (
+            "Bounded implementation-owner handoff.",
+            json.dumps({"status": "complete", "evidence": ["read-only"]}),
+        ):
+            with self.subTest(result=result):
+                run = record.provider_runs[0].model_copy(
+                    update={"status": "FINISHED", "result": result}
+                )
+                self.assertIsNone(
+                    authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
+                )
+
+    def test_manual_claude_completion_cannot_authenticate_review_artifact(self):
+        record = self.callback_record()
+        run = record.provider_runs[0].model_copy(update={"status": "FINISHED"})
+
+        with self.assertRaisesRegex(ValueError, "successful provider run"):
+            authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
+
     def test_review_provider_must_match_authenticated_run(self):
         callback = self.callback(reviewer_provider="cursor")
         record = self.callback_record()

@@ -104,8 +104,6 @@ def authenticate_provider_review_artifact(
         ProviderName.CLAUDE: {"completed"},
         ProviderName.CURSOR: {"FINISHED", "completed"},
     }
-    if run.status not in successful_statuses[run.provider]:
-        raise ValueError("only a successful provider run can authenticate a review")
     if not run.result:
         return None
     try:
@@ -116,6 +114,8 @@ def authenticate_provider_review_artifact(
         "edge_oracle_exact_sha_review/v1"
     ):
         return None
+    if run.status not in successful_statuses[run.provider]:
+        raise ValueError("only a successful provider run can authenticate a review")
     if "signature" in payload:
         raise ValueError("provider review output must not supply an authentication signature")
     payload["signature"] = "0" * 64
