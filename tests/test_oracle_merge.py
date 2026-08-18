@@ -497,6 +497,119 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(github.snapshot_calls, 2)
         self.assertIsNotNone(self.released_attempt("final-unresolved")[1])
 
+    def test_stale_draft_lag_at_final_snapshot_waits_for_eligible_non_draft(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(),
+                self.snapshot(draft=True),
+                self.snapshot(),
+            ),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-stale-lag")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(github.snapshot_calls, 4)
+        self.assertEqual(self.sleeps, [1.0])
+
+    def test_unowned_draft_on_final_snapshot_is_terminal(self):
+        github = FakeGitHub(
+            self.snapshot(draft=True),
+            responses=(self.snapshot(),),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-unowned-draft")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn(OracleMergePolicy.DRAFT_NOT_MERGEABLE_REASON, result.reasons)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertIsNotNone(self.released_attempt("final-unowned-draft")[1])
+
+    def test_exhausted_stale_draft_at_final_snapshot_is_recoverable(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(),
+                self.snapshot(draft=True),
+                self.snapshot(draft=True),
+                self.snapshot(draft=True),
+            ),
+        )
+        artifact = self.artifact(artifact_id="final-stale-exhausted")
+
+        result = self.service(github).process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertIn("still reported the pull request as draft", result.reasons[0])
+        self.assertIn("remains retryable", result.reasons[0])
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 5)
+        self.assertEqual(self.released_attempt("final-stale-exhausted"), ("RECOVERABLE", None))
+        self.assertEqual(
+            self.service(FakeGitHub(self.snapshot())).process(artifact).status,
+            OracleMergeStatus.MERGED,
+        )
+
+    def test_final_snapshot_stale_draft_with_unresolved_mergeability_is_terminal(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(),
+                self.snapshot(draft=True, mergeable=None),
+            ),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-stale-unresolved")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn(OracleMergePolicy.UNRESOLVED_MERGEABILITY_REASON, result.reasons)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 3)
+        self.assertIsNotNone(self.released_attempt("final-stale-unresolved")[1])
+
+    def test_drift_during_final_stale_draft_lag_is_terminal(self):
+        drifted_checks = [
+            check.model_copy(update={"head_sha": NEW_SHA})
+            for check in self.snapshot().checks
+        ]
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(),
+                self.snapshot(draft=True),
+                self.snapshot(draft=True, head_sha=NEW_SHA, checks=drifted_checks),
+            ),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-stale-drift")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertTrue(
+            any("head SHA changed" in reason for reason in result.reasons),
+            result.model_dump(),
+        )
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 4)
+        self.assertIsNotNone(self.released_attempt("final-stale-drift")[1])
+
     def test_artifact_identifier_cannot_be_reused_for_another_review(self):
         github = FakeGitHub(self.snapshot())
         service = self.service(github)

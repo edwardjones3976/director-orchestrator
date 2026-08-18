@@ -1105,10 +1105,14 @@ class OracleMergeService:
         # and re-run the full policy immediately before GitHub merge; a changed
         # thread, review decision, check, title/body safety signal, path/file
         # evidence, or SHA must block. Unresolved mergeability here is terminal.
-        # Bounded read retries and rate-limit holds still apply. The merge
-        # mutation itself is never retried if the result is ambiguous. The
-        # gateway still rechecks base/head SHAs as defense in depth.
-        final_snapshot, unreadable = self._read_snapshot(artifact)
+        # A lagging REST draft flag after a gate-owned ready transition stays on
+        # the same bounded stale-draft wait as `_resolved_snapshot` and does not
+        # consume the artifact. Bounded read retries and rate-limit holds still
+        # apply. The merge mutation itself is never retried if the result is
+        # ambiguous. The gateway still rechecks base/head SHAs as defense in depth.
+        final_snapshot, unreadable = self._final_snapshot(
+            artifact, transitioned_from_draft=transitioned_from_draft
+        )
         if unreadable is not None:
             return unreadable
         decision = self.policy.evaluate(artifact, final_snapshot)
@@ -1178,6 +1182,77 @@ class OracleMergeService:
             "transient read failures and remains retryable: "
             f"{type(last_read_failure).__name__}",
         )
+
+    def _final_snapshot(
+        self,
+        artifact: OracleReviewArtifact,
+        *,
+        transitioned_from_draft: bool,
+    ) -> tuple[OraclePullRequestSnapshot | None, OracleMergeResult | None]:
+        """Take the pre-mutation snapshot without consuming a gate-owned stale draft.
+
+        After ``mark_ready`` already confirmed the pull request is ready, a lagging
+        REST ``draft: true`` is the same bounded transient that ``_resolved_snapshot``
+        already classifies. This read keeps that classification: the artifact is not
+        consumed, and merge waits for a fresh complete snapshot that is non-draft and
+        fully eligible. An unowned draft, unresolved mergeability, and every other
+        policy or safety reason stay fail-closed on the read that reports them. Rate
+        limits and evidence failures keep their existing holds. Nothing is merged
+        from here, so nothing ambiguous is retried.
+        """
+        snapshot, unreadable = self._read_snapshot(artifact)
+        if unreadable is not None:
+            return None, unreadable
+        stale_draft_allowance = (
+            self._poll_stale_draft_reads if transitioned_from_draft else 1
+        )
+        read_failure_allowance = self._poll_read_failures
+        last_read_failure: Exception | None = None
+        delay = self._poll_base_delay
+        while True:
+            stale_draft = transitioned_from_draft and snapshot.draft
+            decision = self.policy.evaluate(artifact, snapshot)
+            blocking = [
+                reason
+                for reason in decision.reasons
+                if not (
+                    stale_draft and reason == self.policy.DRAFT_NOT_MERGEABLE_REASON
+                )
+            ]
+            if blocking or decision.serious_safety_reasons:
+                return None, self.store.complete(decision)
+            if not stale_draft:
+                return snapshot, None
+            stale_draft_allowance -= 1
+            if not stale_draft_allowance:
+                return None, self._release_for_retry(
+                    artifact,
+                    "GitHub still reported the pull request as draft after "
+                    f"{self._poll_stale_draft_reads} bounded re-reads following a "
+                    "confirmed ready-for-review transition and remains retryable",
+                )
+            while read_failure_allowance:
+                self._sleep(delay)
+                delay = min(delay * 2, self._poll_max_delay)
+                try:
+                    snapshot = self.github.snapshot(
+                        artifact.repository, artifact.pull_number
+                    )
+                    break
+                except OracleDiffError as exc:
+                    return None, self._complete_evidence_failure(artifact, exc)
+                except OracleRateLimitError as exc:
+                    return None, self._release_for_rate_limit(artifact, exc)
+                except Exception as exc:
+                    read_failure_allowance -= 1
+                    last_read_failure = exc
+            else:
+                return None, self._release_for_retry(
+                    artifact,
+                    "GitHub validation read failed closed after "
+                    f"{self._poll_read_failures} transient read failures and remains "
+                    f"retryable: {type(last_read_failure).__name__}",
+                )
 
     def _resolved_snapshot(
         self,

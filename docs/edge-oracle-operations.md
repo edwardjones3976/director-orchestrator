@@ -182,8 +182,12 @@ Immediately before the merge mutation, the gate takes one complete final snapsho
 runs the full `OracleMergePolicy` evaluation. A changed review thread, review decision,
 check, title/body safety signal, path/file evidence, or SHA blocks and consumes the
 artifact. Unresolved `mergeable: null` on that mutation-boundary read is terminal; the
-gate does not start another poll. Bounded read-failure retries and rate-limit holds still
-apply to that snapshot. The gateway then re-GETs the pull and rechecks base and head SHAs
+gate does not start another mergeability poll. A lagging REST `draft: true` after a
+gate-owned ready-for-review transition is not a verdict: it stays on the same bounded
+stale-draft wait already used after `mark_ready`, and merge does not run until a fresh
+complete snapshot is non-draft and fully eligible. An unowned draft flag on that read
+remains terminal. Bounded read-failure retries and rate-limit holds still apply to that
+snapshot. The gateway then re-GETs the pull and rechecks base and head SHAs
 as defense in depth before `PUT /merge`. The merge request includes the reviewed SHA, so
 GitHub rejects a head advance even after the final read. Residual platform limitation:
 GitHub's REST merge endpoint binds the expected head SHA but has no atomic expected-base
@@ -212,10 +216,11 @@ reviewed change. The gate classifies the state instead:
 
   Backoff is one second doubling to an eight-second cap. Each read spends the allowance for
   every transient condition it exhibits, so overlapping conditions shorten the wait. The
-  poll performs at most eight reads over about thirty-nine seconds, and the whole gate at
-  most twelve GitHub snapshot reads over about forty-one seconds, including the first read
-  and one complete final snapshot immediately before merge, each with the same two-read
-  failure allowance. Every successful read
+  poll performs at most eight reads over about thirty-nine seconds. The first read and the
+  complete final snapshot immediately before merge each carry the same two-read failure
+  allowance. After a gate-owned ready transition, that final snapshot may continue the same
+  three-read stale-draft wait instead of consuming the artifact; merge still waits for a
+  non-draft eligible snapshot. Every successful read
   revalidates the
   repository, pull-request identity, open and unmerged state, expected base SHA, exact head
   SHA, checks, review threads, paths, and safety signals before the wait continues. The
