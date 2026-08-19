@@ -574,6 +574,26 @@ class AssignmentBoundaryTests(unittest.TestCase):
                 "Research records for +4420.79460958",
                 "phone number",
             ),
+            (
+                "Find public methodology",
+                "Research records for +376\u200b123456",
+                "phone number",
+            ),
+            (
+                "Find public methodology",
+                "Research records for +376\u2060123456",
+                "phone number",
+            ),
+            (
+                "Find public methodology",
+                "Research records for +376\u00b7123456",
+                "phone number",
+            ),
+            (
+                "Find public methodology",
+                "Research records for +376\u2022123456",
+                "phone number",
+            ),
         ]
         for index, (task, query, reason) in enumerate(cases, start=1):
             plan = DirectorPlan(

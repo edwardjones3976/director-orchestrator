@@ -45,15 +45,9 @@ _NORTH_AMERICAN_PHONE = re.compile(
     r"(?<!\w)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\w)"
 )
 _SIGNED_PUBLIC_NUMBER = re.compile(r"(?<!\w)\+0\.\d+(?![\w.])")
-_INTERNATIONAL_PHONE_PUNCTUATION = frozenset("()/.\u2212")
-
-
 def _is_international_phone_separator(character: str) -> bool:
-    return (
-        character.isspace()
-        or character in _INTERNATIONAL_PHONE_PUNCTUATION
-        or unicodedata.category(character) == "Pd"
-    )
+    category = unicodedata.category(character)
+    return character.isspace() or category[0] in {"M", "P", "S", "Z"} or category == "Cf"
 
 
 def _contains_phone_number(value: str) -> bool:
@@ -65,7 +59,9 @@ def _contains_phone_number(value: str) -> bool:
             continue
         digit_count = 0
         candidate_characters: list[str] = []
-        for candidate_character in normalized_value[start + 1 : start + 42]:
+        for candidate_character in normalized_value[start + 1 :]:
+            if candidate_character == "+":
+                break
             if candidate_character.isdecimal():
                 digit_count += 1
                 candidate_characters.append(candidate_character)
