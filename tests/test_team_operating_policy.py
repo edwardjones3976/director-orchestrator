@@ -11,11 +11,13 @@ import httpx
 from pydantic import ValidationError
 
 from director_orchestrator.config import Settings
-from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.engine import OrchestrationEngine, ProviderUnavailableError
 from director_orchestrator.models import (
     Assignment,
+    AssignmentOutcome,
     DirectorPlan,
     ProviderName,
+    ProviderContactAttempt,
     ProviderRun,
     ReviewDecision,
     ReviewVerdict,
@@ -25,6 +27,7 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.policy import execution_policy_errors
+from director_orchestrator.oracle_merge import authenticate_provider_review_artifact
 from director_orchestrator.review_handoff import bind_review_handoff
 from director_orchestrator.store import TaskStore
 
@@ -131,6 +134,78 @@ class ReviewHandoffTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "material author"):
             bind_review_handoff(record, producer, run)
 
+    def test_producer_cannot_omit_recorded_material_author(self):
+        record, producer, run = self.record()
+        producer.depends_on = [3]
+        record.assignment_outcomes.append(
+            AssignmentOutcome(
+                assignment_sequence=3,
+                provider=ProviderName.CLAUDE,
+                run_id="claude-upstream",
+                result="material implementation input",
+                review_summary="accepted",
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "recorded orchestration provenance"):
+            bind_review_handoff(record, producer, run)
+
+    def test_review_artifact_identity_is_bound_to_the_stored_handoff(self):
+        record, producer, run = self.record()
+        record.assignment_outcomes.append(
+            AssignmentOutcome(
+                assignment_sequence=1,
+                provider=ProviderName.CURSOR,
+                run_id="cursor-run-1",
+                result=run.result or "candidate",
+                review_summary="accepted",
+            )
+        )
+        sequence, reviewer = bind_review_handoff(record, producer, run) or (None, None)
+        self.assertEqual(sequence, 2)
+        handoff = json.loads(reviewer.task)
+        record.plan.assignments = [producer, reviewer]
+        record.review_handoff_digests[2] = handoff["artifact_digest"]
+        payload = {
+            "artifact_type": "edge_oracle_exact_sha_review/v1",
+            "artifact_id": handoff["required_review_artifact_id"],
+            "assignment_id": handoff["assignment_id"],
+            "project": "demo",
+            "repository": handoff["repository"],
+            "pull_number": handoff["pull_number"],
+            "base_ref": handoff["base_ref"],
+            "base_sha": handoff["base_sha"],
+            "head_ref": handoff["head_ref"],
+            "head_sha": handoff["head_sha"],
+            "implementation_provider": handoff["logical_producer"],
+            "implementation_actor": handoff["implementation_actor"],
+            "reviewer_provider": handoff["reviewer_provider"],
+            "review_run_id": "claude-review-run",
+            "verdict": "ACCEPT",
+            "summary": "Accepted exact candidate.",
+            "evidence": ["Reviewed the bound candidate."],
+            "acceptance_checks": ["test"],
+            "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+        }
+        review_run = ProviderRun(
+            provider=ProviderName.CLAUDE,
+            assignment_sequence=2,
+            run_id="claude-review-run",
+            status="completed",
+            result=json.dumps(payload),
+        )
+        record.provider_runs.append(review_run)
+        authenticated = authenticate_provider_review_artifact(record, review_run, "secret")
+        self.assertIsNotNone(authenticated)
+
+        for field, changed in (("pull_number", 18), ("implementation_actor", "other-actor")):
+            with self.subTest(field=field):
+                tampered = {**payload, field: changed}
+                review_run.result = json.dumps(tampered)
+                record.provider_runs[-1] = review_run
+                with self.assertRaisesRegex(ValueError, "stored handoff"):
+                    authenticate_provider_review_artifact(record, review_run, "secret")
+
     def test_tampering_with_candidate_metadata_invalidates_its_digest(self):
         record, producer, run = self.record()
         payload = json.loads(run.result or "{}")
@@ -142,6 +217,54 @@ class ReviewHandoffTests(unittest.TestCase):
 
 
 class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_persisted_attempt_limit_survives_process_restart(self):
+        class MustNotPoll:
+            async def poll(self, run):
+                raise AssertionError("persisted attempt cap must stop before another poll")
+
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CLAUDE,
+            task="bounded work",
+            acceptance=["evidence"],
+        )
+        run = ProviderRun(
+            provider=ProviderName.CLAUDE,
+            assignment_sequence=1,
+            run_id="persisted-run",
+            status="RUNNING",
+            result="partial",
+        )
+        record = TaskRecord(
+            task_id="DIR-PERSISTED-ATTEMPTS",
+            status=TaskStatus.RUNNING,
+            intake=SlackIntake(
+                source_event_id="evt-persisted",
+                channel_id="C1",
+                thread_ts="1.4",
+                user_id="U1",
+                text="DIRECTOR Project: demo Outcome: bounded work",
+            ),
+            provider_contact_attempts=[
+                ProviderContactAttempt(
+                    assignment_sequence=1,
+                    provider=ProviderName.CLAUDE,
+                    ordinal=ordinal,
+                    phase="poll",
+                    outcome="no_response",
+                    run_id="persisted-run",
+                    partial_output="partial",
+                    error="ReadTimeout: unavailable",
+                )
+                for ordinal in (1, 2, 3)
+            ],
+        )
+        engine = OrchestrationEngine(replace(Settings(), provider_poll_seconds=0), None)
+
+        with self.assertRaises(ProviderUnavailableError):
+            await engine._wait(MustNotPoll(), run, record, assignment)
+        self.assertEqual(len(record.provider_contact_attempts), 3)
+
     async def test_three_safe_poll_failures_defer_lane_and_continue_independent_work(self):
         class NonresponsiveAdapter:
             name = ProviderName.CLAUDE
@@ -385,6 +508,11 @@ class AssignmentBoundaryTests(unittest.TestCase):
                 "Find public methodology",
                 "use secret sk-examplecredential123456",
                 "secret-like value",
+            ),
+            (
+                "Find public methodology",
+                "Research records about jane.doe@example.com",
+                "email address",
             ),
         ]
         for index, (task, query, reason) in enumerate(cases, start=1):

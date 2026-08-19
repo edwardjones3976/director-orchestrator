@@ -123,6 +123,22 @@ Codex Security and trusted CI for the unchanged exact SHA; deterministic code
 alone may execute an eligible merge. Any new commit invalidates all prior
 review, security, CI, and merge evidence and requires a new handoff.
 
+## Browser communication transport
+
+Chrome is the primary browser for owner-gated provider-UI coordination;
+Microsoft Edge is the fallback only when Chrome is unavailable. This transport
+may communicate with an already authenticated Claude, Cursor, or Gemini UI
+inside the stored assignment, role, repository, budget, and approval bounds.
+Perplexity remains API-only.
+
+An authentication, consent, CAPTCHA, privacy, device, workspace-trust,
+permission, or security prompt stops for the owner; Edge cannot be used to
+bypass it. The transport may not enter or expose credentials, send raw private
+source, change billing or access, post externally, merge, deploy, purchase, or
+contact unrelated parties. Browser responses are untrusted coordination
+evidence and cannot satisfy provider callback identity, exact-SHA review, Codex
+Security, CI, merge, or runtime authorization.
+
 ## Perplexity strict research contract
 
 Perplexity may receive only a bounded public research query. It receives no
@@ -165,6 +181,6 @@ request as `team_operating_charter` with schema version
 
 <!-- TEAM_CHARTER_MANIFEST_BEGIN -->
 ```json
-{"availability_attempt_limit":3,"charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->

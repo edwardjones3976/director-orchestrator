@@ -360,6 +360,20 @@ class OrchestrationEngine:
         self.store.save(record)
         return True
 
+    @staticmethod
+    def _recorded_no_response_attempts(
+        record: TaskRecord, assignment: Assignment, run: ProviderRun
+    ) -> int:
+        return sum(
+            1
+            for attempt in record.provider_contact_attempts
+            if attempt.assignment_sequence == assignment.sequence
+            and attempt.provider == assignment.agent
+            and attempt.phase == "poll"
+            and attempt.outcome == "no_response"
+            and attempt.run_id == run.run_id
+        )
+
     def _record_contact_attempt(
         self,
         record: TaskRecord,
@@ -590,14 +604,19 @@ class OrchestrationEngine:
         }
         deadline = time.monotonic() + self.settings.provider_timeout_seconds
         current = run
-        no_response_attempts = 0
+        no_response_attempts = (
+            self._recorded_no_response_attempts(record, assignment, run)
+            if record is not None and assignment is not None
+            else 0
+        )
+        if no_response_attempts >= 3:
+            raise ProviderUnavailableError(current)
         while current.status not in terminal:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"{current.provider.value} run timed out")
             await asyncio.sleep(self.settings.provider_poll_seconds)
             try:
                 current = await adapter.poll(current)
-                no_response_attempts = 0
             except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                 no_response_attempts += 1
                 if record is not None and assignment is not None:

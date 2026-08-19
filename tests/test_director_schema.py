@@ -197,6 +197,11 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
+        browser = charter["browser_communication_policy"]
+        self.assertEqual(browser["primary"], "chrome")
+        self.assertEqual(browser["fallback"], "microsoft_edge")
+        self.assertEqual(browser["eligible_providers"], ["claude", "cursor", "gemini"])
+        self.assertTrue(any("untrusted coordination evidence" in rule for rule in browser["rules"]))
         cursor = charter["role_profiles"]["cursor"]
         self.assertEqual(cursor["capability_parity_target"], 0.9)
         self.assertEqual(cursor["comparison_peers"], ["claude", "openai_codex"])

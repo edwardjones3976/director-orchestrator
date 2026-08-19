@@ -90,6 +90,19 @@ def bind_review_handoff(
     if candidate.base_ref != producer_assignment.starting_ref:
         raise ValueError("review candidate base ref does not match the producer assignment")
 
+    recorded_material_authors = {
+        producer_assignment.agent,
+        *(
+            outcome.provider
+            for outcome in record.assignment_outcomes
+            if outcome.assignment_sequence in producer_assignment.depends_on
+        ),
+    }
+    if set(candidate.material_authors) != recorded_material_authors:
+        raise ValueError(
+            "review candidate material authors do not match recorded orchestration provenance"
+        )
+
     reviewers = [
         assignment
         for assignment in record.plan.assignments
@@ -114,7 +127,7 @@ def bind_review_handoff(
         "assignment_id": f"{record.task_id}:{reviewer.sequence}",
         "producer_assignment_id": candidate.assignment_id,
         "logical_producer": candidate.logical_producer.value,
-        "material_authors": [provider.value for provider in candidate.material_authors],
+        "material_authors": sorted(provider.value for provider in recorded_material_authors),
         "reviewer_provider": reviewer.agent.value,
         "repository": candidate.repository,
         "pull_number": candidate.pull_number,
@@ -124,6 +137,7 @@ def bind_review_handoff(
         "head_sha": candidate.head_sha,
         "implementation_actor": candidate.implementation_actor,
         "artifact_digest": candidate.artifact_digest,
+        "required_review_artifact_id": candidate.artifact_digest,
         "changed_files": candidate.changed_files,
         "tests": candidate.tests,
         "known_limitations": candidate.known_limitations,

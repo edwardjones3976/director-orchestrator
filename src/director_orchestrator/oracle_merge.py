@@ -170,6 +170,52 @@ def authenticate_provider_review_artifact(
         )
     if implementation.provider == run.provider:
         raise ValueError("review provider cannot accept its own implementation outcome")
+    try:
+        handoff = json.loads(assignment.task)
+    except json.JSONDecodeError:
+        handoff = None
+    if isinstance(handoff, dict) and handoff.get("schema_version") == (
+        "director-review-handoff/v1"
+    ):
+        expected_digest = handoff.get("artifact_digest")
+        if not isinstance(expected_digest, str) or not hmac.compare_digest(
+            record.review_handoff_digests.get(sequence, ""), expected_digest
+        ):
+            raise ValueError("stored review handoff digest is missing or changed")
+        expected = {
+            "artifact_id": handoff.get("required_review_artifact_id"),
+            "assignment_id": handoff.get("assignment_id"),
+            "repository": handoff.get("repository"),
+            "pull_number": handoff.get("pull_number"),
+            "base_ref": handoff.get("base_ref"),
+            "base_sha": handoff.get("base_sha"),
+            "head_ref": handoff.get("head_ref"),
+            "head_sha": handoff.get("head_sha"),
+            "implementation_provider": handoff.get("logical_producer"),
+            "implementation_actor": handoff.get("implementation_actor"),
+            "reviewer_provider": handoff.get("reviewer_provider"),
+        }
+        actual = {
+            "artifact_id": artifact.artifact_id,
+            "assignment_id": artifact.assignment_id,
+            "repository": artifact.repository,
+            "pull_number": artifact.pull_number,
+            "base_ref": artifact.base_ref,
+            "base_sha": artifact.base_sha,
+            "head_ref": artifact.head_ref,
+            "head_sha": artifact.head_sha,
+            "implementation_provider": artifact.implementation_provider,
+            "implementation_actor": artifact.implementation_actor,
+            "reviewer_provider": artifact.reviewer_provider,
+        }
+        mismatched = sorted(
+            key for key, value in expected.items() if actual[key] != value
+        )
+        if mismatched:
+            raise ValueError(
+                "review artifact does not match the stored handoff: "
+                + ", ".join(mismatched)
+            )
     review_context = "\n".join([assignment.task, *assignment.acceptance]).lower()
     if "review" not in review_context or artifact.head_sha not in review_context:
         raise ValueError("provider assignment was not pinned to the exact reviewed head SHA")
