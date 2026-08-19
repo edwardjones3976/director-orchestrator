@@ -552,3 +552,32 @@ class AssignmentBoundaryTests(unittest.TestCase):
             with self.subTest(index=index):
                 errors = execution_policy_errors(plan, settings)
                 self.assertTrue(any(reason in error for error in errors), errors)
+
+    def test_public_research_identifiers_are_not_misclassified_as_phone_numbers(self):
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        for query in ("calibration paper arXiv 2408.12345", "compare evidence from 2018 2019 2020"):
+            plan = DirectorPlan(
+                project="demo",
+                normalized_outcome="Bounded public research",
+                risk_level=RiskLevel.LOW,
+                approval_required=False,
+                max_hops=1,
+                max_revisions=0,
+                assignments=[
+                    Assignment(
+                        sequence=1,
+                        agent=ProviderName.PERPLEXITY,
+                        task="Find public methodology",
+                        acceptance=["Return public sources"],
+                        public_research_query=query,
+                    )
+                ],
+                final_acceptance=["Primary team evaluates evidence"],
+            )
+            with self.subTest(query=query):
+                self.assertEqual(execution_policy_errors(plan, settings), [])
