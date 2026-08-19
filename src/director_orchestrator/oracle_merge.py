@@ -404,6 +404,7 @@ class OracleMergePolicy:
         self.required_checks = settings.oracle_automerge_required_checks
         self.required_check_app = settings.oracle_automerge_required_check_app
         self.review_secret = settings.oracle_automerge_review_secret
+        self.provider_actor_map = settings.oracle_provider_actor_map()
 
     @staticmethod
     def _added_patch_text(snapshot: OraclePullRequestSnapshot) -> str:
@@ -442,6 +443,21 @@ class OracleMergePolicy:
             errors.append("the exact-SHA reviewer must be Claude or Cursor")
         if artifact.reviewer_provider.lower() == artifact.implementation_provider.lower():
             errors.append("the implementation author cannot accept its own work")
+        producer_actors = self.provider_actor_map.get(
+            artifact.implementation_provider.lower(), frozenset()
+        )
+        reviewer_actors = self.provider_actor_map.get(
+            artifact.reviewer_provider.lower(), frozenset()
+        )
+        implementation_actor = artifact.implementation_actor.lower()
+        if not producer_actors:
+            errors.append("implementation provider has no trusted GitHub actor binding")
+        elif implementation_actor not in producer_actors:
+            errors.append("implementation actor is not bound to the implementation provider")
+        if not reviewer_actors:
+            errors.append("review provider has no trusted GitHub actor binding")
+        elif implementation_actor in reviewer_actors:
+            errors.append("implementation actor is also controlled by the review provider")
         if artifact.implementation_actor.lower() != snapshot.author_login.lower():
             errors.append("pull request author does not match the recorded implementation actor")
 
