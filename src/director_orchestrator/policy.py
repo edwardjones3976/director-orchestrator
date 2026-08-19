@@ -36,10 +36,31 @@ _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("diff or source excerpt", re.compile(r"(?:diff --git|@@ -\d|```(?:python|javascript|typescript|diff|json)?\s)", re.I)),
     ("private-context language", re.compile(r"\b(?:private|internal|unpublished|our repository|our code|attached patch)\b", re.I)),
     ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
-    ("phone number", re.compile(r"(?<!\w)(?:\+\d{8,15}|\+\d{1,3}(?:[\s.-]\(?\d{1,4}\)?){2,5}|(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})(?!\w)")),
     ("UUID", re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)),
     ("Slack identifier", re.compile(r"\b[CUW](?=[A-Z0-9]{8,}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{8,}\b", re.I)),
 )
+
+_NORTH_AMERICAN_PHONE = re.compile(
+    r"(?<!\w)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\w)"
+)
+_INTERNATIONAL_PHONE_PUNCTUATION = frozenset(" ().-")
+
+
+def _contains_phone_number(value: str) -> bool:
+    if _NORTH_AMERICAN_PHONE.search(value):
+        return True
+    for start, character in enumerate(value):
+        if character != "+":
+            continue
+        digit_count = 0
+        for candidate_character in value[start + 1 : start + 42]:
+            if candidate_character.isdecimal():
+                digit_count += 1
+                if digit_count >= 8:
+                    return True
+            elif candidate_character not in _INTERNATIONAL_PHONE_PUNCTUATION:
+                break
+    return False
 
 
 def deterministic_approval_reasons(text: str) -> list[str]:
@@ -105,6 +126,10 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                         f"assignment {assignment.sequence}: Perplexity research cannot receive {label} authority"
                     )
             if assignment.public_research_query:
+                if _contains_phone_number(assignment.public_research_query):
+                    errors.add(
+                        f"assignment {assignment.sequence}: Perplexity public research query contains phone number"
+                    )
                 for label, pattern in _PUBLIC_RESEARCH_QUERY_BLOCKS:
                     if pattern.search(assignment.public_research_query):
                         errors.add(
