@@ -44,7 +44,7 @@ _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _NORTH_AMERICAN_PHONE = re.compile(
     r"(?<!\w)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\w)"
 )
-_SIGNED_PUBLIC_NUMBER = re.compile(r"(?<!\w)\+\d+(?:\.\d+)?(?![\w.])")
+_SIGNED_PUBLIC_NUMBER = re.compile(r"(?<!\w)\+0\.\d+(?![\w.])")
 _INTERNATIONAL_PHONE_PUNCTUATION = frozenset("()/.\u2212")
 
 
@@ -64,22 +64,19 @@ def _contains_phone_number(value: str) -> bool:
         if character != "+":
             continue
         digit_count = 0
-        has_separator = False
         candidate_characters: list[str] = []
         for candidate_character in normalized_value[start + 1 : start + 42]:
             if candidate_character.isdecimal():
                 digit_count += 1
                 candidate_characters.append(candidate_character)
             elif _is_international_phone_separator(candidate_character):
-                has_separator = True
                 candidate_characters.append(candidate_character)
             else:
                 break
         normalized_candidate = ("+" + "".join(candidate_characters)).strip()
         if _SIGNED_PUBLIC_NUMBER.fullmatch(normalized_candidate) is not None:
-            if "." in normalized_candidate or digit_count <= 8:
-                continue
-        if digit_count >= (8 if has_separator else 10):
+            continue
+        if digit_count >= 8:
             return True
     return False
 

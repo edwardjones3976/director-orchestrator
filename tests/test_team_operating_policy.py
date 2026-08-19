@@ -564,6 +564,16 @@ class AssignmentBoundaryTests(unittest.TestCase):
                 "Research records for +49 30/901820",
                 "phone number",
             ),
+            (
+                "Find public methodology",
+                "Research records for +376123456",
+                "phone number",
+            ),
+            (
+                "Find public methodology",
+                "Research records for +4420.79460958",
+                "phone number",
+            ),
         ]
         for index, (task, query, reason) in enumerate(cases, start=1):
             plan = DirectorPlan(
@@ -599,7 +609,6 @@ class AssignmentBoundaryTests(unittest.TestCase):
             "calibration paper arXiv 2408.12345",
             "compare evidence from 2018 2019 2020",
             "signed effect +0.12345678",
-            "signed integer +12345678",
         ):
             plan = DirectorPlan(
                 project="demo",
