@@ -462,12 +462,12 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.session_id, "environment-1")
         self.assertEqual(run.assignment_sequence, 1)
 
-    async def test_gemini_usage_check_remains_pollable(self):
+    async def test_gemini_usage_check_is_stateless_low_cost_and_never_starts_antigravity(self):
         settings = replace(
             Settings(),
             gemini_api_key="test-gemini",
             gemini_api_revision="2026-05-20",
-            gemini_agent="antigravity-preview-05-2026",
+            gemini_usage_model="gemini-3.5-flash-lite",
         )
         RecordingAsyncClient.responses = [
             {"id": "interaction-1", "status": "completed", "output_text": "STATUS=OK"}
@@ -477,11 +477,69 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             run = await GeminiAdapter(settings).usage_check("probe")
 
         request = RecordingAsyncClient.calls[0]
-        self.assertEqual(request["json"]["agent"], "antigravity-preview-05-2026")
-        self.assertTrue(request["json"]["background"])
-        self.assertTrue(request["json"]["store"])
-        self.assertNotIn("model", request["json"])
+        self.assertEqual(request["json"]["model"], "gemini-3.5-flash-lite")
+        self.assertFalse(request["json"]["store"])
+        self.assertNotIn("agent", request["json"])
+        self.assertNotIn("background", request["json"])
+        self.assertNotIn("environment", request["json"])
         self.assertEqual(run.status, "completed")
+        self.assertEqual(run.attempt_count, 1)
+
+    async def test_gemini_usage_check_retries_only_explicit_429_with_bounded_delay(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_usage_max_attempts=3,
+            gemini_usage_max_retry_delay_seconds=8,
+        )
+        RecordingAsyncClient.responses = [
+            FakeResponse(
+                {"error": {"status": "RATE_LIMIT_EXCEEDED"}},
+                status_code=429,
+                headers={"Retry-After": "60"},
+            ),
+            {"id": "interaction-2", "status": "completed", "output_text": "STATUS=OK"},
+        ]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep") as sleep,
+        ):
+            run = await GeminiAdapter(settings).usage_check("probe")
+
+        self.assertEqual(len(RecordingAsyncClient.calls), 2)
+        sleep.assert_awaited_once_with(8.0)
+        self.assertEqual(run.attempt_count, 2)
+
+    async def test_gemini_usage_check_records_final_quota_code_without_response_text(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_usage_max_attempts=3,
+            gemini_usage_max_retry_delay_seconds=0,
+        )
+        rate_limit = FakeResponse(
+            {
+                "error": {
+                    "status": "RESOURCE_EXHAUSTED",
+                    "message": "account-specific detail must not enter the error",
+                }
+            },
+            status_code=429,
+        )
+        RecordingAsyncClient.responses = [rate_limit, rate_limit, rate_limit]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep"),
+        ):
+            with self.assertRaises(ProviderError) as captured:
+                await GeminiAdapter(settings).usage_check("probe")
+
+        self.assertEqual(captured.exception.code, "resource_exhausted")
+        self.assertEqual(captured.exception.attempt_count, 3)
+        self.assertNotIn("account-specific", str(captured.exception))
+        self.assertEqual(len(RecordingAsyncClient.calls), 3)
 
     async def test_perplexity_usage_check_uses_synchronous_agent_contract(self):
         settings = replace(

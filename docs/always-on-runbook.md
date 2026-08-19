@@ -30,7 +30,7 @@ docker compose logs --tail 100 orchestrator slackbot
 
 Healthy means the orchestrator is `healthy`, Slackbot and n8n are `running`, and `http://localhost:8080/health` returns `"ok": true`.
 
-The health response also includes `usage_monitor`. Its `latest` list shows the most recent bounded check for each provider without exposing model replies or credentials. Periodic checks remain dormant unless both `USAGE_CHECK_ENABLED=true` and `ALLOW_PAID_RUNS=true`.
+The health response also includes `usage_monitor`. Its `latest` list shows freshness, completion confidence, attempts, normalized quota code, tokens, and provider-reported cost without exposing model replies or credentials. `all_configured_have_recent_signal` is false for missing, stale, skipped, or failed providers. A Claude `prompted` record is explicitly listed under `pending_completion_providers`; it proves Routine intake only, not callback completion. `daily_accounting` reports bounded request/retry/token/quota totals and never invents missing cost. Periodic checks remain dormant unless both `USAGE_CHECK_ENABLED=true` and `ALLOW_PAID_RUNS=true`.
 
 ## Periodic usage-check operation
 

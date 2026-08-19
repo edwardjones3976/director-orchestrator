@@ -130,6 +130,16 @@ class Settings:
     )
     gemini_agent: str = os.getenv("GEMINI_AGENT", "antigravity-preview-05-2026")
     gemini_api_revision: str = os.getenv("GEMINI_API_REVISION", "2026-05-20")
+    gemini_usage_model: str = os.getenv(
+        "GEMINI_USAGE_MODEL", "gemini-3.5-flash-lite"
+    )
+    gemini_usage_max_attempts: int = _int("GEMINI_USAGE_MAX_ATTEMPTS", 3)
+    gemini_usage_max_retry_delay_seconds: int = _int(
+        "GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS", 8
+    )
+    gemini_max_total_tokens: int = _int("GEMINI_MAX_TOTAL_TOKENS", 20_000)
+    gemini_daily_budget_usd: float = _float("GEMINI_DAILY_BUDGET_USD", 2.0)
+    gemini_daily_request_limit: int = _int("GEMINI_DAILY_REQUEST_LIMIT", 50)
 
     perplexity_enabled: bool = _bool("PERPLEXITY_ENABLED", False)
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
@@ -142,12 +152,31 @@ class Settings:
     ).strip().lower()
     perplexity_timeout_seconds: int = _int("PERPLEXITY_TIMEOUT_SECONDS", 180)
     perplexity_daily_budget_usd: float = _float("PERPLEXITY_DAILY_BUDGET_USD", 2.0)
+    perplexity_daily_request_limit: int = _int(
+        "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
+    )
     perplexity_allow_repository_write: bool = _bool(
         "PERPLEXITY_ALLOW_REPOSITORY_WRITE", False
     )
     perplexity_allow_review_verdict: bool = _bool(
         "PERPLEXITY_ALLOW_REVIEW_VERDICT", False
     )
+
+    def gemini_supplemental_readiness(self) -> dict[str, bool]:
+        return {
+            "credential_configured": bool(self.gemini_api_key),
+            "agent_configured": bool(self.gemini_agent),
+            "usage_model_configured": bool(self.gemini_usage_model),
+            "usage_retry_attempts_valid": 1 <= self.gemini_usage_max_attempts <= 5,
+            "usage_retry_delay_valid": 0
+            <= self.gemini_usage_max_retry_delay_seconds
+            <= 60,
+            "token_budget_valid": 1 <= self.gemini_max_total_tokens <= 1_000_000,
+            "daily_budget_valid": 0 < self.gemini_daily_budget_usd <= 1_000,
+            "daily_request_limit_valid": 1
+            <= self.gemini_daily_request_limit
+            <= 100_000,
+        }
 
     def perplexity_research_readiness(self) -> dict[str, bool]:
         return {
@@ -159,6 +188,9 @@ class Settings:
             in {"low", "medium", "high"},
             "timeout_valid": 1 <= self.perplexity_timeout_seconds <= 1_800,
             "budget_valid": 0 < self.perplexity_daily_budget_usd <= 1_000,
+            "daily_request_limit_valid": 1
+            <= self.perplexity_daily_request_limit
+            <= 100_000,
             "repository_write_disabled": not self.perplexity_allow_repository_write,
             "review_verdict_disabled": not self.perplexity_allow_review_verdict,
         }
@@ -169,7 +201,7 @@ class Settings:
             "openai_director": bool(self.openai_api_key),
             "cursor": bool(self.cursor_api_key),
             "claude": bool(self.claude_routine_url and self.claude_routine_token),
-            "gemini": bool(self.gemini_api_key),
+            "gemini": all(self.gemini_supplemental_readiness().values()),
             "perplexity": all(self.perplexity_research_readiness().values()),
         }
 

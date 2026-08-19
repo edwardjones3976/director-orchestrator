@@ -6,7 +6,7 @@ Perplexity evidence boundaries are defined in
 
 ## Shared periodic usage-check behavior
 
-The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt. The prompt instructs the provider not to browse, call tools, inspect repositories, edit files, create branches or pull requests, or perform project work. This is an instruction rather than a provider-side sandbox for agent products such as Cursor and Gemini, so provider-side spend limits remain required. The monitor records provider-returned token metadata when available and sends only a bounded status summary to Slack.
+The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt. The prompt instructs the provider not to browse, call tools, inspect repositories, edit files, create branches or pull requests, or perform project work. This is an instruction rather than a provider-side sandbox for agent products such as Cursor and Gemini, so provider-side spend limits remain required. The monitor records provider-returned tokens and cost when available, bounded attempts, and normalized quota failures; it never invents missing cost telemetry.
 
 These probes consume provider usage and are opt-in through `USAGE_CHECK_ENABLED=true`. They are also disabled by the global paid-run gate and cannot execute while `ALLOW_PAID_RUNS=false`. The default interval is 360 minutes and the enforced minimum is 15 minutes, including manual runs. `POST /v1/usage-checks/run` returns a structured schedule (`accepted` / `not_due` / `busy`) so callers know which providers were actually scheduled before waiting for records. Account dashboards, not model prose, remain authoritative for plan balances and billing.
 
@@ -60,6 +60,7 @@ PERPLEXITY_MAX_RESULTS=10
 PERPLEXITY_SEARCH_CONTEXT_SIZE=high
 PERPLEXITY_TIMEOUT_SECONDS=180
 PERPLEXITY_DAILY_BUDGET_USD=2.00
+PERPLEXITY_DAILY_REQUEST_LIMIT=100
 PERPLEXITY_ALLOW_REPOSITORY_WRITE=false
 PERPLEXITY_ALLOW_REVIEW_VERDICT=false
 ```
@@ -81,9 +82,11 @@ only for the bounded availability/usage prompt.
 
 The adapter refuses to run unless every research-only control is valid. It also
 rejects draft-PR authority and any assignment whose estimated cost exceeds
-`PERPLEXITY_DAILY_BUDGET_USD`. That value is a fail-closed per-assignment ceiling,
-not aggregate billing telemetry; configure an API Platform budget/credit control
-as the authoritative daily spend backstop. Only after billing and the dedicated
+`PERPLEXITY_DAILY_BUDGET_USD`. It is a fail-closed per-assignment ceiling and the
+usage monitor stops new probes after provider-reported daily cost reaches it.
+`PERPLEXITY_DAILY_REQUEST_LIMIT` bounds daily monitor requests. Provider-reported
+cost may be incomplete, so configure an API Platform budget/credit control as the
+authoritative daily spend backstop. Only after billing and the dedicated
 key are ready should an operator set `PERPLEXITY_ENABLED=true` and include
 `perplexity` in `USAGE_CHECK_PROVIDERS` if periodic checks are desired.
 
@@ -93,14 +96,23 @@ The Gemini adapter uses the REST Interactions API; it does not call the legacy
 `generateContent` endpoint. `GEMINI_AGENT` names the managed Antigravity agent and
 is sent as the request's `agent` field. New runs use `environment=remote`, while a
 revision reuses the `environment_id` returned by the prior interaction together
-with `previous_interaction_id`.
+with `previous_interaction_id`. Availability checks instead use the low-cost
+`GEMINI_USAGE_MODEL=gemini-3.5-flash-lite` statelessly with `store=false`; they do
+not provision an Antigravity sandbox. Explicit 429 responses receive at most
+`GEMINI_USAGE_MAX_ATTEMPTS` bounded attempts, and the final normalized quota code
+is persisted without provider response text or credentials.
 
-All Gemini calls are bounded background interactions with `store=true`. Google
-requires stored state for background polling. Terminal output is read from the
+Managed-agent Gemini calls are bounded background interactions with `store=true`.
+Google requires stored state for background polling. Terminal output is read from the
 `model_output` entries in the Interaction `steps` timeline, with `output_text`
 accepted only as an SDK-compatible convenience field. `requires_action` and
 `budget_exceeded` fail closed; the Director never loops indefinitely or treats
 those statuses as successful completion.
+
+`GEMINI_MAX_TOTAL_TOKENS` caps managed-agent runs. The monitor enforces
+`GEMINI_DAILY_REQUEST_LIMIT` for its own probes and reports request, retry, token,
+quota-failure, and provider-reported-cost totals. Google AI Studio billing and
+quota settings remain the authoritative spend backstop when Gemini omits cost.
 
 Gemini remains an optional supplemental specialist. Installing its developer
 documentation tooling does not configure `GEMINI_API_KEY`, enable Gemini usage

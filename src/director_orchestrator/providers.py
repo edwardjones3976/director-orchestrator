@@ -16,7 +16,16 @@ _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        attempt_count: int = 1,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.attempt_count = attempt_count
 
 
 def _response_error_blob(response: httpx.Response) -> str:
@@ -405,10 +414,19 @@ class GeminiAdapter(ProviderAdapter):
                     chunks.append(content["text"])
         return "".join(chunks) or None
 
-    def _run(self, payload: dict[str, Any], *, session_id: str | None = None) -> ProviderRun:
+    def _run(
+        self,
+        payload: dict[str, Any],
+        *,
+        session_id: str | None = None,
+        fallback_run_id: str | None = None,
+    ) -> ProviderRun:
+        run_id = payload.get("id") or fallback_run_id
+        if not run_id:
+            raise ProviderError("Gemini Interaction response did not include an ID")
         return ProviderRun(
             provider=self.name,
-            run_id=payload["id"],
+            run_id=run_id,
             session_id=payload.get("environment_id") or session_id,
             status=payload.get("status", "in_progress"),
             result=self._output_text(payload),
@@ -423,6 +441,31 @@ class GeminiAdapter(ProviderAdapter):
             "Api-Revision": self.settings.gemini_api_revision,
         }
 
+    @staticmethod
+    def _error_code(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError, TypeError):
+            payload = {}
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            for key in ("status", "code"):
+                value = error.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip().lower()[:100]
+        return f"http_{response.status_code}"
+
+    def _usage_retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get("Retry-After")
+        try:
+            parsed = float(retry_after) if retry_after is not None else float(2**attempt)
+        except (TypeError, ValueError):
+            parsed = float(2**attempt)
+        return min(
+            max(parsed, 0.0),
+            float(max(0, self.settings.gemini_usage_max_retry_delay_seconds)),
+        )
+
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
         prompt = f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"
         body = {
@@ -431,6 +474,10 @@ class GeminiAdapter(ProviderAdapter):
             "environment": "remote",
             "background": True,
             "store": True,
+            "agent_config": {
+                "type": "antigravity",
+                "max_total_tokens": self.settings.gemini_max_total_tokens,
+            },
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
@@ -462,6 +509,10 @@ class GeminiAdapter(ProviderAdapter):
             "input": prompt,
             "background": True,
             "store": True,
+            "agent_config": {
+                "type": "antigravity",
+                "max_total_tokens": self.settings.gemini_max_total_tokens,
+            },
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
@@ -473,22 +524,35 @@ class GeminiAdapter(ProviderAdapter):
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         body = {
-            "agent": self.settings.gemini_agent,
+            "model": self.settings.gemini_usage_model,
             "input": prompt,
-            "environment": "remote",
-            "background": True,
-            # Background Interactions must be stored so the returned ID remains pollable.
-            "store": True,
+            "store": False,
         }
+        max_attempts = max(1, min(self.settings.gemini_usage_max_attempts, 5))
         async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.settings.gemini_api_base}/interactions",
-                headers=self.headers,
-                json=body,
-            )
-            response.raise_for_status()
+            for attempt in range(1, max_attempts + 1):
+                response = await client.post(
+                    f"{self.settings.gemini_api_base}/interactions",
+                    headers=self.headers,
+                    json=body,
+                )
+                if response.status_code < 400:
+                    break
+                if response.status_code != 429:
+                    response.raise_for_status()
+                code = self._error_code(response)
+                if attempt >= max_attempts:
+                    raise ProviderError(
+                        f"Gemini usage check failed with {code} after {attempt} bounded attempts",
+                        code=code,
+                        attempt_count=attempt,
+                    )
+                await asyncio.sleep(self._usage_retry_delay(response, attempt - 1))
         payload = response.json()
-        return self._run(payload)
+        return self._run(
+            payload,
+            fallback_run_id="gemini-stateless-usage-check",
+        ).model_copy(update={"attempt_count": attempt})
 
 
 class PerplexityAdapter(ProviderAdapter):

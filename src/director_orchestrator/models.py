@@ -114,6 +114,7 @@ class ProviderRun(BaseModel):
     session_id: str | None = None
     url: str | None = None
     result: str | None = None
+    attempt_count: int = Field(default=1, ge=1, le=10)
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -128,6 +129,9 @@ class UsageCheckRecord(BaseModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
+    reported_cost_usd: float | None = Field(default=None, ge=0)
+    attempt_count: int = Field(default=1, ge=0, le=10)
+    provider_error_code: str | None = Field(default=None, min_length=1, max_length=100)
     raw_usage: dict[str, Any] = Field(default_factory=dict)
     error: str | None = Field(default=None, max_length=2_000)
 
