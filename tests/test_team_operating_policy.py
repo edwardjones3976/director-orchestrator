@@ -125,6 +125,7 @@ class ReviewHandoffTests(unittest.TestCase):
             assignment_sequence=1,
             run_id="cursor-run-1",
             status="FINISHED",
+            evidence_source="provider_authenticated",
             result=json.dumps(
                 review_candidate_payload(material_authors=material_authors),
                 separators=(",", ":"),
@@ -219,11 +220,19 @@ class ReviewHandoffTests(unittest.TestCase):
             assignment_sequence=2,
             run_id="claude-review-run",
             status="completed",
+            evidence_source="provider_authenticated",
             result=json.dumps(payload),
         )
         record.provider_runs.append(review_run)
         authenticated = authenticate_provider_review_artifact(record, review_run, "secret")
         self.assertIsNotNone(authenticated)
+
+        review_run.evidence_source = "owner_recovery"
+        record.provider_runs[-1] = review_run
+        with self.assertRaisesRegex(ValueError, "authenticated provider evidence"):
+            authenticate_provider_review_artifact(record, review_run, "secret")
+        review_run.evidence_source = "provider_authenticated"
+        record.provider_runs[-1] = review_run
 
         for field, changed in (("pull_number", 18), ("implementation_actor", "other-actor")):
             with self.subTest(field=field):
@@ -240,6 +249,13 @@ class ReviewHandoffTests(unittest.TestCase):
         run.result = json.dumps(payload)
 
         with self.assertRaisesRegex(ValidationError, "digest"):
+            self.bind(record, producer, run)
+
+    def test_owner_recovery_result_cannot_become_provider_review_authority(self):
+        record, producer, run = self.record()
+        run.evidence_source = "owner_recovery"
+
+        with self.assertRaisesRegex(ValueError, "provider-authenticated"):
             self.bind(record, producer, run)
 
     def test_nonwrite_and_unapproved_producers_cannot_arm_review(self):
@@ -359,6 +375,7 @@ class ReviewHandoffTests(unittest.TestCase):
             assignment_sequence=3,
             run_id="cursor-final",
             status="FINISHED",
+            evidence_source="provider_authenticated",
             result=json.dumps(payload),
         )
 

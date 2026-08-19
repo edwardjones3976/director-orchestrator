@@ -100,9 +100,14 @@ model-generated text is public.
 If a provider dispatch times out after transmission, ordinary approval cannot retry it.
 Reconcile the exact pending assignment through
 `POST /v1/tasks/{task_id}/dispatch-reconciliation`: record either an existing provider run
-(`created`, with its run ID/status) or provider-dashboard evidence that no run was created
-(`not_created`). Only the latter permits one new dispatch. This prevents an ambiguous paid
-request from being duplicated by task recovery or a generic approval.
+(`created`, with only its run ID and required session ID) or provider-dashboard evidence that
+no run was created (`not_created`). A caller cannot supply status, result, or URL as provider
+evidence: Cursor and Gemini are polled through their authenticated APIs, while Claude must
+complete through its authenticated callback. Synchronous Perplexity searches cannot be adopted
+by run ID. Only `not_created` permits one new dispatch. Initial and revision requests use this
+same rule, preventing ambiguous paid work from being duplicated by recovery or generic approval.
+Owner-supplied manual recovery text remains operational evidence only and cannot authorize an
+exact-SHA review handoff or merge.
 
 An immutable Claude or Cursor review artifact must validate as
 `OracleReviewArtifact`. A secret-free shape is available in

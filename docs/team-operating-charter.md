@@ -112,8 +112,11 @@ changed. An unavailable provider cannot indefinitely block unrelated work.
 
 The attempt rule never authorizes duplicate paid work. If a dispatch may have
 created a provider run but returned ambiguously, the Director does not repeat
-the dispatch merely to reach three attempts. That lane stops for owner
-resolution while independent safe lanes may continue.
+the initial or revision dispatch merely to reach three attempts. That lane stops
+for owner reconciliation of the provider identifiers; result evidence must still
+arrive from the authenticated provider API or callback. Owner-supplied recovery
+text cannot become exact-SHA review or merge authority. Independent safe lanes
+may continue.
 
 ## Review-to-merge handoff
 

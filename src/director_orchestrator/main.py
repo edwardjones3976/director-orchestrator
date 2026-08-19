@@ -15,6 +15,7 @@ from .approvals import (
     apply_failed_predispatch_retry,
     apply_owner_approval,
     owner_identity_matches,
+    reset_for_owner_clarification,
 )
 from .callbacks import (
     CallbackConflict,
@@ -177,14 +178,7 @@ def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) 
         if not approval.note.strip() or approval.note == "Approved":
             raise HTTPException(status_code=409, detail="This task needs a written clarification, not a bare approval")
         record.intake.text += f"\n\nOwner clarification: {approval.note.strip()}"
-        record.plan = None
-        record.next_assignment_index = 0
-        record.provider_runs = []
-        record.owner_approved = False
-        # The plan is rebuilt from the clarified text, so sequence numbers from
-        # the discarded plan must not carry over.
-        record.approved_assignments = []
-        record.approved_assignment_digests = {}
+        reset_for_owner_clarification(record)
     else:
         try:
             apply_owner_approval(record, approval)

@@ -18,7 +18,7 @@ from .models import (
     UsageCheckRunStatus,
     UsageCheckStatus,
 )
-from .providers import ProviderAdapter, provider_registry
+from .providers import GeminiAdapter, ProviderAdapter, provider_registry
 from .store import TaskStore
 
 
@@ -220,6 +220,17 @@ class UsageMonitor:
             return "Provider reported daily cost limit reached"
         return None
 
+    def _supplemental_remaining_requests(
+        self, provider: str, now: datetime
+    ) -> int | None:
+        if provider not in {"gemini", "perplexity"}:
+            return None
+        accounting = self._daily_accounting(provider, now)
+        request_limit = accounting["daily_request_limit"]
+        if not isinstance(request_limit, int):
+            return None
+        return max(0, request_limit - accounting["request_count"])
+
     def partition_providers(
         self, *, force: bool, now: datetime | None = None
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -331,11 +342,19 @@ class UsageMonitor:
             current = await adapter.poll(current)
         return current
 
-    async def _prompt(self, provider: str) -> ProviderRun:
+    async def _prompt(
+        self, provider: str, *, remaining_requests: int | None = None
+    ) -> ProviderRun:
         if provider == "openai":
             return await self._openai_usage_check()
         adapter = self.adapters[ProviderName(provider)]
-        run = await adapter.usage_check(USAGE_CHECK_PROMPT)
+        if provider == "gemini" and isinstance(adapter, GeminiAdapter):
+            run = await adapter.usage_check(
+                USAGE_CHECK_PROMPT,
+                max_attempts=remaining_requests,
+            )
+        else:
+            run = await adapter.usage_check(USAGE_CHECK_PROMPT)
         return await self._wait(adapter, run)
 
     def _record_from_run(self, cycle_id: str, provider: str, run: ProviderRun) -> UsageCheckRecord:
@@ -456,7 +475,12 @@ class UsageMonitor:
                         )
                     else:
                         try:
-                            run = await self._prompt(provider)
+                            run = await self._prompt(
+                                provider,
+                                remaining_requests=self._supplemental_remaining_requests(
+                                    provider, now
+                                ),
+                            )
                             record = self._record_from_run(cycle_id, provider, run)
                         except Exception as exc:
                             record = UsageCheckRecord(

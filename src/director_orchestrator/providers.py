@@ -528,15 +528,19 @@ class GeminiAdapter(ProviderAdapter):
             update={"assignment_sequence": run.assignment_sequence}
         )
 
-    async def usage_check(self, prompt: str) -> ProviderRun:
+    async def usage_check(
+        self, prompt: str, *, max_attempts: int | None = None
+    ) -> ProviderRun:
         body = {
             "model": self.settings.gemini_usage_model,
             "input": prompt,
             "store": False,
         }
-        max_attempts = max(1, min(self.settings.gemini_usage_max_attempts, 5))
+        configured_attempts = max(1, min(self.settings.gemini_usage_max_attempts, 5))
+        if max_attempts is not None:
+            configured_attempts = min(configured_attempts, max(1, max_attempts))
         async with httpx.AsyncClient(timeout=60) as client:
-            for attempt in range(1, max_attempts + 1):
+            for attempt in range(1, configured_attempts + 1):
                 response = await client.post(
                     f"{self.settings.gemini_api_base}/interactions",
                     headers=self.headers,
@@ -547,7 +551,7 @@ class GeminiAdapter(ProviderAdapter):
                 if response.status_code != 429:
                     response.raise_for_status()
                 code = self._error_code(response)
-                if attempt >= max_attempts:
+                if attempt >= configured_attempts:
                     raise ProviderError(
                         f"Gemini usage check failed with {code} after {attempt} bounded attempts",
                         code=code,

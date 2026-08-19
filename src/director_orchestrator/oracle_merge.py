@@ -131,6 +131,8 @@ def authenticate_provider_review_artifact(
     if len(matching_runs) != 1 or matching_runs[0].assignment_sequence is None:
         raise ValueError("provider review output is not bound to one stored assignment")
     stored_run = matching_runs[0]
+    if stored_run.evidence_source != "provider_authenticated":
+        raise ValueError("provider review result lacks authenticated provider evidence")
     if stored_run.status not in successful_statuses[run.provider]:
         raise ValueError("stored provider review run is not successful")
     if not hmac.compare_digest(stored_run.result or "", run.result):
@@ -243,6 +245,10 @@ def authenticate_claude_review_artifact(
         raise ValueError("Claude callback result was not persisted before authentication")
     if not hmac.compare_digest(run.result, callback.result):
         raise ValueError("Claude callback result does not match the stored run")
+    # This compatibility wrapper is called only after the dedicated callback
+    # bearer boundary has authenticated the payload. Persisted callback handling
+    # sets the same provenance marker in callbacks.apply_claude_callback.
+    run.evidence_source = "provider_authenticated"
     return authenticate_provider_review_artifact(record, run, secret)
 
 

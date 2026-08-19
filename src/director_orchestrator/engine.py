@@ -534,6 +534,7 @@ class OrchestrationEngine:
                 await self.notifier.post(record, record.message)
                 return False
             run.assignment_sequence = assignment.sequence
+            run.evidence_source = "provider_authenticated"
             record.provider_runs.append(run)
             self.store.save(record)
             await self.notifier.post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
@@ -576,14 +577,43 @@ class OrchestrationEngine:
         if decision.verdict == ReviewVerdict.REVISE and record.revision_count < record.plan.max_revisions:
             if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached before revision")
+            try:
+                revised = await adapter.revise(
+                    run,
+                    decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
+                    assignment=assignment,
+                    context=self._handoff_context(record, assignment),
+                )
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                self._record_contact_attempt(
+                    record,
+                    assignment,
+                    ordinal=min(
+                        3,
+                        1
+                        + sum(
+                            item.outcome == "ambiguous_dispatch"
+                            for item in record.provider_contact_attempts
+                            if item.assignment_sequence == assignment.sequence
+                            and item.provider == assignment.agent
+                        ),
+                    ),
+                    phase="revision",
+                    outcome="ambiguous_dispatch",
+                    run=None,
+                    error=exc,
+                )
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    f"{assignment.agent.value} revision dispatch returned ambiguously. It was not "
+                    "retried because a paid run may already exist; owner reconciliation is required."
+                )
+                self.store.save(record)
+                await self.notifier.post(record, record.message)
+                return False
             record.revision_count += 1
-            revised = await adapter.revise(
-                run,
-                decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
-                assignment=assignment,
-                context=self._handoff_context(record, assignment),
-            )
             revised.assignment_sequence = assignment.sequence
+            revised.evidence_source = "provider_authenticated"
             record.provider_runs.append(revised)
             self.store.save(record)
             try:
@@ -658,6 +688,7 @@ class OrchestrationEngine:
             await asyncio.sleep(self.settings.provider_poll_seconds)
             try:
                 current = await adapter.poll(current)
+                current.evidence_source = "provider_authenticated"
             except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                 no_response_attempts += 1
                 if record is not None and assignment is not None:

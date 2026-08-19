@@ -305,6 +305,7 @@ class OracleMergeGateTests(unittest.TestCase):
             assignment_sequence=2,
             run_id="cursor-review-run",
             status="FINISHED",
+            evidence_source="provider_authenticated",
             result=json.dumps(payload),
         )
         base_record = self.callback_record()

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from pydantic import ValidationError
+
 from director_orchestrator.approvals import (
     StaleApproval,
     apply_ambiguous_dispatch_resolution,
@@ -10,15 +12,19 @@ from director_orchestrator.approvals import (
     assignment_approval_digest,
     assignment_is_approved,
     plan_gate_pending,
+    reset_for_owner_clarification,
 )
 from director_orchestrator.models import (
     AmbiguousDispatchResolution,
     Assignment,
+    AssignmentOutcome,
     DirectorPlan,
     OwnerApproval,
     ProviderName,
     ProviderContactAttempt,
     ProviderRun,
+    ReviewDecision,
+    ReviewVerdict,
     RiskLevel,
     SlackIntake,
     TaskRecord,
@@ -238,14 +244,130 @@ class AmbiguousDispatchReconciliationTests(unittest.TestCase):
                 resolution="created",
                 note="Provider dashboard shows the run",
                 run_id="provider-run-123",
-                run_status="RUNNING",
-                url="https://provider.invalid/runs/123",
+                session_id="provider-session-123",
             ),
         )
 
         self.assertEqual(record.status, TaskStatus.QUEUED)
         self.assertEqual(record.provider_runs[0].run_id, "provider-run-123")
+        self.assertEqual(record.provider_runs[0].status, "RECONCILED_PENDING")
+        self.assertIsNone(record.provider_runs[0].result)
+        self.assertEqual(record.provider_runs[0].evidence_source, "unverified")
         self.assertEqual(record.provider_contact_attempts[-1].outcome, "reconciled_created")
+
+    def test_created_reconciliation_cannot_supply_status_result_or_url(self):
+        with self.assertRaises(ValidationError):
+            AmbiguousDispatchResolution.model_validate(
+                {
+                    "owner_user_id": "U0B9UJ86D27",
+                    "assignment_sequence": 1,
+                    "resolution": "created",
+                    "note": "Provider dashboard shows the run",
+                    "run_id": "provider-run-123",
+                    "session_id": "provider-session-123",
+                    "run_status": "FINISHED",
+                    "result": "fabricated provider result",
+                    "url": "https://provider.invalid/runs/123",
+                }
+            )
+
+    def test_created_perplexity_reconciliation_fails_closed(self):
+        record = self.ambiguous_record()
+        record.plan.assignments[0].agent = ProviderName.PERPLEXITY
+        record.provider_contact_attempts[0].provider = ProviderName.PERPLEXITY
+
+        with self.assertRaisesRegex(StaleApproval, "cannot be recovered"):
+            apply_ambiguous_dispatch_resolution(
+                record,
+                AmbiguousDispatchResolution(
+                    owner_user_id="U0B9UJ86D27",
+                    assignment_sequence=1,
+                    resolution="created",
+                    note="Provider dashboard shows the run",
+                    run_id="perplexity-run-123",
+                ),
+            )
+
+    def test_created_revision_reconciliation_counts_only_confirmed_revision(self):
+        record = self.ambiguous_record()
+        record.provider_contact_attempts[0].phase = "revision"
+
+        apply_ambiguous_dispatch_resolution(
+            record,
+            AmbiguousDispatchResolution(
+                owner_user_id="U0B9UJ86D27",
+                assignment_sequence=1,
+                resolution="created",
+                note="Provider dashboard shows the revision",
+                run_id="provider-revision-123",
+                session_id="provider-session-123",
+            ),
+        )
+
+        self.assertEqual(record.revision_count, 1)
+
+
+class OwnerClarificationResetTests(unittest.TestCase):
+    def test_discarded_plan_clears_all_sequence_scoped_execution_state(self):
+        record = _record(owner_approved=True, approved=[1])
+        record.provider_runs = [
+            ProviderRun(
+                provider=ProviderName.CURSOR,
+                assignment_sequence=1,
+                run_id="run-1",
+                status="FINISHED",
+                result="old result",
+                evidence_source="provider_authenticated",
+            )
+        ]
+        record.assignment_outcomes = [
+            AssignmentOutcome(
+                assignment_sequence=1,
+                provider=ProviderName.CURSOR,
+                run_id="run-1",
+                result="old result",
+                review_summary="old acceptance",
+            )
+        ]
+        record.review_handoff_digests = {2: "a" * 64}
+        record.provider_contact_attempts = [
+            ProviderContactAttempt(
+                assignment_sequence=1,
+                provider=ProviderName.CURSOR,
+                ordinal=1,
+                phase="poll",
+                outcome="no_response",
+                run_id="run-1",
+                error="timeout",
+            )
+        ]
+        record.unavailable_providers = [ProviderName.CURSOR]
+        record.deferred_assignments = [1]
+        record.availability_impacts = ["old confidence impact"]
+        record.review = ReviewDecision(
+            verdict=ReviewVerdict.ACCEPT,
+            summary="old review",
+        )
+        record.revision_count = 1
+        record.error = "old error"
+
+        reset_for_owner_clarification(record)
+
+        self.assertIsNone(record.plan)
+        self.assertEqual(record.next_assignment_index, 0)
+        self.assertEqual(record.provider_runs, [])
+        self.assertEqual(record.assignment_outcomes, [])
+        self.assertEqual(record.review_handoff_digests, {})
+        self.assertEqual(record.provider_contact_attempts, [])
+        self.assertEqual(record.unavailable_providers, [])
+        self.assertEqual(record.deferred_assignments, [])
+        self.assertEqual(record.availability_impacts, [])
+        self.assertIsNone(record.review)
+        self.assertEqual(record.revision_count, 0)
+        self.assertFalse(record.owner_approved)
+        self.assertEqual(record.approved_assignments, [])
+        self.assertEqual(record.approved_assignment_digests, {})
+        self.assertIsNone(record.error)
 
 
 if __name__ == "__main__":

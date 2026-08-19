@@ -5,6 +5,9 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
+
+import httpx
 
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
@@ -15,7 +18,7 @@ from director_orchestrator.models import (
     UsageCheckStatus,
 )
 from director_orchestrator.store import TaskStore
-from director_orchestrator.providers import ProviderError
+from director_orchestrator.providers import GeminiAdapter, ProviderError
 from director_orchestrator.usage import (
     UsageMonitor,
     normalize_reported_cost,
@@ -191,6 +194,63 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(limited[0].attempt_count, 0)
             self.assertIn("daily request limit", limited[0].error or "")
             self.assertEqual(adapter.calls, 0)
+
+    async def test_gemini_retries_cannot_cross_remaining_daily_request_allowance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("gemini",),
+                gemini_api_key="test-gemini",
+                gemini_usage_max_attempts=3,
+                gemini_daily_request_limit=3,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                slack_bot_token="",
+            )
+            store.add_usage_check(
+                UsageCheckRecord(
+                    cycle_id="USAGE-EARLIER",
+                    provider="gemini",
+                    status=UsageCheckStatus.ERROR,
+                    checked_at=datetime.now(timezone.utc) - timedelta(minutes=16),
+                    attempt_count=2,
+                    provider_error_code="http_429",
+                    error="Earlier bounded quota response",
+                )
+            )
+            outbound_calls = 0
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                nonlocal outbound_calls
+                outbound_calls += 1
+                return httpx.Response(
+                    429,
+                    request=request,
+                    json={"error": {"status": "RESOURCE_EXHAUSTED"}},
+                )
+
+            transport = httpx.MockTransport(handler)
+            monitor = UsageMonitor(
+                settings,
+                store,
+                adapters={ProviderName.GEMINI: GeminiAdapter(settings)},
+            )
+            with patch(
+                "director_orchestrator.providers.httpx.AsyncClient",
+                return_value=httpx.AsyncClient(transport=transport),
+            ):
+                records = await monitor.run_once(force=True)
+
+            self.assertEqual(outbound_calls, 1)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(records[0].attempt_count, 1)
+            self.assertEqual(
+                monitor.health()["daily_accounting"]["gemini"]["request_count"],
+                settings.gemini_daily_request_limit,
+            )
 
     async def test_health_distinguishes_claude_prompt_from_completed_response(self):
         with tempfile.TemporaryDirectory() as directory:

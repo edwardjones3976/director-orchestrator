@@ -101,6 +101,8 @@ def bind_review_handoff(
         if producer_assignment.allow_draft_pr:
             raise ValueError("draft-PR assignment did not return a review candidate artifact")
         return None
+    if run.evidence_source != "provider_authenticated":
+        raise ValueError("review candidate lacks provider-authenticated result evidence")
     if record.plan is None:
         raise ValueError("review candidate has no stored plan")
     if not producer_assignment.allow_draft_pr:

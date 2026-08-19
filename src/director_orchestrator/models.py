@@ -115,6 +115,9 @@ class ProviderRun(BaseModel):
     url: str | None = None
     result: str | None = None
     attempt_count: int = Field(default=1, ge=1, le=10)
+    evidence_source: Literal[
+        "provider_authenticated", "owner_recovery", "unverified"
+    ] = "unverified"
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -174,7 +177,7 @@ class ProviderContactAttempt(BaseModel):
     assignment_sequence: int = Field(ge=1, le=20)
     provider: ProviderName
     ordinal: int = Field(ge=1, le=3)
-    phase: Literal["dispatch", "poll", "callback", "reconciliation"]
+    phase: Literal["dispatch", "revision", "poll", "callback", "reconciliation"]
     outcome: Literal[
         "no_response",
         "ambiguous_dispatch",
@@ -240,19 +243,26 @@ class AmbiguousDispatchResolution(BaseModel):
     assignment_sequence: int = Field(ge=1, le=20)
     resolution: Literal["not_created", "created"]
     note: str = Field(min_length=3, max_length=2_000)
-    run_id: str | None = Field(default=None, min_length=1, max_length=255)
-    run_status: str | None = Field(default=None, min_length=1, max_length=100)
-    session_id: str | None = Field(default=None, max_length=255)
-    url: str | None = Field(default=None, max_length=2_000)
-    result: str | None = Field(default=None, max_length=50_000)
+    run_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    session_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
 
     @model_validator(mode="after")
     def validate_created_run(self) -> AmbiguousDispatchResolution:
-        if self.resolution == "created" and (not self.run_id or not self.run_status):
-            raise ValueError("created reconciliation requires run_id and run_status")
+        if self.resolution == "created" and not self.run_id:
+            raise ValueError("created reconciliation requires run_id")
         if self.resolution == "not_created" and any(
             value is not None
-            for value in (self.run_id, self.run_status, self.session_id, self.url, self.result)
+            for value in (self.run_id, self.session_id)
         ):
             raise ValueError("not-created reconciliation cannot include provider-run fields")
         return self

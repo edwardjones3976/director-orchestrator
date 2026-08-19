@@ -9,6 +9,7 @@ from .models import (
     Assignment,
     OwnerApproval,
     ProviderContactAttempt,
+    ProviderName,
     ProviderRun,
     TaskRecord,
     TaskStatus,
@@ -128,16 +129,39 @@ def apply_ambiguous_dispatch_resolution(
 
     run: ProviderRun | None = None
     if resolution.resolution == "created":
+        if pending.agent == ProviderName.PERPLEXITY:
+            raise StaleApproval(
+                "Perplexity search responses cannot be recovered by run ID; "
+                "confirm not-created or start a newly approved assignment"
+            )
+        if pending.agent == ProviderName.CURSOR and not resolution.session_id:
+            raise StaleApproval("Cursor created reconciliation requires session_id")
+        if pending.agent not in {
+            ProviderName.CURSOR,
+            ProviderName.CLAUDE,
+            ProviderName.GEMINI,
+        }:
+            raise StaleApproval("This provider does not support created-run reconciliation")
+        status = (
+            "WAITING_CALLBACK"
+            if pending.agent == ProviderName.CLAUDE
+            else "RECONCILED_PENDING"
+        )
         run = ProviderRun(
             provider=pending.agent,
             assignment_sequence=pending.sequence,
             run_id=resolution.run_id or "",
-            status=resolution.run_status or "",
-            session_id=resolution.session_id,
-            url=resolution.url,
-            result=resolution.result,
+            status=status,
+            session_id=(
+                resolution.session_id
+                or (resolution.run_id if pending.agent == ProviderName.CLAUDE else None)
+            ),
+            evidence_source="unverified",
+            raw={"reconciled_identifier_only": True},
         )
         record.provider_runs.append(run)
+        if ambiguous.phase == "revision":
+            record.revision_count += 1
 
     record.provider_contact_attempts.append(
         ProviderContactAttempt(
@@ -160,6 +184,26 @@ def apply_ambiguous_dispatch_resolution(
         "Owner reconciled the ambiguous dispatch as "
         + ("an existing provider run." if run else "not created; one new dispatch is permitted.")
     )
+
+
+def reset_for_owner_clarification(record: TaskRecord) -> None:
+    """Discard every execution artifact derived from a superseded plan."""
+
+    record.plan = None
+    record.next_assignment_index = 0
+    record.provider_runs = []
+    record.assignment_outcomes = []
+    record.review_handoff_digests = {}
+    record.provider_contact_attempts = []
+    record.unavailable_providers = []
+    record.deferred_assignments = []
+    record.availability_impacts = []
+    record.review = None
+    record.revision_count = 0
+    record.owner_approved = False
+    record.approved_assignments = []
+    record.approved_assignment_digests = {}
+    record.error = None
 
 
 def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) -> None:

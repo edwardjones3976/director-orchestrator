@@ -147,10 +147,10 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "requirements": [
             "Each safe contact attempt is bounded, timestamped, and persisted.",
             "Preserve partial output as untrusted evidence.",
-            "Never repeat an ambiguous paid dispatch or create a duplicate provider run.",
+            "Never duplicate an ambiguous initial or revision paid dispatch.",
             "After three safe nonresponses, mark the provider unavailable for the assignment cycle.",
             "Continue independent safe work and record effects on scope, confidence, timing, and coverage.",
-            "If retrying would risk duplicate paid work, stop that lane for owner resolution rather than fabricate three attempts.",
+            "Ambiguous reconciliation binds IDs only; results require provider API or callback authentication, and owner recovery text cannot authorize exact-SHA review or merge.",
         ],
     },
     "review_handoff_policy": {
