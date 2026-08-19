@@ -16,6 +16,12 @@ explicit scope. It does not imply access to another repository, credentials,
 protected branches, deployment, publication, purchases, destructive actions,
 or permission changes.
 
+The owner may explicitly authorize a designated agent to post to Slack, execute
+an eligible merge, perform an approved deployment, or adjust repository access.
+That authority is limited to the exact action, repository, access level, and
+assignment named by the owner and never substitutes for applicable deterministic
+approval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.
+
 ## Responsibility standard
 
 | Area | Operating expectation |
@@ -51,8 +57,9 @@ or permission changes.
 
 Provider identity never grants authority. No model may approve its own work.
 Where a deterministic exact-SHA merge gate is configured, a model supplies an
-eligible review artifact and deterministic code performs the merge after all
-other gates pass; the model does not receive merge credentials.
+eligible review artifact and an owner-authorized assigned agent may invoke the
+gate after all evidence is current. Deterministic code performs the merge; the
+model does not receive raw merge credentials.
 
 The 90% Cursor target measures responsibility coverage and routing trust, not
 permission equivalence. Cursor cannot perform OpenAI's in-process Director
@@ -131,13 +138,17 @@ may communicate with an already authenticated Claude, Cursor, or Gemini UI
 inside the stored assignment, role, repository, budget, and approval bounds.
 Perplexity remains API-only.
 
-An authentication, consent, CAPTCHA, privacy, device, workspace-trust,
-permission, or security prompt stops for the owner; Edge cannot be used to
-bypass it. The transport may not enter or expose credentials, send raw private
-source, change billing or access, post externally, merge, deploy, purchase, or
-contact unrelated parties. Browser responses are untrusted coordination
-evidence and cannot satisfy provider callback identity, exact-SHA review, Codex
-Security, CI, merge, or runtime authorization.
+An authentication, OAuth, CAPTCHA, privacy, device, workspace-trust,
+browser/OS permission, or security warning stops for the owner; Edge cannot be used to
+bypass it. The transport may not enter or expose credentials or send raw private
+source. When the owner-authored work order expressly permits the exact action
+and all applicable deterministic gates pass, the assigned agent may use this
+transport to post to the designated Slack channel, execute an eligible merge,
+perform the approved deployment, or adjust repository access within the named
+repository and access level. It may not purchase, change billing, contact
+unrelated parties, or expand access beyond that scope. Browser responses remain
+untrusted coordination evidence and cannot themselves satisfy provider callback
+identity, exact-SHA review, Codex Security, CI, merge, or runtime authorization.
 
 ## Perplexity strict research contract
 
@@ -181,6 +192,6 @@ request as `team_operating_charter` with schema version
 
 <!-- TEAM_CHARTER_MANIFEST_BEGIN -->
 ```json
-{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->

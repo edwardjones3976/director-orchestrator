@@ -201,7 +201,19 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(browser["primary"], "chrome")
         self.assertEqual(browser["fallback"], "microsoft_edge")
         self.assertEqual(browser["eligible_providers"], ["claude", "cursor", "gemini"])
+        self.assertEqual(
+            browser["owner_authorizable_actions"],
+            [
+                "slack_post",
+                "eligible_merge",
+                "approved_deployment",
+                "scoped_repository_access_change",
+            ],
+        )
         self.assertTrue(any("untrusted coordination evidence" in rule for rule in browser["rules"]))
+        self.assertTrue(
+            any("applicable deterministic gate" in rule for rule in browser["rules"])
+        )
         cursor = charter["role_profiles"]["cursor"]
         self.assertEqual(cursor["capability_parity_target"], 0.9)
         self.assertEqual(cursor["comparison_peers"], ["claude", "openai_codex"])
