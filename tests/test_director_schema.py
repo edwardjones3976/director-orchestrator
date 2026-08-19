@@ -229,6 +229,11 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 for rule in charter["committee"]["voting"]["rules"]
             )
         )
+        efficiency = charter["efficiency_policy"]
+        self.assertTrue(efficiency["concise_evidence_first"])
+        self.assertTrue(efficiency["repeat_requires_new_information"])
+        self.assertTrue(any("information gain" in rule for rule in efficiency["rules"]))
+        self.assertTrue(any("safety evidence" in rule for rule in efficiency["rules"]))
 
     async def test_repeated_plans_inject_one_bounded_immutable_charter_each(self):
         class CapturingDirector(OpenAIDirector):
@@ -296,9 +301,15 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
     def test_provider_cannot_mutate_canonical_roles_or_supply_weights(self):
         mutable = team_operating_charter()
         mutable["committee"]["members"]["cursor"]["voting_power"] = 99
+        mutable["efficiency_policy"]["repeat_requires_new_information"] = False
         self.assertEqual(
             team_operating_charter()["committee"]["members"]["cursor"]["voting_power"],
             1.5,
+        )
+        self.assertTrue(
+            team_operating_charter()["efficiency_policy"][
+                "repeat_requires_new_information"
+            ]
         )
         with self.assertRaises(ValueError):
             AdvisoryVote.model_validate(
