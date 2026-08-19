@@ -544,6 +544,26 @@ class AssignmentBoundaryTests(unittest.TestCase):
                 "Research records for +49 (30) 901820",
                 "phone number",
             ),
+            (
+                "Find public methodology",
+                "Research records for +44\u00a020\u00a07946\u00a00958",
+                "phone number",
+            ),
+            (
+                "Find public methodology",
+                "Research records for +44\u202f20\u202f7946\u202f0958",
+                "phone number",
+            ),
+            (
+                "Find public methodology",
+                "Research records for +44 20\u20117946\u20110958",
+                "phone number",
+            ),
+            (
+                "Find public methodology",
+                "Research records for +49 30/901820",
+                "phone number",
+            ),
         ]
         for index, (task, query, reason) in enumerate(cases, start=1):
             plan = DirectorPlan(
@@ -575,7 +595,12 @@ class AssignmentBoundaryTests(unittest.TestCase):
             repository_allowlist=("example/demo",),
             allowed_starting_refs=("main",),
         )
-        for query in ("calibration paper arXiv 2408.12345", "compare evidence from 2018 2019 2020"):
+        for query in (
+            "calibration paper arXiv 2408.12345",
+            "compare evidence from 2018 2019 2020",
+            "signed effect +0.12345678",
+            "signed integer +12345678",
+        ):
             plan = DirectorPlan(
                 project="demo",
                 normalized_outcome="Bounded public research",

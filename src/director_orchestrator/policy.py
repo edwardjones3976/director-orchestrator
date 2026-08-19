@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from copy import deepcopy
 from urllib.parse import urlparse
 
@@ -43,7 +44,16 @@ _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _NORTH_AMERICAN_PHONE = re.compile(
     r"(?<!\w)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\w)"
 )
-_INTERNATIONAL_PHONE_PUNCTUATION = frozenset(" ().-")
+_SIGNED_PUBLIC_NUMBER = re.compile(r"(?<!\w)\+\d+(?:\.\d+)?(?![\w.])")
+_INTERNATIONAL_PHONE_PUNCTUATION = frozenset("()/.\u2212")
+
+
+def _is_international_phone_separator(character: str) -> bool:
+    return (
+        character.isspace()
+        or character in _INTERNATIONAL_PHONE_PUNCTUATION
+        or unicodedata.category(character) == "Pd"
+    )
 
 
 def _contains_phone_number(value: str) -> bool:
@@ -53,13 +63,23 @@ def _contains_phone_number(value: str) -> bool:
         if character != "+":
             continue
         digit_count = 0
+        has_separator = False
+        candidate_characters: list[str] = []
         for candidate_character in value[start + 1 : start + 42]:
             if candidate_character.isdecimal():
                 digit_count += 1
-                if digit_count >= 8:
-                    return True
-            elif candidate_character not in _INTERNATIONAL_PHONE_PUNCTUATION:
+                candidate_characters.append(candidate_character)
+            elif _is_international_phone_separator(candidate_character):
+                has_separator = True
+                candidate_characters.append(candidate_character)
+            else:
                 break
+        normalized_candidate = ("+" + "".join(candidate_characters)).strip()
+        if _SIGNED_PUBLIC_NUMBER.fullmatch(normalized_candidate) is not None:
+            if "." in normalized_candidate or digit_count <= 8:
+                continue
+        if digit_count >= (8 if has_separator else 10):
+            return True
     return False
 
 
