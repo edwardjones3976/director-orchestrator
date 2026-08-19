@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -17,7 +18,7 @@ from .models import (
     UsageCheckRunStatus,
     UsageCheckStatus,
 )
-from .providers import ProviderAdapter, provider_registry
+from .providers import GeminiAdapter, ProviderAdapter, provider_registry
 from .store import TaskStore
 
 
@@ -37,6 +38,7 @@ TERMINAL_STATUSES = {
     "cancelled",
     "incomplete",
     "requires_action",
+    "budget_exceeded",
     "prompted",
 }
 SUCCESS_STATUSES = {"FINISHED", "completed", "prompted"}
@@ -102,6 +104,21 @@ def normalize_usage(payload: dict[str, Any]) -> tuple[dict[str, Any], int | None
     return usage, input_tokens, output_tokens, total_tokens
 
 
+def normalize_reported_cost(usage: dict[str, Any]) -> float | None:
+    """Extract only a provider-reported USD total; never invent token pricing."""
+    cost = usage.get("cost")
+    if isinstance(cost, dict):
+        currency = cost.get("currency")
+        if isinstance(currency, str) and currency.upper() != "USD":
+            return None
+        cost = cost.get("total_cost")
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        parsed = float(cost)
+        if parsed >= 0 and math.isfinite(parsed):
+            return parsed
+    return None
+
+
 class UsageMonitor:
     def __init__(
         self,
@@ -140,6 +157,79 @@ class UsageMonitor:
         latest = self.store.latest_usage_check(provider)
         required_interval = MINIMUM_INTERVAL if force else self.interval
         return latest is None or now - latest.checked_at >= required_interval
+
+    @staticmethod
+    def _utc_day_start(now: datetime) -> datetime:
+        current = now.astimezone(timezone.utc)
+        return current.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def _daily_accounting(self, provider: str, now: datetime) -> dict[str, Any]:
+        records = self.store.usage_checks_since(provider, self._utc_day_start(now))
+        attempted = [
+            record for record in records if record.status != UsageCheckStatus.SKIPPED
+        ]
+        request_count = sum(record.attempt_count for record in attempted)
+        retry_count = sum(max(0, record.attempt_count - 1) for record in attempted)
+        total_tokens = sum(record.total_tokens or 0 for record in attempted)
+        reported_costs = [
+            record.reported_cost_usd
+            for record in attempted
+            if record.reported_cost_usd is not None
+        ]
+        quota_codes = {
+            "quota_exceeded",
+            "rate_limit_exceeded",
+            "resource_exhausted",
+            "http_429",
+        }
+        quota_failures = sum(
+            1 for record in attempted if record.provider_error_code in quota_codes
+        )
+        request_limit: int | None = None
+        budget_usd: float | None = None
+        if provider == "gemini":
+            request_limit = self.settings.gemini_daily_request_limit
+            budget_usd = self.settings.gemini_daily_budget_usd
+        elif provider == "perplexity":
+            request_limit = self.settings.perplexity_daily_request_limit
+            budget_usd = self.settings.perplexity_daily_budget_usd
+        return {
+            "request_count": request_count,
+            "retry_count": retry_count,
+            "quota_failure_count": quota_failures,
+            "total_tokens": total_tokens,
+            "reported_cost_usd": round(sum(reported_costs), 8),
+            "cost_visibility_complete": bool(attempted)
+            and len(reported_costs) == len(attempted),
+            "daily_request_limit": request_limit,
+            "daily_budget_usd": budget_usd,
+        }
+
+    def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
+        if provider not in {"gemini", "perplexity"}:
+            return None
+        accounting = self._daily_accounting(provider, now)
+        request_limit = accounting["daily_request_limit"]
+        if isinstance(request_limit, int) and accounting["request_count"] >= request_limit:
+            return "Provider daily request limit reached"
+        budget = accounting["daily_budget_usd"]
+        if (
+            isinstance(budget, (int, float))
+            and accounting["reported_cost_usd"] >= budget
+        ):
+            return "Provider reported daily cost limit reached"
+        return None
+
+    def _supplemental_remaining_requests(
+        self, provider: str, now: datetime
+    ) -> int | None:
+        if provider not in {"gemini", "perplexity"}:
+            return None
+        accounting = self._daily_accounting(provider, now)
+        request_limit = accounting["daily_request_limit"]
+        if not isinstance(request_limit, int):
+            return None
+        return max(0, request_limit - accounting["request_count"])
 
     def partition_providers(
         self, *, force: bool, now: datetime | None = None
@@ -252,11 +342,19 @@ class UsageMonitor:
             current = await adapter.poll(current)
         return current
 
-    async def _prompt(self, provider: str) -> ProviderRun:
+    async def _prompt(
+        self, provider: str, *, remaining_requests: int | None = None
+    ) -> ProviderRun:
         if provider == "openai":
             return await self._openai_usage_check()
         adapter = self.adapters[ProviderName(provider)]
-        run = await adapter.usage_check(USAGE_CHECK_PROMPT)
+        if provider == "gemini" and isinstance(adapter, GeminiAdapter):
+            run = await adapter.usage_check(
+                USAGE_CHECK_PROMPT,
+                max_attempts=remaining_requests,
+            )
+        else:
+            run = await adapter.usage_check(USAGE_CHECK_PROMPT)
         return await self._wait(adapter, run)
 
     def _record_from_run(self, cycle_id: str, provider: str, run: ProviderRun) -> UsageCheckRecord:
@@ -273,6 +371,8 @@ class UsageMonitor:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            reported_cost_usd=normalize_reported_cost(raw_usage),
+            attempt_count=run.attempt_count,
             raw_usage=raw_usage,
             error=f"Provider ended with status {run.status}" if failed else None,
         )
@@ -283,7 +383,16 @@ class UsageMonitor:
         lines = ["*Aesop Director — periodic provider usage check*"]
         for record in records:
             usage = f"; tokens={record.total_tokens}" if record.total_tokens is not None else ""
-            lines.append(f"• `{record.provider}`: {record.status.value}{usage}")
+            cost = (
+                f"; reported_cost_usd={record.reported_cost_usd:.6f}"
+                if record.reported_cost_usd is not None
+                else ""
+            )
+            retries = f"; attempts={record.attempt_count}" if record.attempt_count > 1 else ""
+            pending = "; completion=pending_callback" if record.status == UsageCheckStatus.PROMPTED else ""
+            lines.append(
+                f"• `{record.provider}`: {record.status.value}{usage}{cost}{retries}{pending}"
+            )
         lines.append("Model replies are availability signals; subscription balances remain authoritative only in provider dashboards.")
         headers = {
             "Authorization": f"Bearer {self.settings.slack_bot_token}",
@@ -347,22 +456,45 @@ class UsageMonitor:
                         continue
                     if not self._is_due(provider, now, force):
                         continue
+                    limit_error = self._supplemental_limit_error(provider, now)
                     if not readiness.get(provider, False):
                         record = UsageCheckRecord(
                             cycle_id=cycle_id,
                             provider=provider,
                             status=UsageCheckStatus.SKIPPED,
+                            attempt_count=0,
                             error="Provider credential is not configured",
+                        )
+                    elif limit_error:
+                        record = UsageCheckRecord(
+                            cycle_id=cycle_id,
+                            provider=provider,
+                            status=UsageCheckStatus.SKIPPED,
+                            attempt_count=0,
+                            error=limit_error,
                         )
                     else:
                         try:
-                            run = await self._prompt(provider)
+                            run = await self._prompt(
+                                provider,
+                                remaining_requests=self._supplemental_remaining_requests(
+                                    provider, now
+                                ),
+                            )
                             record = self._record_from_run(cycle_id, provider, run)
                         except Exception as exc:
                             record = UsageCheckRecord(
                                 cycle_id=cycle_id,
                                 provider=provider,
                                 status=UsageCheckStatus.ERROR,
+                                attempt_count=max(
+                                    1, min(int(getattr(exc, "attempt_count", 1)), 10)
+                                ),
+                                provider_error_code=(
+                                    str(getattr(exc, "code"))[:100]
+                                    if getattr(exc, "code", None)
+                                    else None
+                                ),
                                 error=f"{type(exc).__name__}: {exc}"[:2_000],
                             )
                     self.store.add_usage_check(record)
@@ -386,19 +518,70 @@ class UsageMonitor:
             await asyncio.sleep(60)
 
     def health(self) -> dict[str, Any]:
-        return {
-            "enabled": self.settings.usage_check_enabled,
-            "paid_run_gate_open": self.settings.allow_paid_runs,
-            "interval_minutes": max(15, self.settings.usage_check_interval_minutes),
-            "providers": list(self.providers),
-            "unsupported_providers": list(self.unsupported_providers),
-            "latest": [
+        now = datetime.now(timezone.utc)
+        latest_records = self.store.latest_usage_checks()
+        latest_by_provider = {record.provider: record for record in latest_records}
+        current_signals: list[str] = []
+        completion_verified: list[str] = []
+        pending_completion: list[str] = []
+        latest: list[dict[str, Any]] = []
+        for record in latest_records:
+            fresh = now - record.checked_at <= self.interval
+            signal_current = fresh and record.status in {
+                UsageCheckStatus.OK,
+                UsageCheckStatus.PROMPTED,
+            }
+            if signal_current:
+                current_signals.append(record.provider)
+            if fresh and record.status == UsageCheckStatus.OK:
+                completion_verified.append(record.provider)
+            if fresh and record.status == UsageCheckStatus.PROMPTED:
+                pending_completion.append(record.provider)
+            latest.append(
                 {
                     "provider": record.provider,
                     "status": record.status.value,
                     "checked_at": record.checked_at.isoformat(),
+                    "fresh": fresh,
+                    "completion_verified": fresh
+                    and record.status == UsageCheckStatus.OK,
                     "total_tokens": record.total_tokens,
+                    "reported_cost_usd": record.reported_cost_usd,
+                    "attempt_count": record.attempt_count,
+                    "provider_error_code": record.provider_error_code,
                 }
-                for record in self.store.latest_usage_checks()
+            )
+        configured = list(self.supported_providers)
+        return {
+            "enabled": self.settings.usage_check_enabled,
+            "paid_run_gate_open": self.settings.allow_paid_runs,
+            "gate_state": (
+                "open"
+                if self.settings.usage_check_enabled and self.settings.allow_paid_runs
+                else "usage_disabled"
+                if not self.settings.usage_check_enabled
+                else "paid_runs_disabled"
+            ),
+            "interval_minutes": max(15, self.settings.usage_check_interval_minutes),
+            "providers": list(self.providers),
+            "unsupported_providers": list(self.unsupported_providers),
+            "all_configured_have_recent_signal": bool(configured)
+            and not self.unsupported_providers
+            and all(provider in current_signals for provider in configured),
+            "all_configured_completion_verified": bool(configured)
+            and not self.unsupported_providers
+            and all(provider in completion_verified for provider in configured),
+            "completion_verified_providers": completion_verified,
+            "pending_completion_providers": pending_completion,
+            "missing_or_stale_providers": [
+                provider
+                for provider in configured
+                if provider not in current_signals
+                or provider not in latest_by_provider
             ],
+            "daily_accounting": {
+                provider: self._daily_accounting(provider, now)
+                for provider in configured
+            },
+            "latest": latest,
         }

@@ -9,10 +9,12 @@ import httpx
 
 from .config import Settings
 from .director import OpenAIDirector
+from .approvals import assignment_is_approved, unresolved_ambiguous_dispatch
 from .models import (
     Assignment,
     AssignmentOutcome,
     ProviderName,
+    ProviderContactAttempt,
     ReviewDecision,
     ReviewVerdict,
     TaskRecord,
@@ -24,8 +26,29 @@ from .oracle_merge import (
     authenticate_provider_review_artifact,
 )
 from .policy import enforce_plan, execution_policy_errors, preview_plan
-from .providers import ProviderError, ProviderRun, provider_registry
+from .providers import (
+    PostSubmitAmbiguityError,
+    ProviderError,
+    ProviderRun,
+    provider_registry,
+)
+from .review_handoff import bind_review_handoff, transitive_dependency_sequences
 from .store import TaskStore
+
+
+_POST_SUBMIT_AMBIGUITY_ERRORS = (
+    PostSubmitAmbiguityError,
+    httpx.HTTPError,
+    ValueError,
+    LookupError,
+    TypeError,
+)
+
+
+class ProviderUnavailableError(ProviderError):
+    def __init__(self, run: ProviderRun):
+        super().__init__(f"{run.provider.value} did not respond after three safe attempts")
+        self.run = run
 
 
 class SlackNotifier:
@@ -39,6 +62,7 @@ class SlackNotifier:
         *,
         approvable: bool = False,
         approval_sequence: int | None = None,
+        approval_query: str | None = None,
     ) -> None:
         if not self.settings.slack_bot_token:
             return
@@ -47,8 +71,32 @@ class SlackNotifier:
             # Carry the assignment this button was rendered for, so a button left
             # sitting in the channel cannot approve a later gated assignment.
             value = record.task_id if approval_sequence is None else f"{record.task_id}|{approval_sequence}"
+            approval_summary = message
+            query_block: list[dict] = []
+            if approval_query is not None:
+                rendered_suffix = f"\nPublic research query: `{approval_query}`"
+                if approval_summary.endswith(rendered_suffix):
+                    approval_summary = approval_summary[: -len(rendered_suffix)]
+                exact_query = (
+                    "Exact outbound Perplexity query (approved byte-for-byte):\n"
+                    + approval_query
+                )
+                if len(exact_query) > 2_900:
+                    raise ValueError(
+                        "Perplexity approval query exceeds Slack's exact-display limit"
+                    )
+                query_block = [
+                    {
+                        "type": "section",
+                        "text": {"type": "plain_text", "text": exact_query},
+                    }
+                ]
             body["blocks"] = [
-                {"type": "section", "text": {"type": "mrkdwn", "text": message[:2_900]}},
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": approval_summary[:2_900]},
+                },
+                *query_block,
                 {
                     "type": "actions",
                     "elements": [
@@ -139,8 +187,8 @@ class OrchestrationEngine:
                 )
                 return
 
-            assignments = sorted(record.plan.assignments, key=lambda item: item.sequence)
-            while record.next_assignment_index < len(assignments):
+            while record.next_assignment_index < len(record.plan.assignments):
+                assignments = sorted(record.plan.assignments, key=lambda item: item.sequence)
                 assignment = assignments[record.next_assignment_index]
                 if assignment.agent == ProviderName.OWNER:
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -148,16 +196,27 @@ class OrchestrationEngine:
                     self.store.save(record)
                     await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{assignment.task}")
                     return
-                if assignment.requires_approval and assignment.sequence not in record.approved_assignments:
+                if assignment.requires_approval and not assignment_is_approved(record, assignment):
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
-                    record.message = f"Assignment {assignment.sequence} requires owner approval"
+                    record.message = f"Assignment {assignment.sequence} requires exact-scope owner approval"
                     self.store.save(record)
+                    public_query = (
+                        f"\nPublic research query: `{assignment.public_research_query}`"
+                        if assignment.agent == ProviderName.PERPLEXITY
+                        and assignment.public_research_query
+                        else ""
+                    )
                     await self.notifier.post(
                         record,
                         f"*{task_id} — OWNER DECISION REQUIRED*\nAssignment {assignment.sequence} requires your approval.\n"
-                        f"`{assignment.agent.value}` — {assignment.task[:1_500]}",
+                        f"`{assignment.agent.value}` — {assignment.task[:1_500]}{public_query}",
                         approvable=True,
                         approval_sequence=assignment.sequence,
+                        approval_query=(
+                            assignment.public_research_query
+                            if assignment.agent == ProviderName.PERPLEXITY
+                            else None
+                        ),
                     )
                     return
                 accepted = await self._execute_assignment(record, assignment)
@@ -171,6 +230,15 @@ class OrchestrationEngine:
                 record.review = None
                 self.store.save(record)
 
+            if record.deferred_assignments:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    "Safe independent work completed, but assignments were deferred after provider "
+                    "unavailability: " + ", ".join(str(item) for item in sorted(set(record.deferred_assignments)))
+                )
+                self.store.save(record)
+                await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{record.message}")
+                return
             record.status = TaskStatus.DONE
             record.message = "All assignments passed Director review."
             self.store.save(record)
@@ -191,7 +259,11 @@ class OrchestrationEngine:
             ),
             key=lambda outcome: outcome.assignment_sequence,
         )[-10:]
-        dependency_set = set(assignment.depends_on)
+        dependency_set = (
+            transitive_dependency_sequences(record.plan.assignments, assignment)
+            if record.plan
+            else set()
+        )
 
         def bounded(outcome: AssignmentOutcome) -> dict:
             return {
@@ -219,14 +291,21 @@ class OrchestrationEngine:
                 "sequence": assignment.sequence,
                 "depends_on": list(assignment.depends_on),
                 "requires_approval": assignment.requires_approval,
-                "owner_approval_recorded": assignment.sequence in record.approved_assignments,
+                "owner_approval_recorded": assignment_is_approved(record, assignment),
             },
             "dependency_outcomes": [
                 bounded(outcome)
                 for outcome in prior_outcomes
                 if outcome.assignment_sequence in dependency_set
             ],
-            "prior_accepted_outcomes": [bounded(outcome) for outcome in prior_outcomes],
+            # Preserve the legacy key for provider contracts, but include only
+            # declared transitive dependencies. Unrelated earlier output must not
+            # silently become material input or contaminate reviewer independence.
+            "prior_accepted_outcomes": [
+                bounded(outcome)
+                for outcome in prior_outcomes
+                if outcome.assignment_sequence in dependency_set
+            ],
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -317,12 +396,116 @@ class OrchestrationEngine:
         await self.notifier.post(record, record.message)
         return True
 
+    async def _bind_review_candidate(
+        self, record: TaskRecord, assignment: Assignment, run: ProviderRun
+    ) -> bool:
+        try:
+            bound = bind_review_handoff(
+                record,
+                assignment,
+                run,
+                trusted_provider_actors=self.settings.oracle_provider_actor_map(),
+            )
+        except (TypeError, ValueError) as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = ("Review handoff failed closed: " + str(exc))[:2_000]
+            self.store.save(record)
+            await self.notifier.post(record, record.message)
+            return False
+        if bound is None:
+            return True
+        sequence, review_assignment = bound
+        record.plan.assignments = sorted(
+            [
+                review_assignment if item.sequence == sequence else item
+                for item in record.plan.assignments
+            ],
+            key=lambda item: item.sequence,
+        )
+        handoff = json.loads(review_assignment.task)
+        record.review_handoff_digests[sequence] = handoff["artifact_digest"]
+        self.store.save(record)
+        return True
+
+    @staticmethod
+    def _recorded_no_response_attempts(
+        record: TaskRecord, assignment: Assignment, run: ProviderRun
+    ) -> int:
+        return sum(
+            1
+            for attempt in record.provider_contact_attempts
+            if attempt.assignment_sequence == assignment.sequence
+            and attempt.provider == assignment.agent
+            and attempt.phase == "poll"
+            and attempt.outcome == "no_response"
+            and attempt.run_id == run.run_id
+        )
+
+    def _record_contact_attempt(
+        self,
+        record: TaskRecord,
+        assignment: Assignment,
+        *,
+        ordinal: int,
+        phase: str,
+        outcome: str,
+        run: ProviderRun | None,
+        error: Exception,
+    ) -> None:
+        record.provider_contact_attempts.append(
+            ProviderContactAttempt(
+                assignment_sequence=assignment.sequence,
+                provider=assignment.agent,
+                ordinal=ordinal,
+                phase=phase,
+                outcome=outcome,
+                run_id=run.run_id if run else None,
+                partial_output=((run.result or "")[:2_000] or None) if run else None,
+                error=f"{type(error).__name__}: {error}"[:2_000],
+            )
+        )
+        self.store.save(record)
+
+    async def _defer_unavailable(
+        self, record: TaskRecord, assignment: Assignment, run: ProviderRun
+    ) -> None:
+        if assignment.agent not in record.unavailable_providers:
+            record.unavailable_providers.append(assignment.agent)
+        if assignment.sequence not in record.deferred_assignments:
+            record.deferred_assignments.append(assignment.sequence)
+        impact = (
+            f"Assignment {assignment.sequence} ({assignment.agent.value}) deferred after three "
+            "safe nonresponses; no duplicate dispatch was made. Scope and coverage are reduced, "
+            "confidence is lower, and timing depends on provider recovery or owner reassignment."
+        )
+        if impact not in record.availability_impacts:
+            record.availability_impacts.append(impact)
+        record.status = TaskStatus.RUNNING
+        record.message = impact
+        self.store.save(record)
+        await self.notifier.post(record, f"*{record.task_id} — PROVIDER UNAVAILABLE*\n{impact}")
+        return True
+
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
         completed_sequences = {
             outcome.assignment_sequence for outcome in record.assignment_outcomes
         }
         missing_dependencies = sorted(set(assignment.depends_on) - completed_sequences)
         if missing_dependencies:
+            if set(missing_dependencies).intersection(record.deferred_assignments):
+                if assignment.sequence not in record.deferred_assignments:
+                    record.deferred_assignments.append(assignment.sequence)
+                impact = (
+                    f"Assignment {assignment.sequence} deferred because unavailable dependency "
+                    + ", ".join(str(item) for item in missing_dependencies)
+                    + "; independent safe assignments remain eligible."
+                )
+                if impact not in record.availability_impacts:
+                    record.availability_impacts.append(impact)
+                record.status = TaskStatus.RUNNING
+                record.message = impact
+                self.store.save(record)
+                return True
             record.status = TaskStatus.BLOCKED
             record.message = (
                 f"Assignment {assignment.sequence} is waiting on unaccepted dependencies: "
@@ -349,20 +532,69 @@ class OrchestrationEngine:
         if existing_runs:
             run = existing_runs[-1]
         else:
+            if unresolved_ambiguous_dispatch(record, assignment) is not None:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    f"{assignment.agent.value} dispatch remains ambiguous. Reconcile whether the "
+                    "provider run was created before any new paid dispatch."
+                )
+                self.store.save(record)
+                await self.notifier.post(record, record.message)
+                return False
             if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached")
             record.status = TaskStatus.RUNNING
             self.store.save(record)
-            run = await adapter.dispatch(
-                assignment,
-                context=self._handoff_context(record, assignment),
-            )
+            try:
+                run = await adapter.dispatch(
+                    assignment,
+                    context=self._handoff_context(record, assignment),
+                )
+            except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+                self._record_contact_attempt(
+                    record,
+                    assignment,
+                    ordinal=min(
+                        3,
+                        1
+                        + sum(
+                            item.outcome == "ambiguous_dispatch"
+                            for item in record.provider_contact_attempts
+                            if item.assignment_sequence == assignment.sequence
+                            and item.provider == assignment.agent
+                        ),
+                    ),
+                    phase="dispatch",
+                    outcome="ambiguous_dispatch",
+                    run=None,
+                    error=exc,
+                )
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    f"{assignment.agent.value} dispatch returned ambiguously. It was not retried "
+                    "because a paid run may already exist; owner reconciliation is required."
+                )
+                self.store.save(record)
+                await self.notifier.post(record, record.message)
+                return False
             run.assignment_sequence = assignment.sequence
+            run.evidence_source = "provider_authenticated"
             record.provider_runs.append(run)
             self.store.save(record)
             await self.notifier.post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
 
-        run = await self._wait(adapter, run)
+        try:
+            run = await self._wait(adapter, run, record, assignment)
+        except ProviderUnavailableError as exc:
+            run = exc.run
+            run_index = next(
+                index
+                for index in range(len(record.provider_runs) - 1, -1, -1)
+                if record.provider_runs[index].run_id == run.run_id
+            )
+            record.provider_runs[run_index] = run
+            await self._defer_unavailable(record, assignment, run)
+            return True
         run_index = next(index for index in range(len(record.provider_runs) - 1, -1, -1) if record.provider_runs[index].run_id == run.run_id)
         record.provider_runs[run_index] = run
         if not run.result:
@@ -378,6 +610,8 @@ class OrchestrationEngine:
         record.review = decision
         self.store.save(record)
         if decision.verdict == ReviewVerdict.ACCEPT:
+            if not await self._bind_review_candidate(record, assignment, run):
+                return False
             merge_result = await self._process_exact_sha_review(record, run)
             if merge_result is False:
                 return False
@@ -387,17 +621,52 @@ class OrchestrationEngine:
         if decision.verdict == ReviewVerdict.REVISE and record.revision_count < record.plan.max_revisions:
             if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached before revision")
+            try:
+                revised = await adapter.revise(
+                    run,
+                    decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
+                    assignment=assignment,
+                    context=self._handoff_context(record, assignment),
+                )
+            except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+                self._record_contact_attempt(
+                    record,
+                    assignment,
+                    ordinal=min(
+                        3,
+                        1
+                        + sum(
+                            item.outcome == "ambiguous_dispatch"
+                            for item in record.provider_contact_attempts
+                            if item.assignment_sequence == assignment.sequence
+                            and item.provider == assignment.agent
+                        ),
+                    ),
+                    phase="revision",
+                    outcome="ambiguous_dispatch",
+                    run=None,
+                    error=exc,
+                )
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    f"{assignment.agent.value} revision dispatch returned ambiguously. It was not "
+                    "retried because a paid run may already exist; owner reconciliation is required."
+                )
+                self.store.save(record)
+                await self.notifier.post(record, record.message)
+                return False
             record.revision_count += 1
-            revised = await adapter.revise(
-                run,
-                decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
-                assignment=assignment,
-                context=self._handoff_context(record, assignment),
-            )
             revised.assignment_sequence = assignment.sequence
+            revised.evidence_source = "provider_authenticated"
             record.provider_runs.append(revised)
             self.store.save(record)
-            revised = await self._wait(adapter, revised)
+            try:
+                revised = await self._wait(adapter, revised, record, assignment)
+            except ProviderUnavailableError as exc:
+                revised = exc.run
+                record.provider_runs[-1] = revised
+                await self._defer_unavailable(record, assignment, revised)
+                return True
             record.provider_runs[-1] = revised
             self.store.save(record)
             if not revised.result:
@@ -413,6 +682,8 @@ class OrchestrationEngine:
             final_decision = await self.director.review(record, revised.result)
             record.review = final_decision
             if final_decision.verdict == ReviewVerdict.ACCEPT:
+                if not await self._bind_review_candidate(record, assignment, revised):
+                    return False
                 merge_result = await self._process_exact_sha_review(record, revised)
                 if merge_result is False:
                     return False
@@ -425,17 +696,66 @@ class OrchestrationEngine:
         self.store.save(record)
         return False
 
-    async def _wait(self, adapter, run: ProviderRun) -> ProviderRun:
+    async def _wait(
+        self,
+        adapter,
+        run: ProviderRun,
+        record: TaskRecord | None = None,
+        assignment: Assignment | None = None,
+    ) -> ProviderRun:
         if run.status == "WAITING_CALLBACK":
             return run
-        terminal = {"FINISHED", "ERROR", "CANCELLED", "EXPIRED", "completed", "failed", "cancelled", "incomplete"}
+        terminal = {
+            "FINISHED",
+            "ERROR",
+            "CANCELLED",
+            "EXPIRED",
+            "completed",
+            "failed",
+            "cancelled",
+            "incomplete",
+            "requires_action",
+            "budget_exceeded",
+        }
         deadline = time.monotonic() + self.settings.provider_timeout_seconds
         current = run
+        no_response_attempts = (
+            self._recorded_no_response_attempts(record, assignment, run)
+            if record is not None and assignment is not None
+            else 0
+        )
+        if no_response_attempts >= 3:
+            raise ProviderUnavailableError(current)
         while current.status not in terminal:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"{current.provider.value} run timed out")
             await asyncio.sleep(self.settings.provider_poll_seconds)
-            current = await adapter.poll(current)
-        if current.status in {"ERROR", "CANCELLED", "EXPIRED", "failed", "cancelled", "incomplete"}:
+            try:
+                current = await adapter.poll(current)
+                current.evidence_source = "provider_authenticated"
+            except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
+                no_response_attempts += 1
+                if record is not None and assignment is not None:
+                    self._record_contact_attempt(
+                        record,
+                        assignment,
+                        ordinal=no_response_attempts,
+                        phase="poll",
+                        outcome="no_response",
+                        run=current,
+                        error=exc,
+                    )
+                if no_response_attempts >= 3:
+                    raise ProviderUnavailableError(current) from exc
+        if current.status in {
+            "ERROR",
+            "CANCELLED",
+            "EXPIRED",
+            "failed",
+            "cancelled",
+            "incomplete",
+            "requires_action",
+            "budget_exceeded",
+        }:
             raise ProviderError(f"{current.provider.value} ended with status {current.status}")
         return current

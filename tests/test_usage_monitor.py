@@ -3,7 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
+
+import httpx
 
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
@@ -14,7 +18,12 @@ from director_orchestrator.models import (
     UsageCheckStatus,
 )
 from director_orchestrator.store import TaskStore
-from director_orchestrator.usage import UsageMonitor, normalize_usage
+from director_orchestrator.providers import GeminiAdapter, ProviderError
+from director_orchestrator.usage import (
+    UsageMonitor,
+    normalize_reported_cost,
+    normalize_usage,
+)
 
 
 class SuccessfulCursorProbe:
@@ -30,6 +39,44 @@ class SuccessfulCursorProbe:
             status="FINISHED",
             result="STATUS=OK; MODEL=test; QUOTA=UNAVAILABLE",
             raw={"usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20}},
+        )
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        raise AssertionError("Terminal usage checks must not be polled")
+
+
+class QuotaFailingGeminiProbe:
+    def __init__(self):
+        self.calls = 0
+
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        self.calls += 1
+        raise ProviderError(
+            "Gemini usage check failed with resource_exhausted after 3 bounded attempts",
+            code="resource_exhausted",
+            attempt_count=3,
+        )
+
+
+class SuccessfulPerplexityProbe:
+    def __init__(self):
+        self.calls = 0
+
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        self.calls += 1
+        return ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            run_id="perplexity-usage-1",
+            status="completed",
+            result="STATUS=OK",
+            raw={
+                "usage": {
+                    "input_tokens": 20,
+                    "output_tokens": 4,
+                    "total_tokens": 24,
+                    "cost": {"currency": "USD", "total_cost": 0.00019},
+                }
+            },
         )
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
@@ -52,8 +99,273 @@ class UsageNormalizationTests(unittest.TestCase):
         self.assertEqual(raw["totalTokenCount"], 15)
         self.assertEqual((input_tokens, output_tokens, total_tokens), (10, 5, 15))
 
+    def test_normalizes_only_provider_reported_usd_cost(self):
+        self.assertEqual(
+            normalize_reported_cost(
+                {"cost": {"currency": "USD", "total_cost": 0.00019}}
+            ),
+            0.00019,
+        )
+        self.assertIsNone(
+            normalize_reported_cost(
+                {"cost": {"currency": "EUR", "total_cost": 0.00019}}
+            )
+        )
+        self.assertIsNone(normalize_reported_cost({"total_tokens": 1_000}))
+
 
 class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_quota_failure_attempts_and_freshness_are_visible_without_provider_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = QuotaFailingGeminiProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("gemini",),
+                gemini_api_key="test-gemini",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                slack_bot_token="",
+            )
+            monitor = UsageMonitor(
+                settings, store, adapters={ProviderName.GEMINI: adapter}
+            )
+
+            records = await monitor.run_once(force=True)
+            health = monitor.health()
+
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(records[0].attempt_count, 3)
+            self.assertEqual(records[0].provider_error_code, "resource_exhausted")
+            self.assertNotIn("response_text", records[0].error or "")
+            self.assertFalse(health["all_configured_have_recent_signal"])
+            self.assertFalse(health["all_configured_completion_verified"])
+            self.assertEqual(health["missing_or_stale_providers"], ["gemini"])
+            self.assertEqual(health["daily_accounting"]["gemini"]["request_count"], 3)
+            self.assertEqual(health["daily_accounting"]["gemini"]["retry_count"], 2)
+            self.assertEqual(
+                health["daily_accounting"]["gemini"]["quota_failure_count"], 1
+            )
+
+    async def test_reported_cost_is_accounted_and_daily_request_limit_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulPerplexityProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("perplexity",),
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_daily_request_limit=1,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                slack_bot_token="",
+            )
+            monitor = UsageMonitor(
+                settings, store, adapters={ProviderName.PERPLEXITY: adapter}
+            )
+
+            store.add_usage_check(
+                UsageCheckRecord(
+                    cycle_id="USAGE-STALE001",
+                    provider="perplexity",
+                    status=UsageCheckStatus.OK,
+                    checked_at=datetime.now(timezone.utc) - timedelta(minutes=16),
+                    input_tokens=20,
+                    output_tokens=4,
+                    total_tokens=24,
+                    reported_cost_usd=0.00019,
+                    raw_usage={
+                        "cost": {"currency": "USD", "total_cost": 0.00019}
+                    },
+                )
+            )
+            accounting = monitor.health()["daily_accounting"]["perplexity"]
+            self.assertEqual(accounting["request_count"], 1)
+            self.assertEqual(accounting["reported_cost_usd"], 0.00019)
+            self.assertTrue(accounting["cost_visibility_complete"])
+
+            limited = await monitor.run_once(force=True)
+            self.assertEqual(limited[0].status, UsageCheckStatus.SKIPPED)
+            self.assertEqual(limited[0].attempt_count, 0)
+            self.assertIn("daily request limit", limited[0].error or "")
+            self.assertEqual(adapter.calls, 0)
+
+    async def test_gemini_retries_cannot_cross_remaining_daily_request_allowance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("gemini",),
+                gemini_api_key="test-gemini",
+                gemini_usage_max_attempts=3,
+                gemini_daily_request_limit=3,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                slack_bot_token="",
+            )
+            store.add_usage_check(
+                UsageCheckRecord(
+                    cycle_id="USAGE-EARLIER",
+                    provider="gemini",
+                    status=UsageCheckStatus.ERROR,
+                    checked_at=datetime.now(timezone.utc) - timedelta(minutes=16),
+                    attempt_count=2,
+                    provider_error_code="http_429",
+                    error="Earlier bounded quota response",
+                )
+            )
+            outbound_calls = 0
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                nonlocal outbound_calls
+                outbound_calls += 1
+                return httpx.Response(
+                    429,
+                    request=request,
+                    json={"error": {"status": "RESOURCE_EXHAUSTED"}},
+                )
+
+            transport = httpx.MockTransport(handler)
+            monitor = UsageMonitor(
+                settings,
+                store,
+                adapters={ProviderName.GEMINI: GeminiAdapter(settings)},
+            )
+            with patch(
+                "director_orchestrator.providers.httpx.AsyncClient",
+                return_value=httpx.AsyncClient(transport=transport),
+            ):
+                records = await monitor.run_once(force=True)
+
+            self.assertEqual(outbound_calls, 1)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(records[0].attempt_count, 1)
+            self.assertEqual(
+                monitor.health()["daily_accounting"]["gemini"]["request_count"],
+                settings.gemini_daily_request_limit,
+            )
+
+    async def test_gemini_transport_failure_preserves_all_attempted_requests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("gemini",),
+                gemini_api_key="test-gemini",
+                gemini_usage_max_attempts=3,
+                gemini_daily_request_limit=3,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                slack_bot_token="",
+            )
+            outbound_calls = 0
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                nonlocal outbound_calls
+                outbound_calls += 1
+                if outbound_calls == 1:
+                    return httpx.Response(
+                        429,
+                        request=request,
+                        json={"error": {"status": "RESOURCE_EXHAUSTED"}},
+                    )
+                raise httpx.ReadTimeout(
+                    "second Gemini attempt lost its response", request=request
+                )
+
+            transport = httpx.MockTransport(handler)
+            monitor = UsageMonitor(
+                settings,
+                store,
+                adapters={ProviderName.GEMINI: GeminiAdapter(settings)},
+            )
+            with (
+                patch(
+                    "director_orchestrator.providers.httpx.AsyncClient",
+                    return_value=httpx.AsyncClient(transport=transport),
+                ),
+                patch("director_orchestrator.providers.asyncio.sleep"),
+            ):
+                records = await monitor.run_once(force=True)
+
+            self.assertEqual(outbound_calls, 2)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(records[0].attempt_count, 2)
+            self.assertEqual(records[0].provider_error_code, "transport_error")
+            self.assertEqual(
+                monitor.health()["daily_accounting"]["gemini"]["request_count"],
+                2,
+            )
+
+    async def test_health_distinguishes_claude_prompt_from_completed_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            now = datetime.now(timezone.utc)
+            store.add_usage_check(
+                UsageCheckRecord(
+                    cycle_id="USAGE-HEALTH01",
+                    provider="claude",
+                    status=UsageCheckStatus.PROMPTED,
+                    checked_at=now,
+                )
+            )
+            store.add_usage_check(
+                UsageCheckRecord(
+                    cycle_id="USAGE-HEALTH01",
+                    provider="cursor",
+                    status=UsageCheckStatus.OK,
+                    checked_at=now,
+                )
+            )
+            monitor = UsageMonitor(
+                replace(
+                    Settings(),
+                    allow_paid_runs=True,
+                    usage_check_enabled=True,
+                    usage_check_providers=("claude", "cursor"),
+                    sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                ),
+                store,
+                adapters={},
+            )
+
+            health = monitor.health()
+            self.assertTrue(health["all_configured_have_recent_signal"])
+            self.assertFalse(health["all_configured_completion_verified"])
+            self.assertEqual(health["pending_completion_providers"], ["claude"])
+            self.assertEqual(health["completion_verified_providers"], ["cursor"])
+            latest = {item["provider"]: item for item in health["latest"]}
+            self.assertFalse(latest["claude"]["completion_verified"])
+            self.assertTrue(latest["cursor"]["completion_verified"])
+    async def test_interactions_budget_exceeded_fails_closed_without_polling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            monitor = UsageMonitor(
+                replace(Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")),
+                store,
+                adapters={},
+            )
+            record = monitor._record_from_run(
+                "USAGE-BUDGET",
+                "gemini",
+                ProviderRun(
+                    provider=ProviderName.GEMINI,
+                    run_id="interaction-budget",
+                    status="budget_exceeded",
+                ),
+            )
+            self.assertEqual(record.status, UsageCheckStatus.ERROR)
+            self.assertIn("budget_exceeded", record.error)
+
     async def test_unknown_provider_terminal_status_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
@@ -186,6 +498,8 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(adapter.calls, 1)
             self.assertEqual(monitor.health()["providers"], ["cursor", "unknown"])
             self.assertEqual(monitor.health()["unsupported_providers"], ["unknown"])
+            self.assertFalse(monitor.health()["all_configured_have_recent_signal"])
+            self.assertFalse(monitor.health()["all_configured_completion_verified"])
 
     async def test_unconfigured_provider_is_recorded_as_skipped(self):
         with tempfile.TemporaryDirectory() as directory:

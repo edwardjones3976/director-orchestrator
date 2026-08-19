@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -15,7 +16,20 @@ _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        attempt_count: int = 1,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.attempt_count = attempt_count
+
+
+class PostSubmitAmbiguityError(ProviderError):
+    """A provider accepted a create request, but its new run cannot be identified."""
 
 
 def _response_error_blob(response: httpx.Response) -> str:
@@ -389,6 +403,45 @@ class ClaudeAdapter(ProviderAdapter):
 class GeminiAdapter(ProviderAdapter):
     name = ProviderName.GEMINI
 
+    @staticmethod
+    def _output_text(payload: dict[str, Any]) -> str | None:
+        output_text = payload.get("output_text")
+        if isinstance(output_text, str) and output_text:
+            return output_text
+
+        chunks: list[str] = []
+        for step in payload.get("steps", []):
+            if not isinstance(step, dict) or step.get("type") != "model_output":
+                continue
+            for content in step.get("content", []):
+                if isinstance(content, dict) and isinstance(content.get("text"), str):
+                    chunks.append(content["text"])
+        return "".join(chunks) or None
+
+    def _run(
+        self,
+        payload: dict[str, Any],
+        *,
+        session_id: str | None = None,
+        fallback_run_id: str | None = None,
+        post_submit: bool = False,
+    ) -> ProviderRun:
+        if not isinstance(payload, dict):
+            error_type = PostSubmitAmbiguityError if post_submit else ProviderError
+            raise error_type("Gemini Interaction response was not an object")
+        run_id = payload.get("id") or fallback_run_id
+        if not run_id:
+            error_type = PostSubmitAmbiguityError if post_submit else ProviderError
+            raise error_type("Gemini Interaction response did not include an ID")
+        return ProviderRun(
+            provider=self.name,
+            run_id=run_id,
+            session_id=payload.get("environment_id") or session_id,
+            status=payload.get("status", "in_progress"),
+            result=self._output_text(payload),
+            raw=payload,
+        )
+
     @property
     def headers(self) -> dict[str, str]:
         return {
@@ -397,70 +450,147 @@ class GeminiAdapter(ProviderAdapter):
             "Api-Revision": self.settings.gemini_api_revision,
         }
 
+    @staticmethod
+    def _error_code(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError, TypeError):
+            payload = {}
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            for key in ("status", "code"):
+                value = error.get(key)
+                if isinstance(value, str) and value.strip():
+                    normalized = value.strip().lower()
+                    if normalized in {
+                        "quota_exceeded",
+                        "rate_limit_exceeded",
+                        "resource_exhausted",
+                    }:
+                        return normalized
+        return f"http_{response.status_code}"
+
+    def _usage_retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get("Retry-After")
+        try:
+            parsed = float(retry_after) if retry_after is not None else float(2**attempt)
+        except (TypeError, ValueError):
+            parsed = float(2**attempt)
+        return min(
+            max(parsed, 0.0),
+            float(max(0, self.settings.gemini_usage_max_retry_delay_seconds)),
+        )
+
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
         prompt = f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"
         body = {
-            "model": self.settings.gemini_agent,
+            "agent": self.settings.gemini_agent,
             "input": prompt,
             "environment": "remote",
             "background": True,
+            "store": True,
+            "agent_config": {
+                "type": "antigravity",
+                "max_total_tokens": self.settings.gemini_max_total_tokens,
+            },
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return ProviderRun(
-            provider=self.name,
-            run_id=payload["id"],
-            session_id=payload.get("environment_id"),
-            status=payload.get("status", "in_progress"),
-            raw=payload,
-        )
+        return self._run(payload, post_submit=True)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.get(f"{self.settings.gemini_api_base}/interactions/{run.run_id}", headers=self.headers)
             response.raise_for_status()
         payload = response.json()
-        return run.model_copy(update={"status": payload.get("status", run.status), "result": payload.get("output_text"), "raw": payload})
+        return self._run(payload, session_id=run.session_id).model_copy(
+            update={"assignment_sequence": run.assignment_sequence}
+        )
 
-    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
         body = {
-            "model": self.settings.gemini_agent,
+            "agent": self.settings.gemini_agent,
             "previous_interaction_id": run.run_id,
-            "environment": "remote",
+            "environment": run.session_id or "remote",
             "input": prompt,
             "background": True,
+            "store": True,
+            "agent_config": {
+                "type": "antigravity",
+                "max_total_tokens": self.settings.gemini_max_total_tokens,
+            },
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return ProviderRun(provider=self.name, run_id=payload["id"], session_id=payload.get("environment_id", run.session_id), status=payload.get("status", "in_progress"), raw=payload)
+        return self._run(
+            payload,
+            session_id=run.session_id,
+            post_submit=True,
+        ).model_copy(
+            update={"assignment_sequence": run.assignment_sequence}
+        )
 
-    async def usage_check(self, prompt: str) -> ProviderRun:
+    async def usage_check(
+        self, prompt: str, *, max_attempts: int | None = None
+    ) -> ProviderRun:
         body = {
-            "model": self.settings.gemini_agent,
+            "model": self.settings.gemini_usage_model,
             "input": prompt,
-            "environment": "remote",
-            "background": True,
             "store": False,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.settings.gemini_api_base}/interactions",
-                headers=self.headers,
-                json=body,
+        configured_attempts = max(1, min(self.settings.gemini_usage_max_attempts, 5))
+        if max_attempts is not None:
+            configured_attempts = min(configured_attempts, max(1, max_attempts))
+        attempt = 0
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                for attempt in range(1, configured_attempts + 1):
+                    response = await client.post(
+                        f"{self.settings.gemini_api_base}/interactions",
+                        headers=self.headers,
+                        json=body,
+                    )
+                    if response.status_code < 400:
+                        break
+                    if response.status_code != 429:
+                        response.raise_for_status()
+                    code = self._error_code(response)
+                    if attempt >= configured_attempts:
+                        raise ProviderError(
+                            f"Gemini usage check failed with {code} after {attempt} bounded attempts",
+                            code=code,
+                            attempt_count=attempt,
+                        )
+                    await asyncio.sleep(self._usage_retry_delay(response, attempt - 1))
+            payload = response.json()
+            return self._run(
+                payload,
+                fallback_run_id="gemini-stateless-usage-check",
+            ).model_copy(update={"attempt_count": attempt})
+        except ProviderError:
+            raise
+        except Exception as exc:
+            code = (
+                "transport_error"
+                if isinstance(exc, httpx.RequestError)
+                else "invalid_response"
             )
-            response.raise_for_status()
-        payload = response.json()
-        return ProviderRun(
-            provider=self.name,
-            run_id=payload["id"],
-            session_id=payload.get("environment_id"),
-            status=payload.get("status", "in_progress"),
-            raw=payload,
-        )
+            raise ProviderError(
+                f"Gemini usage check failed with {code} after {max(1, attempt)} bounded attempts",
+                code=code,
+                attempt_count=max(1, attempt),
+            ) from exc
 
 
 class PerplexityAdapter(ProviderAdapter):
@@ -469,6 +599,53 @@ class PerplexityAdapter(ProviderAdapter):
     @property
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.settings.perplexity_api_key}", "Content-Type": "application/json"}
+
+    def _require_research_only(self, assignment: Assignment | None = None) -> None:
+        failed = [
+            name
+            for name, ready in self.settings.perplexity_research_readiness().items()
+            if not ready
+        ]
+        if failed:
+            raise ProviderError(
+                "Perplexity research-only configuration is not ready: " + ", ".join(failed)
+            )
+        if assignment is not None:
+            if assignment.allow_draft_pr:
+                raise ProviderError("Perplexity research assignments cannot create draft pull requests")
+            if assignment.estimated_cost_usd > self.settings.perplexity_daily_budget_usd:
+                raise ProviderError(
+                    "Perplexity assignment estimate exceeds the configured research budget ceiling"
+                )
+
+    @staticmethod
+    def _search_run(payload: dict[str, Any], query: str) -> ProviderRun:
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+        evidence = {
+            "query": query,
+            "retrieved_at": retrieved_at,
+            "results": [
+                {
+                    "result_url": item.get("url"),
+                    "page_title": item.get("title"),
+                    "publication_date": item.get("date"),
+                    "last_updated": item.get("last_updated"),
+                    "supporting_excerpt": item.get("snippet"),
+                    "source_type": "web_result",
+                    "confidence": "not_provided_by_search_api",
+                    "contradictions_and_unavailable_evidence": "not_evaluated_in_raw_search",
+                }
+                for item in payload.get("results", [])
+                if isinstance(item, dict)
+            ],
+        }
+        return ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            run_id=payload["id"],
+            status="completed",
+            result=json.dumps(evidence, sort_keys=True),
+            raw=payload,
+        )
 
     @staticmethod
     def _run(payload: dict[str, Any]) -> ProviderRun:
@@ -489,36 +666,45 @@ class PerplexityAdapter(ProviderAdapter):
         )
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        del context  # Search receives only the bounded query, never repository/task context.
+        self._require_research_only(assignment)
+        if not assignment.public_research_query:
+            raise ProviderError("Perplexity requires a bounded public research query")
         body = {
-            "preset": self.settings.perplexity_preset,
-            "input": f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}",
-            "tools": [{"type": "web_search"}],
+            "query": assignment.public_research_query,
+            "max_results": self.settings.perplexity_max_results,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f"{self.settings.perplexity_api_base}/v1/agent", headers=self.headers, json=body)
+        async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
+            response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload)
+        return self._search_run(payload, assignment.public_research_query)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
-        raise ProviderError("Perplexity Agent API responses are synchronous and cannot be polled")
+        raise ProviderError("Perplexity API responses are synchronous and cannot be polled")
 
-    async def revise(self, run: ProviderRun, prompt: str) -> ProviderRun:
-        body = {"preset": self.settings.perplexity_preset, "previous_response_id": run.run_id, "input": prompt}
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f"{self.settings.perplexity_api_base}/v1/agent", headers=self.headers, json=body)
-            response.raise_for_status()
-        payload = response.json()
-        return self._run(payload)
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
+        del run, prompt  # Revision text is untrusted Director output, not a Search query.
+        if assignment is None:
+            raise ProviderError("Perplexity requires a bounded public research query")
+        return await self.dispatch(assignment, context or "")
 
     async def usage_check(self, prompt: str) -> ProviderRun:
+        self._require_research_only()
         body = {
             "preset": self.settings.perplexity_preset,
             "input": prompt,
             "max_output_tokens": self.settings.usage_check_max_output_tokens,
             "tools": [],
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
             response = await client.post(
                 f"{self.settings.perplexity_api_base}/v1/agent",
                 headers=self.headers,

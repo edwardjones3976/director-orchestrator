@@ -18,6 +18,27 @@ _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("credential or permission change", re.compile(r"\b(api key|token|password|secret|credential|oauth|permission|access scope|administrator|admin access)\b", re.I)),
 )
 
+_PERPLEXITY_PROHIBITED_AUTHORITY: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("code or repository write", re.compile(r"\b(?:implement|edit|modify|write|rewrite|refactor|commit|push)\b.{0,40}\b(?:code|file|repository|repo|branch)\b", re.I | re.S)),
+    ("pull-request or merge action", re.compile(r"\b(?:pull request|draft pr|merge|mergeable)\b", re.I)),
+    ("approval or review verdict", re.compile(r"\b(?:review verdict|approve|approval verdict|accept or reject|changes_required)\b", re.I)),
+    ("committee vote", re.compile(r"\b(?:cast (?:a )?vote|committee vote|vote (?:for|against)|record perplexity(?:'s)? vote)\b", re.I)),
+    ("deployment or publication", re.compile(r"\b(?:deploy|deployment|publish|release)\b", re.I)),
+    ("external message", re.compile(r"\b(?:post|send|reply)\b.{0,30}\b(?:slack|message|email|comment)\b", re.I | re.S)),
+    ("operational decision", re.compile(r"\b(?:assess|decide|determine|recommend|judge)\b.{0,60}\b(?:patch|pull request|pr|ship|merge|deploy|release|acceptance)\b", re.I | re.S)),
+)
+
+_PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("repository path", re.compile(r"(?:[a-z]:\\|/(?:home|users|workspace)/|\b(?:src|tests|oracle|docs)/[\w./-]+)", re.I)),
+    ("repository URL", re.compile(r"https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+", re.I)),
+    ("commit SHA", re.compile(r"\b[0-9a-f]{40}\b", re.I)),
+    ("secret-like value", re.compile(r"\b(?:sk-[a-z0-9_-]{12,}|ghp_[a-z0-9]{12,}|github_pat_[a-z0-9_]{12,}|xox[baprs]-[a-z0-9-]{12,})\b", re.I)),
+    ("diff or source excerpt", re.compile(r"(?:diff --git|@@ -\d|```(?:python|javascript|typescript|diff|json)?\s)", re.I)),
+    ("private-context language", re.compile(r"\b(?:private|internal|unpublished|our repository|our code|attached patch)\b", re.I)),
+    ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
+    ("UUID", re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)),
+    ("Slack identifier", re.compile(r"\b[CUW](?=[A-Z0-9]{8,}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{8,}\b", re.I)),
+)
 
 def deterministic_approval_reasons(text: str) -> list[str]:
     return [label for label, pattern in _GATES if pattern.search(text)]
@@ -62,10 +83,59 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             )
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
+        if assignment.agent == ProviderName.PERPLEXITY:
+            if not assignment.requires_approval:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity research requires exact-query owner approval"
+                )
+            if not assignment.public_research_query:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity requires a bounded public research query"
+                )
+            if assignment.repository:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity research cannot receive repository context"
+                )
+            if assignment.allow_draft_pr:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity research cannot create a draft pull request"
+                )
+            scope_text = "\n".join([assignment.task, *assignment.acceptance])
+            for label, pattern in _PERPLEXITY_PROHIBITED_AUTHORITY:
+                if pattern.search(scope_text):
+                    errors.add(
+                        f"assignment {assignment.sequence}: Perplexity research cannot receive {label} authority"
+                    )
+            if assignment.public_research_query:
+                for label, pattern in _PUBLIC_RESEARCH_QUERY_BLOCKS:
+                    if pattern.search(assignment.public_research_query):
+                        errors.add(
+                            f"assignment {assignment.sequence}: Perplexity public research query contains {label}"
+                        )
+        elif assignment.public_research_query is not None:
+            errors.add(
+                f"assignment {assignment.sequence}: public research query is reserved for Perplexity"
+            )
         if assignment.allow_draft_pr and not assignment.requires_approval:
             errors.add(
                 f"assignment {assignment.sequence}: draft PR creation requires assignment approval"
             )
+        if assignment.allow_draft_pr:
+            reviewers = [
+                candidate
+                for candidate in plan.assignments
+                if candidate.depends_on == [assignment.sequence]
+                and candidate.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+                and candidate.agent != assignment.agent
+            ]
+            if len(reviewers) != 1:
+                errors.add(
+                    f"assignment {assignment.sequence}: draft PR work requires exactly one pre-budgeted independent Claude or Cursor review"
+                )
+            elif reviewers[0].allow_draft_pr:
+                errors.add(
+                    f"assignment {reviewers[0].sequence}: review assignment cannot create a draft pull request"
+                )
         if assignment.repository:
             repository = canonical_repository(assignment.repository)
             if not allowed_repositories:
@@ -120,6 +190,12 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
             else item
             for item in safe.assignments
         ]
+    safe.assignments = [
+        item.model_copy(update={"requires_approval": True})
+        if item.agent == ProviderName.PERPLEXITY
+        else item
+        for item in safe.assignments
+    ]
     return safe
 
 

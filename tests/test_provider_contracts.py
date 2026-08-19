@@ -3,13 +3,20 @@ from __future__ import annotations
 import json
 import unittest
 from dataclasses import replace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
 from director_orchestrator.config import Settings
 from director_orchestrator.models import Assignment, ProviderName, ProviderRun
-from director_orchestrator.providers import ClaudeAdapter, CursorAdapter, GeminiAdapter, PerplexityAdapter
+from director_orchestrator.providers import (
+    ClaudeAdapter,
+    CursorAdapter,
+    GeminiAdapter,
+    PerplexityAdapter,
+    PostSubmitAmbiguityError,
+    ProviderError,
+)
 
 
 class FakeResponse:
@@ -353,12 +360,162 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.run_id, "claude-revision")
         self.assertEqual(run.status, "WAITING_CALLBACK")
 
-    async def test_gemini_usage_check_uses_current_interactions_contract(self):
+    @staticmethod
+    def gemini_assignment() -> Assignment:
+        return Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            task="Validate the prototype in an isolated sandbox",
+            acceptance=["Report the isolated evidence"],
+            repository="example/demo",
+        )
+
+    async def test_gemini_dispatch_uses_antigravity_interactions_contract(self):
         settings = replace(
             Settings(),
             gemini_api_key="test-gemini",
             gemini_api_revision="2026-05-20",
             gemini_agent="antigravity-preview-05-2026",
+        )
+        RecordingAsyncClient.responses = [
+            {
+                "id": "interaction-1",
+                "environment_id": "environment-1",
+                "status": "in_progress",
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await GeminiAdapter(settings).dispatch(self.gemini_assignment(), "context")
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(request["headers"]["Api-Revision"], "2026-05-20")
+        self.assertEqual(request["json"]["agent"], "antigravity-preview-05-2026")
+        self.assertEqual(request["json"]["environment"], "remote")
+        self.assertTrue(request["json"]["background"])
+        self.assertTrue(request["json"]["store"])
+        self.assertNotIn("model", request["json"])
+        self.assertEqual(run.session_id, "environment-1")
+
+    async def test_gemini_create_missing_id_is_post_submit_ambiguity(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        for payload in ({"status": "in_progress"}, []):
+            with self.subTest(payload=payload):
+                RecordingAsyncClient.responses = [payload]
+                with patch(
+                    "director_orchestrator.providers.httpx.AsyncClient",
+                    RecordingAsyncClient,
+                ):
+                    with self.assertRaises(PostSubmitAmbiguityError):
+                        await GeminiAdapter(settings).dispatch(
+                            self.gemini_assignment(),
+                            "context",
+                        )
+
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            status="completed",
+        )
+        RecordingAsyncClient.responses = [{"status": "in_progress"}]
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaises(PostSubmitAmbiguityError):
+                await GeminiAdapter(settings).revise(
+                    prior,
+                    "Return additional evidence",
+                    assignment=self.gemini_assignment(),
+                    context="context",
+                )
+
+    async def test_gemini_poll_missing_id_is_not_a_new_dispatch_ambiguity(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            status="in_progress",
+        )
+        RecordingAsyncClient.responses = [{"status": "in_progress"}]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaises(ProviderError) as raised:
+                await GeminiAdapter(settings).poll(prior)
+
+        self.assertNotIsInstance(raised.exception, PostSubmitAmbiguityError)
+
+    async def test_gemini_poll_extracts_text_from_interaction_steps(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=2,
+            run_id="interaction-1",
+            session_id="environment-1",
+            status="in_progress",
+        )
+        RecordingAsyncClient.responses = [
+            {
+                "id": "interaction-1",
+                "status": "completed",
+                "steps": [
+                    {"type": "thought", "content": [{"type": "text", "text": "hidden"}]},
+                    {
+                        "type": "model_output",
+                        "content": [
+                            {"type": "text", "text": "Evidence "},
+                            {"type": "text", "text": "complete."},
+                        ],
+                    },
+                ],
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await GeminiAdapter(settings).poll(prior)
+
+        self.assertEqual(run.result, "Evidence complete.")
+        self.assertEqual(run.session_id, "environment-1")
+        self.assertEqual(run.assignment_sequence, 2)
+
+    async def test_gemini_revision_reuses_interaction_environment(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_agent="antigravity-preview-05-2026",
+        )
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            session_id="environment-1",
+            status="completed",
+        )
+        RecordingAsyncClient.responses = [
+            {"id": "interaction-2", "status": "in_progress"}
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await GeminiAdapter(settings).revise(
+                prior,
+                "Add exact evidence",
+                assignment=self.gemini_assignment(),
+                context="context",
+            )
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(request["json"]["agent"], "antigravity-preview-05-2026")
+        self.assertEqual(request["json"]["previous_interaction_id"], "interaction-1")
+        self.assertEqual(request["json"]["environment"], "environment-1")
+        self.assertTrue(request["json"]["store"])
+        self.assertEqual(run.session_id, "environment-1")
+        self.assertEqual(run.assignment_sequence, 1)
+
+    async def test_gemini_usage_check_is_stateless_low_cost_and_never_starts_antigravity(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_api_revision="2026-05-20",
+            gemini_usage_model="gemini-3.5-flash-lite",
         )
         RecordingAsyncClient.responses = [
             {"id": "interaction-1", "status": "completed", "output_text": "STATUS=OK"}
@@ -368,16 +525,91 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             run = await GeminiAdapter(settings).usage_check("probe")
 
         request = RecordingAsyncClient.calls[0]
-        self.assertEqual(request["headers"]["Api-Revision"], "2026-05-20")
-        self.assertEqual(request["json"]["model"], "antigravity-preview-05-2026")
-        self.assertEqual(request["json"]["environment"], "remote")
+        self.assertEqual(request["json"]["model"], "gemini-3.5-flash-lite")
         self.assertFalse(request["json"]["store"])
         self.assertNotIn("agent", request["json"])
+        self.assertNotIn("background", request["json"])
+        self.assertNotIn("environment", request["json"])
         self.assertEqual(run.status, "completed")
+        self.assertEqual(run.attempt_count, 1)
+
+    async def test_gemini_usage_check_retries_only_explicit_429_with_bounded_delay(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_usage_max_attempts=3,
+            gemini_usage_max_retry_delay_seconds=8,
+        )
+        RecordingAsyncClient.responses = [
+            FakeResponse(
+                {"error": {"status": "RATE_LIMIT_EXCEEDED"}},
+                status_code=429,
+                headers={"Retry-After": "60"},
+            ),
+            {"id": "interaction-2", "status": "completed", "output_text": "STATUS=OK"},
+        ]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep") as sleep,
+        ):
+            run = await GeminiAdapter(settings).usage_check("probe")
+
+        self.assertEqual(len(RecordingAsyncClient.calls), 2)
+        sleep.assert_awaited_once_with(8.0)
+        self.assertEqual(run.attempt_count, 2)
+
+    async def test_gemini_usage_check_records_final_quota_code_without_response_text(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_usage_max_attempts=3,
+            gemini_usage_max_retry_delay_seconds=0,
+        )
+        rate_limit = FakeResponse(
+            {
+                "error": {
+                    "status": "RESOURCE_EXHAUSTED",
+                    "message": "account-specific detail must not enter the error",
+                }
+            },
+            status_code=429,
+        )
+        RecordingAsyncClient.responses = [rate_limit, rate_limit, rate_limit]
+
+        with (
+            patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient),
+            patch("director_orchestrator.providers.asyncio.sleep"),
+        ):
+            with self.assertRaises(ProviderError) as captured:
+                await GeminiAdapter(settings).usage_check("probe")
+
+        self.assertEqual(captured.exception.code, "resource_exhausted")
+        self.assertEqual(captured.exception.attempt_count, 3)
+        self.assertNotIn("account-specific", str(captured.exception))
+        self.assertEqual(len(RecordingAsyncClient.calls), 3)
+
+    async def test_gemini_usage_check_does_not_trust_arbitrary_provider_error_codes(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_usage_max_attempts=1,
+        )
+        response = httpx.Response(
+            429,
+            json={"error": {"status": "ACCOUNT_PRIVATE_DETAIL"}},
+            request=httpx.Request("POST", "https://gemini.invalid/interactions"),
+        )
+        with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+            with self.assertRaises(ProviderError) as raised:
+                await GeminiAdapter(settings).usage_check("probe")
+
+        self.assertEqual(raised.exception.code, "http_429")
 
     async def test_perplexity_usage_check_uses_synchronous_agent_contract(self):
         settings = replace(
             Settings(),
+            perplexity_enabled=True,
             perplexity_api_key="test-perplexity",
             perplexity_preset="fast-search",
         )
@@ -400,6 +632,241 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("background", request["json"])
         self.assertEqual(run.status, "completed")
         self.assertEqual(run.result, "STATUS=OK")
+
+    async def test_perplexity_dispatch_uses_raw_search_without_repository_context(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+            perplexity_max_results=7,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            task="Find current primary sources about calibration metrics",
+            acceptance=["Report sources and contradictions"],
+            public_research_query="primary sources about probability calibration metrics",
+            repository="example/private-repository",
+            estimated_cost_usd=0.25,
+        )
+        RecordingAsyncClient.responses = [
+            {
+                "id": "search-1",
+                "results": [
+                    {
+                        "title": "Calibration reference",
+                        "url": "https://example.test/reference",
+                        "snippet": "A supporting excerpt.",
+                        "date": "2026-08-01",
+                        "last_updated": "2026-08-10",
+                    }
+                ],
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await PerplexityAdapter(settings).dispatch(
+                assignment,
+                "PRIVATE REPOSITORY CONTEXT MUST NOT LEAVE THE ORCHESTRATOR",
+            )
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(request["url"], "https://api.perplexity.ai/search")
+        self.assertEqual(
+            request["json"],
+            {"query": assignment.public_research_query, "max_results": 7},
+        )
+        self.assertNotIn("PRIVATE", json.dumps(request))
+        self.assertNotIn("example/private-repository", json.dumps(request))
+        evidence = json.loads(run.result or "{}")
+        self.assertEqual(evidence["query"], assignment.public_research_query)
+        self.assertEqual(evidence["results"][0]["result_url"], "https://example.test/reference")
+        self.assertEqual(evidence["results"][0]["page_title"], "Calibration reference")
+        self.assertEqual(evidence["results"][0]["publication_date"], "2026-08-01")
+        self.assertEqual(evidence["results"][0]["supporting_excerpt"], "A supporting excerpt.")
+        self.assertEqual(evidence["results"][0]["source_type"], "web_result")
+        self.assertEqual(evidence["results"][0]["confidence"], "not_provided_by_search_api")
+
+    async def test_perplexity_revise_reuses_bounded_query_and_drops_director_text(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+            perplexity_max_results=7,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            task="Find current primary sources about calibration metrics",
+            acceptance=["Report sources and contradictions"],
+            public_research_query="primary sources about probability calibration metrics",
+            estimated_cost_usd=0.25,
+        )
+        prior = ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            run_id="search-1",
+            status="completed",
+            result="{}",
+        )
+        RecordingAsyncClient.responses = [
+            {
+                "id": "search-2",
+                "results": [
+                    {
+                        "title": "Calibration follow-up",
+                        "url": "https://example.test/follow-up",
+                        "snippet": "A later excerpt.",
+                    }
+                ],
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await PerplexityAdapter(settings).revise(
+                prior,
+                "Retry using SHA abcdef0123456789abcdef0123456789abcdef01 and src/secret.py",
+                assignment=assignment,
+                context="PRIVATE REPOSITORY CONTEXT MUST NOT LEAVE THE ORCHESTRATOR",
+            )
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(request["url"], "https://api.perplexity.ai/search")
+        self.assertEqual(
+            request["json"],
+            {"query": assignment.public_research_query, "max_results": 7},
+        )
+        serialized = json.dumps(request)
+        self.assertNotIn("PRIVATE", serialized)
+        self.assertNotIn("src/secret.py", serialized)
+        self.assertNotIn("abcdef0123456789abcdef0123456789abcdef01", serialized)
+        evidence = json.loads(run.result or "{}")
+        self.assertEqual(evidence["query"], assignment.public_research_query)
+        self.assertEqual(run.run_id, "search-2")
+
+    async def test_perplexity_revise_rejects_write_authority_and_missing_query(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+            perplexity_daily_budget_usd=2.0,
+        )
+        prior = ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            run_id="search-1",
+            status="completed",
+        )
+        base = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            task="Find sources",
+            acceptance=["Report URLs"],
+            public_research_query="primary sources about probability calibration metrics",
+            requires_approval=True,
+        )
+
+        for kwargs in (
+            {"assignment": None, "context": "context"},
+            {"assignment": base.model_copy(update={"allow_draft_pr": True}), "context": "context"},
+            {"assignment": base.model_copy(update={"estimated_cost_usd": 2.01}), "context": "context"},
+            {
+                "assignment": base.model_copy(update={"public_research_query": None}),
+                "context": "context",
+            },
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ProviderError):
+                    await PerplexityAdapter(settings).revise(
+                        prior,
+                        "Retry with private identifiers",
+                        **kwargs,
+                    )
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
+    async def test_perplexity_dispatch_fails_closed_when_research_policy_is_not_ready(self):
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            task="Find sources",
+            acceptance=["Report URLs"],
+        )
+        unsafe_settings = (
+            replace(Settings(), perplexity_api_key="test-perplexity"),
+            replace(
+                Settings(),
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_mode="general",
+            ),
+            replace(
+                Settings(),
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_allow_repository_write=True,
+            ),
+            replace(
+                Settings(),
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_allow_review_verdict=True,
+            ),
+            replace(
+                Settings(),
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_max_results=21,
+            ),
+            replace(
+                Settings(),
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_search_context_size="unbounded",
+            ),
+            replace(
+                Settings(),
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_timeout_seconds=0,
+            ),
+            replace(
+                Settings(),
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_daily_budget_usd=0,
+            ),
+        )
+
+        for settings in unsafe_settings:
+            with self.subTest(settings=settings):
+                with self.assertRaises(ProviderError):
+                    await PerplexityAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
+    async def test_perplexity_dispatch_rejects_write_authority_and_budget_overrun(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+            perplexity_daily_budget_usd=2.0,
+        )
+        base = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            task="Find sources",
+            acceptance=["Report URLs"],
+            requires_approval=True,
+        )
+
+        for assignment in (
+            base.model_copy(update={"allow_draft_pr": True}),
+            base.model_copy(update={"estimated_cost_usd": 2.01}),
+        ):
+            with self.subTest(assignment=assignment):
+                with self.assertRaises(ProviderError):
+                    await PerplexityAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
 
 
 if __name__ == "__main__":

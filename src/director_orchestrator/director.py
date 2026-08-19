@@ -8,6 +8,7 @@ import httpx
 
 from .config import Settings
 from .models import DirectorPlan, ReviewDecision, TaskRecord
+from .team_charter import team_operating_charter
 
 
 def _openai_strict_subset(value: Any) -> Any:
@@ -97,14 +98,23 @@ class OpenAIDirector:
             "primary_team": list(self.settings.primary_team),
             "supplemental_specialists": ["gemini", "perplexity"],
             "provider_strategy": self.settings.provider_strategy(),
+            "team_operating_charter": team_operating_charter(),
             "routing_rules": [
                 "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases.",
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
                 "Use estimated_cost_usd and max_task_budget_usd for the deterministic budget gate. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
                 "Treat OpenAI, Claude, and Cursor as the primary team.",
                 "Use Claude as the primary coding and general workhorse when configured.",
-                "Use Cursor as the other primary repository teammate for coding overflow, independent second passes, and cloud-agent automation.",
+                "Treat Cursor as a full-spectrum primary repository partner with a 90 percent capability-parity target relative to Claude and OpenAI Codex. Route low through critical work to Cursor by fit, independence, capacity, and evidence needs; do not reserve it only for overflow or second passes.",
+                "Cursor may handle research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership. It still cannot replace OpenAI acceptance, mandatory Codex Security, or an independent reviewer for its own work.",
                 "Use Gemini or Perplexity only as supplemental specialists when their distinct sandbox, validation, research, or sourcing strengths materially help.",
+                "For medium, high, or critical complexity, prefer a bounded evidence-backed debate among available committee members before synthesis. Weighted voting is advisory only and cannot change authority or deterministic gates.",
+                "Count a producer's advisory vote at full configured weight while keeping that producer ineligible to review or accept its own work. Abstentions and unavailable members cast zero weight and never change the fixed configured denominator.",
+                "Resolve an ordinary advisory tie by documented OpenAI evidence judgment. Ask the owner one focused question when tied options materially differ in cost, authority, safety, privacy, repository scope, runtime behavior, or project direction.",
+                "After three bounded recorded idempotent-safe nonresponse attempts, mark the provider unavailable for this assignment cycle, preserve partial output as untrusted evidence, continue independent safe work, and report scope, confidence, timing, and coverage changes. Never repeat an ambiguous paid dispatch.",
+                "Pre-budget a different-provider review assignment for every requested draft PR or other reviewable implementation. The runtime binds its structured handoff to the logical producer, material authors, exact base/head SHA or artifact digest, changed files, tests, limitations, acceptance checks, and security context. A new commit invalidates prior review, Codex Security, CI, and merge evidence.",
+                "Perplexity is evidence-only: give it methodological, theoretical, source-discovery, or fact-verification research without repository context, code work, review verdicts, votes, or external-write authority. Set requires_approval=true so the owner sees and approves the exact outbound query. Set public_research_query to a bounded public query containing no repository path or URL, commit SHA, source excerpt, private identifier, or secret-like value; set it null for every other provider.",
+                "For owner-gated provider-UI coordination, use an already authenticated Chrome session first and Microsoft Edge only when Chrome is unavailable. Limit this to Claude, Cursor, or Gemini inside the stored assignment; never bypass authentication, consent, CAPTCHA, privacy, device, workspace-trust, permission, or security prompts, expose credentials or raw private source, change billing or access, post externally, merge, deploy, purchase, or treat browser output as authenticated provider or gate evidence. Perplexity remains API-only.",
                 "Use owner for ambiguity, unavailable specialists, quota exhaustion, or approval-gated actions.",
                 "Never set starting_ref to a Cursor auto-generated cursor/... working branch. Those branches are deleted after their pull requests merge; use only a durable allowlisted ref such as main.",
             ],
