@@ -354,7 +354,12 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 assignment: Assignment,
                 context: str,
             ) -> ProviderRun:
-                raise httpx.ReadTimeout("remote creation outcome unknown")
+                request = httpx.Request("POST", "https://cursor.invalid/v1/agents/run")
+                raise httpx.HTTPStatusError(
+                    "provider returned 503 after submission",
+                    request=request,
+                    response=httpx.Response(503, request=request),
+                )
 
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "tasks.sqlite3")

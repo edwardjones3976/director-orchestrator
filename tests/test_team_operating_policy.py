@@ -6,13 +6,18 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 from pydantic import ValidationError
 
 from director_orchestrator.config import Settings
 from director_orchestrator.approvals import assignment_approval_digest
-from director_orchestrator.engine import OrchestrationEngine, ProviderUnavailableError
+from director_orchestrator.engine import (
+    OrchestrationEngine,
+    ProviderUnavailableError,
+    SlackNotifier,
+)
 from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
@@ -598,76 +603,155 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(completed.assignment_outcomes[0].provider, ProviderName.CURSOR)
             self.assertIn("no duplicate dispatch", completed.availability_impacts[0])
 
-    async def test_ambiguous_dispatch_is_recorded_once_and_never_retried(self):
+    async def test_post_submit_failures_are_recorded_once_and_never_retried(self):
         class AmbiguousAdapter:
             name = ProviderName.CLAUDE
 
-            def __init__(self):
+            def __init__(self, error):
                 self.dispatch_calls = 0
+                self.error = error
 
             async def dispatch(self, assignment, context):
                 self.dispatch_calls += 1
-                raise httpx.ReadTimeout("request outcome unknown")
+                raise self.error
 
-        with tempfile.TemporaryDirectory() as directory:
-            settings = replace(
-                Settings(),
-                allow_paid_runs=True,
-                openai_api_key="test-openai",
-                claude_routine_url="https://claude.invalid/fire",
-                claude_routine_token="test-claude",
-                project_allowlist=("demo",),
-                repository_allowlist=("example/demo",),
-                allowed_starting_refs=("main",),
-                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+        request = httpx.Request("POST", "https://claude.invalid/fire")
+        errors = {
+            "timeout": httpx.ReadTimeout("request outcome unknown", request=request),
+            "server_status": httpx.HTTPStatusError(
+                "provider returned 503",
+                request=request,
+                response=httpx.Response(503, request=request),
+            ),
+            "malformed_json": ValueError("provider returned malformed JSON"),
+            "missing_identifier": KeyError("run_id"),
+        }
+        for label, error in errors.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                settings = replace(
+                    Settings(),
+                    allow_paid_runs=True,
+                    openai_api_key="test-openai",
+                    claude_routine_url="https://claude.invalid/fire",
+                    claude_routine_token="test-claude",
+                    project_allowlist=("demo",),
+                    repository_allowlist=("example/demo",),
+                    allowed_starting_refs=("main",),
+                    sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                )
+                store = TaskStore(settings.sqlite_path)
+                task = TaskRecord(
+                    task_id=f"DIR-AMBIGUOUS-{label.upper()}",
+                    status=TaskStatus.QUEUED,
+                    intake=SlackIntake(
+                        source_event_id=f"evt-ambiguous-{label}",
+                        channel_id="C1",
+                        thread_ts="1.3",
+                        user_id="U1",
+                        text="DIRECTOR Project: demo Outcome: bounded work",
+                    ),
+                    plan=DirectorPlan(
+                        project="demo",
+                        normalized_outcome="Bounded work",
+                        risk_level=RiskLevel.LOW,
+                        approval_required=False,
+                        max_hops=1,
+                        max_revisions=0,
+                        assignments=[
+                            Assignment(
+                                sequence=1,
+                                agent=ProviderName.CLAUDE,
+                                task="Perform bounded work",
+                                acceptance=["Return evidence"],
+                            )
+                        ],
+                        final_acceptance=["Evidence accepted"],
+                    ),
+                )
+                store.create(task)
+                adapter = AmbiguousAdapter(error)
+                engine = OrchestrationEngine(settings, store)
+                engine.providers = {ProviderName.CLAUDE: adapter}
+
+                await engine.run(task.task_id)
+
+                completed = store.get(task.task_id)
+                self.assertEqual(completed.status, TaskStatus.OWNER_DECISION_REQUIRED)
+                self.assertEqual(adapter.dispatch_calls, 1)
+                self.assertEqual(len(completed.provider_contact_attempts), 1)
+                self.assertEqual(
+                    completed.provider_contact_attempts[0].outcome,
+                    "ambiguous_dispatch",
+                )
+
+                completed.status = TaskStatus.QUEUED
+                store.save(completed)
+                await engine.run(task.task_id)
+                self.assertEqual(adapter.dispatch_calls, 1)
+                self.assertIn(
+                    "remains ambiguous", (store.get(task.task_id).message or "")
+                )
+
+    async def test_perplexity_approval_block_displays_exact_full_query(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"ok": True}
+
+        class RecordingClient:
+            body = None
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, *, headers, json):
+                RecordingClient.body = json
+                return FakeResponse()
+
+        query = "public calibration evidence " + ("q" * 1_970)
+        record = TaskRecord(
+            task_id="DIR-QUERY-DISPLAY",
+            status=TaskStatus.OWNER_DECISION_REQUIRED,
+            intake=SlackIntake(
+                source_event_id="evt-query-display",
+                channel_id="C1",
+                thread_ts="1.4",
+                user_id="U1",
+                text="DIRECTOR Project: demo Outcome: research",
+            ),
+        )
+        message = (
+            "*DIR-QUERY-DISPLAY — OWNER DECISION REQUIRED*\n"
+            + ("task " * 300)
+            + f"\nPublic research query: `{query}`"
+        )
+        notifier = SlackNotifier(replace(Settings(), slack_bot_token="test-slack"))
+        with patch(
+            "director_orchestrator.engine.httpx.AsyncClient", RecordingClient
+        ):
+            await notifier.post(
+                record,
+                message,
+                approvable=True,
+                approval_sequence=1,
+                approval_query=query,
             )
-            store = TaskStore(settings.sqlite_path)
-            task = TaskRecord(
-                task_id="DIR-AMBIGUOUS",
-                status=TaskStatus.QUEUED,
-                intake=SlackIntake(
-                    source_event_id="evt-ambiguous",
-                    channel_id="C1",
-                    thread_ts="1.3",
-                    user_id="U1",
-                    text="DIRECTOR Project: demo Outcome: bounded work",
-                ),
-                plan=DirectorPlan(
-                    project="demo",
-                    normalized_outcome="Bounded work",
-                    risk_level=RiskLevel.LOW,
-                    approval_required=False,
-                    max_hops=1,
-                    max_revisions=0,
-                    assignments=[
-                        Assignment(
-                            sequence=1,
-                            agent=ProviderName.CLAUDE,
-                            task="Perform bounded work",
-                            acceptance=["Return evidence"],
-                        )
-                    ],
-                    final_acceptance=["Evidence accepted"],
-                ),
-            )
-            store.create(task)
-            adapter = AmbiguousAdapter()
-            engine = OrchestrationEngine(settings, store)
-            engine.providers = {ProviderName.CLAUDE: adapter}
 
-            await engine.run(task.task_id)
-
-            completed = store.get(task.task_id)
-            self.assertEqual(completed.status, TaskStatus.OWNER_DECISION_REQUIRED)
-            self.assertEqual(adapter.dispatch_calls, 1)
-            self.assertEqual(len(completed.provider_contact_attempts), 1)
-            self.assertEqual(completed.provider_contact_attempts[0].outcome, "ambiguous_dispatch")
-
-            completed.status = TaskStatus.QUEUED
-            store.save(completed)
-            await engine.run(task.task_id)
-            self.assertEqual(adapter.dispatch_calls, 1)
-            self.assertIn("remains ambiguous", (store.get(task.task_id).message or ""))
+        blocks = RecordingClient.body["blocks"]
+        self.assertEqual(
+            blocks[1]["text"]["text"],
+            "Exact outbound Perplexity query (approved byte-for-byte):\n" + query,
+        )
+        self.assertEqual(blocks[1]["text"]["type"], "plain_text")
+        self.assertEqual(blocks[-1]["type"], "actions")
 
 
 class AssignmentBoundaryTests(unittest.TestCase):

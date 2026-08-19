@@ -252,6 +252,60 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 settings.gemini_daily_request_limit,
             )
 
+    async def test_gemini_transport_failure_preserves_all_attempted_requests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("gemini",),
+                gemini_api_key="test-gemini",
+                gemini_usage_max_attempts=3,
+                gemini_daily_request_limit=3,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                slack_bot_token="",
+            )
+            outbound_calls = 0
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                nonlocal outbound_calls
+                outbound_calls += 1
+                if outbound_calls == 1:
+                    return httpx.Response(
+                        429,
+                        request=request,
+                        json={"error": {"status": "RESOURCE_EXHAUSTED"}},
+                    )
+                raise httpx.ReadTimeout(
+                    "second Gemini attempt lost its response", request=request
+                )
+
+            transport = httpx.MockTransport(handler)
+            monitor = UsageMonitor(
+                settings,
+                store,
+                adapters={ProviderName.GEMINI: GeminiAdapter(settings)},
+            )
+            with (
+                patch(
+                    "director_orchestrator.providers.httpx.AsyncClient",
+                    return_value=httpx.AsyncClient(transport=transport),
+                ),
+                patch("director_orchestrator.providers.asyncio.sleep"),
+            ):
+                records = await monitor.run_once(force=True)
+
+            self.assertEqual(outbound_calls, 2)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(records[0].attempt_count, 2)
+            self.assertEqual(records[0].provider_error_code, "transport_error")
+            self.assertEqual(
+                monitor.health()["daily_accounting"]["gemini"]["request_count"],
+                2,
+            )
+
     async def test_health_distinguishes_claude_prompt_from_completed_response(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))

@@ -31,6 +31,14 @@ from .review_handoff import bind_review_handoff, transitive_dependency_sequences
 from .store import TaskStore
 
 
+_POST_SUBMIT_AMBIGUITY_ERRORS = (
+    httpx.HTTPError,
+    ValueError,
+    LookupError,
+    TypeError,
+)
+
+
 class ProviderUnavailableError(ProviderError):
     def __init__(self, run: ProviderRun):
         super().__init__(f"{run.provider.value} did not respond after three safe attempts")
@@ -48,6 +56,7 @@ class SlackNotifier:
         *,
         approvable: bool = False,
         approval_sequence: int | None = None,
+        approval_query: str | None = None,
     ) -> None:
         if not self.settings.slack_bot_token:
             return
@@ -56,8 +65,32 @@ class SlackNotifier:
             # Carry the assignment this button was rendered for, so a button left
             # sitting in the channel cannot approve a later gated assignment.
             value = record.task_id if approval_sequence is None else f"{record.task_id}|{approval_sequence}"
+            approval_summary = message
+            query_block: list[dict] = []
+            if approval_query is not None:
+                rendered_suffix = f"\nPublic research query: `{approval_query}`"
+                if approval_summary.endswith(rendered_suffix):
+                    approval_summary = approval_summary[: -len(rendered_suffix)]
+                exact_query = (
+                    "Exact outbound Perplexity query (approved byte-for-byte):\n"
+                    + approval_query
+                )
+                if len(exact_query) > 2_900:
+                    raise ValueError(
+                        "Perplexity approval query exceeds Slack's exact-display limit"
+                    )
+                query_block = [
+                    {
+                        "type": "section",
+                        "text": {"type": "plain_text", "text": exact_query},
+                    }
+                ]
             body["blocks"] = [
-                {"type": "section", "text": {"type": "mrkdwn", "text": message[:2_900]}},
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": approval_summary[:2_900]},
+                },
+                *query_block,
                 {
                     "type": "actions",
                     "elements": [
@@ -173,6 +206,11 @@ class OrchestrationEngine:
                         f"`{assignment.agent.value}` — {assignment.task[:1_500]}{public_query}",
                         approvable=True,
                         approval_sequence=assignment.sequence,
+                        approval_query=(
+                            assignment.public_research_query
+                            if assignment.agent == ProviderName.PERPLEXITY
+                            else None
+                        ),
                     )
                     return
                 accepted = await self._execute_assignment(record, assignment)
@@ -506,7 +544,7 @@ class OrchestrationEngine:
                     assignment,
                     context=self._handoff_context(record, assignment),
                 )
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
                 self._record_contact_attempt(
                     record,
                     assignment,
@@ -584,7 +622,7 @@ class OrchestrationEngine:
                     assignment=assignment,
                     context=self._handoff_context(record, assignment),
                 )
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
                 self._record_contact_attempt(
                     record,
                     assignment,

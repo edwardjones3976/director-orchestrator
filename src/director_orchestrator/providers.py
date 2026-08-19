@@ -539,30 +539,45 @@ class GeminiAdapter(ProviderAdapter):
         configured_attempts = max(1, min(self.settings.gemini_usage_max_attempts, 5))
         if max_attempts is not None:
             configured_attempts = min(configured_attempts, max(1, max_attempts))
-        async with httpx.AsyncClient(timeout=60) as client:
-            for attempt in range(1, configured_attempts + 1):
-                response = await client.post(
-                    f"{self.settings.gemini_api_base}/interactions",
-                    headers=self.headers,
-                    json=body,
-                )
-                if response.status_code < 400:
-                    break
-                if response.status_code != 429:
-                    response.raise_for_status()
-                code = self._error_code(response)
-                if attempt >= configured_attempts:
-                    raise ProviderError(
-                        f"Gemini usage check failed with {code} after {attempt} bounded attempts",
-                        code=code,
-                        attempt_count=attempt,
+        attempt = 0
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                for attempt in range(1, configured_attempts + 1):
+                    response = await client.post(
+                        f"{self.settings.gemini_api_base}/interactions",
+                        headers=self.headers,
+                        json=body,
                     )
-                await asyncio.sleep(self._usage_retry_delay(response, attempt - 1))
-        payload = response.json()
-        return self._run(
-            payload,
-            fallback_run_id="gemini-stateless-usage-check",
-        ).model_copy(update={"attempt_count": attempt})
+                    if response.status_code < 400:
+                        break
+                    if response.status_code != 429:
+                        response.raise_for_status()
+                    code = self._error_code(response)
+                    if attempt >= configured_attempts:
+                        raise ProviderError(
+                            f"Gemini usage check failed with {code} after {attempt} bounded attempts",
+                            code=code,
+                            attempt_count=attempt,
+                        )
+                    await asyncio.sleep(self._usage_retry_delay(response, attempt - 1))
+            payload = response.json()
+            return self._run(
+                payload,
+                fallback_run_id="gemini-stateless-usage-check",
+            ).model_copy(update={"attempt_count": attempt})
+        except ProviderError:
+            raise
+        except Exception as exc:
+            code = (
+                "transport_error"
+                if isinstance(exc, httpx.RequestError)
+                else "invalid_response"
+            )
+            raise ProviderError(
+                f"Gemini usage check failed with {code} after {max(1, attempt)} bounded attempts",
+                code=code,
+                attempt_count=max(1, attempt),
+            ) from exc
 
 
 class PerplexityAdapter(ProviderAdapter):
