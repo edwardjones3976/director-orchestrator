@@ -57,15 +57,16 @@ def _is_international_phone_separator(character: str) -> bool:
 
 
 def _contains_phone_number(value: str) -> bool:
-    if _NORTH_AMERICAN_PHONE.search(value):
+    normalized_value = unicodedata.normalize("NFKC", value)
+    if _NORTH_AMERICAN_PHONE.search(normalized_value):
         return True
-    for start, character in enumerate(value):
+    for start, character in enumerate(normalized_value):
         if character != "+":
             continue
         digit_count = 0
         has_separator = False
         candidate_characters: list[str] = []
-        for candidate_character in value[start + 1 : start + 42]:
+        for candidate_character in normalized_value[start + 1 : start + 42]:
             if candidate_character.isdecimal():
                 digit_count += 1
                 candidate_characters.append(candidate_character)
