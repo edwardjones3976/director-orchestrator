@@ -18,6 +18,7 @@ from director_orchestrator.engine import (
     ProviderUnavailableError,
     SlackNotifier,
 )
+from director_orchestrator.providers import PostSubmitAmbiguityError, ProviderError
 from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
@@ -625,6 +626,9 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
             ),
             "malformed_json": ValueError("provider returned malformed JSON"),
             "missing_identifier": KeyError("run_id"),
+            "provider_post_submit": PostSubmitAmbiguityError(
+                "provider accepted create request without an identifier"
+            ),
         }
         for label, error in errors.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
@@ -683,7 +687,6 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                     completed.provider_contact_attempts[0].outcome,
                     "ambiguous_dispatch",
                 )
-
                 completed.status = TaskStatus.QUEUED
                 store.save(completed)
                 await engine.run(task.task_id)
@@ -691,6 +694,64 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(
                     "remains ambiguous", (store.get(task.task_id).message or "")
                 )
+
+    async def test_plain_provider_error_is_not_misclassified_as_post_submit(self):
+        class PredispatchAdapter:
+            name = ProviderName.CLAUDE
+
+            async def dispatch(self, assignment, context):
+                raise ProviderError("bounded public research query is required")
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            store = TaskStore(settings.sqlite_path)
+            task = TaskRecord(
+                task_id="DIR-PREDISPATCH-ERROR",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-predispatch-error",
+                    channel_id="C1",
+                    thread_ts="1.4",
+                    user_id="U1",
+                    text="DIRECTOR Project: demo Outcome: bounded research",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Bounded research",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.CLAUDE,
+                            task="Perform bounded work",
+                            acceptance=["Return evidence"],
+                        )
+                    ],
+                    final_acceptance=["Evidence accepted"],
+                ),
+            )
+            store.create(task)
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {ProviderName.CLAUDE: PredispatchAdapter()}
+
+            await engine.run(task.task_id)
+
+            completed = store.get(task.task_id)
+            self.assertEqual(completed.status, TaskStatus.FAILED)
+            self.assertEqual(completed.provider_contact_attempts, [])
 
     async def test_perplexity_approval_block_displays_exact_full_query(self):
         class FakeResponse:

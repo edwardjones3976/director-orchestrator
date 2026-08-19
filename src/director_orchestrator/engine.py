@@ -26,12 +26,18 @@ from .oracle_merge import (
     authenticate_provider_review_artifact,
 )
 from .policy import enforce_plan, execution_policy_errors, preview_plan
-from .providers import ProviderError, ProviderRun, provider_registry
+from .providers import (
+    PostSubmitAmbiguityError,
+    ProviderError,
+    ProviderRun,
+    provider_registry,
+)
 from .review_handoff import bind_review_handoff, transitive_dependency_sequences
 from .store import TaskStore
 
 
 _POST_SUBMIT_AMBIGUITY_ERRORS = (
+    PostSubmitAmbiguityError,
     httpx.HTTPError,
     ValueError,
     LookupError,

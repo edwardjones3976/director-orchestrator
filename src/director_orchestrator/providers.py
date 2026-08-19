@@ -28,6 +28,10 @@ class ProviderError(RuntimeError):
         self.attempt_count = attempt_count
 
 
+class PostSubmitAmbiguityError(ProviderError):
+    """A provider accepted a create request, but its new run cannot be identified."""
+
+
 def _response_error_blob(response: httpx.Response) -> str:
     parts: list[str] = []
     try:
@@ -420,10 +424,15 @@ class GeminiAdapter(ProviderAdapter):
         *,
         session_id: str | None = None,
         fallback_run_id: str | None = None,
+        post_submit: bool = False,
     ) -> ProviderRun:
+        if not isinstance(payload, dict):
+            error_type = PostSubmitAmbiguityError if post_submit else ProviderError
+            raise error_type("Gemini Interaction response was not an object")
         run_id = payload.get("id") or fallback_run_id
         if not run_id:
-            raise ProviderError("Gemini Interaction response did not include an ID")
+            error_type = PostSubmitAmbiguityError if post_submit else ProviderError
+            raise error_type("Gemini Interaction response did not include an ID")
         return ProviderRun(
             provider=self.name,
             run_id=run_id,
@@ -489,7 +498,7 @@ class GeminiAdapter(ProviderAdapter):
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload)
+        return self._run(payload, post_submit=True)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -524,7 +533,11 @@ class GeminiAdapter(ProviderAdapter):
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload, session_id=run.session_id).model_copy(
+        return self._run(
+            payload,
+            session_id=run.session_id,
+            post_submit=True,
+        ).model_copy(
             update={"assignment_sequence": run.assignment_sequence}
         )
 

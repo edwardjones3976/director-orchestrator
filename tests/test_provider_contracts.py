@@ -14,6 +14,7 @@ from director_orchestrator.providers import (
     CursorAdapter,
     GeminiAdapter,
     PerplexityAdapter,
+    PostSubmitAmbiguityError,
     ProviderError,
 )
 
@@ -395,6 +396,53 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(request["json"]["store"])
         self.assertNotIn("model", request["json"])
         self.assertEqual(run.session_id, "environment-1")
+
+    async def test_gemini_create_missing_id_is_post_submit_ambiguity(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        for payload in ({"status": "in_progress"}, []):
+            with self.subTest(payload=payload):
+                RecordingAsyncClient.responses = [payload]
+                with patch(
+                    "director_orchestrator.providers.httpx.AsyncClient",
+                    RecordingAsyncClient,
+                ):
+                    with self.assertRaises(PostSubmitAmbiguityError):
+                        await GeminiAdapter(settings).dispatch(
+                            self.gemini_assignment(),
+                            "context",
+                        )
+
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            status="completed",
+        )
+        RecordingAsyncClient.responses = [{"status": "in_progress"}]
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaises(PostSubmitAmbiguityError):
+                await GeminiAdapter(settings).revise(
+                    prior,
+                    "Return additional evidence",
+                    assignment=self.gemini_assignment(),
+                    context="context",
+                )
+
+    async def test_gemini_poll_missing_id_is_not_a_new_dispatch_ambiguity(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            status="in_progress",
+        )
+        RecordingAsyncClient.responses = [{"status": "in_progress"}]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaises(ProviderError) as raised:
+                await GeminiAdapter(settings).poll(prior)
+
+        self.assertNotIsInstance(raised.exception, PostSubmitAmbiguityError)
 
     async def test_gemini_poll_extracts_text_from_interaction_steps(self):
         settings = replace(Settings(), gemini_api_key="test-gemini")
