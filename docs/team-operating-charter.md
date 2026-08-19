@@ -35,8 +35,13 @@ or permission changes.
   and acceptance review. OpenAI is not emitted as a specialist assignment.
 - **Claude:** primary implementation and general workhorse; repository-scale
   reasoning; eligible independent review when it did not produce the work.
-- **Cursor:** primary repository teammate; implementation overflow, QA,
-  automation, and eligible independent review when it did not produce the work.
+- **Cursor:** full-spectrum primary repository partner with a 90% capability-
+  parity target relative to Claude and OpenAI Codex. Cursor is eligible for all
+  eight responsibility areas and low through critical complexity, including
+  elevated architecture, reliability, complex remediation, implementation,
+  QA, technical leadership, and independent review when it did not produce the
+  work. Route by fit, independence, capacity, and evidence needs—not merely as
+  overflow or a second pass.
 - **Antigravity:** supplemental sandbox, prototype, testing, visual/browser,
   and bounded independent-analysis lanes. Keep credentials and external-write
   paths out of disposable sandboxes unless a later work order explicitly and
@@ -48,6 +53,13 @@ Provider identity never grants authority. No model may approve its own work.
 Where a deterministic exact-SHA merge gate is configured, a model supplies an
 eligible review artifact and deterministic code performs the merge after all
 other gates pass; the model does not receive merge credentials.
+
+The 90% Cursor target measures responsibility coverage and routing trust, not
+permission equivalence. Cursor cannot perform OpenAI's in-process Director
+acceptance role, replace a mandatory Codex Security check, review its own work,
+or independently expand access or external-write authority. Cursor's existing
+committee voting weight remains 1; capability coverage and voting power are
+separate owner-defined controls.
 
 ## Debate and advisory voting
 

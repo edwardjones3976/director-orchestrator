@@ -238,9 +238,20 @@ class Settings:
             },
             "cursor": {
                 "team": "primary",
-                "priority": "primary_repository_teammate_and_independent_second_pass",
+                "priority": "primary_full_spectrum_repository_partner",
                 "account_context": self.other_provider_account_context,
-                "strengths": ["isolated repository execution", "parallel implementation", "draft pull requests"],
+                "capability_parity_target": 0.9,
+                "eligible_complexity": ["low", "medium", "high", "critical"],
+                "strengths": [
+                    "research and evidence verification",
+                    "deep technical reasoning and planning support",
+                    "complex implementation, debugging, and refactoring",
+                    "architecture, reliability, and security-adjacent analysis",
+                    "cross-platform quality assurance",
+                    "independent exact-SHA review",
+                    "technical leadership and coordination",
+                    "isolated repository execution and draft pull requests",
+                ],
             },
             "gemini": {
                 "team": "supplemental",

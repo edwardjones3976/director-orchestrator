@@ -64,6 +64,43 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             ),
         },
     ],
+    "role_profiles": {
+        "cursor": {
+            "team": "primary",
+            "capability_parity_target": 0.9,
+            "comparison_peers": ["claude", "openai_codex"],
+            "eligible_complexity": ["low", "medium", "high", "critical"],
+            "eligible_responsibilities": [
+                "research",
+                "evidence_verification",
+                "programming",
+                "deep_reasoning",
+                "innovation",
+                "development",
+                "quality_assurance",
+                "leadership",
+            ],
+            "elevated_work": [
+                "architecture and design analysis",
+                "complex implementation and refactoring",
+                "reliability and recovery work",
+                "security-adjacent analysis and remediation",
+                "independent exact-SHA review",
+                "cross-platform quality assurance",
+                "technical planning and team coordination",
+            ],
+            "routing_rule": (
+                "Assign Cursor by capability fit, independence, capacity, and evidence needs. "
+                "Do not reserve it only for overflow, routine work, or second passes."
+            ),
+            "non_substitution_rules": [
+                "Cursor cannot perform OpenAI's in-process Director acceptance role.",
+                "Cursor analysis does not replace a mandatory Codex Security check.",
+                "Cursor cannot review or approve its own work.",
+                "Cursor capability parity does not expand repository, credential, merge, deployment, or publication authority.",
+            ],
+        }
+    },
     "committee": {
         "members": {
             "antigravity": {"provider": "gemini", "voting_power": 0.5},

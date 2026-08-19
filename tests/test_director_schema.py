@@ -187,6 +187,15 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
+        cursor = charter["role_profiles"]["cursor"]
+        self.assertEqual(cursor["capability_parity_target"], 0.9)
+        self.assertEqual(cursor["comparison_peers"], ["claude", "openai_codex"])
+        self.assertEqual(cursor["eligible_complexity"], ["low", "medium", "high", "critical"])
+        self.assertEqual(
+            cursor["eligible_responsibilities"],
+            [area["name"] for area in charter["responsibility_areas"]],
+        )
+        self.assertTrue(any("own work" in rule for rule in cursor["non_substitution_rules"]))
         self.assertTrue(
             any(
                 "deterministic policy" in rule.lower()

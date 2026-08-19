@@ -84,6 +84,10 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(all(strategy[name]["team"] == "primary" for name in self.settings.primary_team))
         self.assertEqual(strategy["gemini"]["team"], "supplemental")
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
+        self.assertEqual(strategy["cursor"]["capability_parity_target"], 0.9)
+        self.assertEqual(strategy["cursor"]["eligible_complexity"], ["low", "medium", "high", "critical"])
+        self.assertEqual(strategy["cursor"]["priority"], "primary_full_spectrum_repository_partner")
+        self.assertIn("technical leadership and coordination", strategy["cursor"]["strengths"])
 
     def test_perplexity_readiness_requires_the_complete_research_only_profile(self):
         key_only = replace(self.settings, perplexity_api_key="test-perplexity")
