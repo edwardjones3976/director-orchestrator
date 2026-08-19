@@ -11,6 +11,7 @@ import httpx
 from pydantic import ValidationError
 
 from director_orchestrator.config import Settings
+from director_orchestrator.approvals import assignment_approval_digest
 from director_orchestrator.engine import OrchestrationEngine, ProviderUnavailableError
 from director_orchestrator.models import (
     Assignment,
@@ -57,6 +58,20 @@ def review_candidate_payload(*, producer: str = "cursor", material_authors=None)
 
 
 class ReviewHandoffTests(unittest.TestCase):
+    ACTORS = {
+        "cursor": frozenset({"cursor-agent"}),
+        "claude": frozenset({"claude-agent"}),
+        "gemini": frozenset({"gemini-agent"}),
+    }
+
+    def bind(self, record, producer, run):
+        return bind_review_handoff(
+            record,
+            producer,
+            run,
+            trusted_provider_actors=self.ACTORS,
+        )
+
     def record(self, *, material_authors=None) -> tuple[TaskRecord, Assignment, ProviderRun]:
         producer = Assignment(
             sequence=1,
@@ -100,6 +115,7 @@ class ReviewHandoffTests(unittest.TestCase):
                 final_acceptance=["Exact review, security, and CI remain current"],
             ),
             approved_assignments=[1],
+            approved_assignment_digests={1: assignment_approval_digest(producer)},
         )
         run = ProviderRun(
             provider=ProviderName.CURSOR,
@@ -117,7 +133,7 @@ class ReviewHandoffTests(unittest.TestCase):
     def test_exact_candidate_binds_the_prebudgeted_different_provider(self):
         record, producer, run = self.record()
 
-        sequence, reviewer = bind_review_handoff(record, producer, run) or (None, None)
+        sequence, reviewer = self.bind(record, producer, run) or (None, None)
 
         self.assertEqual(sequence, 2)
         self.assertIsNotNone(reviewer)
@@ -132,11 +148,19 @@ class ReviewHandoffTests(unittest.TestCase):
         record, producer, run = self.record(material_authors=["cursor", "claude"])
 
         with self.assertRaisesRegex(ValueError, "material author"):
-            bind_review_handoff(record, producer, run)
+            self.bind(record, producer, run)
 
     def test_producer_cannot_omit_recorded_material_author(self):
         record, producer, run = self.record()
+        upstream = Assignment(
+            sequence=3,
+            agent=ProviderName.CLAUDE,
+            task="Provide material implementation input",
+            acceptance=["Return evidence"],
+        )
         producer.depends_on = [3]
+        record.plan.assignments.append(upstream)
+        record.approved_assignment_digests[1] = assignment_approval_digest(producer)
         record.assignment_outcomes.append(
             AssignmentOutcome(
                 assignment_sequence=3,
@@ -148,7 +172,7 @@ class ReviewHandoffTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "recorded orchestration provenance"):
-            bind_review_handoff(record, producer, run)
+            self.bind(record, producer, run)
 
     def test_review_artifact_identity_is_bound_to_the_stored_handoff(self):
         record, producer, run = self.record()
@@ -161,7 +185,7 @@ class ReviewHandoffTests(unittest.TestCase):
                 review_summary="accepted",
             )
         )
-        sequence, reviewer = bind_review_handoff(record, producer, run) or (None, None)
+        sequence, reviewer = self.bind(record, producer, run) or (None, None)
         self.assertEqual(sequence, 2)
         handoff = json.loads(reviewer.task)
         record.plan.assignments = [producer, reviewer]
@@ -213,7 +237,130 @@ class ReviewHandoffTests(unittest.TestCase):
         run.result = json.dumps(payload)
 
         with self.assertRaisesRegex(ValidationError, "digest"):
-            bind_review_handoff(record, producer, run)
+            self.bind(record, producer, run)
+
+    def test_nonwrite_and_unapproved_producers_cannot_arm_review(self):
+        record, producer, run = self.record()
+        nonwrite = producer.model_copy(update={"allow_draft_pr": False})
+        record.plan.assignments[0] = nonwrite
+        record.approved_assignment_digests[1] = assignment_approval_digest(nonwrite)
+        with self.assertRaisesRegex(ValueError, "lacks draft-PR authority"):
+            self.bind(record, nonwrite, run)
+
+        record, producer, run = self.record()
+        record.approved_assignment_digests = {}
+        with self.assertRaisesRegex(ValueError, "exact-scope owner approval"):
+            self.bind(record, producer, run)
+
+    def test_candidate_actor_must_belong_to_producer_and_not_reviewer(self):
+        record, producer, run = self.record()
+        payload = json.loads(run.result or "{}")
+        payload["implementation_actor"] = "claude-agent"
+        payload.pop("artifact_digest")
+        encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        payload["artifact_digest"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        run.result = json.dumps(payload)
+
+        with self.assertRaisesRegex(ValueError, "not bound to the logical producer"):
+            self.bind(record, producer, run)
+
+        with self.assertRaisesRegex(ValueError, "no configured trusted GitHub actor"):
+            bind_review_handoff(
+                record,
+                producer,
+                ProviderRun.model_validate({**run.model_dump(), "result": json.dumps(review_candidate_payload())}),
+                trusted_provider_actors={},
+            )
+
+    def test_transitive_material_author_cannot_review_final_candidate(self):
+        upstream = Assignment(
+            sequence=1,
+            agent=ProviderName.CLAUDE,
+            task="Create material design input",
+            acceptance=["Return design evidence"],
+        )
+        middle = Assignment(
+            sequence=2,
+            agent=ProviderName.GEMINI,
+            task="Turn the design into a tested prototype",
+            acceptance=["Return prototype evidence"],
+            depends_on=[1],
+        )
+        producer = Assignment(
+            sequence=3,
+            agent=ProviderName.CURSOR,
+            task="Integrate and create a draft PR",
+            acceptance=["Return exact candidate"],
+            repository="example/demo",
+            starting_ref="main",
+            depends_on=[2],
+            requires_approval=True,
+            allow_draft_pr=True,
+        )
+        reviewer = Assignment(
+            sequence=4,
+            agent=ProviderName.CLAUDE,
+            task="Reserved review",
+            acceptance=["Review exact candidate"],
+            repository="example/demo",
+            depends_on=[3],
+        )
+        record = TaskRecord(
+            task_id="DIR-HANDOFF",
+            status=TaskStatus.RUNNING,
+            intake=SlackIntake(
+                source_event_id="evt-transitive",
+                channel_id="C1",
+                thread_ts="1.5",
+                user_id="U1",
+                text="DIRECTOR Project: demo Outcome: staged implementation",
+            ),
+            plan=DirectorPlan(
+                project="demo",
+                normalized_outcome="Staged implementation",
+                risk_level=RiskLevel.MEDIUM,
+                approval_required=True,
+                max_hops=4,
+                max_revisions=0,
+                assignments=[upstream, middle, producer, reviewer],
+                final_acceptance=["Independent exact-SHA review"],
+            ),
+            assignment_outcomes=[
+                AssignmentOutcome(
+                    assignment_sequence=1,
+                    provider=ProviderName.CLAUDE,
+                    run_id="claude-upstream",
+                    result="design",
+                    review_summary="accepted",
+                ),
+                AssignmentOutcome(
+                    assignment_sequence=2,
+                    provider=ProviderName.GEMINI,
+                    run_id="gemini-middle",
+                    result="prototype",
+                    review_summary="accepted",
+                ),
+            ],
+            approved_assignments=[3],
+            approved_assignment_digests={3: assignment_approval_digest(producer)},
+        )
+        payload = review_candidate_payload(
+            material_authors=["claude", "gemini", "cursor"]
+        )
+        payload["assignment_id"] = "DIR-HANDOFF:3"
+        payload.pop("artifact_digest")
+        encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        payload["artifact_digest"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        run = ProviderRun(
+            provider=ProviderName.CURSOR,
+            assignment_sequence=3,
+            run_id="cursor-final",
+            status="FINISHED",
+            result=json.dumps(payload),
+        )
+
+        with self.assertRaisesRegex(ValueError, "review provider is listed as a material author"):
+            self.bind(record, producer, run)
 
 
 class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
@@ -460,6 +607,12 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(adapter.dispatch_calls, 1)
             self.assertEqual(len(completed.provider_contact_attempts), 1)
             self.assertEqual(completed.provider_contact_attempts[0].outcome, "ambiguous_dispatch")
+
+            completed.status = TaskStatus.QUEUED
+            store.save(completed)
+            await engine.run(task.task_id)
+            self.assertEqual(adapter.dispatch_calls, 1)
+            self.assertIn("remains ambiguous", (store.get(task.task_id).message or ""))
 
 
 class AssignmentBoundaryTests(unittest.TestCase):

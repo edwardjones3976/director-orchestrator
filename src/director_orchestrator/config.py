@@ -78,6 +78,15 @@ class Settings:
     oracle_automerge_required_check_app: str = os.getenv(
         "ORACLE_AUTOMERGE_REQUIRED_CHECK_APP", "github-actions"
     ).strip()
+    oracle_automerge_claude_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_CLAUDE_ACTORS", ""
+    )
+    oracle_automerge_cursor_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_CURSOR_ACTORS", ""
+    )
+    oracle_automerge_gemini_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_GEMINI_ACTORS", ""
+    )
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
     usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)
@@ -244,6 +253,17 @@ class Settings:
             "required_checks_configured": bool(self.oracle_automerge_required_checks),
             "required_check_app_configured": bool(self.oracle_automerge_required_check_app),
             "allowed_paths_configured": bool(self.oracle_automerge_allowed_paths),
+            "provider_actor_bindings_configured": bool(
+                self.oracle_automerge_claude_actors
+                and self.oracle_automerge_cursor_actors
+            ),
+        }
+
+    def oracle_provider_actor_map(self) -> dict[str, frozenset[str]]:
+        return {
+            "claude": frozenset(item.lower() for item in self.oracle_automerge_claude_actors),
+            "cursor": frozenset(item.lower() for item in self.oracle_automerge_cursor_actors),
+            "gemini": frozenset(item.lower() for item in self.oracle_automerge_gemini_actors),
         }
 
     def oracle_github_credential_configured(self) -> bool:

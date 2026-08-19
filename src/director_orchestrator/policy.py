@@ -84,6 +84,10 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
         if assignment.agent == ProviderName.PERPLEXITY:
+            if not assignment.requires_approval:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity research requires exact-query owner approval"
+                )
             if not assignment.public_research_query:
                 errors.add(
                     f"assignment {assignment.sequence}: Perplexity requires a bounded public research query"
@@ -186,6 +190,12 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
             else item
             for item in safe.assignments
         ]
+    safe.assignments = [
+        item.model_copy(update={"requires_approval": True})
+        if item.agent == ProviderName.PERPLEXITY
+        else item
+        for item in safe.assignments
+    ]
     return safe
 
 

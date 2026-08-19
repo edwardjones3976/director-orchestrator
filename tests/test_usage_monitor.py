@@ -138,6 +138,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(records[0].provider_error_code, "resource_exhausted")
             self.assertNotIn("response_text", records[0].error or "")
             self.assertFalse(health["all_configured_have_recent_signal"])
+            self.assertFalse(health["all_configured_completion_verified"])
             self.assertEqual(health["missing_or_stale_providers"], ["gemini"])
             self.assertEqual(health["daily_accounting"]["gemini"]["request_count"], 3)
             self.assertEqual(health["daily_accounting"]["gemini"]["retry_count"], 2)
@@ -225,6 +226,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
 
             health = monitor.health()
             self.assertTrue(health["all_configured_have_recent_signal"])
+            self.assertFalse(health["all_configured_completion_verified"])
             self.assertEqual(health["pending_completion_providers"], ["claude"])
             self.assertEqual(health["completion_verified_providers"], ["cursor"])
             latest = {item["provider"]: item for item in health["latest"]}
@@ -382,6 +384,8 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(adapter.calls, 1)
             self.assertEqual(monitor.health()["providers"], ["cursor", "unknown"])
             self.assertEqual(monitor.health()["unsupported_providers"], ["unknown"])
+            self.assertFalse(monitor.health()["all_configured_have_recent_signal"])
+            self.assertFalse(monitor.health()["all_configured_completion_verified"])
 
     async def test_unconfigured_provider_is_recorded_as_skipped(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TaskStatus(StrEnum):
@@ -174,8 +174,13 @@ class ProviderContactAttempt(BaseModel):
     assignment_sequence: int = Field(ge=1, le=20)
     provider: ProviderName
     ordinal: int = Field(ge=1, le=3)
-    phase: Literal["dispatch", "poll", "callback"]
-    outcome: Literal["no_response", "ambiguous_dispatch"]
+    phase: Literal["dispatch", "poll", "callback", "reconciliation"]
+    outcome: Literal[
+        "no_response",
+        "ambiguous_dispatch",
+        "reconciled_not_created",
+        "reconciled_created",
+    ]
     run_id: str | None = Field(default=None, max_length=255)
     partial_output: str | None = Field(default=None, max_length=2_000)
     error: str = Field(min_length=1, max_length=2_000)
@@ -206,6 +211,10 @@ class TaskRecord(BaseModel):
     # gated assignment must appear here before it runs, so one approval cannot
     # silently clear every remaining gated assignment in the plan.
     approved_assignments: list[int] = Field(default_factory=list)
+    # SHA-256 of the exact validated Assignment the owner saw. Sequence numbers
+    # alone are insufficient because a later plan mutation could otherwise reuse
+    # an old approval for a different public query or write scope.
+    approved_assignment_digests: dict[int, str] = Field(default_factory=dict)
     message: str | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -220,6 +229,33 @@ class OwnerApproval(BaseModel):
     # happens to be pending now. None means "whatever is pending", which is only
     # safe for an approval the owner types fresh, such as the slash command.
     assignment_sequence: int | None = Field(default=None, ge=1, le=20)
+
+
+class AmbiguousDispatchResolution(BaseModel):
+    """Owner-authenticated reconciliation for a dispatch with unknown outcome."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner_user_id: str = Field(min_length=1, max_length=64)
+    assignment_sequence: int = Field(ge=1, le=20)
+    resolution: Literal["not_created", "created"]
+    note: str = Field(min_length=3, max_length=2_000)
+    run_id: str | None = Field(default=None, min_length=1, max_length=255)
+    run_status: str | None = Field(default=None, min_length=1, max_length=100)
+    session_id: str | None = Field(default=None, max_length=255)
+    url: str | None = Field(default=None, max_length=2_000)
+    result: str | None = Field(default=None, max_length=50_000)
+
+    @model_validator(mode="after")
+    def validate_created_run(self) -> AmbiguousDispatchResolution:
+        if self.resolution == "created" and (not self.run_id or not self.run_status):
+            raise ValueError("created reconciliation requires run_id and run_status")
+        if self.resolution == "not_created" and any(
+            value is not None
+            for value in (self.run_id, self.run_status, self.session_id, self.url, self.result)
+        ):
+            raise ValueError("not-created reconciliation cannot include provider-run fields")
+        return self
 
 
 class ClaudeCallback(BaseModel):

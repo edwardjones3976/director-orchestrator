@@ -4,15 +4,20 @@ import unittest
 
 from director_orchestrator.approvals import (
     StaleApproval,
+    apply_ambiguous_dispatch_resolution,
     apply_failed_predispatch_retry,
     apply_owner_approval,
+    assignment_approval_digest,
+    assignment_is_approved,
     plan_gate_pending,
 )
 from director_orchestrator.models import (
+    AmbiguousDispatchResolution,
     Assignment,
     DirectorPlan,
     OwnerApproval,
     ProviderName,
+    ProviderContactAttempt,
     ProviderRun,
     RiskLevel,
     SlackIntake,
@@ -22,7 +27,7 @@ from director_orchestrator.models import (
 
 
 def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int] | None = None) -> TaskRecord:
-    return TaskRecord(
+    record = TaskRecord(
         task_id="DIR-BIND",
         status=TaskStatus.OWNER_DECISION_REQUIRED,
         intake=SlackIntake(
@@ -64,6 +69,13 @@ def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int]
         owner_approved=owner_approved,
         approved_assignments=list(approved or []),
     )
+    record.approved_assignment_digests = {
+        sequence: assignment_approval_digest(
+            next(item for item in record.plan.assignments if item.sequence == sequence)
+        )
+        for sequence in record.approved_assignments
+    }
+    return record
 
 
 class PlanGateSeparationTests(unittest.TestCase):
@@ -87,6 +99,7 @@ class PlanGateSeparationTests(unittest.TestCase):
         )
 
         self.assertEqual(record.approved_assignments, [1])
+        self.assertTrue(assignment_is_approved(record, record.plan.assignments[0]))
 
     def test_ungated_plan_still_binds_the_pending_assignment(self):
         # approval_required False with a gated assignment: the engine stops at
@@ -171,6 +184,68 @@ class FailedPredispatchRetryTests(unittest.TestCase):
                     note="Retry",
                 ),
             )
+
+
+class AmbiguousDispatchReconciliationTests(unittest.TestCase):
+    def ambiguous_record(self) -> TaskRecord:
+        record = _record(owner_approved=True, index=0, approved=[1])
+        record.provider_contact_attempts.append(
+            ProviderContactAttempt(
+                assignment_sequence=1,
+                provider=ProviderName.CURSOR,
+                ordinal=1,
+                phase="dispatch",
+                outcome="ambiguous_dispatch",
+                error="ReadTimeout: outcome unknown",
+            )
+        )
+        return record
+
+    def test_normal_approval_cannot_redispatch_after_ambiguous_result(self):
+        record = self.ambiguous_record()
+
+        with self.assertRaisesRegex(StaleApproval, "must be reconciled"):
+            apply_owner_approval(
+                record,
+                OwnerApproval(owner_user_id="U0B9UJ86D27", assignment_sequence=1),
+            )
+
+    def test_owner_can_confirm_no_run_was_created_before_one_new_dispatch(self):
+        record = self.ambiguous_record()
+
+        apply_ambiguous_dispatch_resolution(
+            record,
+            AmbiguousDispatchResolution(
+                owner_user_id="U0B9UJ86D27",
+                assignment_sequence=1,
+                resolution="not_created",
+                note="Provider dashboard confirms no run exists",
+            ),
+        )
+
+        self.assertEqual(record.status, TaskStatus.QUEUED)
+        self.assertEqual(record.provider_contact_attempts[-1].outcome, "reconciled_not_created")
+        self.assertEqual(record.provider_runs, [])
+
+    def test_owner_can_adopt_the_existing_provider_run_without_redispatch(self):
+        record = self.ambiguous_record()
+
+        apply_ambiguous_dispatch_resolution(
+            record,
+            AmbiguousDispatchResolution(
+                owner_user_id="U0B9UJ86D27",
+                assignment_sequence=1,
+                resolution="created",
+                note="Provider dashboard shows the run",
+                run_id="provider-run-123",
+                run_status="RUNNING",
+                url="https://provider.invalid/runs/123",
+            ),
+        )
+
+        self.assertEqual(record.status, TaskStatus.QUEUED)
+        self.assertEqual(record.provider_runs[0].run_id, "provider-run-123")
+        self.assertEqual(record.provider_contact_attempts[-1].outcome, "reconciled_created")
 
 
 if __name__ == "__main__":

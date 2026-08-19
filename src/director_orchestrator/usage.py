@@ -541,9 +541,12 @@ class UsageMonitor:
             "interval_minutes": max(15, self.settings.usage_check_interval_minutes),
             "providers": list(self.providers),
             "unsupported_providers": list(self.unsupported_providers),
-            "all_configured_have_recent_signal": all(
-                provider in current_signals for provider in configured
-            ),
+            "all_configured_have_recent_signal": bool(configured)
+            and not self.unsupported_providers
+            and all(provider in current_signals for provider in configured),
+            "all_configured_completion_verified": bool(configured)
+            and not self.unsupported_providers
+            and all(provider in completion_verified for provider in configured),
             "completion_verified_providers": completion_verified,
             "pending_completion_providers": pending_completion,
             "missing_or_stale_providers": [

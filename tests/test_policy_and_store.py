@@ -170,7 +170,8 @@ class PolicyTests(unittest.TestCase):
                     agent=ProviderName.PERPLEXITY,
                     task="Find authoritative sources about calibration methodology",
                     acceptance=["Report URLs, provenance, contradictions, and unknowns"],
-                    public_research_query="authoritative calibration methodology sources",
+                public_research_query="authoritative calibration methodology sources",
+                requires_approval=True,
                 )
             ],
             final_acceptance=["A primary-team member evaluates the evidence"],

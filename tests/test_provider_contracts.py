@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from dataclasses import replace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -540,6 +540,23 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured.exception.attempt_count, 3)
         self.assertNotIn("account-specific", str(captured.exception))
         self.assertEqual(len(RecordingAsyncClient.calls), 3)
+
+    async def test_gemini_usage_check_does_not_trust_arbitrary_provider_error_codes(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_usage_max_attempts=1,
+        )
+        response = httpx.Response(
+            429,
+            json={"error": {"status": "ACCOUNT_PRIVATE_DETAIL"}},
+            request=httpx.Request("POST", "https://gemini.invalid/interactions"),
+        )
+        with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+            with self.assertRaises(ProviderError) as raised:
+                await GeminiAdapter(settings).usage_check("probe")
+
+        self.assertEqual(raised.exception.code, "http_429")
 
     async def test_perplexity_usage_check_uses_synchronous_agent_contract(self):
         settings = replace(

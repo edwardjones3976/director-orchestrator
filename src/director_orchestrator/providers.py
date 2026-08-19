@@ -452,7 +452,13 @@ class GeminiAdapter(ProviderAdapter):
             for key in ("status", "code"):
                 value = error.get(key)
                 if isinstance(value, str) and value.strip():
-                    return value.strip().lower()[:100]
+                    normalized = value.strip().lower()
+                    if normalized in {
+                        "quota_exceeded",
+                        "rate_limit_exceeded",
+                        "resource_exhausted",
+                    }:
+                        return normalized
         return f"http_{response.status_code}"
 
     def _usage_retry_delay(self, response: httpx.Response, attempt: int) -> float:

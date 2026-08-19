@@ -9,6 +9,7 @@ import httpx
 
 from .config import Settings
 from .director import OpenAIDirector
+from .approvals import assignment_is_approved, unresolved_ambiguous_dispatch
 from .models import (
     Assignment,
     AssignmentOutcome,
@@ -156,14 +157,20 @@ class OrchestrationEngine:
                     self.store.save(record)
                     await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{assignment.task}")
                     return
-                if assignment.requires_approval and assignment.sequence not in record.approved_assignments:
+                if assignment.requires_approval and not assignment_is_approved(record, assignment):
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
-                    record.message = f"Assignment {assignment.sequence} requires owner approval"
+                    record.message = f"Assignment {assignment.sequence} requires exact-scope owner approval"
                     self.store.save(record)
+                    public_query = (
+                        f"\nPublic research query: `{assignment.public_research_query}`"
+                        if assignment.agent == ProviderName.PERPLEXITY
+                        and assignment.public_research_query
+                        else ""
+                    )
                     await self.notifier.post(
                         record,
                         f"*{task_id} — OWNER DECISION REQUIRED*\nAssignment {assignment.sequence} requires your approval.\n"
-                        f"`{assignment.agent.value}` — {assignment.task[:1_500]}",
+                        f"`{assignment.agent.value}` — {assignment.task[:1_500]}{public_query}",
                         approvable=True,
                         approval_sequence=assignment.sequence,
                     )
@@ -236,7 +243,7 @@ class OrchestrationEngine:
                 "sequence": assignment.sequence,
                 "depends_on": list(assignment.depends_on),
                 "requires_approval": assignment.requires_approval,
-                "owner_approval_recorded": assignment.sequence in record.approved_assignments,
+                "owner_approval_recorded": assignment_is_approved(record, assignment),
             },
             "dependency_outcomes": [
                 bounded(outcome)
@@ -338,7 +345,12 @@ class OrchestrationEngine:
         self, record: TaskRecord, assignment: Assignment, run: ProviderRun
     ) -> bool:
         try:
-            bound = bind_review_handoff(record, assignment, run)
+            bound = bind_review_handoff(
+                record,
+                assignment,
+                run,
+                trusted_provider_actors=self.settings.oracle_provider_actor_map(),
+            )
         except (TypeError, ValueError) as exc:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = ("Review handoff failed closed: " + str(exc))[:2_000]
@@ -465,6 +477,15 @@ class OrchestrationEngine:
         if existing_runs:
             run = existing_runs[-1]
         else:
+            if unresolved_ambiguous_dispatch(record, assignment) is not None:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    f"{assignment.agent.value} dispatch remains ambiguous. Reconcile whether the "
+                    "provider run was created before any new paid dispatch."
+                )
+                self.store.save(record)
+                await self.notifier.post(record, record.message)
+                return False
             if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached")
             record.status = TaskStatus.RUNNING
@@ -478,7 +499,16 @@ class OrchestrationEngine:
                 self._record_contact_attempt(
                     record,
                     assignment,
-                    ordinal=1,
+                    ordinal=min(
+                        3,
+                        1
+                        + sum(
+                            item.outcome == "ambiguous_dispatch"
+                            for item in record.provider_contact_attempts
+                            if item.assignment_sequence == assignment.sequence
+                            and item.provider == assignment.agent
+                        ),
+                    ),
                     phase="dispatch",
                     outcome="ambiguous_dispatch",
                     run=None,

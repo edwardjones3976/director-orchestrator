@@ -65,8 +65,11 @@ PERPLEXITY_ALLOW_REPOSITORY_WRITE=false
 PERPLEXITY_ALLOW_REVIEW_VERDICT=false
 ```
 
-Normal assignments use `POST /search`. The adapter sends only the assignment's
-bounded research query and result limit; it does not send repository context,
+Normal assignments use `POST /search`. Every Perplexity assignment requires an
+owner approval bound to the digest of the exact assignment; the Slack prompt
+shows the complete outbound `public_research_query`, and a later query mutation
+invalidates that approval. The adapter sends only the approved bounded research query and
+result limit; it does not send repository context,
 acceptance authority, credentials, or Slack state. Results are normalized with
 the query, retrieval time, URL, page title, available publication/update dates,
 supporting excerpt, source type, and explicit markers where confidence or

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import Assignment, ProviderName, ProviderRun, TaskRecord
+from .approvals import assignment_is_approved
 from .policy import canonical_repository
 
 
@@ -69,6 +71,8 @@ def bind_review_handoff(
     record: TaskRecord,
     producer_assignment: Assignment,
     run: ProviderRun,
+    *,
+    trusted_provider_actors: Mapping[str, frozenset[str]] | None = None,
 ) -> tuple[int, Assignment] | None:
     """Bind a producer result to one pre-budgeted, different-provider review assignment."""
 
@@ -79,6 +83,12 @@ def bind_review_handoff(
         return None
     if record.plan is None:
         raise ValueError("review candidate has no stored plan")
+    if not producer_assignment.allow_draft_pr:
+        raise ValueError("review candidate producer assignment lacks draft-PR authority")
+    if not producer_assignment.requires_approval:
+        raise ValueError("review candidate producer assignment lacks an approval requirement")
+    if not assignment_is_approved(record, producer_assignment):
+        raise ValueError("review candidate producer assignment lacks exact-scope owner approval")
     if candidate.assignment_id != f"{record.task_id}:{producer_assignment.sequence}":
         raise ValueError("review candidate assignment identifier does not match the producer")
     if candidate.logical_producer != producer_assignment.agent:
@@ -90,13 +100,28 @@ def bind_review_handoff(
     if candidate.base_ref != producer_assignment.starting_ref:
         raise ValueError("review candidate base ref does not match the producer assignment")
 
+    assignments = {assignment.sequence: assignment for assignment in record.plan.assignments}
+    dependency_sequences: set[int] = set()
+    pending = list(producer_assignment.depends_on)
+    while pending:
+        sequence = pending.pop()
+        if sequence in dependency_sequences:
+            continue
+        dependency = assignments.get(sequence)
+        if dependency is None:
+            raise ValueError("review candidate dependency is absent from the stored plan")
+        dependency_sequences.add(sequence)
+        pending.extend(dependency.depends_on)
+    outcomes = {outcome.assignment_sequence: outcome for outcome in record.assignment_outcomes}
+    missing_outcomes = sorted(dependency_sequences - set(outcomes))
+    if missing_outcomes:
+        raise ValueError(
+            "review candidate dependencies lack accepted outcomes: "
+            + ", ".join(str(item) for item in missing_outcomes)
+        )
     recorded_material_authors = {
         producer_assignment.agent,
-        *(
-            outcome.provider
-            for outcome in record.assignment_outcomes
-            if outcome.assignment_sequence in producer_assignment.depends_on
-        ),
+        *(outcomes[sequence].provider for sequence in dependency_sequences),
     }
     if set(candidate.material_authors) != recorded_material_authors:
         raise ValueError(
@@ -117,6 +142,19 @@ def bind_review_handoff(
         raise ValueError("review provider is listed as a material author")
     if reviewer.allow_draft_pr:
         raise ValueError("review assignment cannot create another draft pull request")
+
+    actor_map = trusted_provider_actors or {}
+    producer_actors = actor_map.get(producer_assignment.agent.value, frozenset())
+    reviewer_actors = actor_map.get(reviewer.agent.value, frozenset())
+    implementation_actor = candidate.implementation_actor.strip().lower()
+    if not producer_actors:
+        raise ValueError("logical producer has no configured trusted GitHub actor")
+    if not reviewer_actors:
+        raise ValueError("review provider has no configured trusted GitHub actor")
+    if implementation_actor not in producer_actors:
+        raise ValueError("implementation actor is not bound to the logical producer")
+    if implementation_actor in reviewer_actors:
+        raise ValueError("implementation actor is also controlled by the review provider")
 
     handoff = {
         "schema_version": "director-review-handoff/v1",

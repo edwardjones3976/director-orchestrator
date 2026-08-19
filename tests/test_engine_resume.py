@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from director_orchestrator.config import Settings
+from director_orchestrator.approvals import assignment_approval_digest
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
@@ -306,6 +307,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["Accepted"],
                 ),
                 approved_assignments=[1],
+                approved_assignment_digests={1: assignment_approval_digest(assignment)},
             )
             store.create(record)
 
@@ -636,6 +638,9 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 intake=intake,
                 plan=plan,
                 approved_assignments=[2],
+                approved_assignment_digests={
+                    2: assignment_approval_digest(plan.assignments[1])
+                },
             )
             store.create(record)
 
