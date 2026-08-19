@@ -522,6 +522,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             agent=ProviderName.PERPLEXITY,
             task="Find current primary sources about calibration metrics",
             acceptance=["Report sources and contradictions"],
+            public_research_query="primary sources about probability calibration metrics",
             repository="example/private-repository",
             estimated_cost_usd=0.25,
         )
@@ -550,12 +551,12 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["url"], "https://api.perplexity.ai/search")
         self.assertEqual(
             request["json"],
-            {"query": assignment.task, "max_results": 7},
+            {"query": assignment.public_research_query, "max_results": 7},
         )
         self.assertNotIn("PRIVATE", json.dumps(request))
         self.assertNotIn("example/private-repository", json.dumps(request))
         evidence = json.loads(run.result or "{}")
-        self.assertEqual(evidence["query"], assignment.task)
+        self.assertEqual(evidence["query"], assignment.public_research_query)
         self.assertEqual(evidence["results"][0]["result_url"], "https://example.test/reference")
         self.assertEqual(evidence["results"][0]["page_title"], "Calibration reference")
         self.assertEqual(evidence["results"][0]["publication_date"], "2026-08-01")

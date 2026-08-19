@@ -159,6 +159,7 @@ class PolicyTests(unittest.TestCase):
                     agent=ProviderName.PERPLEXITY,
                     task="Find authoritative sources about calibration methodology",
                     acceptance=["Report URLs, provenance, contradictions, and unknowns"],
+                    public_research_query="authoritative calibration methodology sources",
                 )
             ],
             final_acceptance=["A primary-team member evaluates the evidence"],
@@ -299,7 +300,20 @@ class PolicyTests(unittest.TestCase):
             execution_policy_errors(plan, settings),
         )
         approved = plan.model_copy(
-            update={"assignments": [assignment.model_copy(update={"requires_approval": True})]}
+            update={
+                "max_hops": 2,
+                "assignments": [
+                    assignment.model_copy(update={"requires_approval": True}),
+                    Assignment(
+                        sequence=2,
+                        agent=ProviderName.CLAUDE,
+                        task="Independently review the exact candidate produced by assignment 1",
+                        acceptance=["Return an exact-candidate verdict"],
+                        repository="example/demo",
+                        depends_on=[1],
+                    ),
+                ],
+            }
         )
         self.assertEqual(execution_policy_errors(approved, settings), [])
 

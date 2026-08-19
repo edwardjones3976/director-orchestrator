@@ -566,15 +566,17 @@ class PerplexityAdapter(ProviderAdapter):
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
         del context  # Search receives only the bounded query, never repository/task context.
         self._require_research_only(assignment)
+        if not assignment.public_research_query:
+            raise ProviderError("Perplexity requires a bounded public research query")
         body = {
-            "query": assignment.task,
+            "query": assignment.public_research_query,
             "max_results": self.settings.perplexity_max_results,
         }
         async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
             response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._search_run(payload, assignment.task)
+        return self._search_run(payload, assignment.public_research_query)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         raise ProviderError("Perplexity API responses are synchronous and cannot be polled")

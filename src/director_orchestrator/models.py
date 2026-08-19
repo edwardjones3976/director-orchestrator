@@ -70,6 +70,7 @@ class Assignment(BaseModel):
     agent: ProviderName
     task: str = Field(min_length=1, max_length=10_000)
     acceptance: list[str] = Field(min_length=1, max_length=20)
+    public_research_query: str | None = Field(default=None, min_length=1, max_length=2_000)
     repository: str | None = Field(default=None, max_length=2_000)
     starting_ref: str = Field(default="main", min_length=1, max_length=255)
     depends_on: list[int] = Field(default_factory=list, max_length=20)
@@ -163,6 +164,20 @@ class AssignmentOutcome(BaseModel):
     unresolved_question: str | None = Field(default=None, max_length=2_000)
 
 
+class ProviderContactAttempt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assignment_sequence: int = Field(ge=1, le=20)
+    provider: ProviderName
+    ordinal: int = Field(ge=1, le=3)
+    phase: Literal["dispatch", "poll", "callback"]
+    outcome: Literal["no_response", "ambiguous_dispatch"]
+    run_id: str | None = Field(default=None, max_length=255)
+    partial_output: str | None = Field(default=None, max_length=2_000)
+    error: str = Field(min_length=1, max_length=2_000)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class TaskRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -172,6 +187,11 @@ class TaskRecord(BaseModel):
     plan: DirectorPlan | None = None
     provider_runs: list[ProviderRun] = Field(default_factory=list)
     assignment_outcomes: list[AssignmentOutcome] = Field(default_factory=list)
+    review_handoff_digests: dict[int, str] = Field(default_factory=dict)
+    provider_contact_attempts: list[ProviderContactAttempt] = Field(default_factory=list, max_length=200)
+    unavailable_providers: list[ProviderName] = Field(default_factory=list)
+    deferred_assignments: list[int] = Field(default_factory=list)
+    availability_impacts: list[str] = Field(default_factory=list, max_length=50)
     review: ReviewDecision | None = None
     next_assignment_index: int = Field(default=0, ge=0, le=20)
     revision_count: int = 0

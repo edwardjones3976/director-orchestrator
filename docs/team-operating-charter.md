@@ -80,12 +80,48 @@ If voting helps resolve a disagreement, use these owner-defined advisory weights
 Voting is encouraged, not mandatory. Record each available member's position,
 rationale, confidence, and evidence references; record abstentions and
 unavailable members honestly. Prefer the option with the highest declared
-weighted support, but treat the result as a recommendation. A tie or unresolved
-material disagreement returns to OpenAI synthesis or owner decision.
+weighted support, but treat the result as a recommendation. A producer's vote
+counts at its full configured weight even though that producer cannot review or
+accept its own work. The configured denominator is always 7.0; abstaining and
+unavailable members cast zero weight and cannot change the denominator, another
+member's weight, a threshold, or an authorization boundary.
+
+OpenAI resolves an ordinary tie through a documented evidence judgment. If tied
+options materially differ in cost, authority, safety, privacy, repository scope,
+runtime behavior, or project direction, OpenAI asks the owner one focused
+decision question instead of silently choosing.
 
 No tally can expand scope or access, waive owner approval, make a producer its
 own reviewer, bypass trusted checks, or override deterministic policy, budgets,
 allowlists, exact-SHA binding, or a serious-safety stop.
+
+## Provider availability
+
+Each safe provider-contact attempt is bounded, timestamped, and recorded. After
+three nonresponses, the Director marks that provider unavailable for the current
+assignment cycle, preserves partial output as untrusted evidence, continues any
+independent safe work, and states how scope, confidence, timing, and coverage
+changed. An unavailable provider cannot indefinitely block unrelated work.
+
+The attempt rule never authorizes duplicate paid work. If a dispatch may have
+created a provider run but returned ambiguously, the Director does not repeat
+the dispatch merely to reach three attempts. That lane stops for owner
+resolution while independent safe lanes may continue.
+
+## Review-to-merge handoff
+
+Every requested draft PR or other reviewable implementation must reserve a
+different-provider review assignment in the original bounded plan. Completion
+binds a structured handoff to that assignment with the assignment ID, logical
+producer, material authors, exact base and head SHA or artifact digest, changed
+files, tests, known limitations, acceptance checks, and security context.
+
+The reviewer returns `ACCEPT`, `CHANGES_REQUIRED`, or
+`SERIOUS_SAFETY_STOP` for that exact candidate. The producer's planning vote
+does not make it an eligible reviewer. Independent acceptance is followed by
+Codex Security and trusted CI for the unchanged exact SHA; deterministic code
+alone may execute an eligible merge. Any new commit invalidates all prior
+review, security, CI, and merge evidence and requires a new handoff.
 
 ## Perplexity strict research contract
 
@@ -126,3 +162,9 @@ For a medium-or-higher complexity decision, preserve:
 The machine-readable equivalent is injected into every OpenAI Director planning
 request as `team_operating_charter` with schema version
 `director-team-charter/v1`.
+
+<!-- TEAM_CHARTER_MANIFEST_BEGIN -->
+```json
+{"availability_attempt_limit":3,"charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+```
+<!-- TEAM_CHARTER_MANIFEST_END -->
