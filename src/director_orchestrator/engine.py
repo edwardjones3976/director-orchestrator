@@ -27,7 +27,7 @@ from .oracle_merge import (
 )
 from .policy import enforce_plan, execution_policy_errors, preview_plan
 from .providers import ProviderError, ProviderRun, provider_registry
-from .review_handoff import bind_review_handoff
+from .review_handoff import bind_review_handoff, transitive_dependency_sequences
 from .store import TaskStore
 
 
@@ -215,7 +215,11 @@ class OrchestrationEngine:
             ),
             key=lambda outcome: outcome.assignment_sequence,
         )[-10:]
-        dependency_set = set(assignment.depends_on)
+        dependency_set = (
+            transitive_dependency_sequences(record.plan.assignments, assignment)
+            if record.plan
+            else set()
+        )
 
         def bounded(outcome: AssignmentOutcome) -> dict:
             return {
@@ -250,7 +254,14 @@ class OrchestrationEngine:
                 for outcome in prior_outcomes
                 if outcome.assignment_sequence in dependency_set
             ],
-            "prior_accepted_outcomes": [bounded(outcome) for outcome in prior_outcomes],
+            # Preserve the legacy key for provider contracts, but include only
+            # declared transitive dependencies. Unrelated earlier output must not
+            # silently become material input or contaminate reviewer independence.
+            "prior_accepted_outcomes": [
+                bounded(outcome)
+                for outcome in prior_outcomes
+                if outcome.assignment_sequence in dependency_set
+            ],
         }
         return json.dumps(payload, ensure_ascii=False)
 

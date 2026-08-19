@@ -67,6 +67,26 @@ def parse_review_candidate(result: str | None) -> ReviewCandidateArtifact | None
     return ReviewCandidateArtifact.model_validate(payload)
 
 
+def transitive_dependency_sequences(
+    assignments: list[Assignment], assignment: Assignment
+) -> set[int]:
+    """Return the exact stored dependency closure or fail on a missing node."""
+
+    by_sequence = {item.sequence: item for item in assignments}
+    closure: set[int] = set()
+    pending = list(assignment.depends_on)
+    while pending:
+        sequence = pending.pop()
+        if sequence in closure:
+            continue
+        dependency = by_sequence.get(sequence)
+        if dependency is None:
+            raise ValueError("assignment dependency is absent from the stored plan")
+        closure.add(sequence)
+        pending.extend(dependency.depends_on)
+    return closure
+
+
 def bind_review_handoff(
     record: TaskRecord,
     producer_assignment: Assignment,
@@ -100,18 +120,9 @@ def bind_review_handoff(
     if candidate.base_ref != producer_assignment.starting_ref:
         raise ValueError("review candidate base ref does not match the producer assignment")
 
-    assignments = {assignment.sequence: assignment for assignment in record.plan.assignments}
-    dependency_sequences: set[int] = set()
-    pending = list(producer_assignment.depends_on)
-    while pending:
-        sequence = pending.pop()
-        if sequence in dependency_sequences:
-            continue
-        dependency = assignments.get(sequence)
-        if dependency is None:
-            raise ValueError("review candidate dependency is absent from the stored plan")
-        dependency_sequences.add(sequence)
-        pending.extend(dependency.depends_on)
+    dependency_sequences = transitive_dependency_sequences(
+        record.plan.assignments, producer_assignment
+    )
     outcomes = {outcome.assignment_sequence: outcome for outcome in record.assignment_outcomes}
     missing_outcomes = sorted(dependency_sequences - set(outcomes))
     if missing_outcomes:

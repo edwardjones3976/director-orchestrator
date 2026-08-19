@@ -29,7 +29,10 @@ from director_orchestrator.models import (
 )
 from director_orchestrator.policy import execution_policy_errors
 from director_orchestrator.oracle_merge import authenticate_provider_review_artifact
-from director_orchestrator.review_handoff import bind_review_handoff
+from director_orchestrator.review_handoff import (
+    bind_review_handoff,
+    transitive_dependency_sequences,
+)
 from director_orchestrator.store import TaskStore
 
 
@@ -361,6 +364,41 @@ class ReviewHandoffTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "review provider is listed as a material author"):
             self.bind(record, producer, run)
+
+    def test_dependency_closure_excludes_unrelated_prior_assignments(self):
+        unrelated = Assignment(
+            sequence=1,
+            agent=ProviderName.CLAUDE,
+            task="Unrelated analysis",
+            acceptance=["Evidence"],
+        )
+        upstream = Assignment(
+            sequence=2,
+            agent=ProviderName.GEMINI,
+            task="Declared upstream input",
+            acceptance=["Evidence"],
+        )
+        middle = Assignment(
+            sequence=3,
+            agent=ProviderName.CLAUDE,
+            task="Declared middle input",
+            acceptance=["Evidence"],
+            depends_on=[2],
+        )
+        producer = Assignment(
+            sequence=4,
+            agent=ProviderName.CURSOR,
+            task="Produce candidate",
+            acceptance=["Evidence"],
+            depends_on=[3],
+        )
+
+        self.assertEqual(
+            transitive_dependency_sequences(
+                [unrelated, upstream, middle, producer], producer
+            ),
+            {2, 3},
+        )
 
 
 class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
