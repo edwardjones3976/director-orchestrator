@@ -103,8 +103,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     },
     "committee": {
         "members": {
-            "antigravity": {"provider": "gemini", "voting_power": 0.5},
-            "cursor": {"voting_power": 1.0},
+            "antigravity": {"provider": "gemini", "voting_power": 1.0},
+            "cursor": {"voting_power": 1.5},
             "openai": {"voting_power": 2.0},
             "claude": {"voting_power": 2.5},
         },

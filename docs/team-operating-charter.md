@@ -57,8 +57,8 @@ other gates pass; the model does not receive merge credentials.
 The 90% Cursor target measures responsibility coverage and routing trust, not
 permission equivalence. Cursor cannot perform OpenAI's in-process Director
 acceptance role, replace a mandatory Codex Security check, review its own work,
-or independently expand access or external-write authority. Cursor's existing
-committee voting weight remains 1; capability coverage and voting power are
+or independently expand access or external-write authority. Cursor's current
+committee voting weight is 1.5; capability coverage and voting power are
 separate owner-defined controls.
 
 ## Debate and advisory voting
@@ -72,8 +72,8 @@ If voting helps resolve a disagreement, use these owner-defined advisory weights
 
 | Committee member | Voting power |
 | --- | ---: |
-| Antigravity | 0.5 |
-| Cursor | 1 |
+| Antigravity | 1 |
+| Cursor | 1.5 |
 | OpenAI | 2 |
 | Claude | 2.5 |
 

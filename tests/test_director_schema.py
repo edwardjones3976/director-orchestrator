@@ -182,7 +182,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 name: member["voting_power"]
                 for name, member in charter["committee"]["members"].items()
             },
-            {"antigravity": 0.5, "cursor": 1.0, "openai": 2.0, "claude": 2.5},
+            {"antigravity": 1.0, "cursor": 1.5, "openai": 2.0, "claude": 2.5},
         )
         self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
