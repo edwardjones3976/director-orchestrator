@@ -514,6 +514,21 @@ class AssignmentBoundaryTests(unittest.TestCase):
                 "Research records about jane.doe@example.com",
                 "email address",
             ),
+            (
+                "Find public methodology",
+                "Research records for 018f0f5e-7b3a-7c9d-8f12-123456789abc",
+                "UUID",
+            ),
+            (
+                "Find public methodology",
+                "Research records for Slack user u0b9uj86d27",
+                "Slack identifier",
+            ),
+            (
+                "Find public methodology",
+                "Research records for +44 20 7946 0958",
+                "phone number",
+            ),
         ]
         for index, (task, query, reason) in enumerate(cases, start=1):
             plan = DirectorPlan(
