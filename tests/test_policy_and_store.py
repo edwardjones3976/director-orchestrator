@@ -67,8 +67,19 @@ class PolicyTests(unittest.TestCase):
         plan = preview_plan("Project: RootWitness\nResearch current retention requirements with sources", self.settings)
         self.assertEqual(plan.project, "RootWitness")
         self.assertEqual(plan.assignments[0].agent.value, "perplexity")
+        self.assertIsNone(plan.assignments[0].public_research_query)
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
+
+    def test_dry_run_research_plan_does_not_copy_intake_into_the_search_query(self):
+        text = (
+            "Project: RootWitness\n"
+            "Research current sources for github.com/acme/private-repo and attached patch"
+        )
+        plan = preview_plan(text, self.settings)
+        self.assertEqual(plan.assignments[0].agent.value, "perplexity")
+        self.assertEqual(plan.assignments[0].task, text.strip())
+        self.assertIsNone(plan.assignments[0].public_research_query)
 
     def test_dry_run_uses_claude_as_default_workhorse(self):
         plan = preview_plan("Project: demo\nImplement and test a bounded API change", self.settings)

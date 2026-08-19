@@ -564,6 +564,102 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence["results"][0]["source_type"], "web_result")
         self.assertEqual(evidence["results"][0]["confidence"], "not_provided_by_search_api")
 
+    async def test_perplexity_revise_reuses_bounded_query_and_drops_director_text(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+            perplexity_max_results=7,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            task="Find current primary sources about calibration metrics",
+            acceptance=["Report sources and contradictions"],
+            public_research_query="primary sources about probability calibration metrics",
+            estimated_cost_usd=0.25,
+        )
+        prior = ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            run_id="search-1",
+            status="completed",
+            result="{}",
+        )
+        RecordingAsyncClient.responses = [
+            {
+                "id": "search-2",
+                "results": [
+                    {
+                        "title": "Calibration follow-up",
+                        "url": "https://example.test/follow-up",
+                        "snippet": "A later excerpt.",
+                    }
+                ],
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await PerplexityAdapter(settings).revise(
+                prior,
+                "Retry using SHA abcdef0123456789abcdef0123456789abcdef01 and src/secret.py",
+                assignment=assignment,
+                context="PRIVATE REPOSITORY CONTEXT MUST NOT LEAVE THE ORCHESTRATOR",
+            )
+
+        request = RecordingAsyncClient.calls[0]
+        self.assertEqual(request["url"], "https://api.perplexity.ai/search")
+        self.assertEqual(
+            request["json"],
+            {"query": assignment.public_research_query, "max_results": 7},
+        )
+        serialized = json.dumps(request)
+        self.assertNotIn("PRIVATE", serialized)
+        self.assertNotIn("src/secret.py", serialized)
+        self.assertNotIn("abcdef0123456789abcdef0123456789abcdef01", serialized)
+        evidence = json.loads(run.result or "{}")
+        self.assertEqual(evidence["query"], assignment.public_research_query)
+        self.assertEqual(run.run_id, "search-2")
+
+    async def test_perplexity_revise_rejects_write_authority_and_missing_query(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+            perplexity_daily_budget_usd=2.0,
+        )
+        prior = ProviderRun(
+            provider=ProviderName.PERPLEXITY,
+            run_id="search-1",
+            status="completed",
+        )
+        base = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            task="Find sources",
+            acceptance=["Report URLs"],
+            public_research_query="primary sources about probability calibration metrics",
+            requires_approval=True,
+        )
+
+        for kwargs in (
+            {"assignment": None, "context": "context"},
+            {"assignment": base.model_copy(update={"allow_draft_pr": True}), "context": "context"},
+            {"assignment": base.model_copy(update={"estimated_cost_usd": 2.01}), "context": "context"},
+            {
+                "assignment": base.model_copy(update={"public_research_query": None}),
+                "context": "context",
+            },
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ProviderError):
+                    await PerplexityAdapter(settings).revise(
+                        prior,
+                        "Retry with private identifiers",
+                        **kwargs,
+                    )
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
     async def test_perplexity_dispatch_fails_closed_when_research_policy_is_not_ready(self):
         assignment = Assignment(
             sequence=1,

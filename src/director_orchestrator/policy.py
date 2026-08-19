@@ -210,7 +210,6 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         agent=provider,
         task=text.strip(),
         acceptance=["Owner-defined outcome is demonstrably satisfied", "Evidence and unresolved risks are reported"],
-        public_research_query=text.strip()[:2_000] if provider == ProviderName.PERPLEXITY else None,
         requires_approval=False,
         estimated_cost_usd=0,
     )
