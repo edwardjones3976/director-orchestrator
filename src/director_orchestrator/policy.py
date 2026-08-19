@@ -18,6 +18,15 @@ _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("credential or permission change", re.compile(r"\b(api key|token|password|secret|credential|oauth|permission|access scope|administrator|admin access)\b", re.I)),
 )
 
+_PERPLEXITY_PROHIBITED_AUTHORITY: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("code or repository write", re.compile(r"\b(?:implement|edit|modify|write|rewrite|refactor|commit|push)\b.{0,40}\b(?:code|file|repository|repo|branch)\b", re.I | re.S)),
+    ("pull-request or merge action", re.compile(r"\b(?:pull request|draft pr|merge|mergeable)\b", re.I)),
+    ("approval or review verdict", re.compile(r"\b(?:review verdict|approve|approval verdict|accept or reject|changes_required)\b", re.I)),
+    ("committee vote", re.compile(r"\b(?:cast (?:a )?vote|committee vote|vote (?:for|against)|record perplexity(?:'s)? vote)\b", re.I)),
+    ("deployment or publication", re.compile(r"\b(?:deploy|deployment|publish|release)\b", re.I)),
+    ("external message", re.compile(r"\b(?:post|send|reply)\b.{0,30}\b(?:slack|message|email|comment)\b", re.I | re.S)),
+)
+
 
 def deterministic_approval_reasons(text: str) -> list[str]:
     return [label for label, pattern in _GATES if pattern.search(text)]
@@ -62,6 +71,21 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             )
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
+        if assignment.agent == ProviderName.PERPLEXITY:
+            if assignment.repository:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity research cannot receive repository context"
+                )
+            if assignment.allow_draft_pr:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity research cannot create a draft pull request"
+                )
+            scope_text = "\n".join([assignment.task, *assignment.acceptance])
+            for label, pattern in _PERPLEXITY_PROHIBITED_AUTHORITY:
+                if pattern.search(scope_text):
+                    errors.add(
+                        f"assignment {assignment.sequence}: Perplexity research cannot receive {label} authority"
+                    )
         if assignment.allow_draft_pr and not assignment.requires_approval:
             errors.add(
                 f"assignment {assignment.sequence}: draft PR creation requires assignment approval"

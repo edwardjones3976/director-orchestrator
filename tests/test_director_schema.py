@@ -124,6 +124,77 @@ class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(director.captured["prior_accepted_outcomes"][0]["run_id"], "claude-1")
 
 
+class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_plan_receives_the_owner_authorized_team_charter(self):
+        class CapturingDirector(OpenAIDirector):
+            async def _structured(self, prompt, model, schema_name):
+                self.captured = json.loads(prompt)
+                return DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Assess alternatives",
+                    risk_level=RiskLevel.MEDIUM,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.OWNER,
+                            task="Select an option",
+                            acceptance=["Decision recorded"],
+                        )
+                    ],
+                    final_acceptance=["Decision recorded"],
+                )
+
+        record = TaskRecord(
+            task_id="DIR-TEAM-CHARTER",
+            status=TaskStatus.PLANNING,
+            intake=SlackIntake(
+                source_event_id="evt-team-charter",
+                channel_id="C123",
+                thread_ts="123.49",
+                user_id="U123",
+                text="DIRECTOR Project: demo Outcome: assess medium-complexity alternatives",
+            ),
+        )
+        director = CapturingDirector(replace(Settings(), openai_api_key="test-openai"))
+
+        await director.plan(record)
+
+        charter = director.captured["team_operating_charter"]
+        self.assertEqual(charter["schema_version"], "director-team-charter/v1")
+        self.assertEqual(
+            [area["name"] for area in charter["responsibility_areas"]],
+            [
+                "research",
+                "evidence_verification",
+                "programming",
+                "deep_reasoning",
+                "innovation",
+                "development",
+                "quality_assurance",
+                "leadership",
+            ],
+        )
+        self.assertEqual(
+            {
+                name: member["voting_power"]
+                for name, member in charter["committee"]["members"].items()
+            },
+            {"antigravity": 0.5, "cursor": 1.0, "openai": 2.0, "claude": 2.5},
+        )
+        self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
+        self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
+        self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
+        self.assertTrue(
+            any(
+                "deterministic policy" in rule.lower()
+                for rule in charter["committee"]["voting"]["rules"]
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -8,6 +8,7 @@ import httpx
 
 from .config import Settings
 from .models import DirectorPlan, ReviewDecision, TaskRecord
+from .team_charter import team_operating_charter
 
 
 def _openai_strict_subset(value: Any) -> Any:
@@ -97,6 +98,7 @@ class OpenAIDirector:
             "primary_team": list(self.settings.primary_team),
             "supplemental_specialists": ["gemini", "perplexity"],
             "provider_strategy": self.settings.provider_strategy(),
+            "team_operating_charter": team_operating_charter(),
             "routing_rules": [
                 "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases.",
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
@@ -105,6 +107,8 @@ class OpenAIDirector:
                 "Use Claude as the primary coding and general workhorse when configured.",
                 "Use Cursor as the other primary repository teammate for coding overflow, independent second passes, and cloud-agent automation.",
                 "Use Gemini or Perplexity only as supplemental specialists when their distinct sandbox, validation, research, or sourcing strengths materially help.",
+                "For medium, high, or critical complexity, prefer a bounded evidence-backed debate among available committee members before synthesis. Weighted voting is advisory only and cannot change authority or deterministic gates.",
+                "Perplexity is evidence-only: give it methodological, theoretical, source-discovery, or fact-verification research without repository context, code work, review verdicts, votes, or external-write authority.",
                 "Use owner for ambiguity, unavailable specialists, quota exhaustion, or approval-gated actions.",
                 "Never set starting_ref to a Cursor auto-generated cursor/... working branch. Those branches are deleted after their pull requests merge; use only a durable allowlisted ref such as main.",
             ],

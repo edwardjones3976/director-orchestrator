@@ -97,6 +97,71 @@ class PolicyTests(unittest.TestCase):
             unsafe.perplexity_research_readiness()["review_verdict_disabled"]
         )
 
+    def test_perplexity_assignments_cannot_receive_repository_or_non_research_authority(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        unsafe = DirectorPlan(
+            project="demo",
+            normalized_outcome="Ask Perplexity to write and approve a repository change",
+            risk_level=RiskLevel.LOW,
+            approval_required=True,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.PERPLEXITY,
+                    task="Write code in the repository, issue an approval verdict, and cast a vote",
+                    acceptance=["Create a draft PR and post the result to Slack"],
+                    repository="example/demo",
+                    allow_draft_pr=True,
+                    requires_approval=True,
+                )
+            ],
+            final_acceptance=["Perplexity approved its own change"],
+        )
+
+        errors = execution_policy_errors(unsafe, settings)
+
+        self.assertIn("assignment 1: Perplexity research cannot receive repository context", errors)
+        self.assertIn("assignment 1: Perplexity research cannot create a draft pull request", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive code or repository write authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive pull-request or merge action authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive approval or review verdict authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive committee vote authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive external message authority", errors)
+
+    def test_perplexity_methodological_research_remains_allowed(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        safe = DirectorPlan(
+            project="demo",
+            normalized_outcome="Research calibration methodology",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.PERPLEXITY,
+                    task="Find authoritative sources about calibration methodology",
+                    acceptance=["Report URLs, provenance, contradictions, and unknowns"],
+                )
+            ],
+            final_acceptance=["A primary-team member evaluates the evidence"],
+        )
+
+        self.assertEqual(execution_policy_errors(safe, settings), [])
+
     def test_execution_targets_and_dependencies_are_strictly_allowlisted(self):
         settings = replace(
             self.settings,

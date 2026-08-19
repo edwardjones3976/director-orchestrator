@@ -1,5 +1,9 @@
 # Provider Setup Matrix
 
+The cross-provider responsibility, debate, advisory-voting, and strict
+Perplexity evidence boundaries are defined in
+[`team-operating-charter.md`](team-operating-charter.md).
+
 ## Shared periodic usage-check behavior
 
 The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt. The prompt instructs the provider not to browse, call tools, inspect repositories, edit files, create branches or pull requests, or perform project work. This is an instruction rather than a provider-side sandbox for agent products such as Cursor and Gemini, so provider-side spend limits remain required. The monitor records provider-returned token metadata when available and sends only a bounded status summary to Slack.
