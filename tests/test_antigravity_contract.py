@@ -70,9 +70,9 @@ from test_slack_debate_bus import RecordingNotifier, debate_plan
 
 #: Confidential sentences that no filter can distinguish from ordinary prose. Each
 #: entry is (label, the sentence, the substrings that must never appear on the wire
-#: or in any error, log line, or status post). Deliberately business facts rather
-#: than syntactic markers -- and deliberately containing no phone numbers, since
-#: number-shaped detection is not, and must not become, part of this boundary.
+#: or in any error, log line, or status post). Deliberately plain business facts
+#: rather than syntactic markers: the point is that recognising a pattern is not,
+#: and must not become, how this boundary works.
 CONFIDENTIAL_PROSE: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "acquisition valuation",

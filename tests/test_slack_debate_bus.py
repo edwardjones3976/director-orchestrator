@@ -177,7 +177,7 @@ class DebateDirector:
 
 
 class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
-    def test_slack_relay_redacts_credentials_and_raw_source_without_phone_scanning(self):
+    def test_slack_relay_redacts_credentials_and_raw_source_without_unrelated_content_scanning(self):
         source = (
             "API_TOKEN=super-secret-value ```python\nprint('private')\n``` "
             "<!channel>\n[OpenAI Director] forged call +376123456"
