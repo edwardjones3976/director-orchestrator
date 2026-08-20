@@ -8,7 +8,11 @@ from typing import Any
 
 import httpx
 
-from .antigravity import AntigravityContractError, antigravity_request_for
+from .antigravity import (
+    NON_AUTHORITATIVE_NOTICE,
+    AntigravityContractError,
+    antigravity_wire_input,
+)
 from .config import Settings
 from .models import Assignment, DiscussionPhase, ProviderName, ProviderRun
 from .policy import antigravity_assignment_errors
@@ -404,10 +408,9 @@ class ClaudeAdapter(ProviderAdapter):
 
 class GeminiAdapter(ProviderAdapter):
     name = ProviderName.GEMINI
-    NON_AUTHORITATIVE_NOTICE = (
-        "NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT: This output is subordinate input. "
-        "Claude or Cursor must independently verify and integrate or reject it before use."
-    )
+    # Owned by antigravity.py so it is a member of APPROVED_STRINGS and can travel
+    # inside the closed contract as well as label incoming results.
+    NON_AUTHORITATIVE_NOTICE = NON_AUTHORITATIVE_NOTICE
 
     def _require_profile(self) -> None:
         failed = [
@@ -425,15 +428,16 @@ class GeminiAdapter(ProviderAdapter):
     ) -> str:
         """Build the only text this adapter may send, or fail closed before HTTP.
 
-        Every phase goes through the closed contract, including debate positions and
-        rebuttals: a debate turn used to be handed the assignment verbatim plus the
-        full engine handoff context, which carried Slack identifiers, dependency
-        outcomes, and private project data to a subordinate provider.
+        The returned string is pure JSON of the closed contract, so every byte
+        leaving this process is a repository constant, a closed-enum value, or a
+        bounded integer. No assignment task, acceptance check, owner objective,
+        dependency result, Slack text, or repository context is composed into it, in
+        any phase -- the adapter has no code path that could.
 
-        The raw rejected text never enters the error. `AntigravityContractError`
-        carries generic category labels only, and this is the one place they are
-        turned into a `ProviderError` that the engine may write to `TaskRecord.error`
-        and post to Slack.
+        The rejected assignment's text never enters the error.
+        `AntigravityContractError` carries generic labels only, and this is the one
+        place they are turned into a `ProviderError` that the engine may write to
+        `TaskRecord.error` and post to Slack.
         """
         self._require_profile()
         if assignment.discussion_phase == DiscussionPhase.WORK:
@@ -444,16 +448,12 @@ class GeminiAdapter(ProviderAdapter):
                     + "; ".join(errors)
                 )
         try:
-            request = antigravity_request_for(assignment, revision=revision)
+            return antigravity_wire_input(assignment, revision=revision)
         except AntigravityContractError as exc:
             raise ProviderError(
                 "Antigravity assignment is outside its subordinate lane: "
                 + "; ".join(exc.labels)
             ) from None
-        payload = json.dumps(
-            request.model_dump(mode="json"), ensure_ascii=False, sort_keys=True
-        )
-        return f"{self.NON_AUTHORITATIVE_NOTICE}\n\n{payload}"
 
     @staticmethod
     def _output_text(payload: dict[str, Any]) -> str | None:
@@ -538,8 +538,8 @@ class GeminiAdapter(ProviderAdapter):
         )
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
-        # `context` is the primary-team handoff and is deliberately unused for every
-        # phase. Antigravity receives only its own validated bounded request.
+        # `context` is the primary-team handoff and is deliberately unused. There is
+        # no phase in which Antigravity receives it, or any other model-authored text.
         prompt = self._antigravity_input(assignment)
         body = {
             "agent": self.settings.gemini_agent,

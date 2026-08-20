@@ -56,25 +56,36 @@ approval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.
   review, final acceptance, deterministic merge, or define research-contract
   or methodology truth, and every work assignment must feed a later Claude or
   Cursor assignment that independently verifies and integrates or rejects it.
-  Antigravity may still hold one bounded debate position and one rebuttal at
-  its configured advisory weight; that vote grants no authority. Keep
+  Antigravity cannot be seated in a debate: a position or rebuttal requires the
+  question, the options, and the peer arguments, and none of those may cross its
+  outbound contract. Its configured advisory weight stays in the immutable
+  denominator and is never cast, exactly like an unavailable member. Keep
   credentials and external-write paths out of disposable sandboxes unless a
   later work order explicitly and safely provides them.
-- **Antigravity outbound contract.** Every Antigravity dispatch, in every
-  phase, carries one closed typed request built by
-  `src/director_orchestrator/antigravity.py`: a single capability chosen from
-  `kind` alone, an empty granted-authority list, and a fixed denied-authority
-  block covering repository access and write, branch selection, review,
-  acceptance, merge, deployment or publication, external write, billing, and
-  permission or credential change. Authority is decided by those typed fields,
-  never by classifying prose. The primary-team handoff context is never sent,
-  so a debate position or rebuttal is an independent look at the public
-  question rather than a channel for another provider's raw output. Task and
-  acceptance text is admitted only after a deterministic public-safety
-  validator; a repository path or URL, commit SHA, code identifier, diff or
-  source excerpt, secret-like value, email, UUID, Slack identifier, or named
-  operational action fails closed before any HTTP call and is reported as a
-  generic category label that never quotes the rejected text.
+- **Antigravity outbound contract.** Antigravity is sent no model-authored prose
+  of any kind. `src/director_orchestrator/antigravity.py` composes every request
+  from three sources only: fixed strings that live in that file, values of closed
+  enums, and integers inside declared bounds. The assignment's task and
+  acceptance, the owner objective, dependency results, Slack text, and repository
+  context are never transmitted; they stay in the plan for Director review and the
+  owner's Slack thread. Work is expressed by selecting an `AntigravityFixtureLane`
+  from a closed enum, and the runtime substitutes that lane's fixed public
+  specification. `_assert_closed_vocabulary` walks the serialised payload and
+  rejects any string absent from `APPROVED_STRINGS`, so a string that is not
+  literally present in this repository cannot be sent.
+
+  This replaces content classification, which cannot work: a filter can detect a
+  path or a token, but not that "Blue Cedar acquisition valuation is 42 million
+  dollars" is confidential. Nothing about the *shape* of prose establishes that it
+  is public, so no prose is transmitted and no such filter is attempted.
+
+  Authority remains typed: one capability from a closed table keyed by `kind`, an
+  empty granted-authority list, and a fixed denied-authority block covering
+  repository access and write, branch selection, review, acceptance, merge,
+  deployment or publication, external write, billing, and permission or credential
+  change. Repository, starting ref, draft PR, and public research query are refused
+  as fields. Rejections report labels drawn from the same file and never quote the
+  assignment.
 - **Perplexity:** evidence-only methodological, theoretical, source-discovery,
   and fact-verification research under the strict contract below.
 

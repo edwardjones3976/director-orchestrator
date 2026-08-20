@@ -4,9 +4,15 @@ import re
 from copy import deepcopy
 from urllib.parse import urlparse
 
-from .antigravity import antigravity_contract_labels
+from .antigravity import (
+    DEBATE_UNAVAILABLE_LABEL,
+    LANES_FOR_CAPABILITY,
+    CAPABILITY_BY_KIND,
+    antigravity_contract_labels,
+)
 from .config import Settings
 from .models import (
+    AntigravityDirective,
     Assignment,
     AssignmentKind,
     DirectorPlan,
@@ -85,14 +91,18 @@ def canonical_repository(value: str) -> str:
 def antigravity_assignment_errors(assignment: Assignment) -> list[str]:
     """Deterministic subordinate-lane admission for one Antigravity work assignment.
 
-    Authority is decided by the closed capability contract in `antigravity.py`, which
-    reads typed fields only. This function adds the one requirement that contract
-    cannot express: the assignment must positively declare subordinate scope in its
-    task, so an in-lane `kind` on an out-of-lane task is still refused.
+    What may be transmitted is decided entirely by the closed contract in
+    `antigravity.py`, which reads typed fields only and never forwards prose. This
+    function adds one plan-coherence requirement the contract cannot express: the
+    task the Director wrote for its own review must actually describe subordinate
+    work, so an in-lane `kind` attached to an out-of-lane task is still refused.
 
-    Debate positions and rebuttals go through `antigravity_debate_errors` instead:
-    they are advisory text turns rather than work artifacts, so they carry their own
-    minimal packet and are never asked to declare subordinate work scope.
+    That check is routing hygiene on text that stays inside this process. It is not
+    a disclosure control, and no disclosure control is attempted on prose anywhere:
+    prose is simply never sent.
+
+    Antigravity holds no debate turn. `execution_policy_errors` refuses a plan that
+    seats it in one.
     """
     # The admitted kinds live in CAPABILITY_BY_KIND, which is also what selects the
     # outbound capability. Keeping one table means the lane and the wire cannot drift.
@@ -106,9 +116,13 @@ def antigravity_assignment_errors(assignment: Assignment) -> list[str]:
     return sorted(set(errors))
 
 
-def antigravity_debate_errors(assignment: Assignment) -> list[str]:
-    """Deterministic admission for one Antigravity debate position or rebuttal."""
-    return antigravity_contract_labels(assignment)
+def default_antigravity_directive(kind: AssignmentKind) -> AntigravityDirective | None:
+    """The deterministic lane the runtime binds when the Director omits one."""
+    capability = CAPABILITY_BY_KIND.get(kind)
+    if capability is None:
+        return None
+    lane = sorted(LANES_FOR_CAPABILITY[capability])[0]
+    return AntigravityDirective(lane=lane)
 
 
 def _antigravity_work_sequences(plan: DirectorPlan) -> set[int]:
@@ -168,7 +182,11 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
         expected_sequences = set(position_sequences + rebuttal_sequences)
         if set(discussion_assignments) != expected_sequences:
             errors.add("debate assignment lists must exactly match discussion assignments")
-        eligible = {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GEMINI}
+        # Antigravity is absent: a debate turn cannot be formed from the closed
+        # outbound vocabulary, and it is never sent the question, the options, or
+        # the peer arguments. Its configured advisory weight is simply never cast,
+        # which the fixed committee denominator already accounts for.
+        eligible = {ProviderName.CLAUDE, ProviderName.CURSOR}
         position_providers: set[ProviderName] = set()
         positions = set(position_sequences)
         for sequence in position_sequences:
@@ -222,10 +240,20 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             assignment.agent == ProviderName.GEMINI
             and assignment.discussion_phase != DiscussionPhase.WORK
         ):
-            for error in antigravity_debate_errors(assignment):
-                errors.add(
-                    f"assignment {assignment.sequence}: Antigravity debate packet {error}"
-                )
+            errors.add(
+                f"assignment {assignment.sequence}: Antigravity {DEBATE_UNAVAILABLE_LABEL}"
+            )
+        if (
+            assignment.antigravity_directive is not None
+            and not (
+                assignment.agent == ProviderName.GEMINI
+                and assignment.discussion_phase == DiscussionPhase.WORK
+            )
+        ):
+            errors.add(
+                f"assignment {assignment.sequence}: antigravity directive is reserved "
+                "for Antigravity work assignments"
+            )
         if (
             assignment.agent == ProviderName.GEMINI
             and assignment.discussion_phase == DiscussionPhase.WORK
@@ -364,6 +392,19 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
     safe.assignments = [
         item.model_copy(update={"requires_approval": True})
         if item.agent == ProviderName.PERPLEXITY
+        else item
+        for item in safe.assignments
+    ]
+    # Bind the outbound fixture lane deterministically when the Director omitted it,
+    # the same way the integration wording below is bound. A missing directive is
+    # still an admission error, so a plan that skips enforce_plan fails closed.
+    safe.assignments = [
+        item.model_copy(
+            update={"antigravity_directive": default_antigravity_directive(item.kind)}
+        )
+        if item.agent == ProviderName.GEMINI
+        and item.discussion_phase == DiscussionPhase.WORK
+        and item.antigravity_directive is None
         else item
         for item in safe.assignments
     ]

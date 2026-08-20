@@ -115,6 +115,10 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "claude": {"voting_power": 2.5},
         },
         "debate": {
+            # Antigravity keeps its weight in the immutable denominator and simply
+            # never casts it: a position needs the question, the options, and the
+            # peer arguments, none of which may cross its closed outbound contract.
+            "seatable_members": ["claude", "cursor", "openai"],
             "recommended_for_complexity": ["medium", "high", "critical"],
             "procedure": [
                 "Solicit independent positions before participants see one another's conclusions when practical.",

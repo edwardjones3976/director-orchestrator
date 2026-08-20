@@ -5,8 +5,14 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from director_orchestrator.antigravity import (
+    DEBATE_UNAVAILABLE_LABEL,
+    antigravity_wire_input,
+)
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
+    AntigravityDirective,
+    AntigravityFixtureLane,
     Assignment,
     AssignmentKind,
     DirectorPlan,
@@ -125,148 +131,87 @@ class PolicyTests(unittest.TestCase):
                 self.assertEqual(plan.assignments[0].agent, ProviderName.CLAUDE)
                 self.assertEqual(len(plan.assignments), 1)
 
-    def test_antigravity_lane_rejects_authority_and_draft_pr_work(self):
-        base = Assignment(
-            sequence=1,
-            agent=ProviderName.GEMINI,
-            kind=AssignmentKind.BOILERPLATE,
-            task="Generate boilerplate fixtures for the adapter module",
-            acceptance=["Report the generated fixtures"],
-        )
+    def antigravity_work(self, **overrides) -> Assignment:
+        fields = {
+            "sequence": 1,
+            "agent": ProviderName.GEMINI,
+            "kind": AssignmentKind.BOILERPLATE,
+            "task": "Generate boilerplate fixtures for the adapter module",
+            "acceptance": ["Report the generated fixtures"],
+            "antigravity_directive": AntigravityDirective(
+                lane=AntigravityFixtureLane.UNIT_TEST_FIXTURE_SET
+            ),
+        }
+        fields.update(overrides)
+        return Assignment(**fields)
+
+    def test_antigravity_lane_admits_only_typed_subordinate_work(self):
+        base = self.antigravity_work()
         self.assertEqual(antigravity_assignment_errors(base), [])
 
-        self.assertIn(
-            "requires kind boilerplate, scaffolding, low_level_implementation, "
-            "or abstract_ideation",
-            antigravity_assignment_errors(
-                base.model_copy(update={"kind": AssignmentKind.INDEPENDENT_REVIEW})
-            ),
-        )
-        self.assertIn(
-            "requires explicit subordinate boilerplate, scaffolding, low-level, "
-            "mechanical, or alternate-ideation scope",
-            antigravity_assignment_errors(
-                base.model_copy(update={"task": "Build the new feature end to end"})
-            ),
-        )
-        self.assertIn(
-            "cannot create a draft pull request",
-            antigravity_assignment_errors(
-                base.model_copy(
-                    update={"allow_draft_pr": True, "requires_approval": True}
-                )
-            ),
-        )
-        self.assertIn(
-            "cannot receive repository context",
-            antigravity_assignment_errors(
-                base.model_copy(update={"repository": "example/demo"})
-            ),
-        )
-        self.assertIn(
-            "cannot select a starting ref",
-            antigravity_assignment_errors(
-                base.model_copy(update={"starting_ref": "release-2026"})
-            ),
-        )
-        for authority, expected in (
+        for overrides, expected in (
             (
-                "Generate boilerplate and then perform the exact-SHA review",
-                "cannot receive review authority",
+                {"kind": AssignmentKind.INDEPENDENT_REVIEW},
+                "requires kind boilerplate, scaffolding, low_level_implementation, "
+                "or abstract_ideation",
             ),
             (
-                "Generate boilerplate and approve the pull request",
-                "cannot receive acceptance authority",
+                {"task": "Build the new feature end to end"},
+                "requires explicit subordinate boilerplate, scaffolding, low-level, "
+                "mechanical, or alternate-ideation scope",
             ),
             (
-                "Generate boilerplate and record a review verdict",
-                "cannot receive review authority",
+                {"allow_draft_pr": True, "requires_approval": True},
+                "cannot create a draft pull request",
+            ),
+            ({"repository": "example/demo"}, "cannot receive repository context"),
+            ({"starting_ref": "release-2026"}, "cannot select a starting ref"),
+            (
+                {"public_research_query": "public retry backoff practice"},
+                "cannot receive a public research query",
             ),
             (
-                "Generate boilerplate and define the research contract",
-                "cannot receive contract or methodology authority",
+                {"antigravity_directive": None},
+                "requires a typed antigravity_directive selecting a fixture lane, "
+                "because no assignment prose is transmitted",
             ),
             (
-                "Generate boilerplate and sign-off on the release",
-                "cannot receive acceptance authority",
+                {
+                    "antigravity_directive": AntigravityDirective(
+                        lane=AntigravityFixtureLane.NAMING_ALTERNATIVES
+                    )
+                },
+                "fixture lane does not match the typed capability",
             ),
         ):
-            with self.subTest(task=authority):
+            with self.subTest(overrides=sorted(overrides)):
                 self.assertIn(
                     expected,
-                    antigravity_assignment_errors(
-                        base.model_copy(update={"task": authority})
-                    ),
+                    antigravity_assignment_errors(base.model_copy(update=overrides)),
                 )
 
-    def test_antigravity_lane_fails_closed_on_operational_paraphrase(self):
-        """The old phrase denylist accepted every one of these."""
-        base = Assignment(
-            sequence=1,
-            agent=ProviderName.GEMINI,
-            kind=AssignmentKind.BOILERPLATE,
-            task="Generate boilerplate fixtures for the adapter module",
-            acceptance=["Report the generated fixtures"],
-        )
-        for paraphrase, expected in (
-            ("land the change on the default branch", "branch"),
-            ("get it into main once the checks are green", "branch"),
-            ("put it live for customers", "deployment"),
-            ("give it the thumbs up", "acceptance"),
-            ("make the final call on whether it ships", "acceptance"),
-            ("rubber-stamp the work and move on", "acceptance"),
-            ("say when it is good to go", "acceptance"),
-            ("push the result upstream", "repository"),
-            ("cut a release once it looks right", "deployment"),
-            ("email the summary to the client", "external-write"),
-            ("grant yourself repository access", "permission"),
-            ("charge the extra usage to the plan", "billing"),
-        ):
-            with self.subTest(paraphrase=paraphrase):
-                errors = antigravity_assignment_errors(
-                    base.model_copy(
-                        update={
-                            "task": f"Generate boilerplate fixtures, then {paraphrase}"
-                        }
-                    )
-                )
-                self.assertIn(f"cannot receive {expected} authority", errors)
+    def test_operational_prose_is_no_longer_classified_because_none_is_sent(self):
+        """The paraphrase matrix is now moot, and its absence is the point.
 
-    def test_antigravity_lane_fails_closed_rather_than_forwarding_operational_nouns(self):
-        """The subordinate lane is bounded, not clever: near-misses are refused.
-
-        The previous denylist deliberately admitted this wording so that a benign
-        "merge utility" task would pass. Authority is now typed, so the outbound text
-        no longer needs that latitude and the safer default applies.
+        A denylist could never enumerate "land the change on the default branch",
+        "give it the thumbs up", or a confidential sentence with no keyword at all.
+        The lane is admissible with any of them in its task, because the task is not
+        transmitted -- only the typed lane is. Exhaustive wire-composition proof
+        lives in tests/test_antigravity_contract.py.
         """
-        assignment = Assignment(
-            sequence=1,
-            agent=ProviderName.GEMINI,
-            kind=AssignmentKind.BOILERPLATE,
-            task=(
-                "Generate non-authoritative boilerplate tests for the merge utility "
-                "helper and the approval workflow formatter"
-            ),
-            acceptance=["Report the generated non-authoritative fixtures"],
-        )
-        self.assertEqual(
-            antigravity_assignment_errors(assignment),
-            [
-                "cannot receive acceptance authority",
-                "cannot receive merge authority",
-            ],
-        )
-        self.assertEqual(
-            antigravity_assignment_errors(
-                assignment.model_copy(
-                    update={
-                        "task": "Generate non-authoritative boilerplate fixtures",
-                        "acceptance": ["Report the generated non-authoritative fixtures"],
-                    }
-                )
-            ),
-            [],
-        )
+        for prose in (
+            "Generate boilerplate fixtures, then land the change on the default branch",
+            "Generate boilerplate fixtures, then give it the thumbs up",
+            "Generate boilerplate fixtures. Blue Cedar acquisition valuation is 42 "
+            "million dollars",
+        ):
+            with self.subTest(prose=prose[:48]):
+                assignment = self.antigravity_work(task=prose)
+                self.assertEqual(antigravity_assignment_errors(assignment), [])
+                wire = antigravity_wire_input(assignment)
+                self.assertNotIn("Blue Cedar", wire)
+                self.assertNotIn("thumbs up", wire)
+                self.assertNotIn("default branch", wire)
 
     def antigravity_plan(self, **consumer_overrides) -> DirectorPlan:
         consumer = {
@@ -292,6 +237,9 @@ class PolicyTests(unittest.TestCase):
                     kind=AssignmentKind.SCAFFOLDING,
                     task="Produce scaffolding for the bounded adapter module",
                     acceptance=["Report the scaffolding evidence"],
+                    antigravity_directive=AntigravityDirective(
+                        lane=AntigravityFixtureLane.MODULE_SKELETON
+                    ),
                 ),
                 Assignment(**consumer),
             ],
@@ -344,8 +292,8 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(guarded.assignments[1].kind, AssignmentKind.IMPLEMENTATION)
         self.assertEqual(execution_policy_errors(guarded, settings), [])
 
-    def test_antigravity_debate_participation_stays_outside_the_work_lane(self):
-        """Main's bounded debate lane survives: positions carry an advisory vote only."""
+    def test_antigravity_cannot_be_seated_in_a_debate(self):
+        """A position or rebuttal cannot be formed from the closed wire vocabulary."""
         settings = replace(
             Settings(),
             project_allowlist=("demo",),
@@ -358,13 +306,16 @@ class PolicyTests(unittest.TestCase):
                 "kind": AssignmentKind.GENERAL,
                 "task": "Independently assess option A and option B",
                 "discussion_phase": DiscussionPhase.POSITION,
+                "antigravity_directive": None,
             }
         )
         plan.assignments[1] = plan.assignments[1].model_copy(
             update={"depends_on": []}
         )
         errors = execution_policy_errors(plan, settings)
-        self.assertFalse([item for item in errors if "Antigravity" in item])
+        self.assertIn(
+            f"assignment 1: Antigravity {DEBATE_UNAVAILABLE_LABEL}", errors
+        )
 
     def test_execution_policy_pins_the_primary_team(self):
         settings = replace(

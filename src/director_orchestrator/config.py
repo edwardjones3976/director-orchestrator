@@ -320,9 +320,9 @@ class Settings:
                 "priority": "subordinate_boilerplate_and_alternate_ideation",
                 "account_context": self.other_provider_account_context,
                 "strengths": [
-                    "bounded boilerplate and scaffolding",
-                    "low-level mechanical implementation",
-                    "non-authoritative alternate ideas",
+                    "bounded boilerplate and scaffolding in predefined public fixture lanes",
+                    "low-level mechanical implementation in those lanes",
+                    "non-authoritative alternate ideas in those lanes",
                     "bounded sandbox execution for the above",
                 ],
                 "constraints": [
@@ -331,10 +331,10 @@ class Settings:
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
                     "advisory debate votes stay non-authoritative at the configured weight",
-                    "receives a closed typed capability request, never the handoff context",
+                    "receives no prose at all: no task, acceptance, objective, dependency result, Slack text, or repository context",
+                    "dispatch is driven by antigravity_directive, a closed fixture lane plus bounded numeric controls",
                     "repository, starting_ref, allow_draft_pr, and public_research_query must stay unset",
-                    "task and acceptance must be plain public prose: no path, URL, SHA, code identifier, diff, secret, or owner/Slack identifier",
-                    "task and acceptance must not name an operational action or its object",
+                    "cannot be seated in a debate; its advisory weight stays in the denominator and is never cast",
                 ],
             },
             "perplexity": {
