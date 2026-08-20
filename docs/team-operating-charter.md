@@ -118,6 +118,24 @@ arrive from the authenticated provider API or callback. Owner-supplied recovery
 text cannot become exact-SHA review or merge authority. Independent safe lanes
 may continue.
 
+## Communication and work efficiency
+
+Communication is concise, decision-relevant, and evidence-first. State the
+decision or result, supporting evidence, material uncertainty, and next action
+without restating unchanged context. Verify material claims and correct
+inaccuracies before dependent work or another paid provider call.
+
+Reuse fresh valid evidence. Repeat a call, provider dispatch, test, or review
+only after relevant state changes, an earlier result is ambiguous, or a named
+coverage gap requires it. Before retrying, record what new information the
+attempt should provide; stop, reshape the plan, or escalate when that information
+gain is low. Keep prompts and handoffs to the minimum context needed, and avoid
+cross-contaminating providers with irrelevant private material or another
+provider's conclusions.
+
+Efficiency never weakens quality or safety. Concision may not omit uncertainty,
+required evidence, dissent, limitations, approval gates, or unresolved risks.
+
 ## Review-to-merge handoff
 
 Every requested draft PR or other reviewable implementation must reserve a
@@ -195,6 +213,6 @@ request as `team_operating_charter` with schema version
 
 <!-- TEAM_CHARTER_MANIFEST_BEGIN -->
 ```json
-{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->

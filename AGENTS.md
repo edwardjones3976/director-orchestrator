@@ -12,6 +12,7 @@ These rules apply to every AI coding agent working in this repository.
 8. Add or update tests for behavioral changes. Run the relevant tests and report exact commands and results.
 9. Prefer reversible changes. Do not delete data or rewrite history without explicit owner authorization.
 10. Stop in `OWNER_DECISION_REQUIRED` when an action involves deployment, publishing, merge, deletion, purchases, external representation, sensitive data, credentials, or expanded access.
+11. Communicate concisely and accurately. Reuse fresh verified evidence; repeat a call or test only after state changes, an ambiguous result, or a named coverage gap. Before another paid or tool attempt, identify its expected information gain and stop, reshape, or escalate when that gain is low. Correct inaccuracies before dependent work. Brevity must not omit uncertainty, required evidence, safety gates, or unresolved risks.
 
 ## Cursor Cloud specific instructions
 
