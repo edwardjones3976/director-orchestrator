@@ -11,6 +11,7 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
@@ -34,7 +35,14 @@ from .oracle_diff import (
     parse_hunk_patch,
     require_github_diff_content_type,
     require_identity_content_encoding,
+    require_rest_bool,
+    require_rest_mapping,
     require_rest_nonnegative_int,
+    require_rest_optional_bool,
+    require_rest_optional_text,
+    require_rest_positive_int,
+    require_rest_sha40,
+    require_rest_text,
 )
 from .policy import canonical_repository
 
@@ -1651,6 +1659,40 @@ def _later_deadline_text(existing: str | None, proposed: datetime | None) -> str
     return _utc_deadline_text(current)
 
 
+# GitHub check-run and review-thread evidence is read at exactly the page size
+# requested, so a page that overruns it is malformed rather than merely long.
+MAX_CHECK_RUNS_PER_PAGE = 100
+MAX_REVIEW_THREAD_NODES = 100
+CHECK_RUN_EVIDENCE_MALFORMED = "GitHub check-run evidence is malformed"
+CHECK_RUN_ENUMERATION_INCOMPLETE = "GitHub check-run enumeration is incomplete"
+REVIEW_THREAD_EVIDENCE_INCOMPLETE = "GitHub review-thread evidence is incomplete"
+PULL_REQUEST_EVIDENCE_MALFORMED = "GitHub pull request evidence is malformed"
+
+# A GitHub response body that cannot be read as the shape the gate requires is
+# durable evidence failure, not a transport blip: re-reading it returns the same
+# bytes. Mapping these to OracleDiffError keeps them inside the terminal-evidence
+# boundary so a malformed payload is consumed once instead of driving repeated
+# full pull/files/compare cycles and endless recoverable redelivery. Transport
+# exceptions and OracleRateLimitError never reach these guards, because every
+# guard wraps parsing only — never the request itself.
+_MALFORMED_EVIDENCE_ERRORS = (
+    KeyError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    ValidationError,
+)
+
+
+@dataclass(frozen=True)
+class ReviewThreadEvidence:
+    """Normalized GraphQL review-thread evidence with every field proven."""
+
+    blocking: int
+    has_next_page: bool
+    review_decision: str | None
+
+
 class GitHubOracleGateway:
     def __init__(
         self,
@@ -1805,21 +1847,27 @@ class GitHubOracleGateway:
         return value
 
     def _pull_identity(self, repository: str, pull_number: int, pull: dict) -> dict[str, object]:
+        """Bind the pull-request identity from proven scalars only.
+
+        Truthiness and lax coercion are not evidence here either: a coerced flag
+        would compare equal to a genuine one and hide drift between the two reads
+        this identity exists to bracket.
+        """
         return {
             "repository": canonical_repository(repository),
             "pull_number": pull_number,
-            "title": pull.get("title") or "",
-            "body": pull.get("body") or "",
-            "draft": bool(pull["draft"]),
-            "state": pull["state"],
-            "merged": bool(pull.get("merged")),
-            "base_ref": pull["base"]["ref"],
+            "title": require_rest_optional_text(pull.get("title"), max_length=2_000) or "",
+            "body": require_rest_optional_text(pull.get("body"), max_length=100_000) or "",
+            "draft": require_rest_bool(pull["draft"]),
+            "state": require_rest_text(pull["state"], max_length=64),
+            "merged": require_rest_optional_bool(pull.get("merged")) is True,
+            "base_ref": require_rest_text(pull["base"]["ref"], max_length=255),
             "base_sha": self._require_sha40(pull["base"]["sha"]),
-            "head_ref": pull["head"]["ref"],
+            "head_ref": require_rest_text(pull["head"]["ref"], max_length=255),
             "head_sha": self._require_sha40(pull["head"]["sha"]),
             "head_repository": canonical_repository(pull["head"]["repo"]["full_name"]),
-            "author": pull["user"]["login"],
-            "changed_files": int(pull["changed_files"]),
+            "author": require_rest_text(pull["user"]["login"], max_length=255),
+            "changed_files": require_rest_nonnegative_int(pull["changed_files"]),
         }
 
     @staticmethod
@@ -1980,9 +2028,111 @@ class GitHubOracleGateway:
         except ValueError:
             return False
 
+    @classmethod
+    def _check_run_evidence(cls, response: httpx.Response) -> list[OracleCheckRun]:
+        """Normalize the check-run page, proving every field the policy reads.
+
+        The rate-limit and transport classifications are already settled by the
+        request that produced ``response``; everything from here is pure parsing of
+        bytes GitHub already delivered. A body that is not a check-run page, an
+        enumeration that does not account for itself, or a run whose identity,
+        producer, suite, or head SHA is missing or wrongly typed is therefore
+        durable evidence failure, and is raised as ``OracleDiffError`` so the
+        service consumes it once instead of re-reading it as a transient blip.
+        Messages stay constant: no untrusted payload value is ever interpolated.
+        """
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise OracleDiffError(CHECK_RUN_EVIDENCE_MALFORMED) from exc
+        payload = require_rest_mapping(payload, message=CHECK_RUN_EVIDENCE_MALFORMED)
+        raw_runs = payload.get("check_runs")
+        if not isinstance(raw_runs, list) or len(raw_runs) > MAX_CHECK_RUNS_PER_PAGE:
+            raise OracleDiffError(CHECK_RUN_EVIDENCE_MALFORMED)
+        if "total_count" not in payload:
+            raise OracleDiffError(CHECK_RUN_ENUMERATION_INCOMPLETE)
+        total_count = require_rest_nonnegative_int(
+            payload["total_count"], message=CHECK_RUN_EVIDENCE_MALFORMED
+        )
+        # A page that does not account for the enumeration it declares cannot prove
+        # which checks ran, so the merge fails closed on it rather than merging on a
+        # partial view.
+        if total_count != len(raw_runs):
+            raise OracleDiffError(CHECK_RUN_ENUMERATION_INCOMPLETE)
+        checks: list[OracleCheckRun] = []
+        for item in raw_runs:
+            run = require_rest_mapping(item, message=CHECK_RUN_EVIDENCE_MALFORMED)
+            checks.append(
+                OracleCheckRun(
+                    run_id=require_rest_positive_int(
+                        run.get("id"), message=CHECK_RUN_EVIDENCE_MALFORMED
+                    ),
+                    suite_id=cls._check_suite_id(run.get("check_suite")),
+                    name=require_rest_text(
+                        run.get("name"),
+                        max_length=255,
+                        message=CHECK_RUN_EVIDENCE_MALFORMED,
+                    ),
+                    status=require_rest_text(
+                        run.get("status"),
+                        max_length=64,
+                        message=CHECK_RUN_EVIDENCE_MALFORMED,
+                    ),
+                    conclusion=require_rest_optional_text(
+                        run.get("conclusion"),
+                        max_length=64,
+                        message=CHECK_RUN_EVIDENCE_MALFORMED,
+                    ),
+                    head_sha=require_rest_sha40(
+                        run.get("head_sha"), message=CHECK_RUN_EVIDENCE_MALFORMED
+                    ),
+                    app_slug=cls._check_app_slug(run.get("app")),
+                )
+            )
+        return checks
+
+    @staticmethod
+    def _check_suite_id(raw: object) -> int | None:
+        """Absent suite evidence stays absent; present suite evidence must be real."""
+        if raw is None:
+            return None
+        suite = require_rest_mapping(raw, message=CHECK_RUN_EVIDENCE_MALFORMED)
+        identifier = suite.get("id")
+        if identifier is None:
+            return None
+        return require_rest_positive_int(
+            identifier, message=CHECK_RUN_EVIDENCE_MALFORMED
+        )
+
+    @staticmethod
+    def _check_app_slug(raw: object) -> str:
+        """Unproven producers stay ``unknown`` so they can never match a trusted app.
+
+        A missing app object and a missing slug both keep the existing fail-closed
+        default. A present-but-wrongly-typed app or slug is malformed evidence.
+        """
+        if raw is None:
+            return "unknown"
+        app = require_rest_mapping(raw, message=CHECK_RUN_EVIDENCE_MALFORMED)
+        slug = app.get("slug")
+        if slug is None or slug == "":
+            return "unknown"
+        return require_rest_text(
+            slug, max_length=255, message=CHECK_RUN_EVIDENCE_MALFORMED
+        )
+
     def _review_thread_evidence(
         self, response: httpx.Response
-    ) -> tuple[dict, object, int]:
+    ) -> ReviewThreadEvidence:
+        """Normalize GraphQL review-thread evidence, proving every flag it reports.
+
+        ``isResolved``/``isOutdated``/``hasNextPage`` are read as real JSON booleans
+        rather than by truthiness: a string ``"false"`` is truthy in Python, so a
+        truthiness read would silently drop an unresolved blocking thread and report
+        the enumeration as complete. Every malformed shape here is durable and maps
+        to ``OracleDiffError``; only the rate-limit classification, settled before
+        parsing, still releases for a later retry.
+        """
         payload: object
         try:
             payload = response.json()
@@ -1994,21 +2144,37 @@ class GitHubOracleGateway:
                 retry_not_before=_rate_limit_not_before(response),
             )
         if not isinstance(payload, dict) or payload.get("errors"):
-            raise OracleDiffError("GitHub review-thread evidence is incomplete")
-        try:
-            pull_request = payload["data"]["repository"]["pullRequest"]
-            threads = pull_request["reviewThreads"]
-            review_decision = pull_request.get("reviewDecision")
-            blocking = sum(
-                1
-                for node in threads["nodes"]
-                if not node["isResolved"] and not node["isOutdated"]
-            )
-            if "hasNextPage" not in threads["pageInfo"]:
-                raise KeyError("hasNextPage")
-        except (KeyError, TypeError, ValueError) as exc:
-            raise OracleDiffError("GitHub review-thread evidence is incomplete") from exc
-        return threads, review_decision, blocking
+            raise OracleDiffError(REVIEW_THREAD_EVIDENCE_INCOMPLETE)
+        message = REVIEW_THREAD_EVIDENCE_INCOMPLETE
+        data = require_rest_mapping(payload.get("data"), message=message)
+        repository = require_rest_mapping(data.get("repository"), message=message)
+        pull_request = require_rest_mapping(
+            repository.get("pullRequest"), message=message
+        )
+        threads = require_rest_mapping(
+            pull_request.get("reviewThreads"), message=message
+        )
+        nodes = threads.get("nodes")
+        if not isinstance(nodes, list) or len(nodes) > MAX_REVIEW_THREAD_NODES:
+            raise OracleDiffError(message)
+        page_info = require_rest_mapping(threads.get("pageInfo"), message=message)
+        has_next_page = require_rest_bool(
+            page_info.get("hasNextPage"), message=message
+        )
+        blocking = 0
+        for raw_node in nodes:
+            node = require_rest_mapping(raw_node, message=message)
+            resolved = require_rest_bool(node.get("isResolved"), message=message)
+            outdated = require_rest_bool(node.get("isOutdated"), message=message)
+            if not resolved and not outdated:
+                blocking += 1
+        return ReviewThreadEvidence(
+            blocking=blocking,
+            has_next_page=has_next_page,
+            review_decision=require_rest_optional_text(
+                pull_request.get("reviewDecision"), max_length=64, message=message
+            ),
+        )
 
     @staticmethod
     def _is_transient_compare_status(response: httpx.Response) -> bool:
@@ -2057,7 +2223,12 @@ class GitHubOracleGateway:
 
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         repository = canonical_repository(repository)
-        owner, name = repository.split("/", 1)
+        # A repository that does not canonicalize to owner/name is durable too: it
+        # would raise on every re-read, so it fails closed here rather than
+        # spending the bounded read allowance to reach the same result.
+        owner, _, name = repository.partition("/")
+        if not owner or not name:
+            raise OracleDiffError(PULL_REQUEST_EVIDENCE_MALFORMED)
         try:
             pull = self._get_pull(repository, pull_number)
             self._require_sha40(str(pull["base"]["sha"]))
@@ -2068,17 +2239,22 @@ class GitHubOracleGateway:
             pull, changed_files = self._bind_exact_sha_compare(
                 repository, pull_number, pull, files
             )
+            head_sha = self._require_sha40(pull["head"]["sha"])
         except (OracleDiffError, OracleRateLimitError):
             raise
-        except (KeyError, ValueError, TypeError, ValidationError) as exc:
-            raise OracleDiffError("GitHub pull request evidence is malformed") from exc
-        checks_payload = self._request(
-            "GET",
-            f"/repos/{repository}/commits/{pull['head']['sha']}/check-runs",
-            params={"per_page": 100, "filter": "latest"},
-        ).json()
-        if checks_payload.get("total_count", 0) != len(checks_payload.get("check_runs", [])):
-            raise RuntimeError("GitHub check-run enumeration is incomplete; merge failed closed")
+        except _MALFORMED_EVIDENCE_ERRORS as exc:
+            raise OracleDiffError(PULL_REQUEST_EVIDENCE_MALFORMED) from exc
+        # The request stays outside every parsing guard, so a rate limit still
+        # releases for a later retry and a transport failure still spends the
+        # bounded transient allowance. Only the body it returned is parsed inside
+        # the terminal-evidence boundary.
+        checks = self._check_run_evidence(
+            self._request(
+                "GET",
+                f"/repos/{repository}/commits/{head_sha}/check-runs",
+                params={"per_page": MAX_CHECK_RUNS_PER_PAGE, "filter": "latest"},
+            )
+        )
 
         query = """
         query($owner:String!, $name:String!, $number:Int!) {
@@ -2098,40 +2274,54 @@ class GitHubOracleGateway:
             "/graphql",
             json={"query": query, "variables": {"owner": owner, "name": name, "number": pull_number}},
         )
-        threads, review_decision, blocking = self._review_thread_evidence(graph_response)
+        threads = self._review_thread_evidence(graph_response)
 
-        return OraclePullRequestSnapshot(
-            repository=repository,
-            pull_number=pull_number,
-            title=pull.get("title") or "",
-            body=pull.get("body") or "",
-            state=pull["state"],
-            draft=bool(pull["draft"]),
-            mergeable=pull.get("mergeable"),
-            merged=bool(pull.get("merged")),
-            base_ref=pull["base"]["ref"],
-            base_sha=pull["base"]["sha"],
-            head_ref=pull["head"]["ref"],
-            head_sha=pull["head"]["sha"],
-            head_repository=pull["head"]["repo"]["full_name"],
-            author_login=pull["user"]["login"],
-            changed_files=changed_files,
-            checks=[
-                OracleCheckRun(
-                    run_id=item["id"],
-                    suite_id=(item.get("check_suite") or {}).get("id"),
-                    name=item["name"],
-                    status=item["status"],
-                    conclusion=item.get("conclusion"),
-                    head_sha=item["head_sha"],
-                    app_slug=(item.get("app") or {}).get("slug") or "unknown",
+        # Assembling the snapshot is the last place untrusted GitHub fields are
+        # read, so it carries the same terminal-evidence boundary: a missing or
+        # wrongly typed pull-request field is durable and must not be re-read as a
+        # transient failure.
+        message = PULL_REQUEST_EVIDENCE_MALFORMED
+        try:
+            return OraclePullRequestSnapshot(
+                repository=repository,
+                pull_number=pull_number,
+                title=require_rest_optional_text(
+                    pull.get("title"), max_length=2_000, message=message
                 )
-                for item in checks_payload.get("check_runs", [])
-            ],
-            blocking_review_threads=blocking,
-            review_threads_complete=not threads["pageInfo"]["hasNextPage"],
-            review_decision=review_decision,
-        )
+                or "",
+                body=require_rest_optional_text(
+                    pull.get("body"), max_length=100_000, message=message
+                )
+                or "",
+                state=require_rest_text(pull["state"], max_length=64, message=message),
+                draft=require_rest_bool(pull["draft"], message=message),
+                mergeable=require_rest_optional_bool(
+                    pull.get("mergeable"), message=message
+                ),
+                merged=require_rest_optional_bool(pull.get("merged"), message=message)
+                is True,
+                base_ref=require_rest_text(
+                    pull["base"]["ref"], max_length=255, message=message
+                ),
+                base_sha=require_rest_sha40(pull["base"]["sha"], message=message),
+                head_ref=require_rest_text(
+                    pull["head"]["ref"], max_length=255, message=message
+                ),
+                head_sha=require_rest_sha40(pull["head"]["sha"], message=message),
+                head_repository=pull["head"]["repo"]["full_name"],
+                author_login=require_rest_text(
+                    pull["user"]["login"], max_length=255, message=message
+                ),
+                changed_files=changed_files,
+                checks=checks,
+                blocking_review_threads=threads.blocking,
+                review_threads_complete=not threads.has_next_page,
+                review_decision=threads.review_decision,
+            )
+        except (OracleDiffError, OracleRateLimitError):
+            raise
+        except _MALFORMED_EVIDENCE_ERRORS as exc:
+            raise OracleDiffError(PULL_REQUEST_EVIDENCE_MALFORMED) from exc
 
     def merge(
         self,

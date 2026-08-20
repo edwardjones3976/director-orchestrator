@@ -44,6 +44,16 @@ BASE_SHA = "d" * 40
 REVIEW_SECRET = "test-only-oracle-review-secret"
 
 
+class _Absent:
+    """Sentinel for a JSON key that is missing rather than null."""
+
+    def __repr__(self) -> str:
+        return "<absent>"
+
+
+_ABSENT = _Absent()
+
+
 class _RecordingByteStream(httpx.SyncByteStream):
     def __init__(self, chunks: tuple[bytes, ...]) -> None:
         self._chunks = chunks
@@ -3828,6 +3838,866 @@ class MalformedRetryDeadlineTests(unittest.TestCase):
             ].count("retry_not_before_repaired"),
             1,
         )
+
+
+CHECK_RUN_LEAK = "check-run-body-must-not-leak"
+REVIEW_THREAD_LEAK = "review-thread-body-must-not-leak"
+PULL_EVIDENCE_LEAK = "pull-evidence-body-must-not-leak"
+GOOD_CHECK_RUN = {
+    "id": 10,
+    "name": "test",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": HEAD_SHA,
+    "app": {"slug": "github-actions"},
+    "check_suite": {"id": 11},
+}
+
+
+def _check_run(**overrides) -> dict:
+    run = dict(GOOD_CHECK_RUN)
+    for key, value in overrides.items():
+        if value is _ABSENT:
+            run.pop(key, None)
+        else:
+            run[key] = value
+    return run
+
+
+def _checks_page(*runs, total_count=None) -> dict:
+    return {
+        "total_count": len(runs) if total_count is None else total_count,
+        "check_runs": list(runs),
+    }
+
+
+def _graphql_page(
+    *,
+    nodes=(),
+    page_info=_ABSENT,
+    review_decision="APPROVED",
+    threads=_ABSENT,
+    pull_request=_ABSENT,
+    repository=_ABSENT,
+    data=_ABSENT,
+) -> dict:
+    if threads is _ABSENT:
+        threads = {
+            "nodes": list(nodes),
+            "pageInfo": {"hasNextPage": False} if page_info is _ABSENT else page_info,
+        }
+    if pull_request is _ABSENT:
+        pull_request = {"reviewDecision": review_decision, "reviewThreads": threads}
+    if repository is _ABSENT:
+        repository = {"pullRequest": pull_request}
+    if data is _ABSENT:
+        data = {"repository": repository}
+    return {"data": data}
+
+
+class MalformedGitHubEvidenceBoundaryTests(unittest.TestCase):
+    """Malformed GitHub evidence must be terminal, never a transient re-read.
+
+    Every case here is durable: re-reading returns the same bytes, so classifying
+    it as a transient read failure would spend the bounded read allowance on a
+    fresh full pull/files/compare cycle each time and then release the reviewed
+    artifact for recoverable redelivery that can never succeed. Each case must
+    raise ``OracleDiffError`` inside the terminal-evidence boundary, and no case
+    may echo an untrusted payload value.
+    """
+
+    def setUp(self) -> None:
+        self.harness = GitHubCompleteDiffGatewayTests()
+        self.harness.setUp()
+
+    def _gateway(
+        self,
+        *,
+        pull=_ABSENT,
+        checks=_ABSENT,
+        checks_text=None,
+        graphql=_ABSENT,
+        graphql_text=None,
+    ) -> GitHubOracleGateway:
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            is_diff = "diff" in request.headers.get("accept", "")
+            if pull is not _ABSENT and request.method == "GET" and path.endswith("/pulls/23") and not is_diff:
+                return httpx.Response(200, json=pull)
+            if request.method == "GET" and path.endswith("/check-runs"):
+                if checks_text is not None:
+                    return httpx.Response(
+                        200, text=checks_text, headers={"Content-Type": "application/json"}
+                    )
+                if checks is not _ABSENT:
+                    return httpx.Response(200, json=checks)
+            if request.method == "POST" and path == "/graphql":
+                if graphql_text is not None:
+                    return httpx.Response(
+                        200, text=graphql_text, headers={"Content-Type": "application/json"}
+                    )
+                if graphql is not _ABSENT:
+                    return httpx.Response(200, json=graphql)
+            return self.harness.handler(request)
+
+        return GitHubOracleGateway(
+            "repo-scoped-token", transport=httpx.MockTransport(handler)
+        )
+
+    def _assert_terminal(self, expected: str, **kwargs) -> None:
+        with self.assertRaises(OracleDiffError) as caught:
+            self._gateway(**kwargs).snapshot("edwardjones3976/edge_engine", 23)
+        message = str(caught.exception)
+        self.assertEqual(message, expected)
+        for leak in (CHECK_RUN_LEAK, REVIEW_THREAD_LEAK, PULL_EVIDENCE_LEAK):
+            self.assertNotIn(leak, message)
+
+    def _assert_check_evidence_malformed(self, payload=_ABSENT, text=None) -> None:
+        self._assert_terminal(
+            "GitHub check-run evidence is malformed", checks=payload, checks_text=text
+        )
+
+    def _assert_review_evidence_incomplete(self, payload=_ABSENT, text=None) -> None:
+        self._assert_terminal(
+            "GitHub review-thread evidence is incomplete",
+            graphql=payload,
+            graphql_text=text,
+        )
+
+    def _assert_pull_evidence_malformed(self, pull) -> None:
+        self._assert_terminal("GitHub pull request evidence is malformed", pull=pull)
+
+    # --- check-run evidence: body shape -------------------------------------
+
+    def test_non_object_check_run_body_is_terminal(self) -> None:
+        for payload in (
+            [GOOD_CHECK_RUN],
+            CHECK_RUN_LEAK,
+            17,
+            1.5,
+            True,
+            None,
+        ):
+            with self.subTest(payload=payload):
+                self._assert_check_evidence_malformed(payload)
+
+    def test_unparseable_check_run_body_is_terminal(self) -> None:
+        for text in ("{{{", "", "not json at all", '{"total_count": 1,'):
+            with self.subTest(text=text):
+                self._assert_check_evidence_malformed(text=text)
+
+    def test_non_list_check_runs_is_terminal(self) -> None:
+        for runs in (GOOD_CHECK_RUN, CHECK_RUN_LEAK, 1, True, None):
+            with self.subTest(runs=runs):
+                self._assert_check_evidence_malformed(
+                    {"total_count": 1, "check_runs": runs}
+                )
+
+    def test_missing_check_runs_key_is_terminal(self) -> None:
+        self._assert_check_evidence_malformed({"total_count": 0})
+
+    def test_check_run_page_beyond_the_requested_size_is_terminal(self) -> None:
+        runs = [_check_run(id=index + 1) for index in range(101)]
+        self._assert_check_evidence_malformed(_checks_page(*runs))
+
+    # --- check-run evidence: enumeration ------------------------------------
+
+    def test_non_integer_total_count_is_terminal(self) -> None:
+        for total in ("1", True, False, 1.0, [1], {"n": 1}, None, -1):
+            with self.subTest(total=total):
+                self._assert_check_evidence_malformed(
+                    {"total_count": total, "check_runs": [GOOD_CHECK_RUN]}
+                )
+
+    def test_missing_total_count_is_terminal_incomplete_enumeration(self) -> None:
+        self._assert_terminal(
+            "GitHub check-run enumeration is incomplete",
+            checks={"check_runs": [GOOD_CHECK_RUN]},
+        )
+
+    def test_total_count_disagreeing_with_the_page_is_terminal(self) -> None:
+        for total in (0, 2, 5, 100):
+            with self.subTest(total=total):
+                self._assert_terminal(
+                    "GitHub check-run enumeration is incomplete",
+                    checks=_checks_page(GOOD_CHECK_RUN, total_count=total),
+                )
+
+    # --- check-run evidence: per-run fields ---------------------------------
+
+    def test_check_run_that_is_not_an_object_is_terminal(self) -> None:
+        for run in (CHECK_RUN_LEAK, 10, [GOOD_CHECK_RUN], None, True):
+            with self.subTest(run=run):
+                self._assert_check_evidence_malformed(_checks_page(run))
+
+    def test_missing_or_wrongly_typed_run_identifier_is_terminal(self) -> None:
+        for identifier in (_ABSENT, None, "10", True, 1.0, 0, -1, [10], {"id": 10}):
+            with self.subTest(identifier=identifier):
+                self._assert_check_evidence_malformed(
+                    _checks_page(_check_run(id=identifier))
+                )
+
+    def test_missing_or_wrongly_typed_run_name_is_terminal(self) -> None:
+        for name in (_ABSENT, None, "", 10, True, ["test"], "n" * 256):
+            with self.subTest(name=name):
+                self._assert_check_evidence_malformed(
+                    _checks_page(_check_run(name=name))
+                )
+
+    def test_missing_or_wrongly_typed_run_status_is_terminal(self) -> None:
+        for status in (_ABSENT, None, "", 10, True, ["completed"], "s" * 65):
+            with self.subTest(status=status):
+                self._assert_check_evidence_malformed(
+                    _checks_page(_check_run(status=status))
+                )
+
+    def test_wrongly_typed_run_conclusion_is_terminal(self) -> None:
+        for conclusion in (10, True, ["success"], {"c": 1}, "c" * 65):
+            with self.subTest(conclusion=conclusion):
+                self._assert_check_evidence_malformed(
+                    _checks_page(_check_run(conclusion=conclusion))
+                )
+
+    def test_absent_or_null_conclusion_stays_non_green_rather_than_malformed(self) -> None:
+        for conclusion in (None, ""):
+            with self.subTest(conclusion=conclusion):
+                snapshot = self._gateway(
+                    checks=_checks_page(_check_run(conclusion=conclusion))
+                ).snapshot("edwardjones3976/edge_engine", 23)
+                self.assertEqual(snapshot.checks[0].conclusion, conclusion)
+
+    # --- check-run evidence: head SHA, app, and check suite -----------------
+
+    def test_invalid_run_head_sha_is_terminal(self) -> None:
+        for head_sha in (
+            _ABSENT,
+            None,
+            "",
+            CHECK_RUN_LEAK,
+            "a" * 39,
+            "a" * 41,
+            "A" * 40,
+            "g" * 40,
+            10,
+            True,
+            [HEAD_SHA],
+        ):
+            with self.subTest(head_sha=head_sha):
+                self._assert_check_evidence_malformed(
+                    _checks_page(_check_run(head_sha=head_sha))
+                )
+
+    def test_invalid_run_app_is_terminal(self) -> None:
+        for app in (CHECK_RUN_LEAK, ["github-actions"], 10, True, {"slug": 10}, {"slug": ["a"]}, {"slug": "s" * 256}):
+            with self.subTest(app=app):
+                self._assert_check_evidence_malformed(
+                    _checks_page(_check_run(app=app))
+                )
+
+    def test_unproven_app_producer_stays_unknown_and_never_matches_a_trusted_app(self) -> None:
+        for app in (_ABSENT, None, {}, {"slug": None}, {"slug": ""}):
+            with self.subTest(app=app):
+                snapshot = self._gateway(
+                    checks=_checks_page(_check_run(app=app))
+                ).snapshot("edwardjones3976/edge_engine", 23)
+                self.assertEqual(snapshot.checks[0].app_slug, "unknown")
+                self.assertNotEqual(snapshot.checks[0].app_slug, "github-actions")
+
+    def test_invalid_run_check_suite_is_terminal(self) -> None:
+        for suite in (
+            CHECK_RUN_LEAK,
+            [11],
+            11,
+            True,
+            {"id": "11"},
+            {"id": 0},
+            {"id": -1},
+            {"id": True},
+            {"id": 1.0},
+        ):
+            with self.subTest(suite=suite):
+                self._assert_check_evidence_malformed(
+                    _checks_page(_check_run(check_suite=suite))
+                )
+
+    def test_absent_check_suite_identifier_stays_absent(self) -> None:
+        for suite in (_ABSENT, None, {}, {"id": None}):
+            with self.subTest(suite=suite):
+                snapshot = self._gateway(
+                    checks=_checks_page(_check_run(check_suite=suite))
+                ).snapshot("edwardjones3976/edge_engine", 23)
+                self.assertIsNone(snapshot.checks[0].suite_id)
+
+    # --- GraphQL review-thread evidence -------------------------------------
+
+    def test_non_object_graphql_body_is_terminal(self) -> None:
+        for payload in ([{"data": {}}], REVIEW_THREAD_LEAK, 17, True, None):
+            with self.subTest(payload=payload):
+                self._assert_review_evidence_incomplete(payload)
+
+    def test_unparseable_graphql_body_is_terminal(self) -> None:
+        for text in ("{{{", "", "not json at all"):
+            with self.subTest(text=text):
+                self._assert_review_evidence_incomplete(text=text)
+
+    def test_malformed_graphql_envelope_is_terminal(self) -> None:
+        cases = (
+            {},
+            {"data": None},
+            {"data": REVIEW_THREAD_LEAK},
+            {"data": []},
+            _graphql_page(repository=None),
+            _graphql_page(repository=[]),
+            _graphql_page(pull_request=None),
+            _graphql_page(pull_request=REVIEW_THREAD_LEAK),
+            _graphql_page(threads=None),
+            _graphql_page(threads=[]),
+            _graphql_page(threads={"pageInfo": {"hasNextPage": False}}),
+            _graphql_page(threads={"nodes": []}),
+        )
+        for payload in cases:
+            with self.subTest(payload=payload):
+                self._assert_review_evidence_incomplete(payload)
+
+    def test_malformed_review_thread_nodes_are_terminal(self) -> None:
+        for nodes in (
+            {"isResolved": True},
+            REVIEW_THREAD_LEAK,
+            17,
+            None,
+            [REVIEW_THREAD_LEAK],
+            [None],
+            [{"isOutdated": False}],
+            [{"isResolved": True}],
+            [{"isResolved": "false", "isOutdated": False}],
+            [{"isResolved": False, "isOutdated": "false"}],
+            [{"isResolved": 0, "isOutdated": 0}],
+            [{"isResolved": 1, "isOutdated": 1}],
+            [{"isResolved": None, "isOutdated": None}],
+            [{"isResolved": False, "isOutdated": False}] * 101,
+        ):
+            with self.subTest(nodes=nodes):
+                self._assert_review_evidence_incomplete(
+                    _graphql_page(threads={"nodes": nodes, "pageInfo": {"hasNextPage": False}})
+                )
+
+    def test_malformed_page_info_is_terminal(self) -> None:
+        for page_info in (
+            {},
+            None,
+            [],
+            REVIEW_THREAD_LEAK,
+            {"hasNextPage": None},
+            {"hasNextPage": "false"},
+            {"hasNextPage": "true"},
+            {"hasNextPage": 0},
+            {"hasNextPage": 1},
+            {"hasNextPage": []},
+        ):
+            with self.subTest(page_info=page_info):
+                self._assert_review_evidence_incomplete(_graphql_page(page_info=page_info))
+
+    def test_malformed_review_decision_is_terminal(self) -> None:
+        for decision in (10, True, ["APPROVED"], {"d": 1}, "d" * 65):
+            with self.subTest(decision=decision):
+                self._assert_review_evidence_incomplete(
+                    _graphql_page(review_decision=decision)
+                )
+
+    def test_string_flags_can_no_longer_hide_a_blocking_review_thread(self) -> None:
+        """A truthiness read of ``"false"`` would have dropped this blocking thread."""
+        self._assert_review_evidence_incomplete(
+            _graphql_page(nodes=[{"isResolved": "false", "isOutdated": "false"}])
+        )
+        snapshot = self._gateway(
+            graphql=_graphql_page(nodes=[{"isResolved": False, "isOutdated": False}])
+        ).snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.blocking_review_threads, 1)
+
+    # --- final snapshot construction ----------------------------------------
+
+    def test_non_object_pull_payload_is_terminal(self) -> None:
+        for payload in ([{"state": "open"}], PULL_EVIDENCE_LEAK, 17, True, None):
+            with self.subTest(payload=payload):
+                self._assert_pull_evidence_malformed(payload)
+
+    def test_repository_without_owner_and_name_is_terminal_before_any_read(self) -> None:
+        for repository in ("edge_engine", "/edge_engine", "edwardjones3976/", "/", ""):
+            with self.subTest(repository=repository):
+                with self.assertRaises(OracleDiffError) as caught:
+                    self._gateway().snapshot(repository, 23)
+                self.assertEqual(
+                    str(caught.exception), "GitHub pull request evidence is malformed"
+                )
+                self.assertEqual(self.harness.requests, [])
+
+    def _poisoned_pull(self, **overrides) -> dict:
+        pull = dict(self.harness.pull)
+        for key, value in overrides.items():
+            if value is _ABSENT:
+                pull.pop(key, None)
+            else:
+                pull[key] = value
+        return pull
+
+    def test_non_boolean_mergeability_can_never_be_coerced_into_a_merge(self) -> None:
+        """Lax coercion would have read every one of these as a proven ``True``."""
+        for mergeable in ("yes", "true", "on", "1", 1, 1.0, "no", "false", 0, [], {}):
+            with self.subTest(mergeable=mergeable):
+                self._assert_pull_evidence_malformed(
+                    self._poisoned_pull(mergeable=mergeable)
+                )
+
+    def test_absent_or_null_mergeability_stays_unresolved(self) -> None:
+        for mergeable in (_ABSENT, None):
+            with self.subTest(mergeable=mergeable):
+                snapshot = self._gateway(
+                    pull=self._poisoned_pull(mergeable=mergeable)
+                ).snapshot("edwardjones3976/edge_engine", 23)
+                self.assertIsNone(snapshot.mergeable)
+
+    def test_non_boolean_draft_and_merged_flags_are_terminal(self) -> None:
+        for field, value in (
+            ("draft", "false"),
+            ("draft", "true"),
+            ("draft", 0),
+            ("draft", 1),
+            ("draft", None),
+            ("draft", _ABSENT),
+            ("merged", "false"),
+            ("merged", 1),
+            ("merged", []),
+        ):
+            with self.subTest(field=field, value=value):
+                self._assert_pull_evidence_malformed(self._poisoned_pull(**{field: value}))
+
+    def test_missing_or_wrongly_typed_pull_fields_are_terminal(self) -> None:
+        for field, value in (
+            ("state", _ABSENT),
+            ("state", None),
+            ("state", ""),
+            ("state", 10),
+            ("state", ["open"]),
+            ("title", 10),
+            ("title", ["t"]),
+            ("title", "t" * 2_001),
+            ("body", 10),
+            ("body", "b" * 100_001),
+            ("user", {"login": ""}),
+            ("user", {"login": 10}),
+            ("user", {"login": None}),
+            ("user", {}),
+            ("user", None),
+            ("base", {"ref": "main"}),
+            ("base", {"ref": "", "sha": BASE_SHA}),
+            ("base", {"ref": 10, "sha": BASE_SHA}),
+            ("base", None),
+        ):
+            with self.subTest(field=field, value=value):
+                self._assert_pull_evidence_malformed(self._poisoned_pull(**{field: value}))
+
+    def test_non_integer_changed_file_count_is_terminal_incomplete_enumeration(self) -> None:
+        for value in ("1", True, None, 1.0, -1, [1], _ABSENT):
+            with self.subTest(value=value):
+                self._assert_terminal(
+                    "GitHub file enumeration is incomplete",
+                    pull=self._poisoned_pull(changed_files=value),
+                )
+
+    def test_healthy_evidence_still_produces_a_complete_snapshot(self) -> None:
+        snapshot = self._gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.head_sha, HEAD_SHA)
+        self.assertEqual(snapshot.base_sha, BASE_SHA)
+        self.assertIs(snapshot.mergeable, True)
+        self.assertIs(snapshot.draft, False)
+        self.assertIs(snapshot.merged, False)
+        self.assertEqual(len(snapshot.checks), 1)
+        self.assertEqual(snapshot.checks[0].run_id, 10)
+        self.assertEqual(snapshot.checks[0].suite_id, 11)
+        self.assertEqual(snapshot.checks[0].app_slug, "github-actions")
+        self.assertEqual(snapshot.checks[0].head_sha, HEAD_SHA)
+        self.assertEqual(snapshot.blocking_review_threads, 0)
+        self.assertIs(snapshot.review_threads_complete, True)
+        self.assertEqual(snapshot.review_decision, "APPROVED")
+        self.assertEqual(snapshot.changed_files[0].added_lines, ["research_only = True"])
+
+
+class MalformedEvidenceTerminalDeliveryTests(unittest.TestCase):
+    """Malformed evidence is consumed once; rate limits and transport are not.
+
+    Terminal evidence must spend exactly one bounded snapshot cycle, record a
+    completed non-merge verdict, and make zero GitHub calls on redelivery. A rate
+    limit or a real transport failure must stay recoverable so the same reviewed
+    artifact can be delivered again.
+    """
+
+    def setUp(self) -> None:
+        self.harness = GitHubCompleteDiffGatewayTests()
+        self.harness.setUp()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.settings = Settings(
+            sqlite_path=str(Path(self.temporary.name) / "oracle.sqlite3"),
+            oracle_automerge_enabled=True,
+            oracle_automerge_kill_switch=False,
+            oracle_automerge_project="edge-oracle",
+            oracle_automerge_repository="edwardjones3976/edge_engine",
+            oracle_automerge_base_ref="main",
+            oracle_automerge_branch_prefix="oracle/",
+            oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
+            oracle_automerge_required_checks=("ci", "security"),
+            oracle_automerge_required_check_app="github-actions",
+            oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
+        )
+
+    def _artifact(self, suffix: str) -> OracleReviewArtifact:
+        return OracleReviewArtifact.model_validate(
+            {
+                "artifact_type": "edge_oracle_exact_sha_review/v1",
+                "artifact_id": f"review-artifact-evidence-{suffix}",
+                "assignment_id": f"assignment-evidence-{suffix}",
+                "project": "edge-oracle",
+                "repository": "edwardjones3976/edge_engine",
+                "pull_number": 23,
+                "base_ref": "main",
+                "base_sha": BASE_SHA,
+                "head_ref": "oracle/test",
+                "head_sha": HEAD_SHA,
+                "implementation_provider": "cursor",
+                "implementation_actor": "cursor-agent",
+                "reviewer_provider": "claude",
+                "review_run_id": f"claude-review-evidence-{suffix}",
+                "verdict": OracleReviewVerdict.ACCEPT,
+                "summary": "Exact-SHA review accepted the bounded Oracle change.",
+                "evidence": ["Tests and changed paths reviewed at the exact SHA."],
+                "acceptance_checks": ["ci", "security"],
+                "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+                "signature": "0" * 64,
+            }
+        ).sign(REVIEW_SECRET)
+
+    def _compare_calls(self) -> int:
+        return sum(1 for item in self.harness.requests if "/compare/" in item.url.path)
+
+    def _check_run_calls(self) -> int:
+        return sum(
+            1 for item in self.harness.requests if item.url.path.endswith("/check-runs")
+        )
+
+    def _merge_or_ready_calls(self) -> int:
+        return sum(
+            1
+            for item in self.harness.requests
+            if (item.method == "PUT" and item.url.path.endswith("/merge"))
+            or (
+                item.method == "POST"
+                and item.url.path.endswith("/graphql")
+                and b"markPullRequestReadyForReview" in item.content
+            )
+        )
+
+    def _attempt_row(self, artifact_id: str) -> tuple:
+        connection = sqlite3.connect(self.settings.sqlite_path)
+        try:
+            return connection.execute(
+                "SELECT status, result_json, retry_not_before "
+                "FROM oracle_merge_attempts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+
+    def _service(self, handler) -> OracleMergeService:
+        return OracleMergeService(
+            OracleMergePolicy(self.settings),
+            OracleMergeStore(self.settings.sqlite_path),
+            GitHubOracleGateway(
+                "repo-scoped-token", transport=httpx.MockTransport(handler)
+            ),
+            sleep=lambda _: None,
+        )
+
+    def _handler(self, *, checks=None, graphql=None, pull=None):
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            is_diff = "diff" in request.headers.get("accept", "")
+            if pull is not None and request.method == "GET" and path.endswith("/pulls/23") and not is_diff:
+                self.harness.requests.append(request)
+                return httpx.Response(200, json=pull)
+            if checks is not None and request.method == "GET" and path.endswith("/check-runs"):
+                self.harness.requests.append(request)
+                return checks()
+            if (
+                graphql is not None
+                and request.method == "POST"
+                and path == "/graphql"
+                and b"markPullRequestReadyForReview" not in request.content
+            ):
+                self.harness.requests.append(request)
+                return graphql()
+            return self.harness.handler(request)
+
+        return handler
+
+    def _pull_calls(self) -> int:
+        return sum(
+            1
+            for item in self.harness.requests
+            if item.method == "GET"
+            and item.url.path.endswith("/pulls/23")
+            and "diff" not in item.headers.get("accept", "")
+        )
+
+    def _assert_terminal_single_delivery(
+        self, suffix: str, *, expected_compare_calls: int = 1, **handler_kwargs
+    ) -> None:
+        self.harness.requests.clear()
+        artifact = self._artifact(suffix)
+        service = self._service(self._handler(**handler_kwargs))
+
+        first = service.process(artifact)
+        self.assertEqual(first.status, OracleMergeStatus.ERROR)
+        self.assertNotEqual(first.status, OracleMergeStatus.MERGED)
+        self.assertNotEqual(first.status, OracleMergeStatus.ELIGIBLE)
+        self.assertTrue(
+            any("evidence failed closed" in item for item in first.reasons), first.reasons
+        )
+        # Terminal evidence is consumed, not released: no retryable release reason
+        # and no repeated pull/files/compare cycle.
+        self.assertFalse(any("retryable" in item for item in first.reasons), first.reasons)
+        self.assertFalse(
+            any("transient read failures" in item for item in first.reasons), first.reasons
+        )
+        self.assertEqual(self._compare_calls(), expected_compare_calls)
+        self.assertLessEqual(self._check_run_calls(), 1)
+        # One snapshot cycle brackets the compare fetch with two pull reads. More
+        # than two proves the read allowance was spent re-reading durable evidence.
+        self.assertLessEqual(self._pull_calls(), 2)
+        self.assertEqual(self._merge_or_ready_calls(), 0)
+        self.assertIsNone(first.merge_commit_sha)
+        joined = " ".join(first.reasons)
+        for leak in (CHECK_RUN_LEAK, REVIEW_THREAD_LEAK, PULL_EVIDENCE_LEAK):
+            self.assertNotIn(leak, joined)
+
+        status, payload, retry_not_before = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(status, "ERROR")
+        self.assertIsNotNone(payload)
+        self.assertIsNone(retry_not_before)
+
+        calls = len(self.harness.requests)
+        second = service.process(artifact)
+        self.assertEqual(second.status, OracleMergeStatus.ERROR)
+        self.assertEqual(len(self.harness.requests), calls)
+        self.assertEqual(self._compare_calls(), expected_compare_calls)
+        self.assertEqual(self._merge_or_ready_calls(), 0)
+
+    def test_malformed_check_run_evidence_is_one_delivery_and_no_merge(self) -> None:
+        cases = {
+            "non-object-body": lambda: httpx.Response(
+                200, text=f'"{CHECK_RUN_LEAK}"', headers={"Content-Type": "application/json"}
+            ),
+            "unparseable-body": lambda: httpx.Response(
+                200, text="{{{", headers={"Content-Type": "application/json"}
+            ),
+            "non-list-runs": lambda: httpx.Response(
+                200, json={"total_count": 1, "check_runs": {"id": 10}}
+            ),
+            "string-total-count": lambda: httpx.Response(
+                200, json={"total_count": "1", "check_runs": [GOOD_CHECK_RUN]}
+            ),
+            "bool-total-count": lambda: httpx.Response(
+                200, json={"total_count": True, "check_runs": [GOOD_CHECK_RUN]}
+            ),
+            "count-disagrees": lambda: httpx.Response(
+                200, json={"total_count": 7, "check_runs": [GOOD_CHECK_RUN]}
+            ),
+            "missing-run-id": lambda: httpx.Response(
+                200, json=_checks_page(_check_run(id=_ABSENT))
+            ),
+            "invalid-run-head-sha": lambda: httpx.Response(
+                200, json=_checks_page(_check_run(head_sha=CHECK_RUN_LEAK))
+            ),
+            "invalid-run-app": lambda: httpx.Response(
+                200, json=_checks_page(_check_run(app=[CHECK_RUN_LEAK]))
+            ),
+            "invalid-check-suite": lambda: httpx.Response(
+                200, json=_checks_page(_check_run(check_suite=[11]))
+            ),
+        }
+        for suffix, checks in cases.items():
+            with self.subTest(case=suffix):
+                self._assert_terminal_single_delivery(suffix, checks=checks)
+
+    def test_malformed_review_thread_evidence_is_one_delivery_and_no_merge(self) -> None:
+        cases = {
+            "graphql-non-object": lambda: httpx.Response(
+                200, text=f'"{REVIEW_THREAD_LEAK}"', headers={"Content-Type": "application/json"}
+            ),
+            "graphql-unparseable": lambda: httpx.Response(
+                200, text="{{{", headers={"Content-Type": "application/json"}
+            ),
+            "graphql-null-data": lambda: httpx.Response(200, json={"data": None}),
+            "graphql-null-pull-request": lambda: httpx.Response(
+                200, json=_graphql_page(pull_request=None)
+            ),
+            "graphql-non-list-nodes": lambda: httpx.Response(
+                200,
+                json=_graphql_page(
+                    threads={"nodes": REVIEW_THREAD_LEAK, "pageInfo": {"hasNextPage": False}}
+                ),
+            ),
+            "graphql-string-node-flags": lambda: httpx.Response(
+                200, json=_graphql_page(nodes=[{"isResolved": "false", "isOutdated": "false"}])
+            ),
+            "graphql-missing-page-info": lambda: httpx.Response(
+                200, json=_graphql_page(page_info={})
+            ),
+            "graphql-string-has-next-page": lambda: httpx.Response(
+                200, json=_graphql_page(page_info={"hasNextPage": "false"})
+            ),
+            "graphql-non-string-decision": lambda: httpx.Response(
+                200, json=_graphql_page(review_decision=[REVIEW_THREAD_LEAK])
+            ),
+        }
+        for suffix, graphql in cases.items():
+            with self.subTest(case=suffix):
+                self._assert_terminal_single_delivery(suffix, graphql=graphql)
+
+    def test_malformed_final_snapshot_construction_is_one_delivery_and_no_merge(self) -> None:
+        """``mergeable`` is proven only at construction, after the compare fetch."""
+        for suffix, mergeable in (
+            ("coercible-mergeable-yes", "yes"),
+            ("coercible-mergeable-true", "true"),
+            ("coercible-mergeable-one", 1),
+            ("coercible-mergeable-float", 1.0),
+        ):
+            with self.subTest(case=suffix):
+                self._assert_terminal_single_delivery(
+                    suffix, pull=dict(self.harness.pull, mergeable=mergeable)
+                )
+
+    def test_malformed_pull_evidence_is_terminal_before_any_compare_fetch(self) -> None:
+        """Identity-bound fields fail closed before the bounded compare fetch runs."""
+        cases = {
+            "pull-non-object": [PULL_EVIDENCE_LEAK],
+            "string-draft": dict(self.harness.pull, draft="false"),
+            "numeric-merged": dict(self.harness.pull, merged=1),
+            "empty-author": dict(self.harness.pull, user={"login": ""}),
+            "non-string-state": dict(self.harness.pull, state=[PULL_EVIDENCE_LEAK]),
+            "oversized-title": dict(self.harness.pull, title="t" * 2_001),
+        }
+        for suffix, pull in cases.items():
+            with self.subTest(case=suffix):
+                self._assert_terminal_single_delivery(
+                    suffix, pull=pull, expected_compare_calls=0
+                )
+
+    def test_check_run_rate_limit_stays_recoverable_for_a_later_retry(self) -> None:
+        reset = str(int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()))
+        cases = (
+            (429, {"retry-after": "3600"}),
+            (403, {"retry-after": "3600"}),
+            (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": reset}),
+        )
+        for status, headers in cases:
+            with self.subTest(status=status, headers=headers):
+                self.harness.requests.clear()
+                artifact = self._artifact(f"rate-limit-{status}-{sorted(headers.items())}")
+                service = self._service(
+                    self._handler(
+                        checks=lambda status=status, headers=headers: httpx.Response(
+                            status, json={"total_count": 0, "check_runs": []}, headers=headers
+                        )
+                    )
+                )
+                result = service.process(artifact)
+                self.assertEqual(result.status, OracleMergeStatus.ERROR)
+                self.assertTrue(any("rate limit" in item for item in result.reasons))
+                self.assertTrue(any("remains retryable" in item for item in result.reasons))
+                self.assertFalse(
+                    any("evidence failed closed" in item for item in result.reasons)
+                )
+                self.assertEqual(self._compare_calls(), 1)
+                self.assertEqual(self._merge_or_ready_calls(), 0)
+                self.assertNotIn("3600", " ".join(result.reasons))
+                row_status, payload, retry_not_before = self._attempt_row(
+                    artifact.artifact_id
+                )
+                self.assertEqual(row_status, "RECOVERABLE")
+                self.assertIsNone(payload)
+                self.assertIsNotNone(retry_not_before)
+
+    def test_check_run_transport_failure_stays_recoverable_after_bounded_reads(self) -> None:
+        for status in (500, 502, 503, 504):
+            with self.subTest(status=status):
+                self.harness.requests.clear()
+                artifact = self._artifact(f"transport-{status}")
+                service = self._service(
+                    self._handler(
+                        checks=lambda status=status: httpx.Response(status, json={})
+                    )
+                )
+                result = service.process(artifact)
+                self.assertEqual(result.status, OracleMergeStatus.ERROR)
+                self.assertTrue(
+                    any("transient read failures" in item for item in result.reasons)
+                )
+                self.assertTrue(any("remains retryable" in item for item in result.reasons))
+                self.assertFalse(
+                    any("evidence failed closed" in item for item in result.reasons)
+                )
+                # The bounded read allowance is spent, and only then released.
+                self.assertEqual(self._compare_calls(), 2)
+                self.assertEqual(self._merge_or_ready_calls(), 0)
+                row_status, payload, _ = self._attempt_row(artifact.artifact_id)
+                self.assertEqual(row_status, "RECOVERABLE")
+                self.assertIsNone(payload)
+
+    def test_transport_exception_stays_recoverable(self) -> None:
+        self.harness.requests.clear()
+        artifact = self._artifact("connect-error")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/check-runs"):
+                self.harness.requests.append(request)
+                raise httpx.ConnectError("transport is unavailable")
+            return self.harness.handler(request)
+
+        result = self._service(handler).process(artifact)
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertTrue(any("transient read failures" in item for item in result.reasons))
+        self.assertTrue(any("remains retryable" in item for item in result.reasons))
+        self.assertFalse(any("evidence failed closed" in item for item in result.reasons))
+        self.assertEqual(self._merge_or_ready_calls(), 0)
+        row_status, payload, _ = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(row_status, "RECOVERABLE")
+        self.assertIsNone(payload)
+
+    def test_graphql_rate_limit_stays_recoverable_while_malformed_graphql_is_terminal(self) -> None:
+        self.harness.requests.clear()
+        artifact = self._artifact("graphql-rate-limit")
+        service = self._service(
+            self._handler(
+                graphql=lambda: httpx.Response(
+                    200,
+                    json={"errors": [{"type": "RATE_LIMITED", "message": GRAPHQL_RATE_LIMIT_LEAK}]},
+                    headers={"retry-after": "3600"},
+                )
+            )
+        )
+        result = service.process(artifact)
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertTrue(any("rate limit" in item for item in result.reasons))
+        self.assertTrue(any("remains retryable" in item for item in result.reasons))
+        self.assertNotIn(GRAPHQL_RATE_LIMIT_LEAK, " ".join(result.reasons))
+        row_status, payload, retry_not_before = self._attempt_row(artifact.artifact_id)
+        self.assertEqual(row_status, "RECOVERABLE")
+        self.assertIsNone(payload)
+        self.assertIsNotNone(retry_not_before)
+
 
 
 if __name__ == "__main__":

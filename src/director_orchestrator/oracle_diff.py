@@ -45,10 +45,93 @@ class OracleRateLimitError(RuntimeError):
         self.retry_not_before = retry_not_before
 
 
-def require_rest_nonnegative_int(value: object) -> int:
+REST_EVIDENCE_MALFORMED = "GitHub pull request evidence is malformed"
+
+
+def require_rest_nonnegative_int(
+    value: object, *, message: str = REST_EVIDENCE_MALFORMED
+) -> int:
     """Require a real JSON integer count, not a bool, string, or float."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise OracleDiffError("GitHub pull request evidence is malformed")
+        raise OracleDiffError(message)
+    return value
+
+
+def require_rest_positive_int(
+    value: object, *, message: str = REST_EVIDENCE_MALFORMED
+) -> int:
+    """Require a real JSON identifier: a positive integer, never a bool or string."""
+    identifier = require_rest_nonnegative_int(value, message=message)
+    if identifier < 1:
+        raise OracleDiffError(message)
+    return identifier
+
+
+def require_rest_bool(value: object, *, message: str = REST_EVIDENCE_MALFORMED) -> bool:
+    """Require a real JSON boolean.
+
+    Truthiness is not evidence: a string ``"false"`` and an integer ``0`` both
+    carry a boolean reading that the producer never asserted, so a resolved or
+    outdated review thread could be silently miscounted. Only ``true``/``false``
+    prove the flag.
+    """
+    if not isinstance(value, bool):
+        raise OracleDiffError(message)
+    return value
+
+
+def require_rest_optional_bool(
+    value: object, *, message: str = REST_EVIDENCE_MALFORMED
+) -> bool | None:
+    """Require JSON null or a real JSON boolean.
+
+    ``mergeable`` is the gate's own merge precondition, and Pydantic's lax bool
+    coercion would read ``"yes"``, ``"true"``, ``"on"``, ``"1"``, ``1``, or
+    ``1.0`` as a proven ``True``. Only a real boolean proves mergeability; an
+    absent or null value stays unresolved and blocks.
+    """
+    if value is None:
+        return None
+    return require_rest_bool(value, message=message)
+
+
+def require_rest_mapping(
+    value: object, *, message: str = REST_EVIDENCE_MALFORMED
+) -> dict:
+    """Require a JSON object, not a list, scalar, or null."""
+    if not isinstance(value, dict):
+        raise OracleDiffError(message)
+    return value
+
+
+def require_rest_text(
+    value: object, *, max_length: int, message: str = REST_EVIDENCE_MALFORMED
+) -> str:
+    """Require a nonempty JSON string inside the bound the snapshot models accept."""
+    if not isinstance(value, str) or not value or len(value) > max_length:
+        raise OracleDiffError(message)
+    return value
+
+
+def require_rest_optional_text(
+    value: object, *, max_length: int, message: str = REST_EVIDENCE_MALFORMED
+) -> str | None:
+    """Require JSON null or a bounded JSON string.
+
+    Emptiness is preserved rather than rejected so an empty check conclusion keeps
+    its existing non-green reading instead of becoming an evidence failure.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > max_length:
+        raise OracleDiffError(message)
+    return value
+
+
+def require_rest_sha40(value: object, *, message: str = REST_EVIDENCE_MALFORMED) -> str:
+    """Require a pinned lowercase 40-hex commit digest."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise OracleDiffError(message)
     return value
 
 
