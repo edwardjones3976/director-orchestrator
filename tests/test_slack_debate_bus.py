@@ -267,6 +267,169 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await engine.run(task.task_id)
             self.assertEqual(len(notifier.posts), post_count)
 
+    async def test_slack_delivery_retries_twice_with_one_idempotency_key(self):
+        class FailTwice(RecordingNotifier):
+            def __init__(self):
+                super().__init__()
+                self.attempt_ids: list[str] = []
+
+            async def post(self, record, message, **kwargs):
+                if "COLLABORATION START" in message:
+                    self.attempt_ids.append(kwargs["client_msg_id"])
+                    if len(self.attempt_ids) < 3:
+                        raise RuntimeError("temporary Slack outage")
+                return await super().post(record, message, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                slack_bot_token="test-slack",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-SLACK-RETRY",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-slack-retry",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="DIRECTOR Project: demo Outcome: retry delivery",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Retry Slack only",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.CLAUDE,
+                            task="Build once",
+                            acceptance=["Evidence accepted"],
+                        )
+                    ],
+                    final_acceptance=["Slack retry is bounded"],
+                ),
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            notifier = FailTwice()
+            engine = OrchestrationEngine(settings, store)
+            engine.notifier = notifier
+
+            opened = await engine._ensure_collaboration_thread(task)
+
+            persisted = store.get(task.task_id)
+            self.assertTrue(opened)
+            self.assertEqual(len(notifier.attempt_ids), 3)
+            self.assertEqual(len(set(notifier.attempt_ids)), 1)
+            self.assertEqual(len(persisted.collaboration_delivery_errors), 2)
+            self.assertFalse(persisted.collaboration_fallback_active)
+
+    async def test_three_slack_failures_fall_back_without_repeating_paid_work(self):
+        class CountingDirector:
+            def __init__(self):
+                self.review_calls = 0
+
+            async def review(self, record, result):
+                self.review_calls += 1
+                return ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Accepted once.",
+                    evidence=["focused evidence"],
+                )
+
+        class FailEveryResultPost(RecordingNotifier):
+            def __init__(self):
+                super().__init__()
+                self.result_attempt_ids: list[str] = []
+
+            async def post(self, record, message, **kwargs):
+                if "WORK_RESULT" in message:
+                    self.result_attempt_ids.append(kwargs["client_msg_id"])
+                    raise RuntimeError("temporary Slack outage")
+                return await super().post(record, message, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                slack_bot_token="test-slack",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            plan = DirectorPlan(
+                project="demo",
+                normalized_outcome="Build once and report once",
+                risk_level=RiskLevel.LOW,
+                approval_required=False,
+                max_hops=1,
+                max_revisions=0,
+                assignments=[
+                    Assignment(
+                        sequence=1,
+                        agent=ProviderName.CLAUDE,
+                        task="Build once",
+                        acceptance=["Evidence accepted"],
+                    )
+                ],
+                final_acceptance=["No duplicate paid work"],
+            )
+            task = TaskRecord(
+                task_id="DIR-SLACK-RECOVERY",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-slack-recovery",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="DIRECTOR Project: demo Outcome: recover delivery",
+                ),
+                plan=plan,
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            adapter = CompletingAdapter(ProviderName.CLAUDE)
+            director = CountingDirector()
+            notifier = FailEveryResultPost()
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {ProviderName.CLAUDE: adapter}
+            engine.director = director
+            engine.notifier = notifier
+
+            await engine.run(task.task_id)
+            completed = store.get(task.task_id)
+            self.assertEqual(completed.status, TaskStatus.DONE, completed.message)
+            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(director.review_calls, 1)
+            self.assertEqual(len(completed.assignment_outcomes), 1)
+            self.assertEqual(len(notifier.result_attempt_ids), 3)
+            self.assertEqual(len(set(notifier.result_attempt_ids)), 1)
+            self.assertEqual(len(completed.collaboration_delivery_errors), 3)
+            self.assertTrue(completed.collaboration_fallback_active)
+            self.assertIn("durable SQLite/API", completed.collaboration_fallback_reason)
+            self.assertEqual(
+                [turn.phase for turn in completed.collaboration_turns],
+                ["delegation", "work_result", "completion"],
+            )
+
+            post_count = len(notifier.posts)
+            await engine.run(task.task_id)
+            resumed = store.get(task.task_id)
+            self.assertEqual(resumed.status, TaskStatus.DONE)
+            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(director.review_calls, 1)
+            self.assertEqual(len(notifier.result_attempt_ids), 3)
+            self.assertEqual(len(notifier.posts), post_count)
+
     async def test_runtime_uses_one_thread_structured_turns_and_deterministic_tally(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(

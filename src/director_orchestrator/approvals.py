@@ -198,6 +198,14 @@ def reset_for_owner_clarification(record: TaskRecord) -> None:
     record.unavailable_providers = []
     record.deferred_assignments = []
     record.availability_impacts = []
+    record.collaboration_thread_ts = None
+    record.collaboration_thread_opened = False
+    record.collaboration_turns = []
+    record.collaboration_delivery_errors = []
+    record.collaboration_fallback_active = False
+    record.collaboration_fallback_reason = None
+    record.debate_tally = None
+    record.debate_synthesis = None
     record.review = None
     record.revision_count = 0
     record.owner_approved = False

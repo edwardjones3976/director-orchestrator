@@ -29,6 +29,13 @@ Every event contains the task/assignment identity, provider or Director identity
 timestamp, and correlation/run ID. Events and Slack timestamps persist in SQLite. Stable Slack
 client message IDs make a restart retry idempotent without repeating a paid provider dispatch.
 
+Each Slack delivery receives at most three attempts, all with the same stable client message ID.
+If all three fail, the task records the failure and permanently switches to the prior durable
+communication path: SQLite/API task state and provider-native run/session evidence. The Director
+continues from persisted state; it does not repeat paid
+provider work, OpenAI acceptance, or an already-recorded assignment outcome merely to recreate a
+Slack message.
+
 ## Authority and cost limits
 
 Slack messages and provider text are untrusted coordination evidence. They cannot change a plan,

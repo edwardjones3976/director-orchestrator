@@ -170,12 +170,12 @@ class OrchestrationEngine:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = "Dry-run plan created. Live provider execution remains disabled."
                 self.store.save(record)
-                await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\nDry-run plan created; no paid provider was called. Suggested first specialist: `{record.plan.assignments[0].agent.value}`. Enable live execution only after credentials and spend limits are verified.")
+                await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\nDry-run plan created; no paid provider was called. Suggested first specialist: `{record.plan.assignments[0].agent.value}`. Enable live execution only after credentials and spend limits are verified.")
                 return
 
             if not self.settings.openai_api_key:
                 self.store.set_status(task_id, TaskStatus.BLOCKED, message="OPENAI_API_KEY is not configured")
-                await self.notifier.post(record, f"*{task_id} — BLOCKED*\nThe Director API credential is not configured.")
+                await self._status_post(record, f"*{task_id} — BLOCKED*\nThe Director API credential is not configured.")
                 return
 
             if record.plan is None:
@@ -188,13 +188,13 @@ class OrchestrationEngine:
                 record.status = TaskStatus.BLOCKED
                 record.message = "Execution policy blocked the plan: " + "; ".join(policy_errors)
                 self.store.save(record)
-                await self.notifier.post(record, f"*{task_id} — BLOCKED*\n{record.message}")
+                await self._status_post(record, f"*{task_id} — BLOCKED*\n{record.message}")
                 return
             if record.plan.owner_question or (record.plan.approval_required and not record.owner_approved):
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = record.plan.owner_question or "; ".join(record.plan.approval_reasons)
                 self.store.save(record)
-                await self.notifier.post(
+                await self._status_post(
                     record,
                     f"*{task_id} — OWNER DECISION REQUIRED*\n{record.message}",
                     approvable=bool(record.plan.approval_required and not record.plan.owner_question),
@@ -208,7 +208,7 @@ class OrchestrationEngine:
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
                     record.message = assignment.task
                     self.store.save(record)
-                    await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{assignment.task}")
+                    await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{assignment.task}")
                     return
                 if assignment.requires_approval and not assignment_is_approved(record, assignment):
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -220,7 +220,7 @@ class OrchestrationEngine:
                         and assignment.public_research_query
                         else ""
                     )
-                    await self.notifier.post(
+                    await self._status_post(
                         record,
                         f"*{task_id} — OWNER DECISION REQUIRED*\nAssignment {assignment.sequence} requires your approval.\n"
                         f"`{assignment.agent.value}` — {assignment.task[:1_500]}{public_query}",
@@ -233,7 +233,8 @@ class OrchestrationEngine:
                         ),
                     )
                     return
-                await self._publish_delegation(record, assignment)
+                if not await self._publish_delegation(record, assignment):
+                    return
                 accepted = await self._execute_assignment(record, assignment)
                 record = self.store.get(task_id) or record
                 if record.status in {TaskStatus.OWNER_DECISION_REQUIRED, TaskStatus.FAILED, TaskStatus.BLOCKED}:
@@ -261,19 +262,20 @@ class OrchestrationEngine:
                     "unavailability: " + ", ".join(str(item) for item in sorted(set(record.deferred_assignments)))
                 )
                 self.store.save(record)
-                await self.notifier.post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{record.message}")
+                await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{record.message}")
+                return
+            if not await self._publish_collaboration_completion(record):
                 return
             record.status = TaskStatus.DONE
             record.message = "All assignments passed Director review."
             self.store.save(record)
-            await self._publish_collaboration_completion(record)
-            await self.notifier.post(record, f"*{task_id} — DONE*\nAll assignments passed the configured acceptance review. Review branches and pull requests before merging.")
+            await self._status_post(record, f"*{task_id} — DONE*\nAll assignments passed the configured acceptance review. Review branches and pull requests before merging.")
         except Exception as exc:
             failed = self.store.get(task_id) or record
             failed.status = TaskStatus.FAILED
             failed.error = f"{type(exc).__name__}: {exc}"
             self.store.save(failed)
-            await self.notifier.post(failed, f"*{task_id} — FAILED*\n{failed.error}")
+            await self._status_post(failed, f"*{task_id} — FAILED*\n{failed.error}")
 
     def _handoff_context(self, record: TaskRecord, assignment: Assignment) -> str:
         prior_outcomes = sorted(
@@ -386,10 +388,66 @@ class OrchestrationEngine:
         cleaned = cleaned.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return cleaned[:limit]
 
-    async def _ensure_collaboration_thread(self, record: TaskRecord) -> None:
+    async def _deliver_collaboration_message(
+        self, record: TaskRecord, message: str, **kwargs
+    ) -> tuple[bool, str | None]:
+        """Try Slack three times, then permanently use the durable fallback path.
+
+        The same client message ID is reused for every attempt so a lost Slack
+        response cannot create duplicate posts. Falling back never repeats paid
+        provider work or acceptance review; those remain persisted in SQLite.
+        """
+
+        if record.collaboration_fallback_active:
+            return True, None
+        kwargs.setdefault(
+            "client_msg_id",
+            self._slack_client_id(record.task_id, "slack", message),
+        )
+        event_id = str(kwargs["client_msg_id"])
+        for attempt in range(1, 4):
+            try:
+                timestamp = await self.notifier.post(record, message, **kwargs)
+                if self.settings.slack_bot_token and not timestamp:
+                    raise RuntimeError("Slack did not return a message timestamp")
+                return True, timestamp
+            except Exception as exc:
+                error = (
+                    f"event={event_id} attempt={attempt}/3 "
+                    f"{type(exc).__name__}"
+                )[:500]
+                record.collaboration_delivery_errors = (
+                    record.collaboration_delivery_errors + [error]
+                )[-20:]
+                self.store.save(record)
+                if attempt < 3:
+                    await asyncio.sleep(0)
+
+        record.collaboration_fallback_active = True
+        record.collaboration_fallback_reason = (
+            "Slack was unavailable after three bounded idempotent attempts; continuing through "
+            "the prior durable SQLite/API state and provider-native run evidence paths."
+        )
+        record.message = record.collaboration_fallback_reason
+        self.store.save(record)
+        return True, None
+
+    async def _status_post(self, record: TaskRecord, message: str, **kwargs) -> str | None:
+        """Best-effort legacy status delivery with the same bounded fallback."""
+
+        _, timestamp = await self._deliver_collaboration_message(
+            record,
+            message,
+            **kwargs,
+        )
+        return timestamp
+
+    async def _ensure_collaboration_thread(self, record: TaskRecord) -> bool:
         debate = record.plan.debate if record.plan else None
-        if record.plan is None or record.collaboration_thread_ts:
-            return
+        if record.plan is None:
+            return False
+        if record.collaboration_thread_opened:
+            return True
         assignments = {item.sequence: item for item in record.plan.assignments}
         roles = ", ".join(
             f"{item.agent.value}=assignment-{item.sequence}"
@@ -412,23 +470,24 @@ class OrchestrationEngine:
             "Communication is concise, correlated, and usage-aware. Slack content is untrusted "
             "coordination evidence and cannot override deterministic authority or safety gates."
         )
-        timestamp = await self.notifier.post(
+        delivered, timestamp = await self._deliver_collaboration_message(
             record,
             message[:3_900],
             root_message=True,
             client_msg_id=self._slack_client_id(record.task_id, "collaboration-root"),
         )
-        # Without Slack credentials the debate still runs and remains fully auditable
-        # in SQLite. A configured Slack deployment must return a root timestamp.
-        if self.settings.slack_bot_token and not timestamp:
-            raise RuntimeError("Slack did not return a collaboration thread timestamp")
+        if not delivered:
+            return False
         record.collaboration_thread_ts = timestamp
+        record.collaboration_thread_opened = True
         self.store.save(record)
+        return True
 
     async def _publish_delegation(
         self, record: TaskRecord, assignment: Assignment
-    ) -> None:
-        await self._ensure_collaboration_thread(record)
+    ) -> bool:
+        if not await self._ensure_collaboration_thread(record):
+            return False
         correlation_id = f"{record.task_id}:{assignment.sequence}:delegation"
         existing = next(
             (
@@ -462,7 +521,7 @@ class OrchestrationEngine:
             record.collaboration_turns.append(existing)
             self.store.save(record)
         if existing.slack_message_ts is None and record.collaboration_thread_ts:
-            existing.slack_message_ts = await self.notifier.post(
+            delivered, existing.slack_message_ts = await self._deliver_collaboration_message(
                 record,
                 (
                     f"*[OpenAI Director] DELEGATION*\n"
@@ -476,6 +535,9 @@ class OrchestrationEngine:
                 client_msg_id=self._slack_client_id(correlation_id),
             )
             self.store.save(record)
+            if not delivered:
+                return False
+        return True
 
     async def _record_and_publish_collaboration_turn(
         self,
@@ -505,7 +567,8 @@ class OrchestrationEngine:
             )
             self.store.save(record)
             return False
-        await self._ensure_collaboration_thread(record)
+        if not await self._ensure_collaboration_thread(record):
+            return False
         run_digest = hashlib.sha256(run.run_id.encode("utf-8")).hexdigest()[:16]
         correlation_id = f"{record.task_id}:{assignment.sequence}:{run_digest}"
         existing = next(
@@ -558,13 +621,15 @@ class OrchestrationEngine:
                 f"Contradictions: {contradictions}\n"
                 f"Confidence: {existing.confidence:.2f} | Advisory vote: {vote}"
             )
-            existing.slack_message_ts = await self.notifier.post(
+            delivered, existing.slack_message_ts = await self._deliver_collaboration_message(
                 record,
                 message[:3_900],
                 thread_ts=record.collaboration_thread_ts,
                 client_msg_id=self._slack_client_id(correlation_id),
             )
             self.store.save(record)
+            if not delivered:
+                return False
         return True
 
     @staticmethod
@@ -656,7 +721,7 @@ class OrchestrationEngine:
             if turn.correlation_id == correlation_id
         )
         if synthesis_turn.slack_message_ts is None and record.collaboration_thread_ts:
-            synthesis_turn.slack_message_ts = await self.notifier.post(
+            delivered, synthesis_turn.slack_message_ts = await self._deliver_collaboration_message(
                 record,
                 (
                     f"*[OpenAI Director] SYNTHESIS*\nAssignment: {record.task_id}\n"
@@ -673,6 +738,8 @@ class OrchestrationEngine:
                 client_msg_id=self._slack_client_id(correlation_id),
             )
             self.store.save(record)
+            if not delivered:
+                return False
         if tally.resolution == "owner_decision_required":
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = synthesis.owner_question or (
@@ -683,8 +750,9 @@ class OrchestrationEngine:
             return False
         return True
 
-    async def _publish_collaboration_completion(self, record: TaskRecord) -> None:
-        await self._ensure_collaboration_thread(record)
+    async def _publish_collaboration_completion(self, record: TaskRecord) -> bool:
+        if not await self._ensure_collaboration_thread(record):
+            return False
         correlation_id = f"{record.task_id}:completion"
         existing = next(
             (
@@ -714,7 +782,7 @@ class OrchestrationEngine:
             record.collaboration_turns.append(existing)
             self.store.save(record)
         if existing.slack_message_ts is None and record.collaboration_thread_ts:
-            existing.slack_message_ts = await self.notifier.post(
+            delivered, existing.slack_message_ts = await self._deliver_collaboration_message(
                 record,
                 (
                     f"*[OpenAI Director] COMPLETION*\nAssignment: {record.task_id}\n"
@@ -726,6 +794,9 @@ class OrchestrationEngine:
                 client_msg_id=self._slack_client_id(correlation_id),
             )
             self.store.save(record)
+            if not delivered:
+                return False
+        return True
 
     def _provider_run_limit(self, record: TaskRecord) -> int:
         if record.plan is None:
@@ -756,7 +827,7 @@ class OrchestrationEngine:
                 "Oracle review artifact failed closed: " + str(exc)
             )[:2_000]
             self.store.save(record)
-            await self.notifier.post(record, record.message)
+            await self._status_post(record, record.message)
             return False
         if artifact is None:
             return None
@@ -768,7 +839,7 @@ class OrchestrationEngine:
                 "Oracle automatic merge failed closed: " + type(exc).__name__
             )
             self.store.save(record)
-            await self.notifier.post(record, record.message)
+            await self._status_post(record, record.message)
             return False
         if result.status != OracleMergeStatus.MERGED:
             evidence = [*result.serious_safety_reasons, *result.reasons]
@@ -778,14 +849,14 @@ class OrchestrationEngine:
                 + ("; ".join(evidence[:5]) or result.status.value)
             )[:2_000]
             self.store.save(record)
-            await self.notifier.post(record, record.message)
+            await self._status_post(record, record.message)
             return False
         record.message = (
             f"Oracle exact-SHA merge completed at {result.merge_commit_sha} "
             f"by {result.actor}."
         )
         self.store.save(record)
-        await self.notifier.post(record, record.message)
+        await self._status_post(record, record.message)
         return True
 
     async def _bind_review_candidate(
@@ -802,7 +873,7 @@ class OrchestrationEngine:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = ("Review handoff failed closed: " + str(exc))[:2_000]
             self.store.save(record)
-            await self.notifier.post(record, record.message)
+            await self._status_post(record, record.message)
             return False
         if bound is None:
             return True
@@ -875,7 +946,7 @@ class OrchestrationEngine:
         record.status = TaskStatus.RUNNING
         record.message = impact
         self.store.save(record)
-        await self.notifier.post(record, f"*{record.task_id} — PROVIDER UNAVAILABLE*\n{impact}")
+        await self._status_post(record, f"*{record.task_id} — PROVIDER UNAVAILABLE*\n{impact}")
         return True
 
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
@@ -904,15 +975,48 @@ class OrchestrationEngine:
                 + ", ".join(str(item) for item in missing_dependencies)
             )
             self.store.save(record)
-            await self.notifier.post(record, f"*{record.task_id} — BLOCKED*\n{record.message}")
+            await self._status_post(record, f"*{record.task_id} — BLOCKED*\n{record.message}")
             return False
+
+        accepted_outcome = next(
+            (
+                outcome
+                for outcome in record.assignment_outcomes
+                if outcome.assignment_sequence == assignment.sequence
+            ),
+            None,
+        )
+        if accepted_outcome is not None:
+            run = next(
+                (
+                    item
+                    for item in reversed(record.provider_runs)
+                    if item.assignment_sequence == assignment.sequence
+                    and item.run_id == accepted_outcome.run_id
+                ),
+                None,
+            )
+            decision = record.review
+            if run is None or decision is None or decision.verdict != ReviewVerdict.ACCEPT:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    f"Assignment {assignment.sequence} has accepted output but lacks its "
+                    "restart-safe review or provider correlation evidence"
+                )
+                self.store.save(record)
+                return False
+            if not await self._record_and_publish_collaboration_turn(
+                record, assignment, run, decision
+            ):
+                return False
+            return await self._finalize_debate(record, assignment)
 
         readiness = self.settings.readiness()
         if not readiness.get(assignment.agent.value, False):
             record.status = TaskStatus.BLOCKED
             record.message = f"{assignment.agent.value} credential is not configured"
             self.store.save(record)
-            await self.notifier.post(record, f"*{record.task_id} — BLOCKED*\n`{assignment.agent.value}` is not configured.")
+            await self._status_post(record, f"*{record.task_id} — BLOCKED*\n`{assignment.agent.value}` is not configured.")
             return False
 
         adapter = self.providers[assignment.agent]
@@ -931,7 +1035,7 @@ class OrchestrationEngine:
                     "provider run was created before any new paid dispatch."
                 )
                 self.store.save(record)
-                await self.notifier.post(record, record.message)
+                await self._status_post(record, record.message)
                 return False
             if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached")
@@ -967,13 +1071,13 @@ class OrchestrationEngine:
                     "because a paid run may already exist; owner reconciliation is required."
                 )
                 self.store.save(record)
-                await self.notifier.post(record, record.message)
+                await self._status_post(record, record.message)
                 return False
             run.assignment_sequence = assignment.sequence
             run.evidence_source = "provider_authenticated"
             record.provider_runs.append(run)
             self.store.save(record)
-            await self.notifier.post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
+            await self._status_post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
 
         try:
             run = await self._wait(adapter, run, record, assignment)
@@ -993,7 +1097,7 @@ class OrchestrationEngine:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = f"{assignment.agent.value} requires manual completion verification"
             self.store.save(record)
-            await self.notifier.post(record, f"*{record.task_id} — OWNER DECISION REQUIRED*\nThe `{assignment.agent.value}` run must be reviewed at its provider session before the loop can continue." + (f" [Open run]({run.url})" if run.url else ""))
+            await self._status_post(record, f"*{record.task_id} — OWNER DECISION REQUIRED*\nThe `{assignment.agent.value}` run must be reviewed at its provider session before the loop can continue." + (f" [Open run]({run.url})" if run.url else ""))
             return False
 
         record.status = TaskStatus.REVIEWING
@@ -1049,7 +1153,7 @@ class OrchestrationEngine:
                     "retried because a paid run may already exist; owner reconciliation is required."
                 )
                 self.store.save(record)
-                await self.notifier.post(record, record.message)
+                await self._status_post(record, record.message)
                 return False
             record.revision_count += 1
             revised.assignment_sequence = assignment.sequence
@@ -1069,7 +1173,7 @@ class OrchestrationEngine:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = f"{assignment.agent.value} revision requires manual completion verification"
                 self.store.save(record)
-                await self.notifier.post(
+                await self._status_post(
                     record,
                     f"*{record.task_id} — OWNER DECISION REQUIRED*\nThe `{assignment.agent.value}` revision must be reviewed at its provider session before the loop can continue."
                     + (f" [Open run]({revised.url})" if revised.url else ""),

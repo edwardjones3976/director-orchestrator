@@ -287,7 +287,11 @@ class TaskRecord(BaseModel):
     deferred_assignments: list[int] = Field(default_factory=list)
     availability_impacts: list[str] = Field(default_factory=list, max_length=50)
     collaboration_thread_ts: str | None = Field(default=None, max_length=64)
+    collaboration_thread_opened: bool = False
     collaboration_turns: list[CollaborationTurn] = Field(default_factory=list, max_length=50)
+    collaboration_delivery_errors: list[str] = Field(default_factory=list, max_length=20)
+    collaboration_fallback_active: bool = False
+    collaboration_fallback_reason: str | None = Field(default=None, max_length=1_000)
     debate_tally: dict[str, Any] | None = None
     debate_synthesis: DebateSynthesis | None = None
     review: ReviewDecision | None = None
