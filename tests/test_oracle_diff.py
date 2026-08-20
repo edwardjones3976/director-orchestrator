@@ -1818,6 +1818,9 @@ class PolicyCompleteDiffScanTests(unittest.TestCase):
             oracle_automerge_required_checks=("ci", "security"),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
 
     def artifact(self, **changes) -> OracleReviewArtifact:
@@ -2046,6 +2049,9 @@ class DeterministicEvidenceFailureTests(unittest.TestCase):
             oracle_automerge_required_checks=("ci", "security"),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
         self.artifact = OracleReviewArtifact.model_validate(
             {
@@ -2253,6 +2259,9 @@ class CompareRateLimitServiceTests(unittest.TestCase):
             oracle_automerge_required_checks=("ci", "security"),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
 
     def _artifact(self, suffix: str) -> OracleReviewArtifact:
@@ -2603,6 +2612,9 @@ class GraphQLReviewThreadRateLimitTests(unittest.TestCase):
             oracle_automerge_required_checks=("ci", "security"),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
 
     def _artifact(self, suffix: str) -> OracleReviewArtifact:
@@ -2800,6 +2812,9 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             oracle_automerge_required_checks=("test",),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
 
     def _artifact(self, suffix: str) -> OracleReviewArtifact:
@@ -2941,6 +2956,9 @@ class OracleMergeStoreSchemaTests(unittest.TestCase):
             oracle_automerge_required_checks=("ci", "security"),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
         self.artifact = OracleReviewArtifact.model_validate(
             {
@@ -3192,6 +3210,9 @@ class MalformedEvidenceProcessTests(unittest.TestCase):
             oracle_automerge_required_checks=("ci", "security"),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
 
     def _artifact(self, suffix: str) -> OracleReviewArtifact:
@@ -3355,6 +3376,9 @@ class MalformedRetryDeadlineTests(unittest.TestCase):
             oracle_automerge_required_checks=("ci", "security"),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
 
     def _artifact(self, suffix: str) -> OracleReviewArtifact:
