@@ -505,8 +505,198 @@ class OracleMergeGateTests(unittest.TestCase):
         second = service.process(self.artifact())
 
         self.assertEqual(first, second)
-        self.assertEqual(github.snapshot_calls, 1)
+        self.assertEqual(github.snapshot_calls, 2)
         self.assertEqual(github.merge_calls, 1)
+
+    def test_final_snapshot_policy_blocks_merge_after_eligible_first_read(self):
+        drifted_checks = [
+            check.model_copy(update={"head_sha": NEW_SHA})
+            for check in self.snapshot().checks
+        ]
+        failed_checks = [
+            self.snapshot().checks[0],
+            self.snapshot().checks[1].model_copy(update={"conclusion": "failure"}),
+        ]
+        cases = (
+            (
+                {
+                    "blocking_review_threads": 1,
+                    "review_decision": "CHANGES_REQUESTED",
+                },
+                "review threads",
+            ),
+            ({"review_decision": "CHANGES_REQUESTED"}, "still request changes"),
+            (
+                {"head_sha": NEW_SHA, "checks": drifted_checks},
+                "head SHA changed",
+            ),
+            ({"base_sha": NEW_BASE_SHA}, "base SHA changed"),
+            ({"checks": failed_checks}, "not successful"),
+            (
+                {"title": "Enable automated funded bet execution"},
+                "funded wagering",
+            ),
+            (
+                {
+                    "changed_files": [
+                        OracleChangedFile(
+                            filename="scheduler.py",
+                            status="modified",
+                            additions=1,
+                            patch="@@ -0,0 +1 @@\n+x = 1",
+                        )
+                    ]
+                },
+                "exceed",
+            ),
+        )
+        for index, (change, reason) in enumerate(cases):
+            with self.subTest(index=index, reason=reason):
+                github = FakeGitHub(
+                    self.snapshot(**change),
+                    responses=(self.snapshot(),),
+                )
+                result = self.service(github).process(
+                    self.artifact(artifact_id=f"final-toctou-{index}")
+                )
+                self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+                self.assertEqual(github.merge_calls, 0)
+                self.assertEqual(github.snapshot_calls, 2)
+                self.assertTrue(
+                    any(
+                        reason in item
+                        for item in [*result.reasons, *result.serious_safety_reasons]
+                    ),
+                    result.model_dump(),
+                )
+                self.assertIsNotNone(self.released_attempt(f"final-toctou-{index}")[1])
+
+    def test_unresolved_mergeability_on_final_snapshot_is_terminal(self):
+        github = FakeGitHub(
+            self.snapshot(mergeable=None),
+            responses=(self.snapshot(),),
+        )
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-unresolved")
+        )
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn(OracleMergePolicy.UNRESOLVED_MERGEABILITY_REASON, result.reasons)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertIsNotNone(self.released_attempt("final-unresolved")[1])
+
+    def test_stale_draft_lag_at_final_snapshot_waits_for_eligible_non_draft(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(),
+                self.snapshot(draft=True),
+                self.snapshot(),
+            ),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-stale-lag")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.merge_calls, 1)
+        self.assertEqual(github.snapshot_calls, 4)
+        self.assertEqual(self.sleeps, [1.0])
+
+    def test_unowned_draft_on_final_snapshot_is_terminal(self):
+        github = FakeGitHub(
+            self.snapshot(draft=True),
+            responses=(self.snapshot(),),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-unowned-draft")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn(OracleMergePolicy.DRAFT_NOT_MERGEABLE_REASON, result.reasons)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 2)
+        self.assertIsNotNone(self.released_attempt("final-unowned-draft")[1])
+
+    def test_exhausted_stale_draft_at_final_snapshot_is_recoverable(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(),
+                self.snapshot(draft=True),
+                self.snapshot(draft=True),
+                self.snapshot(draft=True),
+            ),
+        )
+        artifact = self.artifact(artifact_id="final-stale-exhausted")
+
+        result = self.service(github).process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        self.assertIn("still reported the pull request as draft", result.reasons[0])
+        self.assertIn("remains retryable", result.reasons[0])
+        self.assertEqual(github.ready_calls, 1)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 5)
+        self.assertEqual(self.released_attempt("final-stale-exhausted"), ("RECOVERABLE", None))
+        self.assertEqual(
+            self.service(FakeGitHub(self.snapshot())).process(artifact).status,
+            OracleMergeStatus.MERGED,
+        )
+
+    def test_final_snapshot_stale_draft_with_unresolved_mergeability_is_terminal(self):
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(),
+                self.snapshot(draft=True, mergeable=None),
+            ),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-stale-unresolved")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn(OracleMergePolicy.UNRESOLVED_MERGEABILITY_REASON, result.reasons)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 3)
+        self.assertIsNotNone(self.released_attempt("final-stale-unresolved")[1])
+
+    def test_drift_during_final_stale_draft_lag_is_terminal(self):
+        drifted_checks = [
+            check.model_copy(update={"head_sha": NEW_SHA})
+            for check in self.snapshot().checks
+        ]
+        github = FakeGitHub(
+            self.snapshot(),
+            responses=(
+                self.snapshot(draft=True),
+                self.snapshot(),
+                self.snapshot(draft=True),
+                self.snapshot(draft=True, head_sha=NEW_SHA, checks=drifted_checks),
+            ),
+        )
+
+        result = self.service(github).process(
+            self.artifact(artifact_id="final-stale-drift")
+        )
+
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertTrue(
+            any("head SHA changed" in reason for reason in result.reasons),
+            result.model_dump(),
+        )
+        self.assertEqual(github.merge_calls, 0)
+        self.assertEqual(github.snapshot_calls, 4)
+        self.assertIsNotNone(self.released_attempt("final-stale-drift")[1])
 
     def test_artifact_identifier_cannot_be_reused_for_another_review(self):
         github = FakeGitHub(self.snapshot())
@@ -677,7 +867,8 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assert_rejected(
             snapshot=self.snapshot(changed_files=[OracleChangedFile(
                 filename="oracle/moved.py", previous_filename="scheduler.py",
-                status="renamed", patch="@@ -1 +1 @@\n-old = True\n+research = True"
+                status="renamed", additions=1, deletions=1,
+                patch="@@ -1 +1 @@\n-old = True\n+research = True"
             )]),
             reason="scheduler.py",
         )
@@ -734,8 +925,8 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_material_deletion_is_a_serious_safety_stop(self):
         self.assert_rejected(
             snapshot=self.snapshot(changed_files=[OracleChangedFile(
-                filename="oracle/archive.py", status="removed", deletions=4,
-                patch="@@ -1,4 +0,0 @@\n-old = True"
+                filename="oracle/archive.py", status="removed", deletions=1,
+                patch="@@ -1 +0,0 @@\n-old = True"
             )]),
             reason="material deletion",
         )
@@ -770,7 +961,7 @@ class OracleMergeGateTests(unittest.TestCase):
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.ready_calls, 1)
-        self.assertEqual(github.snapshot_calls, 2)
+        self.assertEqual(github.snapshot_calls, 3)
         self.assertEqual(github.merge_calls, 1)
 
     def test_draft_with_serious_safety_signal_stops_before_ready_transition(self):
@@ -801,7 +992,7 @@ class OracleMergeGateTests(unittest.TestCase):
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.ready_calls, 1)
-        self.assertEqual(github.snapshot_calls, 4)
+        self.assertEqual(github.snapshot_calls, 5)
         self.assertEqual(github.merge_calls, 1)
         self.assertEqual(self.sleeps, [1.0, 2.0])
 
@@ -815,7 +1006,7 @@ class OracleMergeGateTests(unittest.TestCase):
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.ready_calls, 0)
-        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(github.snapshot_calls, 4)
         self.assertEqual(github.merge_calls, 1)
         self.assertEqual(self.sleeps, [1.0])
 
@@ -990,7 +1181,7 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.ready_calls, 1)
         self.assertEqual(github.merge_calls, 1)
-        self.assertEqual(github.snapshot_calls, 4)
+        self.assertEqual(github.snapshot_calls, 5)
         self.assertEqual(self.sleeps, [1.0, 2.0])
 
     def test_persistent_draft_flag_is_recoverable_and_a_later_delivery_merges(self):
@@ -1039,7 +1230,7 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.ready_calls, 1)
         self.assertEqual(github.merge_calls, 1)
-        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(github.snapshot_calls, 4)
         self.assertEqual(self.sleeps, [1.0])
 
     def test_recovered_first_read_of_an_unresolved_draft_still_transitions(self):
@@ -1058,7 +1249,7 @@ class OracleMergeGateTests(unittest.TestCase):
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.ready_calls, 1)
-        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(github.snapshot_calls, 4)
         # One sleep for the initial-read retry; the first post-ready read resolves
         # immediately, so the bounded wait never sleeps.
         self.assertEqual(self.sleeps, [1.0])
@@ -1097,7 +1288,8 @@ class OracleMergeGateTests(unittest.TestCase):
                         OracleChangedFile(
                             filename="scheduler.py",
                             status="modified",
-                            patch="@@ -1 +1 @@\n+x = 1",
+                            additions=1,
+                            patch="@@ -0,0 +1 @@\n+x = 1",
                         )
                     ],
                 },
@@ -1139,7 +1331,7 @@ class OracleMergeGateTests(unittest.TestCase):
         result = self.service(github).process(self.artifact(artifact_id="first-read"))
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
-        self.assertEqual(github.snapshot_calls, 2)
+        self.assertEqual(github.snapshot_calls, 3)
         self.assertEqual(self.sleeps, [1.0])
 
     def test_exhausted_first_read_failures_are_recoverable_not_terminal(self):
@@ -1215,7 +1407,7 @@ class OracleMergeGateTests(unittest.TestCase):
         result = self.service(github).process(self.artifact(artifact_id="independent"))
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
-        self.assertEqual(github.snapshot_calls, 8)
+        self.assertEqual(github.snapshot_calls, 9)
         self.assertEqual(self.sleeps, [1.0, 2.0, 4.0, 8.0, 8.0, 8.0])
 
     def test_read_failure_between_unresolved_reads_still_reaches_the_resolved_snapshot(self):
@@ -1236,7 +1428,7 @@ class OracleMergeGateTests(unittest.TestCase):
         # unresolved reads do not starve the poll and the resolved snapshot is reached.
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.ready_calls, 1)
-        self.assertEqual(github.snapshot_calls, 5)
+        self.assertEqual(github.snapshot_calls, 6)
         self.assertEqual(github.merge_calls, 1)
         self.assertEqual(self.sleeps, [1.0, 2.0, 4.0])
 
@@ -1254,7 +1446,7 @@ class OracleMergeGateTests(unittest.TestCase):
         result = self.service(github, store=store).process(artifact)
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
-        self.assertEqual(github.snapshot_calls, 3)
+        self.assertEqual(github.snapshot_calls, 4)
         self.assertEqual(github.merge_calls, 1)
         self.assertEqual(self.sleeps, [1.0])
         self.assertEqual(
@@ -1341,8 +1533,8 @@ class OracleMergeGateTests(unittest.TestCase):
 
         class BarrierStore(OracleMergeStore):
             @contextmanager
-            def _connect(self):
-                with super()._connect() as connection:
+            def _connect(self, *, immediate: bool = False):
+                with super()._connect(immediate=immediate) as connection:
                     yield BarrierConnection(connection)
 
         outcomes = []

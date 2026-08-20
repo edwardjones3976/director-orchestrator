@@ -108,6 +108,12 @@ class GitHubAppAuthenticationTests(unittest.TestCase):
                 return httpx.Response(200, json=pull)
             if request.method == "GET" and path.endswith("/pulls/23/files"):
                 return httpx.Response(200, json=[])
+            if request.method == "GET" and "/compare/" in path:
+                return httpx.Response(
+                    200,
+                    content=b"",
+                    headers={"Content-Type": "application/vnd.github.diff"},
+                )
             if request.method == "GET" and path.endswith("/check-runs"):
                 return httpx.Response(
                     200,
