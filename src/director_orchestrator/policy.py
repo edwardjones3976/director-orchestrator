@@ -385,20 +385,33 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
     ]
     antigravity_work = _antigravity_work_sequences(safe)
     if antigravity_work:
-        safe.assignments = [
-            item.model_copy(
-                update={
-                    "kind": AssignmentKind.IMPLEMENTATION,
-                    "task": ANTIGRAVITY_CONSUMER_TASK,
-                    "acceptance": list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
-                }
-            )
-            if item.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
-            and item.discussion_phase == DiscussionPhase.WORK
-            and set(item.depends_on) & antigravity_work
-            else item
-            for item in safe.assignments
-        ]
+        rewrite_sequences: set[int] = set()
+        for gemini_sequence in sorted(antigravity_work):
+            consumers = [
+                later
+                for later in safe.assignments
+                if later.sequence > gemini_sequence
+                and later.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+                and later.discussion_phase == DiscussionPhase.WORK
+                and gemini_sequence in later.depends_on
+            ]
+            if any(_is_antigravity_consumer(item) for item in consumers):
+                continue
+            if consumers:
+                rewrite_sequences.add(min(item.sequence for item in consumers))
+        if rewrite_sequences:
+            safe.assignments = [
+                item.model_copy(
+                    update={
+                        "kind": AssignmentKind.IMPLEMENTATION,
+                        "task": ANTIGRAVITY_CONSUMER_TASK,
+                        "acceptance": list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
+                    }
+                )
+                if item.sequence in rewrite_sequences
+                else item
+                for item in safe.assignments
+            ]
     return safe
 
 

@@ -263,6 +263,39 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(guarded.assignments[1].kind, AssignmentKind.IMPLEMENTATION)
         self.assertEqual(execution_policy_errors(guarded, settings), [])
 
+    def test_enforce_plan_does_not_overwrite_later_work_depending_on_antigravity(self):
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        drifted = self.antigravity_plan(
+            task="Ship whatever Antigravity produced",
+            acceptance=["Antigravity says it works"],
+            kind=AssignmentKind.GENERAL,
+        )
+        follow_on = Assignment(
+            sequence=3,
+            agent=ProviderName.CLAUDE,
+            kind=AssignmentKind.EXACT_SHA_REVIEW,
+            task="Independently review the integrated change against the exact SHA",
+            acceptance=["Exact-SHA review evidence is recorded"],
+            depends_on=[1, 2],
+        )
+        drifted.assignments.append(follow_on)
+        guarded = enforce_plan(drifted, "bounded scaffolding", settings)
+
+        self.assertEqual(guarded.assignments[1].task, ANTIGRAVITY_CONSUMER_TASK)
+        self.assertEqual(
+            guarded.assignments[1].acceptance, ANTIGRAVITY_CONSUMER_ACCEPTANCE
+        )
+        self.assertEqual(guarded.assignments[1].kind, AssignmentKind.IMPLEMENTATION)
+        self.assertEqual(guarded.assignments[2].task, follow_on.task)
+        self.assertEqual(guarded.assignments[2].acceptance, follow_on.acceptance)
+        self.assertEqual(guarded.assignments[2].kind, AssignmentKind.EXACT_SHA_REVIEW)
+        self.assertEqual(execution_policy_errors(guarded, settings), [])
+
     def test_antigravity_debate_participation_stays_outside_the_work_lane(self):
         """Main's bounded debate lane survives: positions carry an advisory vote only."""
         settings = replace(
