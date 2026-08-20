@@ -44,6 +44,12 @@ class ReviewVerdict(StrEnum):
     FAIL = "fail"
 
 
+class DiscussionPhase(StrEnum):
+    WORK = "work"
+    POSITION = "position"
+    REBUTTAL = "rebuttal"
+
+
 class UsageCheckStatus(StrEnum):
     OK = "ok"
     PROMPTED = "prompted"
@@ -77,6 +83,22 @@ class Assignment(BaseModel):
     requires_approval: bool = False
     allow_draft_pr: bool = False
     estimated_cost_usd: float = Field(default=0, ge=0, le=1_000)
+    discussion_phase: DiscussionPhase = DiscussionPhase.WORK
+
+
+class DebatePlan(BaseModel):
+    """A bounded, Director-owned discussion attached to one task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=2_000)
+    position_assignments: list[int] = Field(min_length=2, max_length=4)
+    rebuttal_assignments: list[int] = Field(min_length=2, max_length=4)
+    vote_options: list[str] = Field(min_length=2, max_length=6)
+    deadline_minutes: int = Field(default=20, ge=5, le=120)
+    max_rebuttal_rounds: Literal[1] = 1
+    material_risk: bool = False
+    estimated_synthesis_cost_usd: float = Field(default=0, ge=0, le=1_000)
 
 
 class DirectorPlan(BaseModel):
@@ -92,6 +114,26 @@ class DirectorPlan(BaseModel):
     assignments: list[Assignment] = Field(min_length=1, max_length=20)
     final_acceptance: list[str] = Field(min_length=1, max_length=30)
     owner_question: str | None = Field(default=None, max_length=2_000)
+    debate: DebatePlan | None = None
+
+
+class DebateContribution(BaseModel):
+    """A bounded provider position extracted by the Director from untrusted output."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    position: str = Field(min_length=1, max_length=2_000)
+    evidence: list[str] = Field(default_factory=list, max_length=10)
+    contradictions: list[str] = Field(default_factory=list, max_length=10)
+    confidence: float = Field(ge=0, le=1)
+    vote_option: str | None = Field(default=None, min_length=1, max_length=255)
+    abstain: bool = False
+
+    @model_validator(mode="after")
+    def validate_vote(self) -> DebateContribution:
+        if self.abstain == (self.vote_option is not None):
+            raise ValueError("exactly one of vote_option or abstain is required")
+        return self
 
 
 class ReviewDecision(BaseModel):
@@ -102,6 +144,46 @@ class ReviewDecision(BaseModel):
     evidence: list[str] = Field(default_factory=list, max_length=30)
     revision_prompt: str | None = Field(default=None, max_length=10_000)
     owner_question: str | None = Field(default=None, max_length=2_000)
+    debate_contribution: DebateContribution | None = None
+
+
+class DebateSynthesis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(min_length=1, max_length=2_000)
+    rationale: str = Field(min_length=1, max_length=4_000)
+    dissent: list[str] = Field(default_factory=list, max_length=10)
+    next_action: str = Field(min_length=1, max_length=2_000)
+    openai_vote_option: str | None = Field(default=None, min_length=1, max_length=255)
+    openai_abstains: bool = False
+    confidence: float = Field(ge=0, le=1)
+    owner_question: str | None = Field(default=None, max_length=2_000)
+
+    @model_validator(mode="after")
+    def validate_openai_vote(self) -> DebateSynthesis:
+        if self.openai_abstains == (self.openai_vote_option is not None):
+            raise ValueError("exactly one of openai_vote_option or openai_abstains is required")
+        return self
+
+
+class CollaborationTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assignment_sequence: int = Field(ge=1, le=20)
+    provider: ProviderName
+    phase: Literal[
+        "delegation", "work_result", "position", "rebuttal", "synthesis", "completion"
+    ]
+    correlation_id: str = Field(min_length=1, max_length=255)
+    run_id: str = Field(min_length=1, max_length=255)
+    position: str = Field(min_length=1, max_length=2_000)
+    evidence: list[str] = Field(default_factory=list, max_length=10)
+    contradictions: list[str] = Field(default_factory=list, max_length=10)
+    confidence: float = Field(ge=0, le=1)
+    vote_option: str | None = Field(default=None, max_length=255)
+    abstain: bool = False
+    slack_message_ts: str | None = Field(default=None, max_length=64)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ProviderRun(BaseModel):
@@ -204,6 +286,10 @@ class TaskRecord(BaseModel):
     unavailable_providers: list[ProviderName] = Field(default_factory=list)
     deferred_assignments: list[int] = Field(default_factory=list)
     availability_impacts: list[str] = Field(default_factory=list, max_length=50)
+    collaboration_thread_ts: str | None = Field(default=None, max_length=64)
+    collaboration_turns: list[CollaborationTurn] = Field(default_factory=list, max_length=50)
+    debate_tally: dict[str, Any] | None = None
+    debate_synthesis: DebateSynthesis | None = None
     review: ReviewDecision | None = None
     next_assignment_index: int = Field(default=0, ge=0, le=20)
     revision_count: int = 0

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import re
 import time
 from collections import defaultdict
+from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 
@@ -13,6 +16,8 @@ from .approvals import assignment_is_approved, unresolved_ambiguous_dispatch
 from .models import (
     Assignment,
     AssignmentOutcome,
+    CollaborationTurn,
+    DiscussionPhase,
     ProviderName,
     ProviderContactAttempt,
     ReviewDecision,
@@ -34,6 +39,7 @@ from .providers import (
 )
 from .review_handoff import bind_review_handoff, transitive_dependency_sequences
 from .store import TaskStore
+from .team_charter import AdvisoryVote, tally_advisory_votes
 
 
 _POST_SUBMIT_AMBIGUITY_ERRORS = (
@@ -63,10 +69,17 @@ class SlackNotifier:
         approvable: bool = False,
         approval_sequence: int | None = None,
         approval_query: str | None = None,
-    ) -> None:
+        thread_ts: str | None = None,
+        root_message: bool = False,
+        client_msg_id: str | None = None,
+    ) -> str | None:
         if not self.settings.slack_bot_token:
-            return
-        body = {"channel": record.intake.channel_id, "thread_ts": record.intake.thread_ts, "text": message}
+            return None
+        body = {"channel": record.intake.channel_id, "text": message}
+        if not root_message:
+            body["thread_ts"] = thread_ts or record.intake.thread_ts
+        if client_msg_id:
+            body["client_msg_id"] = client_msg_id
         if approvable:
             # Carry the assignment this button was rendered for, so a button left
             # sitting in the channel cannot approve a later gated assignment.
@@ -123,6 +136,7 @@ class SlackNotifier:
             payload = response.json()
             if not payload.get("ok"):
                 raise RuntimeError(f"Slack post failed: {payload.get('error', 'unknown_error')}")
+            return payload.get("ts")
 
 
 class OrchestrationEngine:
@@ -219,6 +233,7 @@ class OrchestrationEngine:
                         ),
                     )
                     return
+                await self._publish_delegation(record, assignment)
                 accepted = await self._execute_assignment(record, assignment)
                 record = self.store.get(task_id) or record
                 if record.status in {TaskStatus.OWNER_DECISION_REQUIRED, TaskStatus.FAILED, TaskStatus.BLOCKED}:
@@ -230,6 +245,15 @@ class OrchestrationEngine:
                 record.review = None
                 self.store.save(record)
 
+            if record.plan.debate is not None and record.debate_synthesis is None:
+                by_sequence = {
+                    item.sequence: item for item in record.plan.assignments
+                }
+                last_rebuttal = by_sequence[
+                    max(record.plan.debate.rebuttal_assignments)
+                ]
+                if not await self._finalize_debate(record, last_rebuttal):
+                    return
             if record.deferred_assignments:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = (
@@ -242,6 +266,7 @@ class OrchestrationEngine:
             record.status = TaskStatus.DONE
             record.message = "All assignments passed Director review."
             self.store.save(record)
+            await self._publish_collaboration_completion(record)
             await self.notifier.post(record, f"*{task_id} — DONE*\nAll assignments passed the configured acceptance review. Review branches and pull requests before merging.")
         except Exception as exc:
             failed = self.store.get(task_id) or record
@@ -334,6 +359,373 @@ class OrchestrationEngine:
             + [outcome],
             key=lambda existing: existing.assignment_sequence,
         )
+
+    @staticmethod
+    def _slack_client_id(*parts: object) -> str:
+        return str(uuid5(NAMESPACE_URL, ":".join(str(part) for part in parts)))
+
+    @staticmethod
+    def _slack_safe_text(value: str, *, limit: int = 2_000) -> str:
+        """Redact credential-shaped values and raw source blocks before Slack relay."""
+
+        cleaned = re.sub(r"```[\s\S]*?```", "[private source omitted]", value)
+        cleaned = re.sub(
+            r"(?i)\b(?:sk-[a-z0-9_-]{10,}|ghp_[a-z0-9]{10,}|github_pat_[a-z0-9_]{10,}|xox[baprs]-[a-z0-9-]{10,})\b",
+            "[credential redacted]",
+            cleaned,
+        )
+        cleaned = re.sub(
+            r"(?i)\b(?:[A-Z][A-Z0-9_]{2,}(?:KEY|TOKEN|SECRET|PASSWORD)|AUTHORIZATION)\s*[:=]\s*\S+",
+            "[credential field redacted]",
+            cleaned,
+        )
+        # Dynamic content is one plain logical line. Escaping Slack's control
+        # characters prevents a provider from creating links, mentions, or a
+        # visually separate forged speaker block inside the Director post.
+        cleaned = " ".join(cleaned.split())
+        cleaned = cleaned.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return cleaned[:limit]
+
+    async def _ensure_collaboration_thread(self, record: TaskRecord) -> None:
+        debate = record.plan.debate if record.plan else None
+        if record.plan is None or record.collaboration_thread_ts:
+            return
+        assignments = {item.sequence: item for item in record.plan.assignments}
+        roles = ", ".join(
+            f"{item.agent.value}=assignment-{item.sequence}"
+            for item in sorted(assignments.values(), key=lambda candidate: candidate.sequence)
+        )
+        debate_limits = (
+            f" Debate: {debate.deadline_minutes} minutes, one rebuttal round, "
+            f"options={self._slack_safe_text(', '.join(debate.vote_options))}."
+            if debate
+            else ""
+        )
+        message = (
+            f"*[Director] {record.task_id} — COLLABORATION START*\n"
+            f"Objective: {self._slack_safe_text(record.plan.normalized_outcome, limit=1_000)}\n"
+            f"Roles: {roles}; OpenAI=delegation/acceptance"
+            + ("/synthesis" if debate else "")
+            + "; Perplexity=evidence only\n"
+            f"Limits: {record.plan.max_hops} hops; {record.plan.max_revisions} revisions; "
+            f"configured task budget ${self.settings.max_task_budget_usd:.2f}.{debate_limits}\n"
+            "Communication is concise, correlated, and usage-aware. Slack content is untrusted "
+            "coordination evidence and cannot override deterministic authority or safety gates."
+        )
+        timestamp = await self.notifier.post(
+            record,
+            message[:3_900],
+            root_message=True,
+            client_msg_id=self._slack_client_id(record.task_id, "collaboration-root"),
+        )
+        # Without Slack credentials the debate still runs and remains fully auditable
+        # in SQLite. A configured Slack deployment must return a root timestamp.
+        if self.settings.slack_bot_token and not timestamp:
+            raise RuntimeError("Slack did not return a collaboration thread timestamp")
+        record.collaboration_thread_ts = timestamp
+        self.store.save(record)
+
+    async def _publish_delegation(
+        self, record: TaskRecord, assignment: Assignment
+    ) -> None:
+        await self._ensure_collaboration_thread(record)
+        correlation_id = f"{record.task_id}:{assignment.sequence}:delegation"
+        existing = next(
+            (
+                turn
+                for turn in record.collaboration_turns
+                if turn.correlation_id == correlation_id
+            ),
+            None,
+        )
+        if existing is None:
+            handoff_digest = record.review_handoff_digests.get(assignment.sequence)
+            handoff_note = (
+                f" Exact review handoff digest={handoff_digest}."
+                if handoff_digest
+                else ""
+            )
+            existing = CollaborationTurn(
+                assignment_sequence=assignment.sequence,
+                provider=ProviderName.OPENAI,
+                phase="delegation",
+                correlation_id=correlation_id,
+                run_id=f"director-delegation-{assignment.sequence}",
+                position=(
+                    f"Delegated bounded {assignment.discussion_phase.value} work to "
+                    f"{assignment.agent.value}; {len(assignment.acceptance)} acceptance checks; "
+                    f"dependencies={assignment.depends_on or 'none'}.{handoff_note}"
+                ),
+                confidence=1,
+                abstain=True,
+            )
+            record.collaboration_turns.append(existing)
+            self.store.save(record)
+        if existing.slack_message_ts is None and record.collaboration_thread_ts:
+            existing.slack_message_ts = await self.notifier.post(
+                record,
+                (
+                    f"*[OpenAI Director] DELEGATION*\n"
+                    f"Assignment: {record.task_id}/{assignment.sequence}\n"
+                    f"Provider: `{assignment.agent.value}` | Phase: `{assignment.discussion_phase.value}`\n"
+                    f"Correlation: `{correlation_id}` | Time: {existing.recorded_at.isoformat()}\n"
+                    f"{existing.position}\n"
+                    "Only the stored assignment, budget, allowlists, approvals, and policy authorize work."
+                )[:3_900],
+                thread_ts=record.collaboration_thread_ts,
+                client_msg_id=self._slack_client_id(correlation_id),
+            )
+            self.store.save(record)
+
+    async def _record_and_publish_collaboration_turn(
+        self,
+        record: TaskRecord,
+        assignment: Assignment,
+        run: ProviderRun,
+        decision: ReviewDecision,
+    ) -> bool:
+        debate = record.plan.debate if record.plan else None
+        contribution = decision.debate_contribution
+        is_discussion = assignment.discussion_phase != DiscussionPhase.WORK
+        if is_discussion and (debate is None or contribution is None):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                f"Assignment {assignment.sequence} lacked its required structured debate contribution"
+            )
+            self.store.save(record)
+            return False
+        if (
+            is_discussion
+            and contribution.vote_option not in debate.vote_options
+            and not contribution.abstain
+        ):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                f"Assignment {assignment.sequence} selected an unconfigured debate option"
+            )
+            self.store.save(record)
+            return False
+        await self._ensure_collaboration_thread(record)
+        run_digest = hashlib.sha256(run.run_id.encode("utf-8")).hexdigest()[:16]
+        correlation_id = f"{record.task_id}:{assignment.sequence}:{run_digest}"
+        existing = next(
+            (
+                turn
+                for turn in record.collaboration_turns
+                if turn.correlation_id == correlation_id
+            ),
+            None,
+        )
+        if existing is None:
+            existing = CollaborationTurn(
+                assignment_sequence=assignment.sequence,
+                provider=assignment.agent,
+                phase=(
+                    assignment.discussion_phase.value
+                    if is_discussion
+                    else "work_result"
+                ),
+                correlation_id=correlation_id,
+                run_id=run.run_id,
+                position=self._slack_safe_text(
+                    contribution.position if contribution else decision.summary
+                ),
+                evidence=[
+                    self._slack_safe_text(item, limit=1_000)
+                    for item in (contribution.evidence if contribution else decision.evidence)
+                ],
+                contradictions=[
+                    self._slack_safe_text(item, limit=1_000)
+                    for item in (contribution.contradictions if contribution else [])
+                ],
+                confidence=(contribution.confidence if contribution else 1),
+                vote_option=(contribution.vote_option if contribution else None),
+                abstain=(contribution.abstain if contribution else True),
+            )
+            record.collaboration_turns.append(existing)
+            self.store.save(record)
+        if existing.slack_message_ts is None and record.collaboration_thread_ts:
+            evidence = "; ".join(existing.evidence[:5]) or "none reported"
+            contradictions = "; ".join(existing.contradictions[:5]) or "none reported"
+            vote = "abstain" if existing.abstain else existing.vote_option
+            message = (
+                f"*[{existing.provider.value}] {existing.phase.upper()}*\n"
+                f"Assignment: {record.task_id}/{existing.assignment_sequence}\n"
+                f"Correlation: `{existing.correlation_id}` | "
+                f"Run: `{self._slack_safe_text(existing.run_id, limit=255)}` | "
+                f"Time: {existing.recorded_at.isoformat()}\n"
+                f"Position: {existing.position}\nEvidence: {evidence}\n"
+                f"Contradictions: {contradictions}\n"
+                f"Confidence: {existing.confidence:.2f} | Advisory vote: {vote}"
+            )
+            existing.slack_message_ts = await self.notifier.post(
+                record,
+                message[:3_900],
+                thread_ts=record.collaboration_thread_ts,
+                client_msg_id=self._slack_client_id(correlation_id),
+            )
+            self.store.save(record)
+        return True
+
+    @staticmethod
+    def _committee_member(provider: ProviderName) -> str:
+        return "antigravity" if provider == ProviderName.GEMINI else provider.value
+
+    async def _finalize_debate(self, record: TaskRecord, assignment: Assignment) -> bool:
+        debate = record.plan.debate if record.plan else None
+        if debate is None or assignment.sequence != max(debate.rebuttal_assignments):
+            return True
+        if record.debate_synthesis is None:
+            record.debate_synthesis = await self.director.synthesize_debate(record)
+            self.store.save(record)
+        synthesis = record.debate_synthesis
+        if synthesis.openai_vote_option not in debate.vote_options and not synthesis.openai_abstains:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = "OpenAI synthesis selected an unconfigured debate option"
+            self.store.save(record)
+            return False
+        latest_by_provider: dict[ProviderName, CollaborationTurn] = {}
+        for turn in record.collaboration_turns:
+            if turn.phase in {"position", "rebuttal"}:
+                latest_by_provider[turn.provider] = turn
+        votes = [
+            AdvisoryVote(
+                member=self._committee_member(provider),
+                disposition="abstain" if turn.abstain else "vote",
+                option=turn.vote_option,
+                rationale=turn.position,
+                evidence=turn.evidence,
+                confidence=turn.confidence,
+            )
+            for provider, turn in latest_by_provider.items()
+        ]
+        participants = {
+            next(
+                item.agent
+                for item in record.plan.assignments
+                if item.sequence == sequence
+            )
+            for sequence in debate.position_assignments
+        }
+        for provider in sorted(participants - set(latest_by_provider), key=lambda item: item.value):
+            votes.append(
+                AdvisoryVote(
+                    member=self._committee_member(provider),
+                    disposition="unavailable",
+                    rationale="Provider did not produce an accepted debate contribution in this cycle.",
+                )
+            )
+        votes.append(
+            AdvisoryVote(
+                member="openai",
+                disposition="abstain" if synthesis.openai_abstains else "vote",
+                option=synthesis.openai_vote_option,
+                rationale=synthesis.rationale,
+                evidence=[],
+                confidence=synthesis.confidence,
+            )
+        )
+        tally = tally_advisory_votes(votes, material_risk=debate.material_risk)
+        record.debate_tally = tally.model_dump(mode="json")
+        correlation_id = f"{record.task_id}:debate-synthesis"
+        if not any(
+            turn.correlation_id == correlation_id
+            for turn in record.collaboration_turns
+        ):
+            record.collaboration_turns.append(
+                CollaborationTurn(
+                    assignment_sequence=assignment.sequence,
+                    provider=ProviderName.OPENAI,
+                    phase="synthesis",
+                    correlation_id=correlation_id,
+                    run_id="openai-director-synthesis",
+                    position=self._slack_safe_text(synthesis.decision),
+                    evidence=[
+                        self._slack_safe_text(item, limit=1_000)
+                        for item in [synthesis.rationale, *synthesis.dissent][:10]
+                    ],
+                    confidence=synthesis.confidence,
+                    vote_option=synthesis.openai_vote_option,
+                    abstain=synthesis.openai_abstains,
+                )
+            )
+        self.store.save(record)
+        synthesis_turn = next(
+            turn
+            for turn in record.collaboration_turns
+            if turn.correlation_id == correlation_id
+        )
+        if synthesis_turn.slack_message_ts is None and record.collaboration_thread_ts:
+            synthesis_turn.slack_message_ts = await self.notifier.post(
+                record,
+                (
+                    f"*[OpenAI Director] SYNTHESIS*\nAssignment: {record.task_id}\n"
+                    f"Correlation: `{correlation_id}` | Time: {synthesis_turn.recorded_at.isoformat()}\n"
+                    f"Decision: {self._slack_safe_text(synthesis.decision)}\n"
+                    f"Rationale: {self._slack_safe_text(synthesis.rationale)}\n"
+                    f"Dissent: {self._slack_safe_text('; '.join(synthesis.dissent) or 'none')}\n"
+                    f"Tally: {self._slack_safe_text(json.dumps(tally.option_weights, sort_keys=True))} "
+                    f"| Resolution: {tally.resolution}\n"
+                    f"Next action: {self._slack_safe_text(synthesis.next_action)}\n"
+                    "Advisory only; deterministic execution and merge gates remain authoritative."
+                )[:3_900],
+                thread_ts=record.collaboration_thread_ts,
+                client_msg_id=self._slack_client_id(correlation_id),
+            )
+            self.store.save(record)
+        if tally.resolution == "owner_decision_required":
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = synthesis.owner_question or (
+                "Material-risk debate tie requires one focused owner decision: "
+                + " versus ".join(tally.winning_options)
+            )
+            self.store.save(record)
+            return False
+        return True
+
+    async def _publish_collaboration_completion(self, record: TaskRecord) -> None:
+        await self._ensure_collaboration_thread(record)
+        correlation_id = f"{record.task_id}:completion"
+        existing = next(
+            (
+                turn
+                for turn in record.collaboration_turns
+                if turn.correlation_id == correlation_id
+            ),
+            None,
+        )
+        if existing is None:
+            existing = CollaborationTurn(
+                assignment_sequence=max(
+                    (item.sequence for item in record.plan.assignments), default=1
+                ),
+                provider=ProviderName.OPENAI,
+                phase="completion",
+                correlation_id=correlation_id,
+                run_id="openai-director-completion",
+                position="All non-deferred assignments passed bounded Director acceptance.",
+                evidence=[
+                    f"accepted assignments={len(record.assignment_outcomes)}",
+                    f"provider runs={len(record.provider_runs)}",
+                ],
+                confidence=1,
+                abstain=True,
+            )
+            record.collaboration_turns.append(existing)
+            self.store.save(record)
+        if existing.slack_message_ts is None and record.collaboration_thread_ts:
+            existing.slack_message_ts = await self.notifier.post(
+                record,
+                (
+                    f"*[OpenAI Director] COMPLETION*\nAssignment: {record.task_id}\n"
+                    f"Correlation: `{correlation_id}` | Time: {existing.recorded_at.isoformat()}\n"
+                    f"{existing.position}\nEvidence: {'; '.join(existing.evidence)}\n"
+                    "GitHub and deterministic records remain the source of truth for code, review, CI, and merge."
+                ),
+                thread_ts=record.collaboration_thread_ts,
+                client_msg_id=self._slack_client_id(correlation_id),
+            )
+            self.store.save(record)
 
     def _provider_run_limit(self, record: TaskRecord) -> int:
         if record.plan is None:
@@ -617,7 +1009,11 @@ class OrchestrationEngine:
                 return False
             self._record_outcome(record, assignment, run, decision)
             self.store.save(record)
-            return True
+            if not await self._record_and_publish_collaboration_turn(
+                record, assignment, run, decision
+            ):
+                return False
+            return await self._finalize_debate(record, assignment)
         if decision.verdict == ReviewVerdict.REVISE and record.revision_count < record.plan.max_revisions:
             if len(record.provider_runs) >= self._provider_run_limit(record):
                 raise ProviderError("Maximum agent hops reached before revision")
@@ -689,7 +1085,11 @@ class OrchestrationEngine:
                     return False
                 self._record_outcome(record, assignment, revised, final_decision)
                 self.store.save(record)
-                return True
+                if not await self._record_and_publish_collaboration_turn(
+                    record, assignment, revised, final_decision
+                ):
+                    return False
+                return await self._finalize_debate(record, assignment)
             decision = final_decision
         record.status = TaskStatus.OWNER_DECISION_REQUIRED if decision.verdict == ReviewVerdict.OWNER else TaskStatus.FAILED
         record.message = decision.owner_question or decision.summary

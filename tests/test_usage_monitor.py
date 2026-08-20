@@ -151,6 +151,9 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reported_cost_is_accounted_and_daily_request_limit_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
+            fixed_now = datetime.now(timezone.utc).replace(
+                hour=12, minute=0, second=0, microsecond=0
+            )
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulPerplexityProbe()
             settings = replace(
@@ -174,7 +177,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                     cycle_id="USAGE-STALE001",
                     provider="perplexity",
                     status=UsageCheckStatus.OK,
-                    checked_at=datetime.now(timezone.utc) - timedelta(minutes=16),
+                    checked_at=fixed_now - timedelta(minutes=16),
                     input_tokens=20,
                     output_tokens=4,
                     total_tokens=24,
@@ -184,12 +187,13 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
             )
-            accounting = monitor.health()["daily_accounting"]["perplexity"]
-            self.assertEqual(accounting["request_count"], 1)
-            self.assertEqual(accounting["reported_cost_usd"], 0.00019)
-            self.assertTrue(accounting["cost_visibility_complete"])
-
-            limited = await monitor.run_once(force=True)
+            with patch("director_orchestrator.usage.datetime") as usage_datetime:
+                usage_datetime.now.return_value = fixed_now
+                accounting = monitor.health()["daily_accounting"]["perplexity"]
+                self.assertEqual(accounting["request_count"], 1)
+                self.assertEqual(accounting["reported_cost_usd"], 0.00019)
+                self.assertTrue(accounting["cost_visibility_complete"])
+                limited = await monitor.run_once(force=True)
             self.assertEqual(limited[0].status, UsageCheckStatus.SKIPPED)
             self.assertEqual(limited[0].attempt_count, 0)
             self.assertIn("daily request limit", limited[0].error or "")
@@ -197,6 +201,9 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_gemini_retries_cannot_cross_remaining_daily_request_allowance(self):
         with tempfile.TemporaryDirectory() as directory:
+            fixed_now = datetime.now(timezone.utc).replace(
+                hour=12, minute=0, second=0, microsecond=0
+            )
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
                 Settings(),
@@ -215,7 +222,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                     cycle_id="USAGE-EARLIER",
                     provider="gemini",
                     status=UsageCheckStatus.ERROR,
-                    checked_at=datetime.now(timezone.utc) - timedelta(minutes=16),
+                    checked_at=fixed_now - timedelta(minutes=16),
                     attempt_count=2,
                     provider_error_code="http_429",
                     error="Earlier bounded quota response",
@@ -238,10 +245,14 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 store,
                 adapters={ProviderName.GEMINI: GeminiAdapter(settings)},
             )
-            with patch(
-                "director_orchestrator.providers.httpx.AsyncClient",
-                return_value=httpx.AsyncClient(transport=transport),
+            with (
+                patch("director_orchestrator.usage.datetime") as usage_datetime,
+                patch(
+                    "director_orchestrator.providers.httpx.AsyncClient",
+                    return_value=httpx.AsyncClient(transport=transport),
+                ),
             ):
+                usage_datetime.now.return_value = fixed_now
                 records = await monitor.run_once(force=True)
 
             self.assertEqual(outbound_calls, 1)

@@ -5,6 +5,8 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 ## What is included
 
 - A Slack Socket Mode gateway, so the desktop does not need a public inbound port.
+- A persistent Slack collaboration bus for bounded delegation, building, research,
+  evidence collection, review handoff, debate, synthesis, and completion reporting.
 - A FastAPI orchestration service with idempotent task intake and durable SQLite state.
 - Deterministic approval gates that model output cannot remove.
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
@@ -15,7 +17,9 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - A reusable Slack app manifest and a Claude routine prompt.
 - Dry-run previews for testing without provider spending.
 
-Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`, `docs/cloud-hosting-later.md`, `docs/project-uppercut-reiteration.md`, and `docs/edge-oracle-operations.md`.
+Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`,
+`docs/slack-collaboration-bus.md`, `docs/cloud-hosting-later.md`,
+`docs/project-uppercut-reiteration.md`, and `docs/edge-oracle-operations.md`.
 
 ## Architecture
 
@@ -23,11 +27,17 @@ Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-se
 2. The Slack gateway accepts only the configured owner and channel, ignores bot messages, and forwards a stable Slack event ID.
 3. n8n passes the normalized event to the orchestrator.
 4. The orchestrator deduplicates it, creates a task record, applies hard limits, and builds a preview or live Director plan.
-5. Specialist runs are dispatched sequentially unless the plan explicitly marks independent work.
-6. Results are reviewed against acceptance checks. Revision loops are capped.
-7. Slack receives the terminal state or a narrowly scoped owner decision request. Approval-gated plans include a confirm button; ambiguity requires a written `/director approve DIR-… <clarification>` response.
-8. In-progress tasks resume after an orchestrator restart without redispatching an already-recorded provider run.
-9. When live execution is enabled, the usage monitor prompts each configured provider no more often than the configured interval and persists its latest status.
+5. The Director opens one persisted collaboration thread, posts each bounded delegation,
+   and relays concise structured results without exposing raw provider output.
+6. Specialist runs are dispatched sequentially unless the plan explicitly marks independent work.
+   Medium-to-critical plans can include independent positions and one rebuttal round.
+7. Results are reviewed against acceptance checks. Revision loops are capped. Advisory votes
+   use fixed weights, while OpenAI synthesis preserves dissent and never creates action authority.
+8. Slack receives collected evidence, review handoffs, completion state, or a narrowly scoped
+   owner decision request. Approval-gated plans include a confirm button; ambiguity requires a
+   written `/director approve DIR-… <clarification>` response.
+9. In-progress tasks resume after an orchestrator restart without redispatching an already-recorded provider run.
+10. When live execution is enabled, the usage monitor prompts each configured provider no more often than the configured interval and persists its latest status.
 
 ## Windows desktop quick start
 
