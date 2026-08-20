@@ -5,7 +5,7 @@ from copy import deepcopy
 from urllib.parse import urlparse
 
 from .config import Settings
-from .models import Assignment, DirectorPlan, ProviderName, RiskLevel
+from .models import Assignment, DirectorPlan, DiscussionPhase, ProviderName, RiskLevel
 
 
 _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -71,6 +71,69 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
     sequence_set = set(sequences)
     if len(sequence_set) != len(sequences):
         errors.add("assignment sequences must be unique")
+
+    discussion_assignments = {
+        item.sequence: item
+        for item in plan.assignments
+        if item.discussion_phase != DiscussionPhase.WORK
+    }
+    if plan.debate is None and discussion_assignments:
+        errors.add("discussion assignments require a bounded debate plan")
+    if plan.debate is not None:
+        debate = plan.debate
+        position_sequences = debate.position_assignments
+        rebuttal_sequences = debate.rebuttal_assignments
+        if len(set(position_sequences)) != len(position_sequences):
+            errors.add("debate position assignments must be unique")
+        if len(set(rebuttal_sequences)) != len(rebuttal_sequences):
+            errors.add("debate rebuttal assignments must be unique")
+        if set(position_sequences).intersection(rebuttal_sequences):
+            errors.add("debate position and rebuttal assignments must be disjoint")
+        if len({option.strip().lower() for option in debate.vote_options}) != len(
+            debate.vote_options
+        ):
+            errors.add("debate vote options must be unique")
+        expected_sequences = set(position_sequences + rebuttal_sequences)
+        if set(discussion_assignments) != expected_sequences:
+            errors.add("debate assignment lists must exactly match discussion assignments")
+        eligible = {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GEMINI}
+        position_providers: set[ProviderName] = set()
+        positions = set(position_sequences)
+        for sequence in position_sequences:
+            assignment = discussion_assignments.get(sequence)
+            if assignment is None:
+                errors.add(f"debate position assignment {sequence} does not exist")
+                continue
+            if assignment.discussion_phase != DiscussionPhase.POSITION:
+                errors.add(f"assignment {sequence}: debate position must use position phase")
+            if assignment.agent not in eligible:
+                errors.add(f"assignment {sequence}: provider is not eligible to debate or vote")
+            if assignment.agent in position_providers:
+                errors.add(f"assignment {sequence}: each debate provider gets one initial position")
+            position_providers.add(assignment.agent)
+            if positions.intersection(assignment.depends_on):
+                errors.add(f"assignment {sequence}: initial positions must remain independent")
+        rebuttal_providers: set[ProviderName] = set()
+        for sequence in rebuttal_sequences:
+            assignment = discussion_assignments.get(sequence)
+            if assignment is None:
+                errors.add(f"debate rebuttal assignment {sequence} does not exist")
+                continue
+            if assignment.discussion_phase != DiscussionPhase.REBUTTAL:
+                errors.add(f"assignment {sequence}: debate rebuttal must use rebuttal phase")
+            if assignment.agent not in position_providers:
+                errors.add(f"assignment {sequence}: rebuttal provider lacks an initial position")
+            if assignment.agent in rebuttal_providers:
+                errors.add(f"assignment {sequence}: each debate provider gets one rebuttal")
+            rebuttal_providers.add(assignment.agent)
+            if not positions.issubset(assignment.depends_on):
+                errors.add(
+                    f"assignment {sequence}: rebuttal must depend on every initial position"
+                )
+        if len(position_providers) < 2:
+            errors.add("a debate requires at least two eligible providers")
+        if rebuttal_providers != position_providers:
+            errors.add("every initial-position provider must receive one rebuttal")
 
     allowed_repositories = {
         canonical_repository(item) for item in settings.repository_allowlist
@@ -178,7 +241,10 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
     reasons.update(deterministic_approval_reasons(source_text))
     if safe.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
         reasons.add(f"{safe.risk_level.value}-risk plan")
-    if sum(item.estimated_cost_usd for item in safe.assignments) > settings.max_task_budget_usd:
+    estimated_cost = sum(item.estimated_cost_usd for item in safe.assignments)
+    if safe.debate is not None:
+        estimated_cost += safe.debate.estimated_synthesis_cost_usd
+    if estimated_cost > settings.max_task_budget_usd:
         reasons.add("estimated cost exceeds task budget")
 
     safe.approval_reasons = sorted(reasons)

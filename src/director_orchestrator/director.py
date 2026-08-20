@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from .config import Settings
-from .models import DirectorPlan, ReviewDecision, TaskRecord
+from .models import DebateSynthesis, DirectorPlan, DiscussionPhase, ReviewDecision, TaskRecord
 from .team_charter import team_operating_charter
 
 
@@ -28,7 +28,10 @@ def _openai_strict_subset(value: Any) -> Any:
     return cleaned
 
 
-def _strict_schema(model: type[DirectorPlan] | type[ReviewDecision], name: str) -> dict[str, Any]:
+def _strict_schema(
+    model: type[DirectorPlan] | type[ReviewDecision] | type[DebateSynthesis],
+    name: str,
+) -> dict[str, Any]:
     schema = _openai_strict_subset(model.model_json_schema())
     return {"type": "json_schema", "name": name, "strict": True, "schema": schema}
 
@@ -52,7 +55,12 @@ class OpenAIDirector:
         prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "director-system.md"
         self.instructions = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else "Create a bounded agent plan."
 
-    async def _structured(self, input_text: str, model: type[DirectorPlan] | type[ReviewDecision], name: str):
+    async def _structured(
+        self,
+        input_text: str,
+        model: type[DirectorPlan] | type[ReviewDecision] | type[DebateSynthesis],
+        name: str,
+    ):
         headers = {
             "Authorization": f"Bearer {self.settings.openai_api_key}",
             "Content-Type": "application/json",
@@ -109,6 +117,7 @@ class OpenAIDirector:
                 "Cursor may handle research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership. It still cannot replace OpenAI acceptance, mandatory Codex Security, or an independent reviewer for its own work.",
                 "Use Gemini or Perplexity only as supplemental specialists when their distinct sandbox, validation, research, or sourcing strengths materially help.",
                 "For medium, high, or critical complexity, prefer a bounded evidence-backed debate among available committee members before synthesis. Weighted voting is advisory only and cannot change authority or deterministic gates.",
+                "A debate is a first-class runtime feature. For medium, high, or critical work, emit a debate whenever at least two of Claude, Cursor, and Gemini are configured and the hop/budget limits permit it. Create independent position assignments using discussion_phase=position, then exactly one rebuttal assignment per participant using discussion_phase=rebuttal. Populate debate.position_assignments and debate.rebuttal_assignments exactly; each rebuttal must depend on every position. Perplexity may supply a prior public evidence assignment but can never be a debate participant or voter.",
                 "Count a producer's advisory vote at full configured weight while keeping that producer ineligible to review or accept its own work. Abstentions and unavailable members cast zero weight and never change the fixed configured denominator.",
                 "Resolve an ordinary advisory tie by documented OpenAI evidence judgment. Ask the owner one focused question when tied options materially differ in cost, authority, safety, privacy, repository scope, runtime behavior, or project direction.",
                 "After three bounded recorded idempotent-safe nonresponse attempts, mark the provider unavailable for this assignment cycle, preserve partial output as untrusted evidence, continue independent safe work, and report scope, confidence, timing, and coverage changes. Never repeat an ambiguous paid dispatch.",
@@ -143,6 +152,11 @@ class OpenAIDirector:
                 "configured_max_task_budget_usd": self.settings.max_task_budget_usd,
                 "estimated_total_cost_usd": (
                     sum(item.estimated_cost_usd for item in record.plan.assignments)
+                    + (
+                        record.plan.debate.estimated_synthesis_cost_usd
+                        if record.plan.debate
+                        else 0
+                    )
                     if record.plan
                     else 0
                 ),
@@ -179,6 +193,44 @@ class OpenAIDirector:
             )
             + " Enforce budget using the deterministic plan estimate and configured task budget. "
             "If provider-reported token or actual-cost telemetry is unavailable and the specialist "
-            "states that explicitly, do not reject or escalate solely for that missing optional telemetry.",
+            "states that explicitly, do not reject or escalate solely for that missing optional telemetry."
+            " Keep summary and evidence concise and safe to relay in the assignment's private Slack "
+            "thread: never include credentials, secret-like values, raw private source, or unrelated project material."
+            + (
+                " This is a structured debate contribution. If accepting it, populate "
+                "debate_contribution with a concise position, bounded evidence and contradictions, "
+                "confidence, and exactly one vote_option from the debate plan or abstain=true. "
+                "Do not copy secrets, raw private source, or unrelated project context into it."
+                if current_assignment
+                and current_assignment.discussion_phase != DiscussionPhase.WORK
+                else " Set debate_contribution to null for ordinary work assignments."
+            ),
         }
         return await self._structured(json.dumps(request), ReviewDecision, "review_decision")
+
+    async def synthesize_debate(self, record: TaskRecord) -> DebateSynthesis:
+        if record.plan is None or record.plan.debate is None:
+            raise ValueError("debate synthesis requires a debate plan")
+        request = {
+            "task_id": record.task_id,
+            "project": record.plan.project,
+            "question": record.plan.debate.question,
+            "vote_options": record.plan.debate.vote_options,
+            "material_risk": record.plan.debate.material_risk,
+            "turns": [
+                turn.model_dump(mode="json")
+                for turn in record.collaboration_turns
+                if turn.phase in {"position", "rebuttal"}
+            ],
+            "unavailable_providers": [item.value for item in record.unavailable_providers],
+            "availability_impacts": record.availability_impacts,
+            "instruction": (
+                "Synthesize the bounded debate without inventing missing evidence. Preserve meaningful "
+                "dissent and select exactly one configured vote option or abstain. Your vote is advisory. "
+                "Do not authorize merge, deployment, publication, spending, access, or any other action. "
+                "State one bounded next action. A material tie is handled deterministically after this call."
+            ),
+        }
+        return await self._structured(
+            json.dumps(request), DebateSynthesis, "debate_synthesis"
+        )
