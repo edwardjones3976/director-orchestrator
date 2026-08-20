@@ -539,6 +539,29 @@ class OrchestrationEngine:
                 return False
         return True
 
+    @staticmethod
+    def _debate_contribution_error(
+        record: TaskRecord,
+        assignment: Assignment,
+        decision: ReviewDecision,
+    ) -> str | None:
+        debate = record.plan.debate if record.plan else None
+        contribution = decision.debate_contribution
+        is_discussion = assignment.discussion_phase != DiscussionPhase.WORK
+        if is_discussion and (debate is None or contribution is None):
+            return (
+                f"Assignment {assignment.sequence} lacked its required structured debate contribution"
+            )
+        if (
+            is_discussion
+            and contribution.vote_option not in debate.vote_options
+            and not contribution.abstain
+        ):
+            return (
+                f"Assignment {assignment.sequence} selected an unconfigured debate option"
+            )
+        return None
+
     async def _record_and_publish_collaboration_turn(
         self,
         record: TaskRecord,
@@ -546,27 +569,14 @@ class OrchestrationEngine:
         run: ProviderRun,
         decision: ReviewDecision,
     ) -> bool:
-        debate = record.plan.debate if record.plan else None
+        contribution_error = self._debate_contribution_error(record, assignment, decision)
+        if contribution_error:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = contribution_error
+            self.store.save(record)
+            return False
         contribution = decision.debate_contribution
         is_discussion = assignment.discussion_phase != DiscussionPhase.WORK
-        if is_discussion and (debate is None or contribution is None):
-            record.status = TaskStatus.OWNER_DECISION_REQUIRED
-            record.message = (
-                f"Assignment {assignment.sequence} lacked its required structured debate contribution"
-            )
-            self.store.save(record)
-            return False
-        if (
-            is_discussion
-            and contribution.vote_option not in debate.vote_options
-            and not contribution.abstain
-        ):
-            record.status = TaskStatus.OWNER_DECISION_REQUIRED
-            record.message = (
-                f"Assignment {assignment.sequence} selected an unconfigured debate option"
-            )
-            self.store.save(record)
-            return False
         if not await self._ensure_collaboration_thread(record):
             return False
         run_digest = hashlib.sha256(run.run_id.encode("utf-8")).hexdigest()[:16]
@@ -639,6 +649,11 @@ class OrchestrationEngine:
     async def _finalize_debate(self, record: TaskRecord, assignment: Assignment) -> bool:
         debate = record.plan.debate if record.plan else None
         if debate is None or assignment.sequence != max(debate.rebuttal_assignments):
+            return True
+        accepted_sequences = {
+            outcome.assignment_sequence for outcome in record.assignment_outcomes
+        }
+        if not set(debate.rebuttal_assignments).issubset(accepted_sequences):
             return True
         if record.debate_synthesis is None:
             record.debate_synthesis = await self.director.synthesize_debate(record)
@@ -741,11 +756,13 @@ class OrchestrationEngine:
             if not delivered:
                 return False
         if tally.resolution == "owner_decision_required":
-            record.status = TaskStatus.OWNER_DECISION_REQUIRED
-            record.message = synthesis.owner_question or (
+            question = synthesis.owner_question or (
                 "Material-risk debate tie requires one focused owner decision: "
                 + " versus ".join(tally.winning_options)
             )
+            record.plan.owner_question = question
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = question
             self.store.save(record)
             return False
         return True
@@ -1005,11 +1022,23 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 return False
-            if not await self._record_and_publish_collaboration_turn(
-                record, assignment, run, decision
-            ):
-                return False
-            return await self._finalize_debate(record, assignment)
+            contribution_error = self._debate_contribution_error(
+                record, assignment, decision
+            )
+            if contribution_error:
+                record.assignment_outcomes = [
+                    item
+                    for item in record.assignment_outcomes
+                    if item.assignment_sequence != assignment.sequence
+                ]
+                record.review = None
+                self.store.save(record)
+            else:
+                if not await self._record_and_publish_collaboration_turn(
+                    record, assignment, run, decision
+                ):
+                    return False
+                return await self._finalize_debate(record, assignment)
 
         readiness = self.settings.readiness()
         if not readiness.get(assignment.agent.value, False):
@@ -1106,6 +1135,14 @@ class OrchestrationEngine:
         record.review = decision
         self.store.save(record)
         if decision.verdict == ReviewVerdict.ACCEPT:
+            contribution_error = self._debate_contribution_error(
+                record, assignment, decision
+            )
+            if contribution_error:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = contribution_error
+                self.store.save(record)
+                return False
             if not await self._bind_review_candidate(record, assignment, run):
                 return False
             merge_result = await self._process_exact_sha_review(record, run)
@@ -1182,6 +1219,14 @@ class OrchestrationEngine:
             final_decision = await self.director.review(record, revised.result)
             record.review = final_decision
             if final_decision.verdict == ReviewVerdict.ACCEPT:
+                contribution_error = self._debate_contribution_error(
+                    record, assignment, final_decision
+                )
+                if contribution_error:
+                    record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                    record.message = contribution_error
+                    self.store.save(record)
+                    return False
                 if not await self._bind_review_candidate(record, assignment, revised):
                     return False
                 merge_result = await self._process_exact_sha_review(record, revised)

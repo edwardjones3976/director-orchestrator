@@ -5,10 +5,13 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
+
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
+    AssignmentOutcome,
     DebateContribution,
     DebatePlan,
     DebateSynthesis,
@@ -147,7 +150,12 @@ class CompletingAdapter:
 
 
 class DebateDirector:
+    def __init__(self):
+        self.review_calls = 0
+        self.synthesize_calls = 0
+
     async def review(self, record, result):
+        self.review_calls += 1
         assignment = sorted(record.plan.assignments, key=lambda item: item.sequence)[
             record.next_assignment_index
         ]
@@ -166,6 +174,7 @@ class DebateDirector:
         )
 
     async def synthesize_debate(self, record):
+        self.synthesize_calls += 1
         return DebateSynthesis(
             decision="Choose option B",
             rationale="The combined Cursor and OpenAI evidence is stronger.",
@@ -174,6 +183,36 @@ class DebateDirector:
             openai_vote_option="B",
             confidence=0.75,
         )
+
+
+class SequenceUnavailableAdapter:
+    def __init__(self, provider: ProviderName, fail_sequences: set[int]):
+        self.name = provider
+        self.fail_sequences = fail_sequences
+        self.calls = 0
+        self.poll_calls = 0
+        self.contexts: list[str] = []
+
+    async def dispatch(self, assignment, context):
+        self.calls += 1
+        self.contexts.append(context)
+        if assignment.sequence in self.fail_sequences:
+            return ProviderRun(
+                provider=self.name,
+                run_id=f"{self.name.value}-{assignment.sequence}",
+                status="RUNNING",
+                result="partial untrusted output",
+            )
+        return ProviderRun(
+            provider=self.name,
+            run_id=f"{self.name.value}-{assignment.sequence}",
+            status="FINISHED",
+            result=f"bounded result from {self.name.value} for {assignment.sequence}",
+        )
+
+    async def poll(self, run):
+        self.poll_calls += 1
+        raise httpx.ReadTimeout("no response")
 
 
 class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -498,7 +537,13 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_material_tie_stops_for_owner_and_never_authorizes_action(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(
-                Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
             store = TaskStore(settings.sqlite_path)
             plan = debate_plan(include_gemini=True, material_risk=True)
@@ -513,6 +558,20 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     text="DIRECTOR Project: demo Outcome: material choice",
                 ),
                 plan=plan,
+                assignment_outcomes=[
+                    AssignmentOutcome(
+                        assignment_sequence=sequence,
+                        provider=provider,
+                        run_id=f"{provider.value}-run",
+                        result="accepted rebuttal",
+                        review_summary="accepted",
+                    )
+                    for sequence, provider in (
+                        (4, ProviderName.CLAUDE),
+                        (5, ProviderName.CURSOR),
+                        (6, ProviderName.GEMINI),
+                    )
+                ],
                 collaboration_turns=[
                     CollaborationTurn(
                         assignment_sequence=4,
@@ -547,8 +606,9 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ],
             )
             store.create(task)
+            director = DebateDirector()
             engine = OrchestrationEngine(settings, store)
-            engine.director = DebateDirector()
+            engine.director = director
 
             continued = await engine._finalize_debate(task, plan.assignments[-1])
 
@@ -557,6 +617,225 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
             self.assertEqual(stopped.debate_tally["resolution"], "owner_decision_required")
             self.assertFalse(stopped.debate_tally["authorizes_external_action"])
+            self.assertEqual(
+                stopped.plan.owner_question,
+                "Material-risk debate tie requires one focused owner decision: A versus B",
+            )
+            self.assertEqual(stopped.message, stopped.plan.owner_question)
+            self.assertEqual(director.synthesize_calls, 1)
+
+            stopped.status = TaskStatus.QUEUED
+            store.save(stopped)
+            await engine.run(task.task_id)
+            resumed = store.get(task.task_id)
+            self.assertEqual(resumed.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(resumed.plan.owner_question, stopped.plan.owner_question)
+            self.assertEqual(director.synthesize_calls, 1)
+
+    async def test_deferred_rebuttal_does_not_synthesize_the_debate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                cursor_api_key="test-cursor",
+                slack_bot_token="test-slack",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                max_agent_hops=4,
+                provider_poll_seconds=0,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            store = TaskStore(settings.sqlite_path)
+            task = TaskRecord(
+                task_id="DIR-DEFER-REBUTTAL",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-defer-rebuttal",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: choose a direction",
+                ),
+                plan=debate_plan(),
+            )
+            store.create(task)
+            claude = CompletingAdapter(ProviderName.CLAUDE)
+            cursor = SequenceUnavailableAdapter(ProviderName.CURSOR, {4})
+            director = DebateDirector()
+            notifier = RecordingNotifier()
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {
+                ProviderName.CLAUDE: claude,
+                ProviderName.CURSOR: cursor,
+            }
+            engine.director = director
+            engine.notifier = notifier
+
+            await engine.run(task.task_id)
+
+            stopped = store.get(task.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.deferred_assignments, [4])
+            self.assertIsNone(stopped.debate_synthesis)
+            self.assertIsNone(stopped.debate_tally)
+            self.assertEqual(director.synthesize_calls, 0)
+            self.assertNotIn(
+                "synthesis",
+                [turn.phase for turn in stopped.collaboration_turns],
+            )
+
+    async def test_missing_debate_contribution_does_not_record_an_accepted_outcome(self):
+        class MissingContributionDirector(DebateDirector):
+            async def review(self, record, result):
+                if self.review_calls == 0:
+                    self.review_calls += 1
+                    return ReviewDecision(
+                        verdict=ReviewVerdict.ACCEPT,
+                        summary="Accepted without a structured debate field.",
+                        evidence=["structured evidence"],
+                    )
+                return await super().review(record, result)
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                cursor_api_key="test-cursor",
+                slack_bot_token="test-slack",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                max_agent_hops=4,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            store = TaskStore(settings.sqlite_path)
+            task = TaskRecord(
+                task_id="DIR-MISSING-CONTRIB",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-missing-contrib",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: choose a direction",
+                ),
+                plan=debate_plan(),
+            )
+            store.create(task)
+            claude = CompletingAdapter(ProviderName.CLAUDE)
+            cursor = CompletingAdapter(ProviderName.CURSOR)
+            director = MissingContributionDirector()
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {
+                ProviderName.CLAUDE: claude,
+                ProviderName.CURSOR: cursor,
+            }
+            engine.director = director
+            engine.notifier = RecordingNotifier()
+
+            await engine.run(task.task_id)
+            stopped = store.get(task.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertIn("structured debate contribution", stopped.message)
+            self.assertEqual(stopped.assignment_outcomes, [])
+            self.assertEqual(stopped.next_assignment_index, 0)
+            self.assertEqual(claude.calls, 1)
+
+            stopped.status = TaskStatus.QUEUED
+            store.save(stopped)
+            await engine.run(task.task_id)
+            completed = store.get(task.task_id)
+            self.assertEqual(completed.status, TaskStatus.DONE, completed.message)
+            self.assertEqual(claude.calls, 2)
+            self.assertEqual(cursor.calls, 2)
+            self.assertGreaterEqual(director.review_calls, 4)
+            self.assertEqual(
+                [outcome.assignment_sequence for outcome in completed.assignment_outcomes],
+                [1, 2, 3, 4],
+            )
+
+    async def test_stored_accept_without_debate_contribution_can_be_re_reviewed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                cursor_api_key="test-cursor",
+                slack_bot_token="test-slack",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                max_agent_hops=4,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            store = TaskStore(settings.sqlite_path)
+            plan = debate_plan()
+            task = TaskRecord(
+                task_id="DIR-STUCK-ACCEPT",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-stuck-accept",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: choose a direction",
+                ),
+                plan=plan,
+                provider_runs=[
+                    ProviderRun(
+                        provider=ProviderName.CLAUDE,
+                        assignment_sequence=1,
+                        run_id="claude-1",
+                        status="FINISHED",
+                        result="bounded result from claude for 1",
+                        evidence_source="provider_authenticated",
+                    )
+                ],
+                assignment_outcomes=[
+                    AssignmentOutcome(
+                        assignment_sequence=1,
+                        provider=ProviderName.CLAUDE,
+                        run_id="claude-1",
+                        result="bounded result from claude for 1",
+                        review_summary="Accepted without a structured debate field.",
+                    )
+                ],
+                review=ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Accepted without a structured debate field.",
+                    evidence=["structured evidence"],
+                ),
+            )
+            store.create(task)
+            claude = CompletingAdapter(ProviderName.CLAUDE)
+            cursor = CompletingAdapter(ProviderName.CURSOR)
+            director = DebateDirector()
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {
+                ProviderName.CLAUDE: claude,
+                ProviderName.CURSOR: cursor,
+            }
+            engine.director = director
+            engine.notifier = RecordingNotifier()
+
+            await engine.run(task.task_id)
+            completed = store.get(task.task_id)
+            self.assertEqual(completed.status, TaskStatus.DONE, completed.message)
+            self.assertEqual(claude.calls, 1)
+            self.assertEqual(director.review_calls, 4)
+            self.assertEqual(
+                [outcome.assignment_sequence for outcome in completed.assignment_outcomes],
+                [1, 2, 3, 4],
+            )
 
 
 if __name__ == "__main__":
