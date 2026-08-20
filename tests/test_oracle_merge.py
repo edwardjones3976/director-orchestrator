@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from director_orchestrator.config import Settings
+from director_orchestrator.callbacks import apply_manual_run_completion
 from director_orchestrator.oracle_merge import (
     OracleChangedFile,
     OracleCheckRun,
@@ -30,6 +31,7 @@ from director_orchestrator.models import (
     AssignmentOutcome,
     ClaudeCallback,
     DirectorPlan,
+    ManualRunCompletion,
     ProviderName,
     ProviderRun,
     RiskLevel,
@@ -338,6 +340,88 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertIsNotNone(artifact)
         self.assertEqual(artifact.reviewer_provider, "cursor")
         self.assertTrue(artifact.signature_is_valid(REVIEW_SECRET))
+
+    def test_manual_claude_handoff_is_classified_before_review_authentication(self):
+        record = self.callback_record()
+        for result in (
+            "Bounded implementation-owner handoff.",
+            json.dumps({"status": "complete", "evidence": ["read-only"]}),
+        ):
+            with self.subTest(result=result):
+                run = record.provider_runs[0].model_copy(
+                    update={"status": "FINISHED", "result": result}
+                )
+                self.assertIsNone(
+                    authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
+                )
+
+    def test_manual_claude_completion_cannot_authenticate_review_artifact(self):
+        record = self.callback_record()
+        artifact_result = record.provider_runs[0].result or ""
+        record.status = TaskStatus.FAILED
+        record.provider_runs[0] = record.provider_runs[0].model_copy(
+            update={"status": "WAITING_CALLBACK", "result": None}
+        )
+        apply_manual_run_completion(
+            record,
+            "claude-review-callback",
+            ManualRunCompletion(owner_user_id="U123", result=artifact_result),
+        )
+        run = record.provider_runs[0]
+
+        with self.assertRaisesRegex(ValueError, "authenticated provider evidence"):
+            authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
+
+    def test_manual_cursor_completion_cannot_authenticate_review_artifact(self):
+        payload = self.artifact(
+            implementation_provider="claude",
+            implementation_actor="claude-agent",
+            reviewer_provider="cursor",
+            review_run_id="cursor-review-run",
+        ).model_dump(mode="json", exclude={"signature"})
+        payload["assignment_id"] = "DIR-CURSOR:2"
+        run = ProviderRun(
+            provider=ProviderName.CURSOR,
+            assignment_sequence=2,
+            run_id="cursor-review-run",
+            status="CREATING",
+        )
+        base_record = self.callback_record()
+        record = base_record.model_copy(
+            update={
+                "task_id": "DIR-CURSOR",
+                "plan": base_record.plan.model_copy(
+                    update={
+                        "assignments": [
+                            base_record.plan.assignments[0].model_copy(
+                                update={"agent": ProviderName.CLAUDE}
+                            ),
+                            base_record.plan.assignments[1].model_copy(
+                                update={"agent": ProviderName.CURSOR}
+                            ),
+                        ]
+                    }
+                ),
+                "provider_runs": [run],
+                "assignment_outcomes": [
+                    base_record.assignment_outcomes[0].model_copy(
+                        update={"provider": ProviderName.CLAUDE}
+                    )
+                ],
+                "status": TaskStatus.FAILED,
+            }
+        )
+        apply_manual_run_completion(
+            record,
+            "cursor-review-run",
+            ManualRunCompletion(
+                owner_user_id="U123", result=json.dumps(payload)
+            ),
+        )
+        run = record.provider_runs[0]
+
+        with self.assertRaisesRegex(ValueError, "authenticated provider evidence"):
+            authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
 
     def test_review_provider_must_match_authenticated_run(self):
         callback = self.callback(reviewer_provider="cursor")
