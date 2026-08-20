@@ -55,8 +55,13 @@ assignment. Provider JSON must use `artifact_type=edge_oracle_exact_sha_review/v
 has no merge authority. The reviewer may be Claude or Cursor, but it must not be the
 implementation provider. OpenAI acceptance runs before the deterministic merge service.
 The review assignment must depend on exactly one accepted implementation outcome; the
-stored dependency, rather than a model assertion, establishes which provider authored the
-work and prevents self-review relabeling.
+stored transitive dependency closure, rather than a model assertion, establishes every
+provider that materially authored the work and prevents self-review relabeling. Candidate
+metadata is accepted only from a draft-PR-capable assignment whose exact scope was approved.
+The claimed implementation actor must also belong to the logical producer's configured
+GitHub-actor allowlist and must not belong to the reviewer. Configure lowercase logins in
+`ORACLE_AUTOMERGE_CLAUDE_ACTORS`, `ORACLE_AUTOMERGE_CURSOR_ACTORS`, and, when used as an
+implementation provider, `ORACLE_AUTOMERGE_GEMINI_ACTORS`.
 
 The committed profile keeps both controls closed:
 
@@ -85,6 +90,24 @@ static-token fallback; configuring it together with any GitHub App field fails c
 
 Branch protection and required checks remain authoritative. Installing the app and
 enabling the feature do not authorize executing a live merge.
+
+Perplexity assignments are separately owner-gated. The Slack approval prompt shows the
+exact bounded `public_research_query`, and the stored approval is bound to a SHA-256 digest
+of that complete assignment. Any query or scope mutation invalidates the approval and asks
+again. Content filters remain defense in depth; they are not treated as proof that arbitrary
+model-generated text is public.
+
+If a provider dispatch times out after transmission, ordinary approval cannot retry it.
+Reconcile the exact pending assignment through
+`POST /v1/tasks/{task_id}/dispatch-reconciliation`: record either an existing provider run
+(`created`, with only its run ID and required session ID) or provider-dashboard evidence that
+no run was created (`not_created`). A caller cannot supply status, result, or URL as provider
+evidence: Cursor and Gemini are polled through their authenticated APIs, while Claude must
+complete through its authenticated callback. Synchronous Perplexity searches cannot be adopted
+by run ID. Only `not_created` permits one new dispatch. Initial and revision requests use this
+same rule, preventing ambiguous paid work from being duplicated by recovery or generic approval.
+Owner-supplied manual recovery text remains operational evidence only and cannot authorize an
+exact-SHA review handoff or merge.
 
 An immutable Claude or Cursor review artifact must validate as
 `OracleReviewArtifact`. A secret-free shape is available in

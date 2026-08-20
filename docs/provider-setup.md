@@ -1,8 +1,12 @@
 # Provider Setup Matrix
 
+The cross-provider responsibility, debate, advisory-voting, and strict
+Perplexity evidence boundaries are defined in
+[`team-operating-charter.md`](team-operating-charter.md).
+
 ## Shared periodic usage-check behavior
 
-The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt. The prompt instructs the provider not to browse, call tools, inspect repositories, edit files, create branches or pull requests, or perform project work. This is an instruction rather than a provider-side sandbox for agent products such as Cursor and Gemini, so provider-side spend limits remain required. The monitor records provider-returned token metadata when available and sends only a bounded status summary to Slack.
+The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt. The prompt instructs the provider not to browse, call tools, inspect repositories, edit files, create branches or pull requests, or perform project work. This is an instruction rather than a provider-side sandbox for agent products such as Cursor and Gemini, so provider-side spend limits remain required. The monitor records provider-returned tokens and cost when available, bounded attempts, and normalized quota failures; it never invents missing cost telemetry.
 
 These probes consume provider usage and are opt-in through `USAGE_CHECK_ENABLED=true`. They are also disabled by the global paid-run gate and cannot execute while `ALLOW_PAID_RUNS=false`. The default interval is 360 minutes and the enforced minimum is 15 minutes, including manual runs. `POST /v1/usage-checks/run` returns a structured schedule (`accepted` / `not_due` / `busy`) so callers know which providers were actually scheduled before waiting for records. Account dashboards, not model prose, remain authoritative for plan balances and billing.
 
@@ -23,14 +27,13 @@ An absent project allowlist blocks every live plan. Cursor cannot use an implici
 - **Claude Pro 20x is the primary workhorse.** Route coding implementation, repository-scale reasoning, code/document review, and Claude-strong analysis there first when its routine is configured and healthy.
 - **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
 - **Cursor is the third primary teammate.** Use it for repository automation, coding overflow, and independent implementation or review passes.
-- **Gemini Antigravity and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from the consumer subscription, and they are not included in the default periodic-check list.
-- **Antigravity is subordinate, not a fourth primary model.** Use it for bounded boilerplate, scaffolding, low-level mechanical programming, and deliberately different or abstract ideas. A later Claude or Cursor assignment must directly consume its artifact and independently integrate or reject it.
+- **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from the consumer subscription, and they are not included in the default periodic-check list.
 
 Practical operating patterns:
 
 1. **Claude-first coding lane:** Claude implements and tests; OpenAI reviews the acceptance evidence; the owner approves any gated action.
 2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
-3. **Optional specialist lane:** when materially useful, Perplexity gathers current sources and Antigravity produces bounded boilerplate, scaffolding, low-level mechanical code, or alternate ideas. The primary team independently verifies and integrates or rejects every artifact.
+3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate boilerplate, scaffolding, low-level mechanical implementation, or alternate ideas. Both return non-authoritative evidence, and a primary model independently verifies and integrates or rejects it.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
 
 | Role | Supported bridge in this package | Required values | Completion path |
@@ -38,37 +41,8 @@ Practical operating patterns:
 | Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
-| Supplemental — subordinate programming/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the fail-closed profile below | Poll stored background Interaction; Claude or Cursor consumes it next |
+| Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
-
-## Antigravity subordinate profile
-
-Antigravity runs through the Gemini Interactions API but is intentionally not a
-peer of OpenAI, Claude, or Cursor in this Director. Configure the profile as:
-
-```dotenv
-GEMINI_MODE=antigravity_subordinate
-GEMINI_ALLOW_REVIEW_VERDICT=false
-GEMINI_ALLOW_PRIMARY_AUTHORITY=false
-```
-
-The deterministic plan gate admits an Antigravity assignment only when its task
-explicitly names boilerplate, scaffolding, low-level or mechanical work, fixture
-generation, or alternate ideation. The Director HMAC-binds that structured scope;
-the adapter refuses unsigned or altered supplemental assignments. Upstream handoff
-context and free-form reviewer revision prompts are never sent to Antigravity.
-The assignment cannot create a draft pull request. Its Claude or Cursor consumer
-is generated by deterministic code, which requires independent reproduction and
-integration of verified portions only rather than trusting model-authored wording.
-Antigravity cannot perform exact-SHA review, final acceptance, merge adjudication,
-or define contract or methodology truth. Its returned text is labeled
-`NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT` before it enters the handoff.
-
-This lane still does real programming: it can execute Bash, Python, and Node in
-its isolated Google-hosted environment and create files there. It does not
-receive primary-team authority merely because the managed agent can use those
-tools. Interesting ideas are hypotheses, not facts without independent
-verification.
 
 ## Perplexity research-only profile
 
@@ -86,20 +60,17 @@ PERPLEXITY_MAX_RESULTS=10
 PERPLEXITY_SEARCH_CONTEXT_SIZE=high
 PERPLEXITY_TIMEOUT_SECONDS=180
 PERPLEXITY_DAILY_BUDGET_USD=2.00
+PERPLEXITY_DAILY_REQUEST_LIMIT=100
 PERPLEXITY_ALLOW_REPOSITORY_WRITE=false
 PERPLEXITY_ALLOW_REVIEW_VERDICT=false
 ```
 
-Normal assignments use `POST /search`. The owner must provide exactly one
-`Public research query: ...` field as the first line of the intake, with no
-indentation or quoting. The Director extracts only that
-line, replaces the model-authored assignment with canonical research acceptance
-criteria, removes repository and draft-PR fields, and HMAC-binds the resulting
-scope. The adapter refuses a missing or altered token. It sends only that explicit
-public query and result limit; it does not send the surrounding intake, repository
-context, credentials, or Slack state. Revisions derive a new public-search query
-only from the bound original task and canonical acceptance criteria; free-form
-reviewer text is discarded. Results are normalized with
+Normal assignments use `POST /search`. Every Perplexity assignment requires an
+owner approval bound to the digest of the exact assignment; the Slack prompt
+shows the complete outbound `public_research_query`, and a later query mutation
+invalidates that approval. The adapter sends only the approved bounded research query and
+result limit; it does not send repository context,
+acceptance authority, credentials, or Slack state. Results are normalized with
 the query, retrieval time, URL, page title, available publication/update dates,
 supporting excerpt, source type, and explicit markers where confidence or
 contradiction evidence is unavailable. OpenAI or another primary-team model
@@ -114,11 +85,44 @@ only for the bounded availability/usage prompt.
 
 The adapter refuses to run unless every research-only control is valid. It also
 rejects draft-PR authority and any assignment whose estimated cost exceeds
-`PERPLEXITY_DAILY_BUDGET_USD`. That value is a fail-closed per-assignment ceiling,
-not aggregate billing telemetry; configure an API Platform budget/credit control
-as the authoritative daily spend backstop. Only after billing and the dedicated
+`PERPLEXITY_DAILY_BUDGET_USD`. It is a fail-closed per-assignment ceiling and the
+usage monitor stops new probes after provider-reported daily cost reaches it.
+`PERPLEXITY_DAILY_REQUEST_LIMIT` bounds daily monitor requests. Provider-reported
+cost may be incomplete, so configure an API Platform budget/credit control as the
+authoritative daily spend backstop. Only after billing and the dedicated
 key are ready should an operator set `PERPLEXITY_ENABLED=true` and include
 `perplexity` in `USAGE_CHECK_PROVIDERS` if periodic checks are desired.
+
+## Antigravity subordinate profile
+
+Antigravity is a subordinate Edge Oracle specialist, not a fourth primary
+model. `GEMINI_MODE=antigravity_subordinate` is required for readiness, and
+`GEMINI_ALLOW_REVIEW_VERDICT` and `GEMINI_ALLOW_PRIMARY_AUTHORITY` must stay
+`false`; any other value fails the readiness profile closed and the adapter
+refuses to dispatch before any paid call.
+
+Deterministic policy admits an Antigravity work assignment only when its
+`kind` is `boilerplate`, `scaffolding`, `low_level_implementation`, or
+`abstract_ideation`, its task names that subordinate scope explicitly, it
+requests no review, acceptance, merge, contract, or methodology authority, and
+it does not create a draft pull request. Every admitted work assignment also
+requires a later Claude or Cursor assignment that directly depends on it and
+carries the runtime-bound wording to independently reproduce the artifact and
+integrate only the verified portions or reject it.
+
+Dispatch prefixes every artifact with an explicit non-authoritative notice and
+sends only the assignment's own bounded task and acceptance checks: the
+upstream handoff context is primary-team work product and is withheld. A
+revision re-issues that same bounded assignment rather than untrusted reviewer
+revision text, and fails closed when the prior sandbox `environment_id` is
+absent instead of provisioning a fresh sandbox. Preview routing selects
+Antigravity only for an explicit boilerplate, scaffolding, low-level,
+mechanical, or alternate-ideation request; Claude remains the default.
+
+Antigravity remains eligible for one bounded debate position and one rebuttal
+at its configured advisory weight. Those are governed by the debate policy,
+carry no authority, and are the only Antigravity assignments outside the
+subordinate work lane.
 
 ## Gemini Interactions API contract
 
@@ -126,19 +130,25 @@ The Gemini adapter uses the REST Interactions API; it does not call the legacy
 `generateContent` endpoint. `GEMINI_AGENT` names the managed Antigravity agent and
 is sent as the request's `agent` field. New runs use `environment=remote`, while a
 revision reuses the `environment_id` returned by the prior interaction together
-with `previous_interaction_id`.
+with `previous_interaction_id`. Availability checks instead use the low-cost
+`GEMINI_USAGE_MODEL=gemini-3.5-flash-lite` statelessly with `store=false`; they do
+not provision an Antigravity sandbox. Explicit 429 responses receive at most
+`GEMINI_USAGE_MAX_ATTEMPTS` bounded attempts, and the final normalized quota code
+is persisted without provider response text or credentials.
 
-Gemini assignments and revisions are bounded background interactions with
-`store=true`; Google requires stored state for background polling. Availability
-checks instead use `GEMINI_USAGE_MODEL` as a synchronous, stateless, no-tools
-interaction so a routine probe cannot provision an Antigravity sandbox.
-Terminal output is read from the
+Managed-agent Gemini calls are bounded background interactions with `store=true`.
+Google requires stored state for background polling. Terminal output is read from the
 `model_output` entries in the Interaction `steps` timeline, with `output_text`
 accepted only as an SDK-compatible convenience field. `requires_action` and
 `budget_exceeded` fail closed; the Director never loops indefinitely or treats
 those statuses as successful completion.
 
-Gemini Antigravity remains an optional subordinate specialist. Installing its developer
+`GEMINI_MAX_TOTAL_TOKENS` caps managed-agent runs. The monitor enforces
+`GEMINI_DAILY_REQUEST_LIMIT` for its own probes and reports request, retry, token,
+quota-failure, and provider-reported-cost totals. Google AI Studio billing and
+quota settings remain the authoritative spend backstop when Gemini omits cost.
+
+Gemini remains an optional supplemental specialist. Installing its developer
 documentation tooling does not configure `GEMINI_API_KEY`, enable Gemini usage
 checks, add Gemini to the primary team, or open the paid-run gate.
 

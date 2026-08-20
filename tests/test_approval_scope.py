@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from director_orchestrator.config import Settings
+from director_orchestrator.approvals import assignment_approval_digest
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
@@ -105,7 +106,7 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
         return store, engine, adapter
 
     def _record(self, approved: list[int]) -> TaskRecord:
-        return TaskRecord(
+        record = TaskRecord(
             task_id="DIR-SCOPE",
             status=TaskStatus.QUEUED,
             intake=SlackIntake(
@@ -119,6 +120,13 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
             owner_approved=True,
             approved_assignments=list(approved),
         )
+        record.approved_assignment_digests = {
+            sequence: assignment_approval_digest(
+                next(item for item in record.plan.assignments if item.sequence == sequence)
+            )
+            for sequence in approved
+        }
+        return record
 
     async def test_approving_one_assignment_does_not_clear_the_next(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:

@@ -78,6 +78,15 @@ class Settings:
     oracle_automerge_required_check_app: str = os.getenv(
         "ORACLE_AUTOMERGE_REQUIRED_CHECK_APP", "github-actions"
     ).strip()
+    oracle_automerge_claude_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_CLAUDE_ACTORS", ""
+    )
+    oracle_automerge_cursor_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_CURSOR_ACTORS", ""
+    )
+    oracle_automerge_gemini_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_GEMINI_ACTORS", ""
+    )
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
     usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)
@@ -133,12 +142,17 @@ class Settings:
     gemini_usage_model: str = os.getenv(
         "GEMINI_USAGE_MODEL", "gemini-3.5-flash-lite"
     )
+    gemini_usage_max_attempts: int = _int("GEMINI_USAGE_MAX_ATTEMPTS", 3)
+    gemini_usage_max_retry_delay_seconds: int = _int(
+        "GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS", 8
+    )
+    gemini_max_total_tokens: int = _int("GEMINI_MAX_TOTAL_TOKENS", 20_000)
+    gemini_daily_budget_usd: float = _float("GEMINI_DAILY_BUDGET_USD", 2.0)
+    gemini_daily_request_limit: int = _int("GEMINI_DAILY_REQUEST_LIMIT", 50)
     gemini_mode: str = os.getenv(
         "GEMINI_MODE", "antigravity_subordinate"
     ).strip().lower()
-    gemini_allow_review_verdict: bool = _bool(
-        "GEMINI_ALLOW_REVIEW_VERDICT", False
-    )
+    gemini_allow_review_verdict: bool = _bool("GEMINI_ALLOW_REVIEW_VERDICT", False)
     gemini_allow_primary_authority: bool = _bool(
         "GEMINI_ALLOW_PRIMARY_AUTHORITY", False
     )
@@ -154,6 +168,9 @@ class Settings:
     ).strip().lower()
     perplexity_timeout_seconds: int = _int("PERPLEXITY_TIMEOUT_SECONDS", 180)
     perplexity_daily_budget_usd: float = _float("PERPLEXITY_DAILY_BUDGET_USD", 2.0)
+    perplexity_daily_request_limit: int = _int(
+        "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
+    )
     perplexity_allow_repository_write: bool = _bool(
         "PERPLEXITY_ALLOW_REPOSITORY_WRITE", False
     )
@@ -161,29 +178,40 @@ class Settings:
         "PERPLEXITY_ALLOW_REVIEW_VERDICT", False
     )
 
+    def gemini_supplemental_readiness(self) -> dict[str, bool]:
+        return {
+            "credential_configured": bool(self.gemini_api_key),
+            "agent_configured": bool(self.gemini_agent),
+            "usage_model_configured": bool(self.gemini_usage_model),
+            "usage_retry_attempts_valid": 1 <= self.gemini_usage_max_attempts <= 5,
+            "usage_retry_delay_valid": 0
+            <= self.gemini_usage_max_retry_delay_seconds
+            <= 60,
+            "token_budget_valid": 1 <= self.gemini_max_total_tokens <= 1_000_000,
+            "daily_budget_valid": 0 < self.gemini_daily_budget_usd <= 1_000,
+            "daily_request_limit_valid": 1
+            <= self.gemini_daily_request_limit
+            <= 100_000,
+            "subordinate_mode": self.gemini_mode == "antigravity_subordinate",
+            "review_verdict_disabled": not self.gemini_allow_review_verdict,
+            "primary_authority_disabled": not self.gemini_allow_primary_authority,
+        }
+
     def perplexity_research_readiness(self) -> dict[str, bool]:
         return {
             "enabled": self.perplexity_enabled,
             "credential_configured": bool(self.perplexity_api_key),
-            "scope_signing_secret_configured": bool(self.shared_secret),
             "research_only_mode": self.perplexity_mode == "research_only",
             "result_limit_valid": 1 <= self.perplexity_max_results <= 20,
             "search_context_size_valid": self.perplexity_search_context_size
             in {"low", "medium", "high"},
             "timeout_valid": 1 <= self.perplexity_timeout_seconds <= 1_800,
             "budget_valid": 0 < self.perplexity_daily_budget_usd <= 1_000,
+            "daily_request_limit_valid": 1
+            <= self.perplexity_daily_request_limit
+            <= 100_000,
             "repository_write_disabled": not self.perplexity_allow_repository_write,
             "review_verdict_disabled": not self.perplexity_allow_review_verdict,
-        }
-
-    def antigravity_subordinate_readiness(self) -> dict[str, bool]:
-        return {
-            "credential_configured": bool(self.gemini_api_key),
-            "scope_signing_secret_configured": bool(self.shared_secret),
-            "managed_agent_configured": self.gemini_agent.startswith("antigravity-"),
-            "subordinate_mode": self.gemini_mode == "antigravity_subordinate",
-            "review_verdict_disabled": not self.gemini_allow_review_verdict,
-            "primary_authority_disabled": not self.gemini_allow_primary_authority,
         }
 
     def readiness(self) -> dict[str, bool]:
@@ -192,7 +220,7 @@ class Settings:
             "openai_director": bool(self.openai_api_key),
             "cursor": bool(self.cursor_api_key),
             "claude": bool(self.claude_routine_url and self.claude_routine_token),
-            "gemini": all(self.antigravity_subordinate_readiness().values()),
+            "gemini": all(self.gemini_supplemental_readiness().values()),
             "perplexity": all(self.perplexity_research_readiness().values()),
         }
 
@@ -235,6 +263,17 @@ class Settings:
             "required_checks_configured": bool(self.oracle_automerge_required_checks),
             "required_check_app_configured": bool(self.oracle_automerge_required_check_app),
             "allowed_paths_configured": bool(self.oracle_automerge_allowed_paths),
+            "provider_actor_bindings_configured": bool(
+                self.oracle_automerge_claude_actors
+                and self.oracle_automerge_cursor_actors
+            ),
+        }
+
+    def oracle_provider_actor_map(self) -> dict[str, frozenset[str]]:
+        return {
+            "claude": frozenset(item.lower() for item in self.oracle_automerge_claude_actors),
+            "cursor": frozenset(item.lower() for item in self.oracle_automerge_cursor_actors),
+            "gemini": frozenset(item.lower() for item in self.oracle_automerge_gemini_actors),
         }
 
     def oracle_github_credential_configured(self) -> bool:
@@ -261,9 +300,20 @@ class Settings:
             },
             "cursor": {
                 "team": "primary",
-                "priority": "primary_repository_teammate_and_independent_second_pass",
+                "priority": "primary_full_spectrum_repository_partner",
                 "account_context": self.other_provider_account_context,
-                "strengths": ["isolated repository execution", "parallel implementation", "draft pull requests"],
+                "capability_parity_target": 0.9,
+                "eligible_complexity": ["low", "medium", "high", "critical"],
+                "strengths": [
+                    "research and evidence verification",
+                    "deep technical reasoning and planning support",
+                    "complex implementation, debugging, and refactoring",
+                    "architecture, reliability, and security-adjacent analysis",
+                    "cross-platform quality assurance",
+                    "independent exact-SHA review",
+                    "technical leadership and coordination",
+                    "isolated repository execution and draft pull requests",
+                ],
             },
             "gemini": {
                 "team": "supplemental",
@@ -273,11 +323,14 @@ class Settings:
                     "bounded boilerplate and scaffolding",
                     "low-level mechanical implementation",
                     "non-authoritative alternate ideas",
+                    "bounded sandbox execution for the above",
                 ],
                 "constraints": [
-                    "must feed a later Claude or Cursor integration assignment",
-                    "cannot issue review or acceptance verdicts",
+                    "supplemental only; never a primary-team substitute",
+                    "work assignments must feed a later Claude or Cursor integration assignment",
+                    "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
+                    "advisory debate votes stay non-authoritative at the configured weight",
                 ],
             },
             "perplexity": {

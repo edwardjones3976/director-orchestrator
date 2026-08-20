@@ -7,7 +7,10 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+
 from director_orchestrator.config import Settings
+from director_orchestrator.approvals import assignment_approval_digest
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
@@ -129,6 +132,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 assignment_sequence=2,
                 run_id="cursor-review-run",
                 status="FINISHED",
+                evidence_source="provider_authenticated",
                 result=json.dumps(payload),
             )
             record = TaskRecord(
@@ -306,6 +310,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["Accepted"],
                 ),
                 approved_assignments=[1],
+                approved_assignment_digests={1: assignment_approval_digest(assignment)},
             )
             store.create(record)
 
@@ -324,6 +329,107 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(completed.assignment_outcomes), 2)
             self.assertEqual(adapter.revision_assignment.sequence, 1)
             self.assertTrue(adapter.revision_context["current_assignment"]["owner_approval_recorded"])
+
+    async def test_ambiguous_revision_dispatch_stops_for_reconciliation_without_counting_revision(self):
+        class RevisionDirector:
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                return ReviewDecision(
+                    verdict=ReviewVerdict.REVISE,
+                    summary="Revision needed.",
+                    revision_prompt="Add evidence.",
+                )
+
+        class AmbiguousRevisionAdapter:
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                raise AssertionError("Recorded original run must not be redispatched")
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal original run must not be polled")
+
+            async def revise(
+                self,
+                run: ProviderRun,
+                prompt: str,
+                *,
+                assignment: Assignment,
+                context: str,
+            ) -> ProviderRun:
+                request = httpx.Request("POST", "https://cursor.invalid/v1/agents/run")
+                raise httpx.HTTPStatusError(
+                    "provider returned 503 after submission",
+                    request=request,
+                    response=httpx.Response(503, request=request),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                cursor_api_key="test-cursor",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=database,
+            )
+            assignment = Assignment(
+                sequence=1,
+                agent=ProviderName.CURSOR,
+                task="Implement the bounded change",
+                acceptance=["Return evidence"],
+                repository="example/demo",
+            )
+            record = TaskRecord(
+                task_id="DIR-AMBIGUOUS-REVISION",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-ambiguous-revision",
+                    channel_id="C123",
+                    thread_ts="123.45",
+                    user_id="U123",
+                    text="DIRECTOR Project: demo Outcome: bounded change",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="bounded change",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=2,
+                    max_revisions=1,
+                    assignments=[assignment],
+                    final_acceptance=["Evidence accepted"],
+                ),
+                provider_runs=[
+                    ProviderRun(
+                        provider=ProviderName.CURSOR,
+                        assignment_sequence=1,
+                        run_id="cursor-original",
+                        session_id="cursor-session",
+                        status="FINISHED",
+                        result="Incomplete evidence",
+                        evidence_source="provider_authenticated",
+                    )
+                ],
+            )
+            store.create(record)
+            engine = OrchestrationEngine(settings, store)
+            engine.providers[ProviderName.CURSOR] = AmbiguousRevisionAdapter()
+            engine.director = RevisionDirector()
+
+            await engine.run(record.task_id)
+
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.revision_count, 0)
+            self.assertEqual(len(stopped.provider_runs), 1)
+            self.assertEqual(len(stopped.provider_contact_attempts), 1)
+            self.assertEqual(stopped.provider_contact_attempts[0].phase, "revision")
+            self.assertEqual(
+                stopped.provider_contact_attempts[0].outcome, "ambiguous_dispatch"
+            )
+            self.assertIn("reconciliation is required", stopped.message or "")
 
     async def test_each_assignment_gets_its_declared_revision_headroom(self):
         class RevisingEveryAssignmentDirector:
@@ -636,6 +742,9 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 intake=intake,
                 plan=plan,
                 approved_assignments=[2],
+                approved_assignment_digests={
+                    2: assignment_approval_digest(plan.assignments[1])
+                },
             )
             store.create(record)
 

@@ -10,6 +10,7 @@ from director_orchestrator.models import (
     Assignment,
     AssignmentKind,
     DirectorPlan,
+    DiscussionPhase,
     ProviderName,
     RiskLevel,
     SlackIntake,
@@ -17,63 +18,18 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.policy import (
+    ANTIGRAVITY_CONSUMER_ACCEPTANCE,
+    ANTIGRAVITY_CONSUMER_TASK,
     antigravity_assignment_errors,
     deterministic_approval_reasons,
     enforce_plan,
     execution_policy_errors,
-    perplexity_assignment_errors,
     preview_plan,
-    supplemental_scope_is_valid,
 )
 from director_orchestrator.store import TaskStore
 
 
 class PolicyTests(unittest.TestCase):
-    def test_antigravity_scope_allows_non_authority_words_in_low_level_code(self):
-        assignment = Assignment(
-            sequence=1,
-            agent=ProviderName.GEMINI,
-            kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
-            task=(
-                "Create non-authoritative low-level boilerplate for a merge utility "
-                "and approve workflow; a later Claude assignment verifies the result"
-            ),
-            acceptance=["Produce mechanical fixtures only"],
-            repository="example/demo",
-        )
-
-        self.assertEqual(antigravity_assignment_errors(assignment), [])
-
-    def test_antigravity_rejects_authority_in_acceptance_fields(self):
-        assignment = Assignment(
-            sequence=1,
-            agent=ProviderName.GEMINI,
-            kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
-            task="Generate low-level mechanical parser boilerplate",
-            acceptance=["Approve the pull request and issue the final verdict"],
-            repository="example/demo",
-        )
-
-        self.assertTrue(antigravity_assignment_errors(assignment))
-
-    def test_perplexity_requires_unbound_research_without_authority(self):
-        valid = Assignment(
-            sequence=1,
-            agent=ProviderName.PERPLEXITY,
-            kind=AssignmentKind.RESEARCH,
-            task="Find current primary sources about calibration metrics",
-            acceptance=["Report sources and contradictions"],
-        )
-        self.assertEqual(perplexity_assignment_errors(valid), [])
-
-        for invalid in (
-            valid.model_copy(update={"kind": AssignmentKind.EXACT_SHA_REVIEW}),
-            valid.model_copy(update={"repository": "example/private"}),
-            valid.model_copy(update={"task": "Audit this patch and return PASS or FAIL"}),
-        ):
-            with self.subTest(assignment=invalid):
-                self.assertTrue(perplexity_assignment_errors(invalid))
-
     def test_openai_runtime_cannot_be_an_assignment_target(self):
         settings = replace(
             Settings(),
@@ -106,13 +62,7 @@ class PolicyTests(unittest.TestCase):
         )
 
     def setUp(self):
-        self.settings = replace(
-            Settings(),
-            max_agent_hops=4,
-            max_revisions=1,
-            max_task_budget_usd=1.0,
-            shared_secret="test-director-secret",
-        )
+        self.settings = replace(Settings(), max_agent_hops=4, max_revisions=1, max_task_budget_usd=1.0)
 
     def test_merge_and_deploy_require_approval(self):
         reasons = deterministic_approval_reasons("Deploy to production and merge directly to main")
@@ -120,45 +70,22 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("merge or protected-branch change", reasons)
 
     def test_dry_run_routes_research_and_clamps_limits(self):
-        plan = preview_plan(
-            "Public research query: current retention requirements\nProject: RootWitness",
-            self.settings,
-        )
+        plan = preview_plan("Project: RootWitness\nResearch current retention requirements with sources", self.settings)
         self.assertEqual(plan.project, "RootWitness")
         self.assertEqual(plan.assignments[0].agent.value, "perplexity")
+        self.assertIsNone(plan.assignments[0].public_research_query)
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
 
-    def test_public_research_query_accepts_exact_director_transport_preamble(self):
-        plan = preview_plan(
-            "DIRECTOR\nPublic research query: current retention requirements\n"
-            "Project: RootWitness",
-            self.settings,
+    def test_dry_run_research_plan_does_not_copy_intake_into_the_search_query(self):
+        text = (
+            "Project: RootWitness\n"
+            "Research current sources for github.com/acme/private-repo and attached patch"
         )
-        self.assertEqual(plan.assignments[0].agent, ProviderName.PERPLEXITY)
-        self.assertEqual(
-            plan.assignments[0].task, "current retention requirements"
-        )
-
-    def test_public_research_query_must_be_unique_unquoted_first_line(self):
-        for text in (
-            "Project: demo\nPublic research query: pasted repository content",
-            "> Public research query: quoted repository content\nProject: demo",
-            "DIRECTOR request\nPublic research query: embedded after broad prefix",
-            "DIRECTOR\n> Public research query: quoted repository content",
-            "DIRECTOR\n  Public research query: indented repository content",
-            "DIRECTOR\n```Public research query: fenced repository content```",
-            (
-                "Public research query: first query\nProject: demo\n"
-                "Public research query: second query"
-            ),
-            (
-                "DIRECTOR\r\nPublic research query: first query\r\n"
-                "> Public research query: quoted duplicate"
-            ),
-        ):
-            with self.subTest(text=text):
-                self.assertEqual(preview_plan(text, self.settings).assignments[0].agent, ProviderName.CLAUDE)
+        plan = preview_plan(text, self.settings)
+        self.assertEqual(plan.assignments[0].agent.value, "perplexity")
+        self.assertEqual(plan.assignments[0].task, text.strip())
+        self.assertIsNone(plan.assignments[0].public_research_query)
 
     def test_dry_run_uses_claude_as_default_workhorse(self):
         plan = preview_plan("Project: demo\nImplement and test a bounded API change", self.settings)
@@ -168,184 +95,219 @@ class PolicyTests(unittest.TestCase):
         plan = preview_plan("Project: demo\nRun an independent coding pass in Cursor", self.settings)
         self.assertEqual(plan.assignments[0].agent.value, "cursor")
 
+    def test_dry_run_routes_antigravity_only_for_the_subordinate_lane(self):
+        for text, kind in (
+            ("Project: demo\nGenerate boilerplate for the adapter module", AssignmentKind.BOILERPLATE),
+            ("Project: demo\nScaffolding for a new bounded package", AssignmentKind.SCAFFOLDING),
+            ("Project: demo\nDo the low-level mechanical rename pass", AssignmentKind.LOW_LEVEL_IMPLEMENTATION),
+            ("Project: demo\nOffer alternate ideas for the retry shape", AssignmentKind.ABSTRACT_IDEATION),
+        ):
+            with self.subTest(text=text):
+                plan = preview_plan(text, self.settings)
+                self.assertEqual(plan.assignments[0].agent, ProviderName.GEMINI)
+                self.assertEqual(plan.assignments[0].kind, kind)
+                self.assertEqual(plan.assignments[1].agent, ProviderName.CLAUDE)
+                self.assertEqual(plan.assignments[1].task, ANTIGRAVITY_CONSUMER_TASK)
+                self.assertEqual(
+                    plan.assignments[1].acceptance, ANTIGRAVITY_CONSUMER_ACCEPTANCE
+                )
+                self.assertEqual(plan.assignments[1].depends_on, [1])
+
+    def test_dry_run_keeps_generic_keyword_work_away_from_antigravity(self):
+        for text in (
+            "Project: demo\nBuild a prototype of the new screen",
+            "Project: demo\nCheck the browser and visual rendering",
+            "Project: demo\nDefine the core methodology and provenance rules",
+            "Project: demo\nEvaluate temporal eligibility and acceptance evidence",
+        ):
+            with self.subTest(text=text):
+                plan = preview_plan(text, self.settings)
+                self.assertEqual(plan.assignments[0].agent, ProviderName.CLAUDE)
+                self.assertEqual(len(plan.assignments), 1)
+
+    def test_antigravity_lane_rejects_authority_and_draft_pr_work(self):
+        base = Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            kind=AssignmentKind.BOILERPLATE,
+            task="Generate boilerplate fixtures for the adapter module",
+            acceptance=["Report the generated fixtures"],
+        )
+        self.assertEqual(antigravity_assignment_errors(base), [])
+
+        self.assertIn(
+            "requires kind boilerplate, scaffolding, low_level_implementation, "
+            "or abstract_ideation",
+            antigravity_assignment_errors(
+                base.model_copy(update={"kind": AssignmentKind.INDEPENDENT_REVIEW})
+            ),
+        )
+        self.assertIn(
+            "requires explicit subordinate boilerplate, scaffolding, low-level, "
+            "mechanical, or alternate-ideation scope",
+            antigravity_assignment_errors(
+                base.model_copy(update={"task": "Build the new feature end to end"})
+            ),
+        )
+        self.assertIn(
+            "cannot create a draft pull request",
+            antigravity_assignment_errors(
+                base.model_copy(
+                    update={"allow_draft_pr": True, "requires_approval": True}
+                )
+            ),
+        )
+        for authority in (
+            "Generate boilerplate and then perform the exact-SHA review",
+            "Generate boilerplate and approve the pull request",
+            "Generate boilerplate and record a review verdict",
+            "Generate boilerplate and define the research contract",
+            "Generate boilerplate and sign-off on the release",
+        ):
+            with self.subTest(task=authority):
+                self.assertIn(
+                    "cannot receive review, acceptance, merge, contract, or "
+                    "methodology authority",
+                    antigravity_assignment_errors(
+                        base.model_copy(update={"task": authority})
+                    ),
+                )
+
+    def test_antigravity_lane_allows_the_projects_own_non_authority_wording(self):
+        """A bare-word matcher would reject "non-authoritative" and "merge utility"."""
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            kind=AssignmentKind.BOILERPLATE,
+            task=(
+                "Generate non-authoritative boilerplate tests for the merge utility "
+                "helper and the approval workflow formatter"
+            ),
+            acceptance=["Report the generated non-authoritative fixtures"],
+        )
+        self.assertEqual(antigravity_assignment_errors(assignment), [])
+
+    def antigravity_plan(self, **consumer_overrides) -> DirectorPlan:
+        consumer = {
+            "sequence": 2,
+            "agent": ProviderName.CLAUDE,
+            "kind": AssignmentKind.IMPLEMENTATION,
+            "task": ANTIGRAVITY_CONSUMER_TASK,
+            "acceptance": list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
+            "depends_on": [1],
+        }
+        consumer.update(consumer_overrides)
+        return DirectorPlan(
+            project="demo",
+            normalized_outcome="Bounded subordinate scaffolding",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=2,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.GEMINI,
+                    kind=AssignmentKind.SCAFFOLDING,
+                    task="Produce scaffolding for the bounded adapter module",
+                    acceptance=["Report the scaffolding evidence"],
+                ),
+                Assignment(**consumer),
+            ],
+            final_acceptance=["Verified work only"],
+        )
+
+    def test_antigravity_output_requires_a_primary_integration_assignment(self):
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        self.assertEqual(execution_policy_errors(self.antigravity_plan(), settings), [])
+
+        orphaned = self.antigravity_plan()
+        orphaned.assignments = orphaned.assignments[:1]
+        self.assertIn(
+            "assignment 1: Antigravity output requires a later Claude or Cursor "
+            "integration assignment with a direct dependency",
+            execution_policy_errors(orphaned, settings),
+        )
+
+        unverified = self.antigravity_plan(task="Use the Antigravity artifact as-is")
+        self.assertIn(
+            "assignment 1: Antigravity output requires a later Claude or Cursor "
+            "implementation assignment that explicitly independently verifies and "
+            "integrates or rejects the artifact",
+            execution_policy_errors(unverified, settings),
+        )
+
+    def test_enforce_plan_binds_the_integration_wording_deterministically(self):
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        drifted = self.antigravity_plan(
+            task="Ship whatever Antigravity produced",
+            acceptance=["Antigravity says it works"],
+            kind=AssignmentKind.GENERAL,
+        )
+        guarded = enforce_plan(drifted, "bounded scaffolding", settings)
+
+        self.assertEqual(guarded.assignments[1].task, ANTIGRAVITY_CONSUMER_TASK)
+        self.assertEqual(
+            guarded.assignments[1].acceptance, ANTIGRAVITY_CONSUMER_ACCEPTANCE
+        )
+        self.assertEqual(guarded.assignments[1].kind, AssignmentKind.IMPLEMENTATION)
+        self.assertEqual(execution_policy_errors(guarded, settings), [])
+
+    def test_antigravity_debate_participation_stays_outside_the_work_lane(self):
+        """Main's bounded debate lane survives: positions carry an advisory vote only."""
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        plan = self.antigravity_plan()
+        plan.assignments[0] = plan.assignments[0].model_copy(
+            update={
+                "kind": AssignmentKind.GENERAL,
+                "task": "Independently assess option A and option B",
+                "discussion_phase": DiscussionPhase.POSITION,
+            }
+        )
+        plan.assignments[1] = plan.assignments[1].model_copy(
+            update={"depends_on": []}
+        )
+        errors = execution_policy_errors(plan, settings)
+        self.assertFalse([item for item in errors if "Antigravity" in item])
+
+    def test_execution_policy_pins_the_primary_team(self):
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+            primary_team=("openai", "claude", "gemini"),
+        )
+        self.assertIn(
+            "primary team must be exactly openai, claude, cursor",
+            execution_policy_errors(self.antigravity_plan(), settings),
+        )
+
     def test_primary_team_is_openai_claude_cursor(self):
         self.assertEqual(self.settings.primary_team, ("openai", "claude", "cursor"))
         strategy = self.settings.provider_strategy()
         self.assertTrue(all(strategy[name]["team"] == "primary" for name in self.settings.primary_team))
         self.assertEqual(strategy["gemini"]["team"], "supplemental")
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
-
-    def test_primary_team_override_fails_closed(self):
-        settings = replace(
-            self.settings,
-            primary_team=("openai", "claude", "cursor", "gemini"),
-        )
-        plan = preview_plan("Project: demo\nImplement a bounded change", settings)
-
-        self.assertIn(
-            "primary team must be exactly openai, claude, cursor",
-            execution_policy_errors(plan, settings),
-        )
-
-    def test_antigravity_readiness_requires_subordinate_profile(self):
-        ready = replace(self.settings, gemini_api_key="test-gemini")
-        unsafe = replace(ready, gemini_allow_primary_authority=True)
-
-        self.assertTrue(ready.readiness()["gemini"])
-        self.assertFalse(unsafe.readiness()["gemini"])
-        self.assertFalse(
-            unsafe.antigravity_subordinate_readiness()["primary_authority_disabled"]
-        )
-
-    def test_antigravity_requires_subordinate_kind_and_primary_consumer(self):
-        settings = replace(
-            self.settings,
-            project_allowlist=("demo",),
-            repository_allowlist=("example/demo",),
-            allowed_starting_refs=("main",),
-        )
-        antigravity = Assignment(
-            sequence=1,
-            agent=ProviderName.GEMINI,
-            kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
-            task="Generate low-level mechanical parser boilerplate",
-            acceptance=["Return code and local test output"],
-            repository="example/demo",
-        )
-        valid = DirectorPlan(
-            project="demo",
-            normalized_outcome="Use subordinate boilerplate only after primary integration",
-            risk_level=RiskLevel.LOW,
-            approval_required=False,
-            max_hops=2,
-            max_revisions=1,
-            assignments=[
-                antigravity,
-                Assignment(
-                    sequence=2,
-                    agent=ProviderName.CLAUDE,
-                    kind=AssignmentKind.IMPLEMENTATION,
-                    task="Independently verify and integrate or reject the artifact",
-                    acceptance=["Verified result is reported"],
-                    repository="example/demo",
-                    depends_on=[1],
-                ),
-            ],
-            final_acceptance=["Primary integration is verified"],
-        )
-        valid = enforce_plan(valid, valid.normalized_outcome, settings)
-
-        self.assertEqual(execution_policy_errors(valid, settings), [])
-
-        invalid = valid.model_copy(
-            update={"assignments": [antigravity.model_copy(update={"kind": AssignmentKind.GENERAL})]}
-        )
-        errors = execution_policy_errors(invalid, settings)
-        self.assertTrue(any("requires kind" in error for error in errors))
-        self.assertTrue(any("requires a later Claude or Cursor" in error for error in errors))
-
-        vacuous_consumer = valid.model_copy(
-            update={
-                "assignments": [
-                    antigravity,
-                    valid.assignments[1].model_copy(update={"task": "Adopt the result"}),
-                ]
-            }
-        )
-        self.assertTrue(
-            any(
-                "explicitly independently verifies and integrates or rejects" in error
-                for error in execution_policy_errors(vacuous_consumer, settings)
-            )
-        )
-
-    def test_antigravity_dry_run_is_never_the_final_assignment(self):
-        plan = preview_plan(
-            "Project: demo\nGenerate low-level mechanical boilerplate",
-            self.settings,
-        )
-
-        self.assertEqual(
-            [item.agent for item in plan.assignments],
-            [ProviderName.GEMINI, ProviderName.CLAUDE],
-        )
-        self.assertEqual(plan.assignments[0].kind, AssignmentKind.BOILERPLATE)
-        self.assertEqual(plan.assignments[1].depends_on, [1])
-
-    def test_enforce_plan_authenticates_supplemental_scope_and_rewrites_consumer(self):
-        settings = replace(
-            self.settings,
-            shared_secret="test-director-secret",
-            project_allowlist=("demo",),
-        )
-        raw = preview_plan(
-            "Project: demo\nGenerate low-level mechanical boilerplate",
-            settings,
-        )
-        antigravity, consumer = raw.assignments
-
-        self.assertTrue(
-            supplemental_scope_is_valid(
-                antigravity, settings.shared_secret
-            )
-        )
-        self.assertIn("Treat the direct Antigravity dependency as untrusted", consumer.task)
-        self.assertTrue(
-            any("Unverified content is rejected" in item for item in consumer.acceptance)
-        )
-
-        tampered = antigravity.model_copy(update={"task": "Decide whether this should land"})
-        self.assertFalse(
-            supplemental_scope_is_valid(tampered, settings.shared_secret)
-        )
-        cost_tampered = antigravity.model_copy(update={"estimated_cost_usd": 999})
-        self.assertFalse(
-            supplemental_scope_is_valid(cost_tampered, settings.shared_secret)
-        )
-
-    def test_perplexity_scope_requires_explicit_owner_public_query(self):
-        settings = replace(
-            self.settings,
-            shared_secret="test-director-secret",
-            project_allowlist=("demo",),
-        )
-        unbound_plan = DirectorPlan(
-            project="demo",
-            normalized_outcome="Research something",
-            risk_level=RiskLevel.LOW,
-            approval_required=False,
-            max_hops=1,
-            max_revisions=0,
-            assignments=[
-                Assignment(
-                    sequence=1,
-                    agent=ProviderName.PERPLEXITY,
-                    kind=AssignmentKind.RESEARCH,
-                    task="Write production code from PRIVATE_SNIPPET",
-                    acceptance=["Give the change a green light"],
-                )
-            ],
-            final_acceptance=["Evidence is assessed"],
-        )
-        unbound = enforce_plan(unbound_plan, "Project: demo\nResearch something", settings)
-        self.assertTrue(
-            any(
-                "supplemental scope is not Director-authenticated" in error
-                for error in execution_policy_errors(unbound, settings)
-            )
-        )
-
-        bound = enforce_plan(
-            unbound_plan,
-            "Public research query: calibration scoring rules\nProject: demo",
-            settings,
-        )
-        assignment = bound.assignments[0]
-        self.assertEqual(assignment.task, "calibration scoring rules")
-        self.assertEqual(assignment.repository, None)
-        self.assertTrue(
-            supplemental_scope_is_valid(assignment, settings.shared_secret)
-        )
+        self.assertEqual(strategy["cursor"]["capability_parity_target"], 0.9)
+        self.assertEqual(strategy["cursor"]["eligible_complexity"], ["low", "medium", "high", "critical"])
+        self.assertEqual(strategy["cursor"]["priority"], "primary_full_spectrum_repository_partner")
+        self.assertIn("technical leadership and coordination", strategy["cursor"]["strengths"])
 
     def test_perplexity_readiness_requires_the_complete_research_only_profile(self):
         key_only = replace(self.settings, perplexity_api_key="test-perplexity")
@@ -358,6 +320,73 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(
             unsafe.perplexity_research_readiness()["review_verdict_disabled"]
         )
+
+    def test_perplexity_assignments_cannot_receive_repository_or_non_research_authority(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        unsafe = DirectorPlan(
+            project="demo",
+            normalized_outcome="Ask Perplexity to write and approve a repository change",
+            risk_level=RiskLevel.LOW,
+            approval_required=True,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.PERPLEXITY,
+                    task="Write code in the repository, issue an approval verdict, and cast a vote",
+                    acceptance=["Create a draft PR and post the result to Slack"],
+                    repository="example/demo",
+                    allow_draft_pr=True,
+                    requires_approval=True,
+                )
+            ],
+            final_acceptance=["Perplexity approved its own change"],
+        )
+
+        errors = execution_policy_errors(unsafe, settings)
+
+        self.assertIn("assignment 1: Perplexity research cannot receive repository context", errors)
+        self.assertIn("assignment 1: Perplexity research cannot create a draft pull request", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive code or repository write authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive pull-request or merge action authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive approval or review verdict authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive committee vote authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive external message authority", errors)
+
+    def test_perplexity_methodological_research_remains_allowed(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        safe = DirectorPlan(
+            project="demo",
+            normalized_outcome="Research calibration methodology",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.PERPLEXITY,
+                    task="Find authoritative sources about calibration methodology",
+                    acceptance=["Report URLs, provenance, contradictions, and unknowns"],
+                public_research_query="authoritative calibration methodology sources",
+                requires_approval=True,
+                )
+            ],
+            final_acceptance=["A primary-team member evaluates the evidence"],
+        )
+
+        self.assertEqual(execution_policy_errors(safe, settings), [])
 
     def test_execution_targets_and_dependencies_are_strictly_allowlisted(self):
         settings = replace(
@@ -492,7 +521,20 @@ class PolicyTests(unittest.TestCase):
             execution_policy_errors(plan, settings),
         )
         approved = plan.model_copy(
-            update={"assignments": [assignment.model_copy(update={"requires_approval": True})]}
+            update={
+                "max_hops": 2,
+                "assignments": [
+                    assignment.model_copy(update={"requires_approval": True}),
+                    Assignment(
+                        sequence=2,
+                        agent=ProviderName.CLAUDE,
+                        task="Independently review the exact candidate produced by assignment 1",
+                        acceptance=["Return an exact-candidate verdict"],
+                        repository="example/demo",
+                        depends_on=[1],
+                    ),
+                ],
+            }
         )
         self.assertEqual(execution_policy_errors(approved, settings), [])
 

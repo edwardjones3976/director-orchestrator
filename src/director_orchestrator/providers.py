@@ -9,19 +9,28 @@ from typing import Any
 import httpx
 
 from .config import Settings
-from .models import Assignment, ProviderName, ProviderRun
-from .policy import (
-    antigravity_assignment_errors,
-    perplexity_assignment_errors,
-    supplemental_scope_is_valid,
-)
+from .models import Assignment, DiscussionPhase, ProviderName, ProviderRun
+from .policy import antigravity_assignment_errors
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        attempt_count: int = 1,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.attempt_count = attempt_count
+
+
+class PostSubmitAmbiguityError(ProviderError):
+    """A provider accepted a create request, but its new run cannot be identified."""
 
 
 def _response_error_blob(response: httpx.Response) -> str:
@@ -394,7 +403,7 @@ class ClaudeAdapter(ProviderAdapter):
 
 class GeminiAdapter(ProviderAdapter):
     name = ProviderName.GEMINI
-    _NON_AUTHORITATIVE_NOTICE = (
+    NON_AUTHORITATIVE_NOTICE = (
         "NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT: This output is subordinate input. "
         "Claude or Cursor must independently verify and integrate or reject it before use."
     )
@@ -402,7 +411,7 @@ class GeminiAdapter(ProviderAdapter):
     def _require_profile(self) -> None:
         failed = [
             name
-            for name, ready in self.settings.antigravity_subordinate_readiness().items()
+            for name, ready in self.settings.gemini_supplemental_readiness().items()
             if not ready
         ]
         if failed:
@@ -411,11 +420,14 @@ class GeminiAdapter(ProviderAdapter):
             )
 
     def _require_subordinate(self, assignment: Assignment) -> None:
+        """Fail closed before any paid dispatch that leaves the subordinate lane.
+
+        Debate positions and rebuttals are bounded by the debate policy instead, so
+        only DiscussionPhase.WORK assignments are held to the lane check here.
+        """
         self._require_profile()
-        if not supplemental_scope_is_valid(assignment, self.settings.shared_secret):
-            raise ProviderError(
-                "Antigravity assignment lacks a Director-authenticated supplemental scope"
-            )
+        if assignment.discussion_phase != DiscussionPhase.WORK:
+            return
         errors = antigravity_assignment_errors(assignment)
         if errors:
             raise ProviderError(
@@ -444,14 +456,19 @@ class GeminiAdapter(ProviderAdapter):
         *,
         session_id: str | None = None,
         fallback_run_id: str | None = None,
+        post_submit: bool = False,
         subordinate_output: bool = False,
     ) -> ProviderRun:
+        if not isinstance(payload, dict):
+            error_type = PostSubmitAmbiguityError if post_submit else ProviderError
+            raise error_type("Gemini Interaction response was not an object")
         run_id = payload.get("id") or fallback_run_id
         if not run_id:
-            raise ProviderError("Gemini Interaction response did not include an ID")
+            error_type = PostSubmitAmbiguityError if post_submit else ProviderError
+            raise error_type("Gemini Interaction response did not include an ID")
         result = self._output_text(payload)
         if subordinate_output and result:
-            result = f"{self._NON_AUTHORITATIVE_NOTICE}\n\n{result}"
+            result = f"{self.NON_AUTHORITATIVE_NOTICE}\n\n{result}"
         return ProviderRun(
             provider=self.name,
             run_id=run_id,
@@ -469,43 +486,86 @@ class GeminiAdapter(ProviderAdapter):
             "Api-Revision": self.settings.gemini_api_revision,
         }
 
-    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
-        del context  # Upstream handoffs are not instructions for this subordinate lane.
-        self._require_subordinate(assignment)
-        prompt = (
-            f"{self._NON_AUTHORITATIVE_NOTICE}\n\n"
-            "Stay within bounded boilerplate, scaffolding, low-level mechanical implementation, "
-            "or alternate ideation. Do not issue review, acceptance, merge, contract, or "
-            "methodology verdicts. Clearly separate tested artifacts from abstract ideas.\n\n"
+    @staticmethod
+    def _error_code(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError, TypeError):
+            payload = {}
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            for key in ("status", "code"):
+                value = error.get(key)
+                if isinstance(value, str) and value.strip():
+                    normalized = value.strip().lower()
+                    if normalized in {
+                        "quota_exceeded",
+                        "rate_limit_exceeded",
+                        "resource_exhausted",
+                    }:
+                        return normalized
+        return f"http_{response.status_code}"
+
+    def _usage_retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get("Retry-After")
+        try:
+            parsed = float(retry_after) if retry_after is not None else float(2**attempt)
+        except (TypeError, ValueError):
+            parsed = float(2**attempt)
+        return min(
+            max(parsed, 0.0),
+            float(max(0, self.settings.gemini_usage_max_retry_delay_seconds)),
+        )
+
+    def _subordinate_prompt(self, assignment: Assignment) -> str:
+        return (
+            f"{self.NON_AUTHORITATIVE_NOTICE}\n\n"
+            "Stay within bounded boilerplate, scaffolding, low-level mechanical "
+            "implementation, or alternate ideation. Do not issue review, acceptance, "
+            "merge, contract, or methodology verdicts. Clearly separate tested "
+            "artifacts from abstract ideas.\n\n"
             f"Task:\n{assignment.task}\n\nAcceptance checks:\n- "
             + "\n- ".join(assignment.acceptance)
         )
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        self._require_subordinate(assignment)
+        if assignment.discussion_phase == DiscussionPhase.WORK:
+            # A subordinate lane receives its own bounded task, never the upstream
+            # handoff context: that context is primary-team work product.
+            prompt = self._subordinate_prompt(assignment)
+        else:
+            prompt = (
+                f"{self.NON_AUTHORITATIVE_NOTICE}\n\n{assignment.task}"
+                "\n\nAcceptance checks:\n- "
+                + "\n- ".join(assignment.acceptance)
+                + f"\n\nContext:\n{context}"
+            )
         body = {
             "agent": self.settings.gemini_agent,
             "input": prompt,
             "environment": "remote",
             "background": True,
             "store": True,
+            "agent_config": {
+                "type": "antigravity",
+                "max_total_tokens": self.settings.gemini_max_total_tokens,
+            },
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload, subordinate_output=True)
+        return self._run(payload, post_submit=True, subordinate_output=True)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
-        self._require_profile()
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.get(f"{self.settings.gemini_api_base}/interactions/{run.run_id}", headers=self.headers)
             response.raise_for_status()
         payload = response.json()
         return self._run(
-            payload,
-            session_id=run.session_id,
-            subordinate_output=True,
-        ).model_copy(
-            update={"assignment_sequence": run.assignment_sequence}
-        )
+            payload, session_id=run.session_id, subordinate_output=True
+        ).model_copy(update={"assignment_sequence": run.assignment_sequence})
 
     async def revise(
         self,
@@ -515,27 +575,40 @@ class GeminiAdapter(ProviderAdapter):
         assignment: Assignment | None = None,
         context: str | None = None,
     ) -> ProviderRun:
-        del prompt, context
         if assignment is None:
             raise ProviderError("Antigravity revision requires the bound assignment")
         self._require_subordinate(assignment)
         if not run.session_id:
+            # Falling back to a fresh "remote" sandbox while still chaining
+            # previous_interaction_id would silently drop the prior files and
+            # tool state, so the revision fails closed before any paid call.
             raise ProviderError(
                 "Antigravity revision requires the prior sandbox environment ID"
             )
+        if assignment.discussion_phase == DiscussionPhase.WORK:
+            # Reviewer revision text is untrusted primary-team output; the
+            # subordinate lane is re-issued its own original bounded assignment.
+            revision_input = (
+                f"{self.NON_AUTHORITATIVE_NOTICE}\n\n"
+                "Revise the prior artifact only to satisfy the original bounded "
+                "subordinate assignment. Do not expand its scope or issue any "
+                f"verdict.\n\nOriginal task:\n{assignment.task}\n\n"
+                "Original acceptance checks:\n- "
+                + "\n- ".join(assignment.acceptance)
+            )
+        else:
+            revision_input = f"{self.NON_AUTHORITATIVE_NOTICE}\n\n{prompt}"
         body = {
             "agent": self.settings.gemini_agent,
             "previous_interaction_id": run.run_id,
             "environment": run.session_id,
-            "input": (
-                f"{self._NON_AUTHORITATIVE_NOTICE}\n\n"
-                "Revise the prior artifact only to satisfy the original bounded subordinate "
-                "assignment. Do not expand its scope or issue any verdict.\n\n"
-                f"Original task:\n{assignment.task}\n\nOriginal acceptance checks:\n- "
-                + "\n- ".join(assignment.acceptance)
-            ),
+            "input": revision_input,
             "background": True,
             "store": True,
+            "agent_config": {
+                "type": "antigravity",
+                "max_total_tokens": self.settings.gemini_max_total_tokens,
+            },
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
@@ -544,27 +617,62 @@ class GeminiAdapter(ProviderAdapter):
         return self._run(
             payload,
             session_id=run.session_id,
+            post_submit=True,
             subordinate_output=True,
         ).model_copy(
             update={"assignment_sequence": run.assignment_sequence}
         )
 
-    async def usage_check(self, prompt: str) -> ProviderRun:
-        self._require_profile()
+    async def usage_check(
+        self, prompt: str, *, max_attempts: int | None = None
+    ) -> ProviderRun:
         body = {
             "model": self.settings.gemini_usage_model,
             "input": prompt,
             "store": False,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.settings.gemini_api_base}/interactions",
-                headers=self.headers,
-                json=body,
+        configured_attempts = max(1, min(self.settings.gemini_usage_max_attempts, 5))
+        if max_attempts is not None:
+            configured_attempts = min(configured_attempts, max(1, max_attempts))
+        attempt = 0
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                for attempt in range(1, configured_attempts + 1):
+                    response = await client.post(
+                        f"{self.settings.gemini_api_base}/interactions",
+                        headers=self.headers,
+                        json=body,
+                    )
+                    if response.status_code < 400:
+                        break
+                    if response.status_code != 429:
+                        response.raise_for_status()
+                    code = self._error_code(response)
+                    if attempt >= configured_attempts:
+                        raise ProviderError(
+                            f"Gemini usage check failed with {code} after {attempt} bounded attempts",
+                            code=code,
+                            attempt_count=attempt,
+                        )
+                    await asyncio.sleep(self._usage_retry_delay(response, attempt - 1))
+            payload = response.json()
+            return self._run(
+                payload,
+                fallback_run_id="gemini-stateless-usage-check",
+            ).model_copy(update={"attempt_count": attempt})
+        except ProviderError:
+            raise
+        except Exception as exc:
+            code = (
+                "transport_error"
+                if isinstance(exc, httpx.RequestError)
+                else "invalid_response"
             )
-            response.raise_for_status()
-        payload = response.json()
-        return self._run(payload, fallback_run_id="gemini-stateless-usage-check")
+            raise ProviderError(
+                f"Gemini usage check failed with {code} after {max(1, attempt)} bounded attempts",
+                code=code,
+                attempt_count=max(1, attempt),
+            ) from exc
 
 
 class PerplexityAdapter(ProviderAdapter):
@@ -574,12 +682,7 @@ class PerplexityAdapter(ProviderAdapter):
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.settings.perplexity_api_key}", "Content-Type": "application/json"}
 
-    def _require_research_only(
-        self,
-        assignment: Assignment | None = None,
-        *,
-        assignment_required: bool = False,
-    ) -> None:
+    def _require_research_only(self, assignment: Assignment | None = None) -> None:
         failed = [
             name
             for name, ready in self.settings.perplexity_research_readiness().items()
@@ -589,19 +692,9 @@ class PerplexityAdapter(ProviderAdapter):
             raise ProviderError(
                 "Perplexity research-only configuration is not ready: " + ", ".join(failed)
             )
-        if assignment_required and assignment is None:
-            raise ProviderError("Perplexity research execution requires the bound assignment")
         if assignment is not None:
-            if not supplemental_scope_is_valid(assignment, self.settings.shared_secret):
-                raise ProviderError(
-                    "Perplexity assignment lacks a Director-authenticated supplemental scope"
-                )
-            errors = perplexity_assignment_errors(assignment)
-            if errors:
-                raise ProviderError(
-                    "Perplexity assignment is outside its research-only lane: "
-                    + "; ".join(errors)
-                )
+            if assignment.allow_draft_pr:
+                raise ProviderError("Perplexity research assignments cannot create draft pull requests")
             if assignment.estimated_cost_usd > self.settings.perplexity_daily_budget_usd:
                 raise ProviderError(
                     "Perplexity assignment estimate exceeds the configured research budget ceiling"
@@ -656,16 +749,18 @@ class PerplexityAdapter(ProviderAdapter):
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
         del context  # Search receives only the bounded query, never repository/task context.
-        self._require_research_only(assignment, assignment_required=True)
+        self._require_research_only(assignment)
+        if not assignment.public_research_query:
+            raise ProviderError("Perplexity requires a bounded public research query")
         body = {
-            "query": assignment.task,
+            "query": assignment.public_research_query,
             "max_results": self.settings.perplexity_max_results,
         }
         async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
             response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._search_run(payload, assignment.task)
+        return self._search_run(payload, assignment.public_research_query)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         raise ProviderError("Perplexity API responses are synchronous and cannot be polled")
@@ -678,23 +773,10 @@ class PerplexityAdapter(ProviderAdapter):
         assignment: Assignment | None = None,
         context: str | None = None,
     ) -> ProviderRun:
-        del run, prompt, context
-        self._require_research_only(assignment, assignment_required=True)
-        assert assignment is not None
-        query = (
-            "Follow-up public-source research for the original bounded query below. "
-            "Find additional or corrective primary evidence for each acceptance criterion; "
-            "report contradictions and unavailable evidence. Do not review code or issue an "
-            "approval verdict.\n\n"
-            f"Original query:\n{assignment.task}\n\nAcceptance criteria:\n- "
-            + "\n- ".join(assignment.acceptance)
-        )
-        body = {"query": query, "max_results": self.settings.perplexity_max_results}
-        async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
-            response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)
-            response.raise_for_status()
-        payload = response.json()
-        return self._search_run(payload, query)
+        del run, prompt  # Revision text is untrusted Director output, not a Search query.
+        if assignment is None:
+            raise ProviderError("Perplexity requires a bounded public research query")
+        return await self.dispatch(assignment, context or "")
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         self._require_research_only()
