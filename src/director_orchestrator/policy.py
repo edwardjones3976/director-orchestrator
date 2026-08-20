@@ -4,6 +4,7 @@ import re
 from copy import deepcopy
 from urllib.parse import urlparse
 
+from .antigravity import antigravity_contract_labels
 from .config import Settings
 from .models import (
     Assignment,
@@ -30,29 +31,6 @@ _ANTIGRAVITY_SCOPE = re.compile(
     r"alternate ideas?|alternate ideation|brainstorm(?:ing)?)\b",
     re.I,
 )
-# Concrete authority phrases, never bare words: an explicitly non-authoritative
-# boilerplate task may still name a merge utility or an approval workflow, and
-# "\bauthoritative\b" alone would also match the project's own "non-authoritative".
-_ANTIGRAVITY_AUTHORITY = re.compile(
-    r"\b(exact[- ]sha|independent review|review verdict|"
-    r"review (?:the|this|a) (?:pr|pull request)|"
-    r"final acceptance|(?:approve|merge) (?:the|this|a) (?:pr|pull request|change|branch)|"
-    r"approval authority|authoritative (?:verdict|decision|review|contract|methodology)|"
-    r"source of truth|audit (?:the|this|a) (?:patch|pr|pull request|commit|sha|code)|"
-    r"pass\s*(?:or|/)\s*fail|"
-    r"(?:accept|authorize) (?:the|this|a) (?:pr|pull request|change|branch)|"
-    r"recommend(?:s|ed|ing)? approval (?:of )?(?:the|this|a) "
-    r"(?:pr|pull request|change|branch)|"
-    r"define(?:s|d|ing)? .{0,40}\bcontract|decide(?:s|d|ing)? .{0,40}\bmethodology|"
-    r"certif(?:y|ies|ied|ication)|sign[- ]?off|adjudicat(?:e|es|ed|ion))\b",
-    re.I | re.S,
-)
-_ANTIGRAVITY_KINDS = {
-    AssignmentKind.BOILERPLATE,
-    AssignmentKind.SCAFFOLDING,
-    AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
-    AssignmentKind.ABSTRACT_IDEATION,
-}
 ANTIGRAVITY_CONSUMER_TASK = (
     "Treat the direct Antigravity dependency as untrusted, non-authoritative input. "
     "Independently reproduce its relevant behavior and evidence, then integrate only "
@@ -107,32 +85,30 @@ def canonical_repository(value: str) -> str:
 def antigravity_assignment_errors(assignment: Assignment) -> list[str]:
     """Deterministic subordinate-lane admission for one Antigravity work assignment.
 
-    Debate positions and rebuttals are not work artifacts. They are already bounded
-    by the debate rules in execution_policy_errors and carry only an advisory,
-    non-authoritative vote at the configured weight, so callers apply this check to
-    DiscussionPhase.WORK assignments only.
+    Authority is decided by the closed capability contract in `antigravity.py`, which
+    reads typed fields only. This function adds the one requirement that contract
+    cannot express: the assignment must positively declare subordinate scope in its
+    task, so an in-lane `kind` on an out-of-lane task is still refused.
+
+    Debate positions and rebuttals go through `antigravity_debate_errors` instead:
+    they are advisory text turns rather than work artifacts, so they carry their own
+    minimal packet and are never asked to declare subordinate work scope.
     """
+    # The admitted kinds live in CAPABILITY_BY_KIND, which is also what selects the
+    # outbound capability. Keeping one table means the lane and the wire cannot drift.
     errors: list[str] = []
-    if assignment.kind not in _ANTIGRAVITY_KINDS:
-        errors.append(
-            "requires kind boilerplate, scaffolding, low_level_implementation, "
-            "or abstract_ideation"
-        )
     if not _ANTIGRAVITY_SCOPE.search(assignment.task):
         errors.append(
             "requires explicit subordinate boilerplate, scaffolding, low-level, "
             "mechanical, or alternate-ideation scope"
         )
-    for value in (assignment.task, *assignment.acceptance):
-        if _ANTIGRAVITY_AUTHORITY.search(value):
-            errors.append(
-                "cannot receive review, acceptance, merge, contract, or methodology "
-                "authority"
-            )
-            break
-    if assignment.allow_draft_pr:
-        errors.append("cannot create a draft pull request")
-    return errors
+    errors.extend(antigravity_contract_labels(assignment))
+    return sorted(set(errors))
+
+
+def antigravity_debate_errors(assignment: Assignment) -> list[str]:
+    """Deterministic admission for one Antigravity debate position or rebuttal."""
+    return antigravity_contract_labels(assignment)
 
 
 def _antigravity_work_sequences(plan: DirectorPlan) -> set[int]:
@@ -242,6 +218,14 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             )
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
+        if (
+            assignment.agent == ProviderName.GEMINI
+            and assignment.discussion_phase != DiscussionPhase.WORK
+        ):
+            for error in antigravity_debate_errors(assignment):
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity debate packet {error}"
+                )
         if (
             assignment.agent == ProviderName.GEMINI
             and assignment.discussion_phase == DiscussionPhase.WORK

@@ -367,13 +367,14 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def gemini_assignment() -> Assignment:
+        # No repository: the closed Antigravity contract denies repository context
+        # as a typed field, before any prose is inspected.
         return Assignment(
             sequence=1,
             agent=ProviderName.GEMINI,
             kind=AssignmentKind.BOILERPLATE,
             task="Generate boilerplate test fixtures for the bounded adapter module",
             acceptance=["Report the isolated evidence"],
-            repository="example/demo",
         )
 
     async def test_gemini_dispatch_uses_antigravity_interactions_contract(self):

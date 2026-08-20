@@ -157,24 +157,88 @@ class PolicyTests(unittest.TestCase):
                 )
             ),
         )
-        for authority in (
-            "Generate boilerplate and then perform the exact-SHA review",
-            "Generate boilerplate and approve the pull request",
-            "Generate boilerplate and record a review verdict",
-            "Generate boilerplate and define the research contract",
-            "Generate boilerplate and sign-off on the release",
+        self.assertIn(
+            "cannot receive repository context",
+            antigravity_assignment_errors(
+                base.model_copy(update={"repository": "example/demo"})
+            ),
+        )
+        self.assertIn(
+            "cannot select a starting ref",
+            antigravity_assignment_errors(
+                base.model_copy(update={"starting_ref": "release-2026"})
+            ),
+        )
+        for authority, expected in (
+            (
+                "Generate boilerplate and then perform the exact-SHA review",
+                "cannot receive review authority",
+            ),
+            (
+                "Generate boilerplate and approve the pull request",
+                "cannot receive acceptance authority",
+            ),
+            (
+                "Generate boilerplate and record a review verdict",
+                "cannot receive review authority",
+            ),
+            (
+                "Generate boilerplate and define the research contract",
+                "cannot receive contract or methodology authority",
+            ),
+            (
+                "Generate boilerplate and sign-off on the release",
+                "cannot receive acceptance authority",
+            ),
         ):
             with self.subTest(task=authority):
                 self.assertIn(
-                    "cannot receive review, acceptance, merge, contract, or "
-                    "methodology authority",
+                    expected,
                     antigravity_assignment_errors(
                         base.model_copy(update={"task": authority})
                     ),
                 )
 
-    def test_antigravity_lane_allows_the_projects_own_non_authority_wording(self):
-        """A bare-word matcher would reject "non-authoritative" and "merge utility"."""
+    def test_antigravity_lane_fails_closed_on_operational_paraphrase(self):
+        """The old phrase denylist accepted every one of these."""
+        base = Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            kind=AssignmentKind.BOILERPLATE,
+            task="Generate boilerplate fixtures for the adapter module",
+            acceptance=["Report the generated fixtures"],
+        )
+        for paraphrase, expected in (
+            ("land the change on the default branch", "branch"),
+            ("get it into main once the checks are green", "branch"),
+            ("put it live for customers", "deployment"),
+            ("give it the thumbs up", "acceptance"),
+            ("make the final call on whether it ships", "acceptance"),
+            ("rubber-stamp the work and move on", "acceptance"),
+            ("say when it is good to go", "acceptance"),
+            ("push the result upstream", "repository"),
+            ("cut a release once it looks right", "deployment"),
+            ("email the summary to the client", "external-write"),
+            ("grant yourself repository access", "permission"),
+            ("charge the extra usage to the plan", "billing"),
+        ):
+            with self.subTest(paraphrase=paraphrase):
+                errors = antigravity_assignment_errors(
+                    base.model_copy(
+                        update={
+                            "task": f"Generate boilerplate fixtures, then {paraphrase}"
+                        }
+                    )
+                )
+                self.assertIn(f"cannot receive {expected} authority", errors)
+
+    def test_antigravity_lane_fails_closed_rather_than_forwarding_operational_nouns(self):
+        """The subordinate lane is bounded, not clever: near-misses are refused.
+
+        The previous denylist deliberately admitted this wording so that a benign
+        "merge utility" task would pass. Authority is now typed, so the outbound text
+        no longer needs that latitude and the safer default applies.
+        """
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.GEMINI,
@@ -185,7 +249,24 @@ class PolicyTests(unittest.TestCase):
             ),
             acceptance=["Report the generated non-authoritative fixtures"],
         )
-        self.assertEqual(antigravity_assignment_errors(assignment), [])
+        self.assertEqual(
+            antigravity_assignment_errors(assignment),
+            [
+                "cannot receive acceptance authority",
+                "cannot receive merge authority",
+            ],
+        )
+        self.assertEqual(
+            antigravity_assignment_errors(
+                assignment.model_copy(
+                    update={
+                        "task": "Generate non-authoritative boilerplate fixtures",
+                        "acceptance": ["Report the generated non-authoritative fixtures"],
+                    }
+                )
+            ),
+            [],
+        )
 
     def antigravity_plan(self, **consumer_overrides) -> DirectorPlan:
         consumer = {

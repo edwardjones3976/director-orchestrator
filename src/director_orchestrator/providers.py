@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from .antigravity import AntigravityContractError, antigravity_request_for
 from .config import Settings
 from .models import Assignment, DiscussionPhase, ProviderName, ProviderRun
 from .policy import antigravity_assignment_errors
@@ -419,21 +420,40 @@ class GeminiAdapter(ProviderAdapter):
                 "Antigravity subordinate configuration is not ready: " + ", ".join(failed)
             )
 
-    def _require_subordinate(self, assignment: Assignment) -> None:
-        """Fail closed before any paid dispatch that leaves the subordinate lane.
+    def _antigravity_input(
+        self, assignment: Assignment, *, revision: bool = False
+    ) -> str:
+        """Build the only text this adapter may send, or fail closed before HTTP.
 
-        Debate positions and rebuttals are bounded by the debate policy instead, so
-        only DiscussionPhase.WORK assignments are held to the lane check here.
+        Every phase goes through the closed contract, including debate positions and
+        rebuttals: a debate turn used to be handed the assignment verbatim plus the
+        full engine handoff context, which carried Slack identifiers, dependency
+        outcomes, and private project data to a subordinate provider.
+
+        The raw rejected text never enters the error. `AntigravityContractError`
+        carries generic category labels only, and this is the one place they are
+        turned into a `ProviderError` that the engine may write to `TaskRecord.error`
+        and post to Slack.
         """
         self._require_profile()
-        if assignment.discussion_phase != DiscussionPhase.WORK:
-            return
-        errors = antigravity_assignment_errors(assignment)
-        if errors:
+        if assignment.discussion_phase == DiscussionPhase.WORK:
+            errors = antigravity_assignment_errors(assignment)
+            if errors:
+                raise ProviderError(
+                    "Antigravity assignment is outside its subordinate lane: "
+                    + "; ".join(errors)
+                )
+        try:
+            request = antigravity_request_for(assignment, revision=revision)
+        except AntigravityContractError as exc:
             raise ProviderError(
                 "Antigravity assignment is outside its subordinate lane: "
-                + "; ".join(errors)
-            )
+                + "; ".join(exc.labels)
+            ) from None
+        payload = json.dumps(
+            request.model_dump(mode="json"), ensure_ascii=False, sort_keys=True
+        )
+        return f"{self.NON_AUTHORITATIVE_NOTICE}\n\n{payload}"
 
     @staticmethod
     def _output_text(payload: dict[str, Any]) -> str | None:
@@ -517,30 +537,10 @@ class GeminiAdapter(ProviderAdapter):
             float(max(0, self.settings.gemini_usage_max_retry_delay_seconds)),
         )
 
-    def _subordinate_prompt(self, assignment: Assignment) -> str:
-        return (
-            f"{self.NON_AUTHORITATIVE_NOTICE}\n\n"
-            "Stay within bounded boilerplate, scaffolding, low-level mechanical "
-            "implementation, or alternate ideation. Do not issue review, acceptance, "
-            "merge, contract, or methodology verdicts. Clearly separate tested "
-            "artifacts from abstract ideas.\n\n"
-            f"Task:\n{assignment.task}\n\nAcceptance checks:\n- "
-            + "\n- ".join(assignment.acceptance)
-        )
-
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
-        self._require_subordinate(assignment)
-        if assignment.discussion_phase == DiscussionPhase.WORK:
-            # A subordinate lane receives its own bounded task, never the upstream
-            # handoff context: that context is primary-team work product.
-            prompt = self._subordinate_prompt(assignment)
-        else:
-            prompt = (
-                f"{self.NON_AUTHORITATIVE_NOTICE}\n\n{assignment.task}"
-                "\n\nAcceptance checks:\n- "
-                + "\n- ".join(assignment.acceptance)
-                + f"\n\nContext:\n{context}"
-            )
+        # `context` is the primary-team handoff and is deliberately unused for every
+        # phase. Antigravity receives only its own validated bounded request.
+        prompt = self._antigravity_input(assignment)
         body = {
             "agent": self.settings.gemini_agent,
             "input": prompt,
@@ -577,7 +577,10 @@ class GeminiAdapter(ProviderAdapter):
     ) -> ProviderRun:
         if assignment is None:
             raise ProviderError("Antigravity revision requires the bound assignment")
-        self._require_subordinate(assignment)
+        # `prompt` is Director text derived from untrusted provider output and
+        # `context` is the primary-team handoff. Neither reaches Antigravity: the
+        # lane is re-issued its own original bounded request, in every phase.
+        revision_input = self._antigravity_input(assignment, revision=True)
         if not run.session_id:
             # Falling back to a fresh "remote" sandbox while still chaining
             # previous_interaction_id would silently drop the prior files and
@@ -585,19 +588,6 @@ class GeminiAdapter(ProviderAdapter):
             raise ProviderError(
                 "Antigravity revision requires the prior sandbox environment ID"
             )
-        if assignment.discussion_phase == DiscussionPhase.WORK:
-            # Reviewer revision text is untrusted primary-team output; the
-            # subordinate lane is re-issued its own original bounded assignment.
-            revision_input = (
-                f"{self.NON_AUTHORITATIVE_NOTICE}\n\n"
-                "Revise the prior artifact only to satisfy the original bounded "
-                "subordinate assignment. Do not expand its scope or issue any "
-                f"verdict.\n\nOriginal task:\n{assignment.task}\n\n"
-                "Original acceptance checks:\n- "
-                + "\n- ".join(assignment.acceptance)
-            )
-        else:
-            revision_input = f"{self.NON_AUTHORITATIVE_NOTICE}\n\n{prompt}"
         body = {
             "agent": self.settings.gemini_agent,
             "previous_interaction_id": run.run_id,

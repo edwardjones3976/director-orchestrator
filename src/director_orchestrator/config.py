@@ -331,6 +331,10 @@ class Settings:
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
                     "advisory debate votes stay non-authoritative at the configured weight",
+                    "receives a closed typed capability request, never the handoff context",
+                    "repository, starting_ref, allow_draft_pr, and public_research_query must stay unset",
+                    "task and acceptance must be plain public prose: no path, URL, SHA, code identifier, diff, secret, or owner/Slack identifier",
+                    "task and acceptance must not name an operational action or its object",
                 ],
             },
             "perplexity": {

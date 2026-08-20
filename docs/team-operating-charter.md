@@ -60,6 +60,21 @@ approval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.
   its configured advisory weight; that vote grants no authority. Keep
   credentials and external-write paths out of disposable sandboxes unless a
   later work order explicitly and safely provides them.
+- **Antigravity outbound contract.** Every Antigravity dispatch, in every
+  phase, carries one closed typed request built by
+  `src/director_orchestrator/antigravity.py`: a single capability chosen from
+  `kind` alone, an empty granted-authority list, and a fixed denied-authority
+  block covering repository access and write, branch selection, review,
+  acceptance, merge, deployment or publication, external write, billing, and
+  permission or credential change. Authority is decided by those typed fields,
+  never by classifying prose. The primary-team handoff context is never sent,
+  so a debate position or rebuttal is an independent look at the public
+  question rather than a channel for another provider's raw output. Task and
+  acceptance text is admitted only after a deterministic public-safety
+  validator; a repository path or URL, commit SHA, code identifier, diff or
+  source excerpt, secret-like value, email, UUID, Slack identifier, or named
+  operational action fails closed before any HTTP call and is reported as a
+  generic category label that never quotes the rejected text.
 - **Perplexity:** evidence-only methodological, theoretical, source-discovery,
   and fact-verification research under the strict contract below.
 
