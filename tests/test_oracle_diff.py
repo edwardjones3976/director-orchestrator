@@ -211,6 +211,46 @@ class RestHunkCompletenessTests(unittest.TestCase):
                 patch=patch,
             )
 
+    def test_added_lines_cap_stays_dominated_by_the_patch_char_cap(self) -> None:
+        """The added_lines item cap can never bind before the patch char cap.
+
+        added_lines is capped at MAX_FILE_PATCH_CHARS items so a complete,
+        fully scanned diff is not spent as a terminal OracleDiffError. That
+        item cap is a backstop, not the real bound: every added line costs at
+        least a "+" and a newline inside the patch, so the densest patch the
+        character cap admits still carries at most half the item cap.
+        """
+        self.assertEqual(
+            OracleChangedFile.model_fields["added_lines"].metadata,
+            OracleChangedFile.model_fields["patch"].metadata,
+        )
+        densest = MAX_FILE_PATCH_CHARS // 2 - 10_000
+        newline = chr(10)
+        patch = f"@@ -0,0 +1,{densest} @@{newline}" + f"+{newline}" * densest
+        patch = patch.rstrip(newline)
+        self.assertLessEqual(len(patch), MAX_FILE_PATCH_CHARS)
+        changed = OracleChangedFile(
+            filename="oracle/dense.py",
+            status="added",
+            additions=densest,
+            deletions=0,
+            patch=patch,
+        )
+        self.assertEqual(len(changed.added_lines or ()), densest)
+        self.assertLess(len(changed.added_lines or ()), MAX_FILE_PATCH_CHARS)
+        self.assertLessEqual(
+            len(changed.added_lines or ()), (MAX_FILE_PATCH_CHARS + 1) // 2
+        )
+
+        with self.assertRaises(ValidationError):
+            OracleChangedFile(
+                filename="oracle/dense.py",
+                status="added",
+                additions=1,
+                deletions=0,
+                patch="+" * (MAX_FILE_PATCH_CHARS + 1),
+            )
+
     def test_valid_multi_hunk_rest_patch_binds_exact_totals(self) -> None:
         patch = (
             "@@ -1,2 +1,2 @@\n"
@@ -1020,6 +1060,29 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
         self.assertEqual(snapshot.changed_files[0].added_lines, added)
         self.assertLessEqual(len(snapshot.changed_files[0].patch or ""), MAX_FILE_PATCH_CHARS)
+        self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
+
+    def test_changed_file_validation_failure_is_terminal_evidence_failure(self) -> None:
+        """A snapshot-binding ValidationError stays terminal, not retryable.
+
+        Aligning the added_lines cap with the per-file patch cap removed the
+        only case that reached this mapping, so hold it with a different
+        bounded field that the compare parser and REST binding both accept:
+        a path longer than OracleChangedFile allows.
+        """
+        long_path = "oracle/" + "d" * 2_000 + ".py"
+        self.files = [
+            {
+                "filename": long_path,
+                "status": "added",
+                "additions": 1,
+                "deletions": 0,
+                "patch": None,
+            }
+        ]
+        self.compare_diff = _added_diff(long_path, "research_only = True")
+        with self.assertRaisesRegex(OracleDiffError, "incomplete or disagrees"):
+            self.gateway().snapshot("edwardjones3976/edge_engine", 23)
         self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
     def test_unavailable_malformed_and_oversized_compare_diffs_reject(self) -> None:
