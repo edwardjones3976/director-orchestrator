@@ -275,7 +275,7 @@ class OracleChangedFile(BaseModel):
     additions: int = Field(default=0, ge=0)
     deletions: int = Field(default=0, ge=0)
     patch: str | None = Field(default=None, max_length=MAX_FILE_PATCH_CHARS)
-    added_lines: list[str] | None = Field(default=None, max_length=20_000)
+    added_lines: list[str] | None = Field(default=None, max_length=MAX_FILE_PATCH_CHARS)
 
     @model_validator(mode="after")
     def bind_structured_added_lines(self) -> OracleChangedFile:

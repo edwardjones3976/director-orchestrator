@@ -1005,7 +1005,7 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.changed_files[0].added_lines, ["research_only = True"])
         self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
-    def test_compare_changed_file_validation_is_terminal_evidence_failure(self) -> None:
+    def test_dense_short_added_lines_under_patch_cap_bind(self) -> None:
         added = ["x"] * 20_001
         self.files = [
             {
@@ -1017,8 +1017,9 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
             }
         ]
         self.compare_diff = _added_diff("oracle/dense.py", *added)
-        with self.assertRaisesRegex(OracleDiffError, "incomplete or disagrees"):
-            self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        snapshot = self.gateway().snapshot("edwardjones3976/edge_engine", 23)
+        self.assertEqual(snapshot.changed_files[0].added_lines, added)
+        self.assertLessEqual(len(snapshot.changed_files[0].patch or ""), MAX_FILE_PATCH_CHARS)
         self.assertTrue(any("/compare/" in item.url.path for item in self.requests))
 
     def test_unavailable_malformed_and_oversized_compare_diffs_reject(self) -> None:
