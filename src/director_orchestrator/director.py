@@ -7,7 +7,8 @@ from typing import Any
 import httpx
 
 from .config import Settings
-from .models import DirectorPlan, ReviewDecision, TaskRecord
+from .models import DebateSynthesis, DirectorPlan, DiscussionPhase, ReviewDecision, TaskRecord
+from .team_charter import team_operating_charter
 
 
 def _openai_strict_subset(value: Any) -> Any:
@@ -27,7 +28,10 @@ def _openai_strict_subset(value: Any) -> Any:
     return cleaned
 
 
-def _strict_schema(model: type[DirectorPlan] | type[ReviewDecision], name: str) -> dict[str, Any]:
+def _strict_schema(
+    model: type[DirectorPlan] | type[ReviewDecision] | type[DebateSynthesis],
+    name: str,
+) -> dict[str, Any]:
     schema = _openai_strict_subset(model.model_json_schema())
     return {"type": "json_schema", "name": name, "strict": True, "schema": schema}
 
@@ -51,7 +55,12 @@ class OpenAIDirector:
         prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "director-system.md"
         self.instructions = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else "Create a bounded agent plan."
 
-    async def _structured(self, input_text: str, model: type[DirectorPlan] | type[ReviewDecision], name: str):
+    async def _structured(
+        self,
+        input_text: str,
+        model: type[DirectorPlan] | type[ReviewDecision] | type[DebateSynthesis],
+        name: str,
+    ):
         headers = {
             "Authorization": f"Bearer {self.settings.openai_api_key}",
             "Content-Type": "application/json",
@@ -97,14 +106,24 @@ class OpenAIDirector:
             "primary_team": list(self.settings.primary_team),
             "supplemental_specialists": ["gemini", "perplexity"],
             "provider_strategy": self.settings.provider_strategy(),
+            "team_operating_charter": team_operating_charter(),
             "routing_rules": [
                 "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases.",
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
                 "Use estimated_cost_usd and max_task_budget_usd for the deterministic budget gate. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
                 "Treat OpenAI, Claude, and Cursor as the primary team.",
                 "Use Claude as the primary coding and general workhorse when configured.",
-                "Use Cursor as the other primary repository teammate for coding overflow, independent second passes, and cloud-agent automation.",
+                "Treat Cursor as a full-spectrum primary repository partner with a 90 percent capability-parity target relative to Claude and OpenAI Codex. Route low through critical work to Cursor by fit, independence, capacity, and evidence needs; do not reserve it only for overflow or second passes.",
+                "Cursor may handle research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership. It still cannot replace OpenAI acceptance, mandatory Codex Security, or an independent reviewer for its own work.",
                 "Use Gemini or Perplexity only as supplemental specialists when their distinct sandbox, validation, research, or sourcing strengths materially help.",
+                "For medium, high, or critical complexity, prefer a bounded evidence-backed debate among available committee members before synthesis. Weighted voting is advisory only and cannot change authority or deterministic gates.",
+                "A debate is a first-class runtime feature. For medium, high, or critical work, emit a debate whenever at least two of Claude, Cursor, and Gemini are configured and the hop/budget limits permit it. Create independent position assignments using discussion_phase=position, then exactly one rebuttal assignment per participant using discussion_phase=rebuttal. Populate debate.position_assignments and debate.rebuttal_assignments exactly; each rebuttal must depend on every position. Perplexity may supply a prior public evidence assignment but can never be a debate participant or voter.",
+                "Count a producer's advisory vote at full configured weight while keeping that producer ineligible to review or accept its own work. Abstentions and unavailable members cast zero weight and never change the fixed configured denominator.",
+                "Resolve an ordinary advisory tie by documented OpenAI evidence judgment. Ask the owner one focused question when tied options materially differ in cost, authority, safety, privacy, repository scope, runtime behavior, or project direction.",
+                "After three bounded recorded idempotent-safe nonresponse attempts, mark the provider unavailable for this assignment cycle, preserve partial output as untrusted evidence, continue independent safe work, and report scope, confidence, timing, and coverage changes. Never repeat an ambiguous paid dispatch.",
+                "Pre-budget a different-provider review assignment for every requested draft PR or other reviewable implementation. The runtime binds its structured handoff to the logical producer, material authors, exact base/head SHA or artifact digest, changed files, tests, limitations, acceptance checks, and security context. A new commit invalidates prior review, Codex Security, CI, and merge evidence.",
+                "Perplexity is evidence-only: give it methodological, theoretical, source-discovery, or fact-verification research without repository context, code work, review verdicts, votes, or external-write authority. Set requires_approval=true so the owner sees and approves the exact outbound query. Set public_research_query to a bounded public query containing no repository path or URL, commit SHA, source excerpt, private identifier, or secret-like value; set it null for every other provider.",
+                "For owner-gated provider-UI coordination, use an already authenticated Chrome session first and Microsoft Edge only when Chrome is unavailable. Limit this to Claude, Cursor, or Gemini inside the stored assignment; never bypass authentication, consent, CAPTCHA, privacy, device, workspace-trust, permission, or security prompts, expose credentials or raw private source, change billing or access, post externally, merge, deploy, purchase, or treat browser output as authenticated provider or gate evidence. Perplexity remains API-only.",
                 "Use owner for ambiguity, unavailable specialists, quota exhaustion, or approval-gated actions.",
                 "Never set starting_ref to a Cursor auto-generated cursor/... working branch. Those branches are deleted after their pull requests merge; use only a durable allowlisted ref such as main.",
             ],
@@ -133,6 +152,11 @@ class OpenAIDirector:
                 "configured_max_task_budget_usd": self.settings.max_task_budget_usd,
                 "estimated_total_cost_usd": (
                     sum(item.estimated_cost_usd for item in record.plan.assignments)
+                    + (
+                        record.plan.debate.estimated_synthesis_cost_usd
+                        if record.plan.debate
+                        else 0
+                    )
                     if record.plan
                     else 0
                 ),
@@ -169,6 +193,44 @@ class OpenAIDirector:
             )
             + " Enforce budget using the deterministic plan estimate and configured task budget. "
             "If provider-reported token or actual-cost telemetry is unavailable and the specialist "
-            "states that explicitly, do not reject or escalate solely for that missing optional telemetry.",
+            "states that explicitly, do not reject or escalate solely for that missing optional telemetry."
+            " Keep summary and evidence concise and safe to relay in the assignment's private Slack "
+            "thread: never include credentials, secret-like values, raw private source, or unrelated project material."
+            + (
+                " This is a structured debate contribution. If accepting it, populate "
+                "debate_contribution with a concise position, bounded evidence and contradictions, "
+                "confidence, and exactly one vote_option from the debate plan or abstain=true. "
+                "Do not copy secrets, raw private source, or unrelated project context into it."
+                if current_assignment
+                and current_assignment.discussion_phase != DiscussionPhase.WORK
+                else " Set debate_contribution to null for ordinary work assignments."
+            ),
         }
         return await self._structured(json.dumps(request), ReviewDecision, "review_decision")
+
+    async def synthesize_debate(self, record: TaskRecord) -> DebateSynthesis:
+        if record.plan is None or record.plan.debate is None:
+            raise ValueError("debate synthesis requires a debate plan")
+        request = {
+            "task_id": record.task_id,
+            "project": record.plan.project,
+            "question": record.plan.debate.question,
+            "vote_options": record.plan.debate.vote_options,
+            "material_risk": record.plan.debate.material_risk,
+            "turns": [
+                turn.model_dump(mode="json")
+                for turn in record.collaboration_turns
+                if turn.phase in {"position", "rebuttal"}
+            ],
+            "unavailable_providers": [item.value for item in record.unavailable_providers],
+            "availability_impacts": record.availability_impacts,
+            "instruction": (
+                "Synthesize the bounded debate without inventing missing evidence. Preserve meaningful "
+                "dissent and select exactly one configured vote option or abstain. Your vote is advisory. "
+                "Do not authorize merge, deployment, publication, spending, access, or any other action. "
+                "State one bounded next action. A material tie is handled deterministically after this call."
+            ),
+        }
+        return await self._structured(
+            json.dumps(request), DebateSynthesis, "debate_synthesis"
+        )

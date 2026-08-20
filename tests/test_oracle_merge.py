@@ -115,6 +115,9 @@ class OracleMergeGateTests(unittest.TestCase):
             oracle_automerge_required_checks=("ci", "security"),
             oracle_automerge_required_check_app="github-actions",
             oracle_automerge_review_secret=REVIEW_SECRET,
+            oracle_automerge_claude_actors=("claude-agent",),
+            oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_gemini_actors=("gemini-agent",),
         )
 
     def artifact(self, **changes) -> OracleReviewArtifact:
@@ -302,6 +305,7 @@ class OracleMergeGateTests(unittest.TestCase):
             assignment_sequence=2,
             run_id="cursor-review-run",
             status="FINISHED",
+            evidence_source="provider_authenticated",
             result=json.dumps(payload),
         )
         base_record = self.callback_record()
@@ -708,6 +712,26 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_implementation_author_cannot_self_accept(self):
         self.assert_rejected(
             artifact=self.artifact(implementation_provider="claude"), reason="own work"
+        )
+
+    def test_provider_actor_bindings_are_rechecked_by_the_merge_policy(self):
+        unknown = self.artifact(implementation_actor="unknown-agent")
+        result = OracleMergePolicy(self.settings).evaluate(
+            unknown, self.snapshot(author_login="unknown-agent")
+        )
+        self.assertIn(
+            "implementation actor is not bound to the implementation provider",
+            result.reasons,
+        )
+
+        shared = replace(
+            self.settings,
+            oracle_automerge_claude_actors=("claude-agent", "cursor-agent"),
+        )
+        result = OracleMergePolicy(shared).evaluate(self.artifact(), self.snapshot())
+        self.assertIn(
+            "implementation actor is also controlled by the review provider",
+            result.reasons,
         )
 
     def test_missing_failed_and_pending_required_checks_fail_closed(self):

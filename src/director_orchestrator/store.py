@@ -171,3 +171,28 @@ class TaskStore:
                 """
             ).fetchall()
         return [UsageCheckRecord.model_validate_json(row["record_json"]) for row in rows]
+
+    def usage_checks_since(
+        self, provider: str, since: datetime
+    ) -> list[UsageCheckRecord]:
+        """Return provider checks at or after an aware UTC boundary.
+
+        Filtering parsed timestamps in Python avoids relying on lexical ordering
+        across legacy records that used different but equivalent UTC offsets.
+        """
+        if since.tzinfo is None:
+            raise ValueError("usage-check boundary must be timezone-aware")
+        boundary = since.astimezone(timezone.utc)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT record_json FROM usage_checks WHERE provider = ? ORDER BY id",
+                (provider,),
+            ).fetchall()
+        records = [
+            UsageCheckRecord.model_validate_json(row["record_json"]) for row in rows
+        ]
+        return [
+            record
+            for record in records
+            if record.checked_at.astimezone(timezone.utc) >= boundary
+        ]

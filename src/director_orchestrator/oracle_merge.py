@@ -145,6 +145,8 @@ def authenticate_provider_review_artifact(
     if len(matching_runs) != 1 or matching_runs[0].assignment_sequence is None:
         raise ValueError("provider review output is not bound to one stored assignment")
     stored_run = matching_runs[0]
+    if stored_run.evidence_source != "provider_authenticated":
+        raise ValueError("provider review result lacks authenticated provider evidence")
     if stored_run.status not in successful_statuses[run.provider]:
         raise ValueError("stored provider review run is not successful")
     if not hmac.compare_digest(stored_run.result or "", run.result):
@@ -184,6 +186,52 @@ def authenticate_provider_review_artifact(
         )
     if implementation.provider == run.provider:
         raise ValueError("review provider cannot accept its own implementation outcome")
+    try:
+        handoff = json.loads(assignment.task)
+    except json.JSONDecodeError:
+        handoff = None
+    if isinstance(handoff, dict) and handoff.get("schema_version") == (
+        "director-review-handoff/v1"
+    ):
+        expected_digest = handoff.get("artifact_digest")
+        if not isinstance(expected_digest, str) or not hmac.compare_digest(
+            record.review_handoff_digests.get(sequence, ""), expected_digest
+        ):
+            raise ValueError("stored review handoff digest is missing or changed")
+        expected = {
+            "artifact_id": handoff.get("required_review_artifact_id"),
+            "assignment_id": handoff.get("assignment_id"),
+            "repository": handoff.get("repository"),
+            "pull_number": handoff.get("pull_number"),
+            "base_ref": handoff.get("base_ref"),
+            "base_sha": handoff.get("base_sha"),
+            "head_ref": handoff.get("head_ref"),
+            "head_sha": handoff.get("head_sha"),
+            "implementation_provider": handoff.get("logical_producer"),
+            "implementation_actor": handoff.get("implementation_actor"),
+            "reviewer_provider": handoff.get("reviewer_provider"),
+        }
+        actual = {
+            "artifact_id": artifact.artifact_id,
+            "assignment_id": artifact.assignment_id,
+            "repository": artifact.repository,
+            "pull_number": artifact.pull_number,
+            "base_ref": artifact.base_ref,
+            "base_sha": artifact.base_sha,
+            "head_ref": artifact.head_ref,
+            "head_sha": artifact.head_sha,
+            "implementation_provider": artifact.implementation_provider,
+            "implementation_actor": artifact.implementation_actor,
+            "reviewer_provider": artifact.reviewer_provider,
+        }
+        mismatched = sorted(
+            key for key, value in expected.items() if actual[key] != value
+        )
+        if mismatched:
+            raise ValueError(
+                "review artifact does not match the stored handoff: "
+                + ", ".join(mismatched)
+            )
     review_context = "\n".join([assignment.task, *assignment.acceptance]).lower()
     if "review" not in review_context or artifact.head_sha not in review_context:
         raise ValueError("provider assignment was not pinned to the exact reviewed head SHA")
@@ -211,6 +259,10 @@ def authenticate_claude_review_artifact(
         raise ValueError("Claude callback result was not persisted before authentication")
     if not hmac.compare_digest(run.result, callback.result):
         raise ValueError("Claude callback result does not match the stored run")
+    # This compatibility wrapper is called only after the dedicated callback
+    # bearer boundary has authenticated the payload. Persisted callback handling
+    # sets the same provenance marker in callbacks.apply_claude_callback.
+    run.evidence_source = "provider_authenticated"
     return authenticate_provider_review_artifact(record, run, secret)
 
 
@@ -392,6 +444,7 @@ class OracleMergePolicy:
         self.required_checks = settings.oracle_automerge_required_checks
         self.required_check_app = settings.oracle_automerge_required_check_app
         self.review_secret = settings.oracle_automerge_review_secret
+        self.provider_actor_map = settings.oracle_provider_actor_map()
 
     @staticmethod
     def _added_patch_text(snapshot: OraclePullRequestSnapshot) -> str:
@@ -426,6 +479,21 @@ class OracleMergePolicy:
             errors.append("the exact-SHA reviewer must be Claude or Cursor")
         if artifact.reviewer_provider.lower() == artifact.implementation_provider.lower():
             errors.append("the implementation author cannot accept its own work")
+        producer_actors = self.provider_actor_map.get(
+            artifact.implementation_provider.lower(), frozenset()
+        )
+        reviewer_actors = self.provider_actor_map.get(
+            artifact.reviewer_provider.lower(), frozenset()
+        )
+        implementation_actor = artifact.implementation_actor.lower()
+        if not producer_actors:
+            errors.append("implementation provider has no trusted GitHub actor binding")
+        elif implementation_actor not in producer_actors:
+            errors.append("implementation actor is not bound to the implementation provider")
+        if not reviewer_actors:
+            errors.append("review provider has no trusted GitHub actor binding")
+        elif implementation_actor in reviewer_actors:
+            errors.append("implementation actor is also controlled by the review provider")
         if artifact.implementation_actor.lower() != snapshot.author_login.lower():
             errors.append("pull request author does not match the recorded implementation actor")
 
