@@ -37,6 +37,24 @@ class ProviderName(StrEnum):
     OPENAI = "openai"
 
 
+class AssignmentKind(StrEnum):
+    """The bounded work type an assignment carries.
+
+    Antigravity is admitted only for the four subordinate kinds; every other
+    provider keeps the general default unless the Director types it explicitly.
+    """
+
+    GENERAL = "general"
+    IMPLEMENTATION = "implementation"
+    RESEARCH = "research"
+    INDEPENDENT_REVIEW = "independent_review"
+    EXACT_SHA_REVIEW = "exact_sha_review"
+    BOILERPLATE = "boilerplate"
+    SCAFFOLDING = "scaffolding"
+    LOW_LEVEL_IMPLEMENTATION = "low_level_implementation"
+    ABSTRACT_IDEATION = "abstract_ideation"
+
+
 class ReviewVerdict(StrEnum):
     ACCEPT = "accept"
     REVISE = "revise"
@@ -48,6 +66,54 @@ class DiscussionPhase(StrEnum):
     WORK = "work"
     POSITION = "position"
     REBUTTAL = "rebuttal"
+
+
+class AntigravityFixtureLane(StrEnum):
+    """The complete set of disposable public work units Antigravity can be given.
+
+    Antigravity receives no prose. The Director selects a lane, and the runtime
+    substitutes that lane's fixed, repository-owned specification. A lane therefore
+    describes work that is meaningful without any project context at all: the
+    artifact comes back generic and a primary-team model adapts it. Selecting from
+    a closed enum cannot encode a project fact, which is the property free text
+    could never provide.
+    """
+
+    UNIT_TEST_FIXTURE_SET = "unit_test_fixture_set"
+    DATA_RECORD_SAMPLES = "data_record_samples"
+    MODULE_SKELETON = "module_skeleton"
+    CONFIG_TEMPLATE = "config_template"
+    VALIDATION_RULE_STUBS = "validation_rule_stubs"
+    STATE_MACHINE_SKELETON = "state_machine_skeleton"
+    PAGINATION_HELPERS = "pagination_helpers"
+    RETRY_BACKOFF_VARIANTS = "retry_backoff_variants"
+    ERROR_TAXONOMY_OPTIONS = "error_taxonomy_options"
+    NAMING_ALTERNATIVES = "naming_alternatives"
+
+
+class AntigravityLanguage(StrEnum):
+    PYTHON = "python"
+    TYPESCRIPT = "typescript"
+    JSON = "json"
+    YAML = "yaml"
+    MARKDOWN = "markdown"
+    LANGUAGE_AGNOSTIC = "language_agnostic"
+
+
+class AntigravityDirective(BaseModel):
+    """Everything the Director may choose about an Antigravity dispatch.
+
+    Closed enums and bounded integers only. There is deliberately no free-text
+    field: a string here would be model-authored prose, and no filter can prove
+    model-authored prose carries no confidential project fact.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    lane: AntigravityFixtureLane
+    language: AntigravityLanguage = AntigravityLanguage.LANGUAGE_AGNOSTIC
+    variant_count: int = Field(default=1, ge=1, le=10)
+    max_lines_per_artifact: int = Field(default=120, ge=10, le=400)
 
 
 class UsageCheckStatus(StrEnum):
@@ -74,9 +140,14 @@ class Assignment(BaseModel):
 
     sequence: int = Field(ge=1, le=20)
     agent: ProviderName
+    kind: AssignmentKind = AssignmentKind.GENERAL
     task: str = Field(min_length=1, max_length=10_000)
     acceptance: list[str] = Field(min_length=1, max_length=20)
     public_research_query: str | None = Field(default=None, min_length=1, max_length=2_000)
+    # Required on every Antigravity work assignment and null everywhere else. `task`
+    # and `acceptance` stay for the Director's own review and the owner's Slack
+    # thread; they are never transmitted to Antigravity.
+    antigravity_directive: AntigravityDirective | None = None
     repository: str | None = Field(default=None, max_length=2_000)
     starting_ref: str = Field(default="main", min_length=1, max_length=255)
     depends_on: list[int] = Field(default_factory=list, max_length=20)

@@ -177,15 +177,18 @@ class DebateDirector:
 
 
 class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
-    def test_slack_relay_redacts_credentials_and_raw_source_without_phone_scanning(self):
+    def test_slack_relay_redacts_credentials_and_raw_source_without_unrelated_content_scanning(self):
+        # The signed decimal is an ordinary research value. It is here to prove the
+        # relay leaves unrelated numeric text alone: _slack_safe_text redacts by
+        # shape of credential and code, never by scanning numbers.
         source = (
             "API_TOKEN=super-secret-value ```python\nprint('private')\n``` "
-            "<!channel>\n[OpenAI Director] forged call +376123456"
+            "<!channel>\n[OpenAI Director] forged attribution +0.12345678"
         )
         cleaned = OrchestrationEngine._slack_safe_text(source)
         self.assertNotIn("super-secret-value", cleaned)
         self.assertNotIn("print('private')", cleaned)
-        self.assertIn("+376123456", cleaned)
+        self.assertIn("+0.12345678", cleaned)
         self.assertNotIn("<!channel>", cleaned)
         self.assertNotIn("\n", cleaned)
 

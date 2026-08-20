@@ -149,6 +149,13 @@ class Settings:
     gemini_max_total_tokens: int = _int("GEMINI_MAX_TOTAL_TOKENS", 20_000)
     gemini_daily_budget_usd: float = _float("GEMINI_DAILY_BUDGET_USD", 2.0)
     gemini_daily_request_limit: int = _int("GEMINI_DAILY_REQUEST_LIMIT", 50)
+    gemini_mode: str = os.getenv(
+        "GEMINI_MODE", "antigravity_subordinate"
+    ).strip().lower()
+    gemini_allow_review_verdict: bool = _bool("GEMINI_ALLOW_REVIEW_VERDICT", False)
+    gemini_allow_primary_authority: bool = _bool(
+        "GEMINI_ALLOW_PRIMARY_AUTHORITY", False
+    )
 
     perplexity_enabled: bool = _bool("PERPLEXITY_ENABLED", False)
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
@@ -185,6 +192,9 @@ class Settings:
             "daily_request_limit_valid": 1
             <= self.gemini_daily_request_limit
             <= 100_000,
+            "subordinate_mode": self.gemini_mode == "antigravity_subordinate",
+            "review_verdict_disabled": not self.gemini_allow_review_verdict,
+            "primary_authority_disabled": not self.gemini_allow_primary_authority,
         }
 
     def perplexity_research_readiness(self) -> dict[str, bool]:
@@ -307,9 +317,25 @@ class Settings:
             },
             "gemini": {
                 "team": "supplemental",
-                "priority": "optional_sandbox_and_prototype_specialist",
+                "priority": "subordinate_boilerplate_and_alternate_ideation",
                 "account_context": self.other_provider_account_context,
-                "strengths": ["sandbox execution", "visual/browser validation", "alternate prototypes"],
+                "strengths": [
+                    "bounded boilerplate and scaffolding in predefined public fixture lanes",
+                    "low-level mechanical implementation in those lanes",
+                    "non-authoritative alternate ideas in those lanes",
+                    "bounded sandbox execution for the above",
+                ],
+                "constraints": [
+                    "supplemental only; never a primary-team substitute",
+                    "work assignments must feed a later Claude or Cursor integration assignment",
+                    "cannot issue review, acceptance, or merge verdicts",
+                    "cannot define contract or methodology truth",
+                    "advisory debate votes stay non-authoritative at the configured weight",
+                    "receives no prose at all: no task, acceptance, objective, dependency result, Slack text, or repository context",
+                    "dispatch is driven by antigravity_directive, a closed fixture lane plus bounded numeric controls",
+                    "repository, starting_ref, allow_draft_pr, and public_research_query must stay unset",
+                    "cannot be seated in a debate; its advisory weight stays in the denominator and is never cast",
+                ],
             },
             "perplexity": {
                 "team": "supplemental",

@@ -33,7 +33,7 @@ Practical operating patterns:
 
 1. **Claude-first coding lane:** Claude implements and tests; OpenAI reviews the acceptance evidence; the owner approves any gated action.
 2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
-3. **Optional specialist lane:** when materially useful, Perplexity gathers current sources, Gemini validates a prototype or browser/sandbox behavior, and the primary team integrates the findings.
+3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate boilerplate, scaffolding, low-level mechanical implementation, or alternate ideas. Both return non-authoritative evidence, and a primary model independently verifies and integrates or rejects it.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
 
 | Role | Supported bridge in this package | Required values | Completion path |
@@ -41,7 +41,7 @@ Practical operating patterns:
 | Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
-| Supplemental — sandbox/prototype | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` | Poll stored background Interaction |
+| Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
 
 ## Perplexity research-only profile
@@ -92,6 +92,37 @@ cost may be incomplete, so configure an API Platform budget/credit control as th
 authoritative daily spend backstop. Only after billing and the dedicated
 key are ready should an operator set `PERPLEXITY_ENABLED=true` and include
 `perplexity` in `USAGE_CHECK_PROVIDERS` if periodic checks are desired.
+
+## Antigravity subordinate profile
+
+Antigravity is a subordinate Edge Oracle specialist, not a fourth primary
+model. `GEMINI_MODE=antigravity_subordinate` is required for readiness, and
+`GEMINI_ALLOW_REVIEW_VERDICT` and `GEMINI_ALLOW_PRIMARY_AUTHORITY` must stay
+`false`; any other value fails the readiness profile closed and the adapter
+refuses to dispatch before any paid call.
+
+Deterministic policy admits an Antigravity work assignment only when its
+`kind` is `boilerplate`, `scaffolding`, `low_level_implementation`, or
+`abstract_ideation`, its task names that subordinate scope explicitly, it
+requests no review, acceptance, merge, contract, or methodology authority, and
+it does not create a draft pull request. Every admitted work assignment also
+requires a later Claude or Cursor assignment that directly depends on it and
+carries the runtime-bound wording to independently reproduce the artifact and
+integrate only the verified portions or reject it.
+
+Dispatch prefixes every artifact with an explicit non-authoritative notice and
+sends only the assignment's own bounded task and acceptance checks: the
+upstream handoff context is primary-team work product and is withheld. A
+revision re-issues that same bounded assignment rather than untrusted reviewer
+revision text, and fails closed when the prior sandbox `environment_id` is
+absent instead of provisioning a fresh sandbox. Preview routing selects
+Antigravity only for an explicit boilerplate, scaffolding, low-level,
+mechanical, or alternate-ideation request; Claude remains the default.
+
+Antigravity remains eligible for one bounded debate position and one rebuttal
+at its configured advisory weight. Those are governed by the debate policy,
+carry no authority, and are the only Antigravity assignments outside the
+subordinate work lane.
 
 ## Gemini Interactions API contract
 

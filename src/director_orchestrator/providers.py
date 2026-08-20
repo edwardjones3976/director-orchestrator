@@ -8,8 +8,14 @@ from typing import Any
 
 import httpx
 
+from .antigravity import (
+    NON_AUTHORITATIVE_NOTICE,
+    AntigravityContractError,
+    antigravity_wire_input,
+)
 from .config import Settings
-from .models import Assignment, ProviderName, ProviderRun
+from .models import Assignment, DiscussionPhase, ProviderName, ProviderRun
+from .policy import antigravity_assignment_errors
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
@@ -402,6 +408,52 @@ class ClaudeAdapter(ProviderAdapter):
 
 class GeminiAdapter(ProviderAdapter):
     name = ProviderName.GEMINI
+    # Owned by antigravity.py so it is a member of APPROVED_STRINGS and can travel
+    # inside the closed contract as well as label incoming results.
+    NON_AUTHORITATIVE_NOTICE = NON_AUTHORITATIVE_NOTICE
+
+    def _require_profile(self) -> None:
+        failed = [
+            name
+            for name, ready in self.settings.gemini_supplemental_readiness().items()
+            if not ready
+        ]
+        if failed:
+            raise ProviderError(
+                "Antigravity subordinate configuration is not ready: " + ", ".join(failed)
+            )
+
+    def _antigravity_input(
+        self, assignment: Assignment, *, revision: bool = False
+    ) -> str:
+        """Build the only text this adapter may send, or fail closed before HTTP.
+
+        The returned string is pure JSON of the closed contract, so every byte
+        leaving this process is a repository constant, a closed-enum value, or a
+        bounded integer. No assignment task, acceptance check, owner objective,
+        dependency result, Slack text, or repository context is composed into it, in
+        any phase -- the adapter has no code path that could.
+
+        The rejected assignment's text never enters the error.
+        `AntigravityContractError` carries generic labels only, and this is the one
+        place they are turned into a `ProviderError` that the engine may write to
+        `TaskRecord.error` and post to Slack.
+        """
+        self._require_profile()
+        if assignment.discussion_phase == DiscussionPhase.WORK:
+            errors = antigravity_assignment_errors(assignment)
+            if errors:
+                raise ProviderError(
+                    "Antigravity assignment is outside its subordinate lane: "
+                    + "; ".join(errors)
+                )
+        try:
+            return antigravity_wire_input(assignment, revision=revision)
+        except AntigravityContractError as exc:
+            raise ProviderError(
+                "Antigravity assignment is outside its subordinate lane: "
+                + "; ".join(exc.labels)
+            ) from None
 
     @staticmethod
     def _output_text(payload: dict[str, Any]) -> str | None:
@@ -425,6 +477,7 @@ class GeminiAdapter(ProviderAdapter):
         session_id: str | None = None,
         fallback_run_id: str | None = None,
         post_submit: bool = False,
+        subordinate_output: bool = False,
     ) -> ProviderRun:
         if not isinstance(payload, dict):
             error_type = PostSubmitAmbiguityError if post_submit else ProviderError
@@ -433,12 +486,15 @@ class GeminiAdapter(ProviderAdapter):
         if not run_id:
             error_type = PostSubmitAmbiguityError if post_submit else ProviderError
             raise error_type("Gemini Interaction response did not include an ID")
+        result = self._output_text(payload)
+        if subordinate_output and result:
+            result = f"{self.NON_AUTHORITATIVE_NOTICE}\n\n{result}"
         return ProviderRun(
             provider=self.name,
             run_id=run_id,
             session_id=payload.get("environment_id") or session_id,
             status=payload.get("status", "in_progress"),
-            result=self._output_text(payload),
+            result=result,
             raw=payload,
         )
 
@@ -482,7 +538,9 @@ class GeminiAdapter(ProviderAdapter):
         )
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
-        prompt = f"{assignment.task}\n\nAcceptance checks:\n- " + "\n- ".join(assignment.acceptance) + f"\n\nContext:\n{context}"
+        # `context` is the primary-team handoff and is deliberately unused. There is
+        # no phase in which Antigravity receives it, or any other model-authored text.
+        prompt = self._antigravity_input(assignment)
         body = {
             "agent": self.settings.gemini_agent,
             "input": prompt,
@@ -498,16 +556,16 @@ class GeminiAdapter(ProviderAdapter):
             response = await client.post(f"{self.settings.gemini_api_base}/interactions", headers=self.headers, json=body)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload, post_submit=True)
+        return self._run(payload, post_submit=True, subordinate_output=True)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.get(f"{self.settings.gemini_api_base}/interactions/{run.run_id}", headers=self.headers)
             response.raise_for_status()
         payload = response.json()
-        return self._run(payload, session_id=run.session_id).model_copy(
-            update={"assignment_sequence": run.assignment_sequence}
-        )
+        return self._run(
+            payload, session_id=run.session_id, subordinate_output=True
+        ).model_copy(update={"assignment_sequence": run.assignment_sequence})
 
     async def revise(
         self,
@@ -517,11 +575,24 @@ class GeminiAdapter(ProviderAdapter):
         assignment: Assignment | None = None,
         context: str | None = None,
     ) -> ProviderRun:
+        if assignment is None:
+            raise ProviderError("Antigravity revision requires the bound assignment")
+        # `prompt` is Director text derived from untrusted provider output and
+        # `context` is the primary-team handoff. Neither reaches Antigravity: the
+        # lane is re-issued its own original bounded request, in every phase.
+        revision_input = self._antigravity_input(assignment, revision=True)
+        if not run.session_id:
+            # Falling back to a fresh "remote" sandbox while still chaining
+            # previous_interaction_id would silently drop the prior files and
+            # tool state, so the revision fails closed before any paid call.
+            raise ProviderError(
+                "Antigravity revision requires the prior sandbox environment ID"
+            )
         body = {
             "agent": self.settings.gemini_agent,
             "previous_interaction_id": run.run_id,
-            "environment": run.session_id or "remote",
-            "input": prompt,
+            "environment": run.session_id,
+            "input": revision_input,
             "background": True,
             "store": True,
             "agent_config": {
@@ -537,6 +608,7 @@ class GeminiAdapter(ProviderAdapter):
             payload,
             session_id=run.session_id,
             post_submit=True,
+            subordinate_output=True,
         ).model_copy(
             update={"assignment_sequence": run.assignment_sequence}
         )

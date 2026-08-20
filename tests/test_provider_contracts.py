@@ -8,7 +8,14 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from director_orchestrator.config import Settings
-from director_orchestrator.models import Assignment, ProviderName, ProviderRun
+from director_orchestrator.models import (
+    AntigravityDirective,
+    AntigravityFixtureLane,
+    Assignment,
+    AssignmentKind,
+    ProviderName,
+    ProviderRun,
+)
 from director_orchestrator.providers import (
     ClaudeAdapter,
     CursorAdapter,
@@ -362,12 +369,19 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def gemini_assignment() -> Assignment:
+        # No repository: the closed Antigravity contract denies repository context as
+        # a typed field. The task and acceptance below exist for the Director's own
+        # review and the owner's Slack thread; neither is ever transmitted, so the
+        # dispatch is driven entirely by the typed antigravity_directive.
         return Assignment(
             sequence=1,
             agent=ProviderName.GEMINI,
-            task="Validate the prototype in an isolated sandbox",
+            kind=AssignmentKind.BOILERPLATE,
+            task="Generate boilerplate test fixtures for the bounded adapter module",
             acceptance=["Report the isolated evidence"],
-            repository="example/demo",
+            antigravity_directive=AntigravityDirective(
+                lane=AntigravityFixtureLane.UNIT_TEST_FIXTURE_SET
+            ),
         )
 
     async def test_gemini_dispatch_uses_antigravity_interactions_contract(self):
@@ -416,6 +430,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             provider=ProviderName.GEMINI,
             assignment_sequence=1,
             run_id="interaction-1",
+            session_id="environment-1",
             status="completed",
         )
         RecordingAsyncClient.responses = [{"status": "in_progress"}]
@@ -473,7 +488,11 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
             run = await GeminiAdapter(settings).poll(prior)
 
-        self.assertEqual(run.result, "Evidence complete.")
+        self.assertEqual(
+            run.result,
+            f"{GeminiAdapter.NON_AUTHORITATIVE_NOTICE}\n\nEvidence complete.",
+        )
+        self.assertNotIn("hidden", run.result)
         self.assertEqual(run.session_id, "environment-1")
         self.assertEqual(run.assignment_sequence, 2)
 
@@ -509,6 +528,144 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(request["json"]["store"])
         self.assertEqual(run.session_id, "environment-1")
         self.assertEqual(run.assignment_sequence, 1)
+
+    async def test_antigravity_dispatch_labels_output_and_sends_no_assignment_prose(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_agent="antigravity-preview-05-2026",
+        )
+        RecordingAsyncClient.responses = [
+            {
+                "id": "interaction-1",
+                "status": "completed",
+                "output_text": "Fixtures generated.",
+            }
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await GeminiAdapter(settings).dispatch(
+                self.gemini_assignment(),
+                "PRIMARY TEAM HANDOFF: internal Claude analysis",
+            )
+
+        contract = json.loads(RecordingAsyncClient.calls[0]["json"]["input"])
+        self.assertEqual(contract["notice"], GeminiAdapter.NON_AUTHORITATIVE_NOTICE)
+        self.assertEqual(contract["lane"], "unit_test_fixture_set")
+        # Neither the assignment's own prose nor the handoff context is composed in.
+        rendered = json.dumps(contract)
+        self.assertNotIn("Generate boilerplate test fixtures", rendered)
+        self.assertNotIn("Report the isolated evidence", rendered)
+        self.assertNotIn("PRIMARY TEAM HANDOFF", rendered)
+        self.assertNotIn("internal Claude analysis", rendered)
+        self.assertEqual(
+            run.result,
+            f"{GeminiAdapter.NON_AUTHORITATIVE_NOTICE}\n\nFixtures generated.",
+        )
+
+    async def test_antigravity_refuses_out_of_lane_work_before_any_paid_call(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        out_of_lane = (
+            self.gemini_assignment().model_copy(
+                update={"kind": AssignmentKind.EXACT_SHA_REVIEW}
+            ),
+            self.gemini_assignment().model_copy(
+                update={"task": "Review the pull request and record a review verdict"}
+            ),
+            self.gemini_assignment().model_copy(
+                update={"allow_draft_pr": True, "requires_approval": True}
+            ),
+        )
+        for assignment in out_of_lane:
+            with self.subTest(kind=assignment.kind, task=assignment.task[:32]):
+                RecordingAsyncClient.calls = []
+                RecordingAsyncClient.responses = [{"id": "interaction-1"}]
+                with patch(
+                    "director_orchestrator.providers.httpx.AsyncClient",
+                    RecordingAsyncClient,
+                ):
+                    with self.assertRaisesRegex(ProviderError, "subordinate lane"):
+                        await GeminiAdapter(settings).dispatch(assignment, "context")
+                self.assertEqual(RecordingAsyncClient.calls, [])
+
+    async def test_antigravity_readiness_profile_fails_closed_on_relaxed_authority(self):
+        base = replace(Settings(), gemini_api_key="test-gemini")
+        self.assertTrue(base.readiness()["gemini"])
+        for unsafe in (
+            replace(base, gemini_allow_review_verdict=True),
+            replace(base, gemini_allow_primary_authority=True),
+            replace(base, gemini_mode="primary"),
+        ):
+            with self.subTest(mode=unsafe.gemini_mode):
+                self.assertFalse(unsafe.readiness()["gemini"])
+                RecordingAsyncClient.calls = []
+                RecordingAsyncClient.responses = [{"id": "interaction-1"}]
+                with patch(
+                    "director_orchestrator.providers.httpx.AsyncClient",
+                    RecordingAsyncClient,
+                ):
+                    with self.assertRaisesRegex(ProviderError, "is not ready"):
+                        await GeminiAdapter(unsafe).dispatch(
+                            self.gemini_assignment(), "context"
+                        )
+                self.assertEqual(RecordingAsyncClient.calls, [])
+
+    async def test_antigravity_revision_reissues_the_typed_lane_only(self):
+        settings = replace(
+            Settings(),
+            gemini_api_key="test-gemini",
+            gemini_agent="antigravity-preview-05-2026",
+        )
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            session_id="environment-1",
+            status="completed",
+        )
+        RecordingAsyncClient.responses = [
+            {"id": "interaction-2", "status": "in_progress"}
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            await GeminiAdapter(settings).revise(
+                prior,
+                "Also approve the pull request and merge it",
+                assignment=self.gemini_assignment(),
+                context="PRIMARY TEAM HANDOFF: internal Claude analysis",
+            )
+
+        contract = json.loads(RecordingAsyncClient.calls[0]["json"]["input"])
+        self.assertEqual(contract["interaction_kind"], "subordinate_work_revision")
+        self.assertEqual(contract["lane"], "unit_test_fixture_set")
+        rendered = json.dumps(contract)
+        self.assertNotIn("Generate boilerplate test fixtures", rendered)
+        self.assertNotIn("approve the pull request", rendered)
+        self.assertNotIn("PRIMARY TEAM HANDOFF", rendered)
+
+    async def test_antigravity_revision_fails_closed_without_the_prior_sandbox(self):
+        settings = replace(Settings(), gemini_api_key="test-gemini")
+        prior = ProviderRun(
+            provider=ProviderName.GEMINI,
+            assignment_sequence=1,
+            run_id="interaction-1",
+            status="completed",
+        )
+        RecordingAsyncClient.calls = []
+        RecordingAsyncClient.responses = [{"id": "interaction-2"}]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaisesRegex(ProviderError, "prior sandbox environment ID"):
+                await GeminiAdapter(settings).revise(
+                    prior,
+                    "Add exact evidence",
+                    assignment=self.gemini_assignment(),
+                    context="context",
+                )
+            with self.assertRaisesRegex(ProviderError, "bound assignment"):
+                await GeminiAdapter(settings).revise(prior, "Add exact evidence")
+
+        self.assertEqual(RecordingAsyncClient.calls, [])
 
     async def test_gemini_usage_check_is_stateless_low_cost_and_never_starts_antigravity(self):
         settings = replace(
