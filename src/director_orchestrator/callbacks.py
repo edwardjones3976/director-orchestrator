@@ -37,7 +37,7 @@ def apply_claude_callback(record: TaskRecord, callback: ClaudeCallback) -> bool:
     run.status = callback.status
     run.result = callback.result
     run.url = callback.session_url or run.url
-    run.provider_authenticated = True
+    run.evidence_source = "provider_authenticated"
     record.status = TaskStatus.REVIEWING
     return True
 
@@ -59,7 +59,7 @@ def apply_manual_run_completion(
         raise CallbackConflict("Provider run already has a result")
     run.status = "FINISHED"
     run.result = completion.result
-    run.provider_authenticated = False
+    run.evidence_source = "owner_recovery"
     record.status = TaskStatus.QUEUED
     record.error = None
     record.message = "Owner supplied exact-run manual completion evidence"

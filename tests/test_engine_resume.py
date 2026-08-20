@@ -7,7 +7,10 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+
 from director_orchestrator.config import Settings
+from director_orchestrator.approvals import assignment_approval_digest
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
@@ -23,6 +26,7 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.oracle_merge import OracleMergeResult, OracleMergeStatus
+from director_orchestrator.providers import ProviderError
 from director_orchestrator.store import TaskStore
 
 
@@ -48,6 +52,27 @@ class NoRedispatchAdapter:
 
 
 class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_interactions_non_success_terminal_states_fail_without_polling(self):
+        class NeverPollAdapter:
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal Interactions status must not be polled")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            engine = OrchestrationEngine(
+                replace(Settings(), sqlite_path=database),
+                TaskStore(database),
+            )
+            for status in ("requires_action", "budget_exceeded"):
+                with self.subTest(status=status):
+                    run = ProviderRun(
+                        provider=ProviderName.GEMINI,
+                        run_id=f"interaction-{status}",
+                        status=status,
+                    )
+                    with self.assertRaisesRegex(ProviderError, status):
+                        await engine._wait(NeverPollAdapter(), run)
+
     async def test_cursor_exact_sha_review_reaches_deterministic_merge_after_acceptance(self):
         base_sha = "d" * 40
         head_sha = "a" * 40
@@ -107,8 +132,8 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 assignment_sequence=2,
                 run_id="cursor-review-run",
                 status="FINISHED",
+                evidence_source="provider_authenticated",
                 result=json.dumps(payload),
-                provider_authenticated=True,
             )
             record = TaskRecord(
                 task_id="DIR-CURSOR-MERGE",
@@ -176,6 +201,134 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(completed.status, TaskStatus.DONE)
             self.assertEqual(merge_service.artifact.reviewer_provider, "cursor")
             self.assertTrue(merge_service.artifact.signature_is_valid("test-review-secret"))
+
+    async def test_manual_handoff_stays_eligible_for_the_next_assignment(self):
+        """An owner-recovered ordinary handoff is not an exact-SHA review artifact.
+
+        It must be classified as non-review at the merge hook so the dependent
+        assignment still becomes eligible, instead of failing closed on the
+        provider-status check that only claimed review artifacts must satisfy.
+        """
+
+        class DispatchingAdapter:
+            def __init__(self):
+                self.dispatch_count = 0
+
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                self.dispatch_count += 1
+                return ProviderRun(
+                    provider=ProviderName.CURSOR,
+                    assignment_sequence=assignment.sequence,
+                    run_id=f"cursor-run-{assignment.sequence}",
+                    status="FINISHED",
+                    evidence_source="provider_authenticated",
+                    result="Independent review evidence recorded.",
+                )
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("A terminal provider run must not be polled")
+
+        class RefusingMergeService:
+            def __init__(self):
+                self.policy = SimpleNamespace(
+                    enabled=True,
+                    kill_switch=False,
+                    review_secret="test-review-secret",
+                )
+
+            def process(self, artifact):
+                raise AssertionError("An ordinary handoff must never reach the merge service")
+
+        for result in (
+            "Bounded implementation-owner handoff. No merge authority claimed.",
+            json.dumps({"status": "complete", "evidence": ["read-only"]}),
+        ):
+            with self.subTest(result=result):
+                with tempfile.TemporaryDirectory() as directory:
+                    database = str(Path(directory) / "tasks.sqlite3")
+                    settings = replace(
+                        Settings(),
+                        allow_paid_runs=True,
+                        openai_api_key="test-openai",
+                        cursor_api_key="test-cursor",
+                        claude_routine_url="https://example.invalid/routine",
+                        claude_routine_token="test-claude-token",
+                        claude_callback_secret="test-callback-secret",
+                        project_allowlist=("edge-oracle",),
+                        repository_allowlist=("edwardjones3976/edge_engine",),
+                        allowed_starting_refs=("main",),
+                        max_agent_hops=2,
+                        provider_poll_seconds=0,
+                        provider_timeout_seconds=1,
+                        sqlite_path=database,
+                    )
+                    implementation = Assignment(
+                        sequence=1,
+                        agent=ProviderName.CLAUDE,
+                        task="Implement the bounded Oracle change.",
+                        acceptance=["Create the isolated implementation."],
+                        repository="edwardjones3976/edge_engine",
+                        starting_ref="main",
+                    )
+                    review = Assignment(
+                        sequence=2,
+                        agent=ProviderName.CURSOR,
+                        task="Independently review the recorded implementation evidence.",
+                        acceptance=["Report independent review evidence."],
+                        repository="edwardjones3976/edge_engine",
+                        starting_ref="main",
+                        depends_on=[1],
+                    )
+                    record = TaskRecord(
+                        task_id="DIR-MANUAL-HANDOFF",
+                        status=TaskStatus.RUNNING,
+                        intake=SlackIntake(
+                            source_event_id="evt-manual-handoff",
+                            channel_id="C123",
+                            thread_ts="123.45",
+                            user_id="U123",
+                            text="DIRECTOR Project: edge-oracle Outcome: manual handoff recovery",
+                        ),
+                        plan=DirectorPlan(
+                            project="edge-oracle",
+                            normalized_outcome="Continue after an owner-recovered handoff.",
+                            risk_level=RiskLevel.LOW,
+                            approval_required=False,
+                            max_hops=2,
+                            max_revisions=0,
+                            assignments=[implementation, review],
+                            final_acceptance=["Both assignments are accepted."],
+                        ),
+                        provider_runs=[
+                            ProviderRun(
+                                provider=ProviderName.CLAUDE,
+                                assignment_sequence=1,
+                                run_id="claude-manual-run",
+                                status="FINISHED",
+                                evidence_source="owner_recovery",
+                                result=result,
+                            )
+                        ],
+                    )
+                    store = TaskStore(database)
+                    store.create(record)
+
+                    adapter = DispatchingAdapter()
+                    engine = OrchestrationEngine(settings, store, RefusingMergeService())
+                    engine.director = AcceptingDirector()
+                    engine.providers[ProviderName.CURSOR] = adapter
+                    engine.providers[ProviderName.CLAUDE] = NoRedispatchAdapter()
+
+                    await engine.run(record.task_id)
+
+                    completed = store.get(record.task_id)
+                    self.assertEqual(completed.status, TaskStatus.DONE)
+                    self.assertNotIn("failed closed", completed.message or "")
+                    self.assertEqual(
+                        [outcome.assignment_sequence for outcome in completed.assignment_outcomes],
+                        [1, 2],
+                    )
+                    self.assertEqual(adapter.dispatch_count, 1)
 
     async def test_revision_preserves_assignment_and_approval_context(self):
         class RevisingDirector:
@@ -285,6 +438,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["Accepted"],
                 ),
                 approved_assignments=[1],
+                approved_assignment_digests={1: assignment_approval_digest(assignment)},
             )
             store.create(record)
 
@@ -303,6 +457,107 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(completed.assignment_outcomes), 2)
             self.assertEqual(adapter.revision_assignment.sequence, 1)
             self.assertTrue(adapter.revision_context["current_assignment"]["owner_approval_recorded"])
+
+    async def test_ambiguous_revision_dispatch_stops_for_reconciliation_without_counting_revision(self):
+        class RevisionDirector:
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                return ReviewDecision(
+                    verdict=ReviewVerdict.REVISE,
+                    summary="Revision needed.",
+                    revision_prompt="Add evidence.",
+                )
+
+        class AmbiguousRevisionAdapter:
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                raise AssertionError("Recorded original run must not be redispatched")
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal original run must not be polled")
+
+            async def revise(
+                self,
+                run: ProviderRun,
+                prompt: str,
+                *,
+                assignment: Assignment,
+                context: str,
+            ) -> ProviderRun:
+                request = httpx.Request("POST", "https://cursor.invalid/v1/agents/run")
+                raise httpx.HTTPStatusError(
+                    "provider returned 503 after submission",
+                    request=request,
+                    response=httpx.Response(503, request=request),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                cursor_api_key="test-cursor",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=database,
+            )
+            assignment = Assignment(
+                sequence=1,
+                agent=ProviderName.CURSOR,
+                task="Implement the bounded change",
+                acceptance=["Return evidence"],
+                repository="example/demo",
+            )
+            record = TaskRecord(
+                task_id="DIR-AMBIGUOUS-REVISION",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-ambiguous-revision",
+                    channel_id="C123",
+                    thread_ts="123.45",
+                    user_id="U123",
+                    text="DIRECTOR Project: demo Outcome: bounded change",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="bounded change",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=2,
+                    max_revisions=1,
+                    assignments=[assignment],
+                    final_acceptance=["Evidence accepted"],
+                ),
+                provider_runs=[
+                    ProviderRun(
+                        provider=ProviderName.CURSOR,
+                        assignment_sequence=1,
+                        run_id="cursor-original",
+                        session_id="cursor-session",
+                        status="FINISHED",
+                        result="Incomplete evidence",
+                        evidence_source="provider_authenticated",
+                    )
+                ],
+            )
+            store.create(record)
+            engine = OrchestrationEngine(settings, store)
+            engine.providers[ProviderName.CURSOR] = AmbiguousRevisionAdapter()
+            engine.director = RevisionDirector()
+
+            await engine.run(record.task_id)
+
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.revision_count, 0)
+            self.assertEqual(len(stopped.provider_runs), 1)
+            self.assertEqual(len(stopped.provider_contact_attempts), 1)
+            self.assertEqual(stopped.provider_contact_attempts[0].phase, "revision")
+            self.assertEqual(
+                stopped.provider_contact_attempts[0].outcome, "ambiguous_dispatch"
+            )
+            self.assertIn("reconciliation is required", stopped.message or "")
 
     async def test_each_assignment_gets_its_declared_revision_headroom(self):
         class RevisingEveryAssignmentDirector:
@@ -615,6 +870,9 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 intake=intake,
                 plan=plan,
                 approved_assignments=[2],
+                approved_assignment_digests={
+                    2: assignment_approval_digest(plan.assignments[1])
+                },
             )
             store.create(record)
 

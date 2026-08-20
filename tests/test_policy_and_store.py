@@ -67,8 +67,19 @@ class PolicyTests(unittest.TestCase):
         plan = preview_plan("Project: RootWitness\nResearch current retention requirements with sources", self.settings)
         self.assertEqual(plan.project, "RootWitness")
         self.assertEqual(plan.assignments[0].agent.value, "perplexity")
+        self.assertIsNone(plan.assignments[0].public_research_query)
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
+
+    def test_dry_run_research_plan_does_not_copy_intake_into_the_search_query(self):
+        text = (
+            "Project: RootWitness\n"
+            "Research current sources for github.com/acme/private-repo and attached patch"
+        )
+        plan = preview_plan(text, self.settings)
+        self.assertEqual(plan.assignments[0].agent.value, "perplexity")
+        self.assertEqual(plan.assignments[0].task, text.strip())
+        self.assertIsNone(plan.assignments[0].public_research_query)
 
     def test_dry_run_uses_claude_as_default_workhorse(self):
         plan = preview_plan("Project: demo\nImplement and test a bounded API change", self.settings)
@@ -84,6 +95,89 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(all(strategy[name]["team"] == "primary" for name in self.settings.primary_team))
         self.assertEqual(strategy["gemini"]["team"], "supplemental")
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
+        self.assertEqual(strategy["cursor"]["capability_parity_target"], 0.9)
+        self.assertEqual(strategy["cursor"]["eligible_complexity"], ["low", "medium", "high", "critical"])
+        self.assertEqual(strategy["cursor"]["priority"], "primary_full_spectrum_repository_partner")
+        self.assertIn("technical leadership and coordination", strategy["cursor"]["strengths"])
+
+    def test_perplexity_readiness_requires_the_complete_research_only_profile(self):
+        key_only = replace(self.settings, perplexity_api_key="test-perplexity")
+        ready = replace(key_only, perplexity_enabled=True)
+        unsafe = replace(ready, perplexity_allow_review_verdict=True)
+
+        self.assertFalse(key_only.readiness()["perplexity"])
+        self.assertTrue(ready.readiness()["perplexity"])
+        self.assertFalse(unsafe.readiness()["perplexity"])
+        self.assertFalse(
+            unsafe.perplexity_research_readiness()["review_verdict_disabled"]
+        )
+
+    def test_perplexity_assignments_cannot_receive_repository_or_non_research_authority(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        unsafe = DirectorPlan(
+            project="demo",
+            normalized_outcome="Ask Perplexity to write and approve a repository change",
+            risk_level=RiskLevel.LOW,
+            approval_required=True,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.PERPLEXITY,
+                    task="Write code in the repository, issue an approval verdict, and cast a vote",
+                    acceptance=["Create a draft PR and post the result to Slack"],
+                    repository="example/demo",
+                    allow_draft_pr=True,
+                    requires_approval=True,
+                )
+            ],
+            final_acceptance=["Perplexity approved its own change"],
+        )
+
+        errors = execution_policy_errors(unsafe, settings)
+
+        self.assertIn("assignment 1: Perplexity research cannot receive repository context", errors)
+        self.assertIn("assignment 1: Perplexity research cannot create a draft pull request", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive code or repository write authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive pull-request or merge action authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive approval or review verdict authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive committee vote authority", errors)
+        self.assertIn("assignment 1: Perplexity research cannot receive external message authority", errors)
+
+    def test_perplexity_methodological_research_remains_allowed(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        safe = DirectorPlan(
+            project="demo",
+            normalized_outcome="Research calibration methodology",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.PERPLEXITY,
+                    task="Find authoritative sources about calibration methodology",
+                    acceptance=["Report URLs, provenance, contradictions, and unknowns"],
+                public_research_query="authoritative calibration methodology sources",
+                requires_approval=True,
+                )
+            ],
+            final_acceptance=["A primary-team member evaluates the evidence"],
+        )
+
+        self.assertEqual(execution_policy_errors(safe, settings), [])
 
     def test_execution_targets_and_dependencies_are_strictly_allowlisted(self):
         settings = replace(
@@ -218,7 +312,20 @@ class PolicyTests(unittest.TestCase):
             execution_policy_errors(plan, settings),
         )
         approved = plan.model_copy(
-            update={"assignments": [assignment.model_copy(update={"requires_approval": True})]}
+            update={
+                "max_hops": 2,
+                "assignments": [
+                    assignment.model_copy(update={"requires_approval": True}),
+                    Assignment(
+                        sequence=2,
+                        agent=ProviderName.CLAUDE,
+                        task="Independently review the exact candidate produced by assignment 1",
+                        acceptance=["Return an exact-candidate verdict"],
+                        repository="example/demo",
+                        depends_on=[1],
+                    ),
+                ],
+            }
         )
         self.assertEqual(execution_policy_errors(approved, settings), [])
 

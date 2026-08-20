@@ -59,6 +59,9 @@ class ClaudeCallbackTests(unittest.TestCase):
         self.assertTrue(apply_claude_callback(record, callback))
         self.assertEqual(record.status, TaskStatus.REVIEWING)
         self.assertEqual(record.provider_runs[0].result, callback.result)
+        self.assertEqual(
+            record.provider_runs[0].evidence_source, "provider_authenticated"
+        )
         self.assertFalse(apply_claude_callback(record, callback))
 
         conflicting = callback.model_copy(update={"result": "Different result"})
@@ -103,7 +106,7 @@ class ClaudeCallbackTests(unittest.TestCase):
         self.assertEqual(record.status, TaskStatus.QUEUED)
         self.assertEqual(record.provider_runs[0].status, "FINISHED")
         self.assertEqual(record.provider_runs[0].result, "Independent review completed.")
-        self.assertFalse(record.provider_runs[0].provider_authenticated)
+        self.assertEqual(record.provider_runs[0].evidence_source, "owner_recovery")
         with self.assertRaises(CallbackConflict):
             apply_manual_run_completion(
                 record,
