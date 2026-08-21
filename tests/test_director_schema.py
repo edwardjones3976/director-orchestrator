@@ -234,6 +234,9 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(efficiency["repeat_requires_new_information"])
         self.assertTrue(any("information gain" in rule for rule in efficiency["rules"]))
         self.assertTrue(any("safety evidence" in rule for rule in efficiency["rules"]))
+        self.assertTrue(any("dependencies" in rule for rule in efficiency["rules"]))
+        self.assertEqual(efficiency["minimal_fix_attempt_limit"], 1)
+        self.assertTrue(efficiency["minimal_fix_invalidates_evidence"])
 
     async def test_repeated_plans_inject_one_bounded_immutable_charter_each(self):
         class CapturingDirector(OpenAIDirector):
@@ -298,10 +301,30 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(documented, canonical_team_charter_manifest_json())
 
+    def test_minimal_fix_policy_is_present_across_authoritative_surfaces(self):
+        root = Path(__file__).resolve().parents[1]
+        surfaces = [
+            root / "docs" / "team-operating-charter.md",
+            root / "docs" / "project-bootstrap-protocol.md",
+            root / "docs" / "templates" / "project-bootstrap" / "workstream-plan.md",
+            root / "docs" / "templates" / "project-bootstrap" / "minimal-fix.md",
+            root / "prompts" / "director-system.md",
+        ]
+        for surface in surfaces:
+            self.assertIn("MINIMAL_FIX", surface.read_text(encoding="utf-8"), surface)
+
+        profile = (
+            root / "docs" / "templates" / "project-bootstrap" / "project-profile.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("minimal_fix:", profile)
+        self.assertIn("attempt_limit: 1", profile)
+        self.assertIn("changed_candidate_invalidates_evidence: true", profile)
+
     def test_provider_cannot_mutate_canonical_roles_or_supply_weights(self):
         mutable = team_operating_charter()
         mutable["committee"]["members"]["cursor"]["voting_power"] = 99
         mutable["efficiency_policy"]["repeat_requires_new_information"] = False
+        mutable["efficiency_policy"]["minimal_fix_attempt_limit"] = 99
         self.assertEqual(
             team_operating_charter()["committee"]["members"]["cursor"]["voting_power"],
             1.5,
@@ -310,6 +333,10 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             team_operating_charter()["efficiency_policy"][
                 "repeat_requires_new_information"
             ]
+        )
+        self.assertEqual(
+            team_operating_charter()["efficiency_policy"]["minimal_fix_attempt_limit"],
+            1,
         )
         with self.assertRaises(ValueError):
             AdvisoryVote.model_validate(

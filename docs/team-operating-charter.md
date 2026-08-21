@@ -102,6 +102,31 @@ or independently expand access or external-write authority. Cursor's current
 committee voting weight is 1.5; capability coverage and voting power are
 separate owner-defined controls.
 
+## Shared provider workflow skills
+
+The shared provider catalog may expose `cursor-agent-workflow`,
+`antigravity-sandbox-workflow`, and `perplexity-research-workflow`. The
+Director selects them by stable catalog name only after the active session
+discovers them; local absolute installation paths are not project contracts.
+
+- `cursor-agent-workflow` strengthens bounded Cursor implementation,
+  debugging, QA, and eligible different-provider exact-SHA review.
+- `antigravity-sandbox-workflow` supports disposable prototypes and bounded
+  behavioral verification whose output remains non-authoritative and subject
+  to Antigravity's current outbound contract and primary-provider verification.
+- `perplexity-research-workflow` structures public, citation-backed research
+  under the strict Perplexity contract; it receives no repository context or
+  operational authority.
+
+A skill is a workflow overlay, not new authority. Selection cannot expand
+scope, data exposure, repository or credential access, spending, provider
+roles, self-review eligibility, Slack authority, merge, deployment,
+publication, or permissions. A skill's own evaluation scenarios establish only
+package quality; each assignment still needs its project-specific acceptance
+evidence. If the refreshed catalog does not expose a selected skill, use the
+provider's baseline contract only when it still satisfies the assignment, or
+reshape the plan under the bounded availability policy.
+
 ## Debate and advisory voting
 
 Debate is recommended for medium, high, and critical complexity. When practical,
@@ -169,6 +194,36 @@ provider's conclusions.
 
 Efficiency never weakens quality or safety. Concision may not omit uncertainty,
 required evidence, dissent, limitations, approval gates, or unresolved risks.
+
+## Minimal integration fix procedure
+
+Use the minimal-fix lane only for one trivial, unambiguous, reversible
+correction whose expected state is already established, whose surface is
+explicitly tiny, and whose correctness can be proven by an existing focused
+check. Prefer, in order: a deterministic repository autofix; a micro-fix by
+the provider already handling the assignment; one batch of compatible minor
+corrections; then normal reassignment. Do not start a new paid provider merely
+to restate an obvious correction that an eligible cheaper method can prove.
+
+The lane is ineligible for uncertain intent, architecture, business logic,
+public APIs, schemas, migrations, authentication, authorization, credentials,
+privacy, security controls, dependencies, provider contracts, budgets,
+permissions, deployment, publication, merge policy, unexplained failures,
+destructive work, or serious-safety signals. Uncertainty makes the normal
+bounded workflow mandatory.
+
+Permit one attempt. Apply only the declared surface, run the narrowest
+authoritative check, confirm that no unrelated behavior or authority changed,
+and record `MINIMAL_FIX` with the issue, eligibility classification, method,
+surface, change, validation, authority change, behavioral expansion, exact
+candidate, and next action. A failed, expanded, or uncertain attempt exits to
+normal reassignment.
+
+A minimal fix reduces coordination cost; it never preserves stale evidence.
+When it changes a reviewable artifact, record the new exact SHA or digest and
+invalidate all review, security, CI, and merge evidence tied to the previous
+candidate. Batch compatible trivial corrections before the new independent
+review when doing so does not conceal risk.
 
 ## Review-to-merge handoff
 
@@ -247,6 +302,6 @@ request as `team_operating_charter` with schema version
 
 <!-- TEAM_CHARTER_MANIFEST_BEGIN -->
 ```json
-{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"minimal_fix_attempt_limit":1,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->

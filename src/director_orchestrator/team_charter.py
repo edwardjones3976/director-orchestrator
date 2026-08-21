@@ -160,12 +160,14 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     "efficiency_policy": {
         "concise_evidence_first": True,
         "repeat_requires_new_information": True,
+        "minimal_fix_attempt_limit": 1,
+        "minimal_fix_invalidates_evidence": True,
         "rules": [
-            "Report decisions, evidence, uncertainty, and next action.",
-            "Correct inaccuracies before dependent work or paid calls.",
-            "Repeat only after state change, ambiguity, or a coverage gap.",
-            "Name retry information gain; stop, reshape, or escalate when low.",
-            "Minimize context and exposure; retain safety evidence.",
+            "Report decisions, evidence, uncertainty, next action.",
+            "Correct inaccuracies before dependencies or paid calls.",
+            "Repeat only for changed state, ambiguity, or coverage.",
+            "Retry only for named information gain.",
+            "Minimize context; retain safety evidence.",
         ],
     },
     "review_handoff_policy": {
@@ -298,6 +300,12 @@ def team_charter_manifest() -> dict[str, Any]:
         ],
         "repeat_requires_new_information": charter["efficiency_policy"][
             "repeat_requires_new_information"
+        ],
+        "minimal_fix_attempt_limit": charter["efficiency_policy"][
+            "minimal_fix_attempt_limit"
+        ],
+        "minimal_fix_invalidates_candidate_evidence": charter["efficiency_policy"][
+            "minimal_fix_invalidates_evidence"
         ],
         "perplexity_role": charter["perplexity_contract"]["role"],
         "perplexity_prohibited": charter["perplexity_contract"]["prohibited"],
