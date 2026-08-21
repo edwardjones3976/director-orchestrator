@@ -102,6 +102,31 @@ or independently expand access or external-write authority. Cursor's current
 committee voting weight is 1.5; capability coverage and voting power are
 separate owner-defined controls.
 
+## Shared provider workflow skills
+
+The shared provider catalog may expose `cursor-agent-workflow`,
+`antigravity-sandbox-workflow`, and `perplexity-research-workflow`. The
+Director selects them by stable catalog name only after the active session
+discovers them; local absolute installation paths are not project contracts.
+
+- `cursor-agent-workflow` strengthens bounded Cursor implementation,
+  debugging, QA, and eligible different-provider exact-SHA review.
+- `antigravity-sandbox-workflow` supports disposable prototypes and bounded
+  behavioral verification whose output remains non-authoritative and subject
+  to Antigravity's current outbound contract and primary-provider verification.
+- `perplexity-research-workflow` structures public, citation-backed research
+  under the strict Perplexity contract; it receives no repository context or
+  operational authority.
+
+A skill is a workflow overlay, not new authority. Selection cannot expand
+scope, data exposure, repository or credential access, spending, provider
+roles, self-review eligibility, Slack authority, merge, deployment,
+publication, or permissions. A skill's own evaluation scenarios establish only
+package quality; each assignment still needs its project-specific acceptance
+evidence. If the refreshed catalog does not expose a selected skill, use the
+provider's baseline contract only when it still satisfies the assignment, or
+reshape the plan under the bounded availability policy.
+
 ## Debate and advisory voting
 
 Debate is recommended for medium, high, and critical complexity. When practical,
