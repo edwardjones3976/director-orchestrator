@@ -173,6 +173,30 @@ assignment.
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
 | Codex Security | independent security evidence for eligible repository changes | product direction, acceptance, merge, or deployment authority |
 
+### Shared provider workflow skills
+
+When the refreshed shared skill catalog exposes the following stable names, the
+Director may select the matching workflow as a project-local execution overlay:
+
+| Skill selector | Provider lane | Use it for | Preserved boundary |
+| --- | --- | --- | --- |
+| `cursor-agent-workflow` | Cursor | implementation, debugging, QA, and independent exact-SHA review | Verify the named repository, worktree, and branch; Cursor cannot review work it materially authored. |
+| `antigravity-sandbox-workflow` | Gemini/Antigravity | disposable prototypes and bounded behavioral verification | The sandbox output is non-authoritative; the current Antigravity outbound contract and primary-provider verification still apply. |
+| `perplexity-research-workflow` | Perplexity | bounded public research with citations and provenance | Send only the approved public query; no repository context, programming, voting, review verdict, or external-write authority. |
+
+Use the catalog name in the assignment rather than a machine-specific absolute
+path. Skill discovery is required before selection; installation or a reported
+structural evaluation does not prove that the active provider session has
+loaded the skill. If a selected skill is unavailable after refresh, continue
+with the provider's baseline contract when that still satisfies acceptance, or
+reshape the plan under the three-attempt availability rule.
+
+A skill is a procedure, not a capability grant. It may narrow how an assignment
+is performed and strengthen its evidence, but cannot widen the project profile,
+provider role, data exposure, budget, repository access, review eligibility, or
+external-action authority. Use no skill merely because it exists; select it
+only when its workflow materially improves the active module.
+
 Availability is not a reason to fabricate coverage. Each safe provider contact
 is bounded and recorded. After three nonresponses or safe failed attempts, mark
 the provider unavailable for that assignment cycle, preserve partial output as
