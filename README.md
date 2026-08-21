@@ -18,8 +18,9 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - Dry-run previews for testing without provider spending.
 
 Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`,
-`docs/slack-collaboration-bus.md`, `docs/cloud-hosting-later.md`,
-`docs/project-uppercut-reiteration.md`, and `docs/edge-oracle-operations.md`.
+`docs/slack-collaboration-bus.md`, `docs/project-bootstrap-protocol.md`,
+`docs/cloud-hosting-later.md`, `docs/project-uppercut-reiteration.md`, and
+`docs/edge-oracle-operations.md`.
 
 ## Architecture
 
