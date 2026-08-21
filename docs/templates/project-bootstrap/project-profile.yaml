@@ -1,0 +1,152 @@
+schema_version: "director-project-profile/v1"
+
+project:
+  id: "<short-stable-project-id>"
+  name: "<working project name>"
+  proposition: "<what this project may accomplish, learn, decide, or change>"
+  state: "exploring" # exploring | framing | building | validating | operating | paused | closed
+  owner: "<owner or authorized source>"
+  created_at: "<ISO-8601 timestamp>"
+  updated_at: "<ISO-8601 timestamp>"
+
+source_context:
+  thread: "<link, identifier, or none>"
+  preserve:
+    - "<useful pattern, lesson, or constraint>"
+  reshape:
+    - "<element that must become project-specific>"
+  discard:
+    - "<source-project assumption that does not belong>"
+  inherited_authority: false
+
+outcomes:
+  desired:
+    - value: "<tentative or confirmed outcome>"
+      status: "provisional" # confirmed | provisional | unknown | not_applicable
+  non_goals:
+    - "<explicit non-goal>"
+  evidence_standard:
+    - "<evidence required for the current phase>"
+  stopping_point: "<decision, threshold, budget, date, failure, or safety condition>"
+
+surfaces:
+  slack:
+    channel: "<dedicated channel or none>"
+    thread: "<thread timestamp/link or not_created>"
+    status: "provisional"
+  repositories:
+    - name: "<exact owner/name>"
+      starting_ref: "<durable ref>"
+      worktree: "<verified project-local path>"
+      status: "provisional"
+  systems_and_data:
+    classification: "<public | private | sensitive | mixed | none | unknown>"
+    allowed_sources: []
+    prohibited_sources: []
+  browser_conversations:
+    - "<existing continuity conversation or none>"
+  external_effects:
+    mode: "analysis_only" # analysis_only | explicitly_scoped
+    allowed: []
+    prohibited: []
+
+modules:
+  discovery:
+    state: "enabled" # enabled | optional | disabled | unknown
+    purpose: "<current reason>"
+  research_and_evidence:
+    state: "optional"
+    purpose: "<current reason>"
+  design_and_decision:
+    state: "optional"
+    purpose: "<current reason>"
+  implementation:
+    state: "optional"
+    purpose: "<current reason>"
+  quality_and_security:
+    state: "optional"
+    purpose: "<current reason>"
+  review_to_merge:
+    state: "optional"
+    purpose: "<current reason>"
+  operations:
+    state: "disabled"
+    purpose: "<current reason>"
+  learning_and_reuse:
+    state: "optional"
+    purpose: "<current reason>"
+
+team:
+  director:
+    provider: "openai"
+    responsibilities: ["framing", "routing", "synthesis", "acceptance"]
+  lanes:
+    - id: "<lane-id>"
+      provider: "<claude | cursor | gemini_antigravity | perplexity | other>"
+      role: "<producer | researcher | verifier | reviewer | operator>"
+      workflow_skill: "<catalog skill name or none>"
+      responsibilities:
+        - "<bounded responsibility>"
+      forbidden_authority:
+        - "<authority this lane must not infer>"
+  shared_skill_catalog:
+    cursor_agent_workflow: "unknown" # discovered | unavailable | unknown
+    antigravity_sandbox_workflow: "unknown"
+    perplexity_research_workflow: "unknown"
+
+coordination:
+  live_transport: "slack"
+  execution_transport: "local_cli_in_verified_worktree"
+  canonical_review_and_merge: "github"
+  browser_role: "continuity_only"
+  provider_messages_relay_through_director: true
+
+controls:
+  total_budget: "<ceiling or owner decision required>"
+  phase_budget: "<ceiling or owner decision required>"
+  timeout: "<bounded duration>"
+  provider_contact_attempt_limit: 3
+  revision_limit: "<bounded count>"
+  hop_limit: "<bounded count>"
+  allowlists:
+    projects: []
+    repositories: []
+    starting_refs: []
+  approval_gates:
+    - "<required owner or deterministic gate>"
+  acceptance_checks:
+    - "<observable check>"
+  serious_safety_stop: true
+
+review_chain:
+  producer: "<provider or unassigned>"
+  material_authors: []
+  eligible_reviewer: "<different provider or unassigned>"
+  candidate:
+    repository: "<exact owner/name or none>"
+    base_sha: "<40-hex SHA or none>"
+    head_sha: "<40-hex SHA or none>"
+    artifact_digest: "<digest or none>"
+  required_evidence:
+    - "different-provider exact-candidate review"
+    - "current security evidence when configured"
+    - "trusted CI when configured"
+  candidate_change_invalidates_evidence: true
+  merge_authority: "deterministic_gate_after_all_required_approval"
+
+assumptions:
+  confirmed: []
+  provisional: []
+  unknown: []
+  not_applicable: []
+
+fallbacks:
+  unavailable_provider: "<replacement, reduced scope, or owner decision>"
+  incomplete_evidence: "<research, experiment, pause, or owner decision>"
+  ambiguous_paid_dispatch: "reconcile_existing_run_before_retry"
+  changed_scope: "reshape_profile_before_dependent_work"
+
+next:
+  action: "<one bounded next action>"
+  responsible_party: "<provider, Director, or owner>"
+  expected_evidence: "<what this action should add>"
