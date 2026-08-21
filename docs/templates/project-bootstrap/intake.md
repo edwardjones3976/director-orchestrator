@@ -2,7 +2,11 @@
 
 Copy this block into the new project's designated Slack thread or continuity
 conversation. Keep it brief enough to invite shaping rather than prematurely
-freezing the project.
+freezing the project. Do not place secrets, credentials, tokens, raw private
+source, or unnecessary source-thread content here. Workflow skills are procedure
+overlays, not permission grants—see
+[`docs/team-operating-charter.md`](../../team-operating-charter.md) for canonical
+provider roles and boundaries.
 
 ## Identity
 
@@ -11,7 +15,7 @@ freezing the project.
 - **Source thread or pattern:** <link, identifier, or concise description>
 - **Requested by:** <owner or authorized source>
 - **Initial state:** exploring
-- **Project channel:** <dedicated Slack channel, proposed channel, or none>
+- **Project channel:** <slack channel ID or configured placeholder from project profile; not a hardcoded workspace name>
 
 ## Mold the source into this project
 
@@ -40,7 +44,7 @@ changing? This may remain deliberately broad.>
 | Repository | <exact owner/name or none> | confirmed / provisional / unknown |
 | Starting ref | <durable ref or none> | confirmed / provisional / unknown |
 | Worktree/path | <verified project path or none> | confirmed / provisional / unknown |
-| Slack | <project channel and thread> | confirmed / provisional / unknown |
+| Slack | <channel ID or configured placeholder and thread> | confirmed / provisional / unknown |
 | Systems/data | <public, private, sensitive, mixed, or none> | confirmed / provisional / unknown |
 | Budget/time | <bounded ceiling and window> | confirmed / provisional / unknown |
 | External effects | analysis-only / <exactly scoped effects> | confirmed / provisional / unknown |
@@ -60,6 +64,9 @@ Mark each `enabled`, `optional`, `disabled`, or `unknown`.
 
 ## Initial team hypothesis
 
+Canonical provider roles, debate rules, and committee weights:
+[`docs/team-operating-charter.md`](../../team-operating-charter.md).
+
 | Lane | Provider/capability | Shared workflow skill | Why it may fit |
 | --- | --- | --- | --- |
 | Director | OpenAI | none | <framing, synthesis, acceptance> |
@@ -69,7 +76,9 @@ Mark each `enabled`, `optional`, `disabled`, or `unknown`.
 
 Skill names are optional workflow selectors, not authority. Use only skills
 discovered in the active catalog and compatible with the provider's existing
-contract.
+contract. A skill may narrow procedure or strengthen evidence; it cannot widen
+repository access, data exposure, budget, review eligibility, or external-action
+authority.
 
 ## First reversible move
 

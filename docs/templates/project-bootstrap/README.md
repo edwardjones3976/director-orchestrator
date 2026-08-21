@@ -29,7 +29,14 @@ kit.
    - `antigravity-sandbox-workflow`
    - `perplexity-research-workflow`
 7. Treat skill selection as procedure, not permission. The project profile,
-   provider contract, and deterministic gates remain authoritative.
+   provider contract, and deterministic gates remain authoritative. Canonical
+   provider roles: [`docs/team-operating-charter.md`](../../team-operating-charter.md).
+8. Use the event vocabulary from
+   [`project-bootstrap-protocol.md`](../../project-bootstrap-protocol.md):
+   `PROJECT_BOOTSTRAP` (intake record), `BOOTSTRAP`, `PLAN`, `WORKING`,
+   `EVIDENCE`, `REVIEW_READY`, `DECISION`, `OWNER_DECISION_REQUIRED`,
+   `RESHAPED`, `PAUSED`, `COMPLETE`.
 
 Do not place secrets, credentials, tokens, raw private source, or unnecessary
-source-thread content in any template.
+source-thread content in any template. Name Slack destinations only from the
+project profile or runtime configuration—never hardcode workspace channel names.

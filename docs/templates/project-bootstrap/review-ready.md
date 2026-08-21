@@ -2,7 +2,9 @@
 
 The producer completes this handoff for a different eligible provider. The
 Director posts or prompts the review assignment in the project thread. This
-record requests independent review; it does not approve or merge the work.
+record requests independent review; it does not approve or merge the work. Do
+not place secrets, credentials, tokens, or raw private source in this handoff.
+Workflow skills are procedure overlays, not permission grants.
 
 ## Candidate identity
 
@@ -45,7 +47,9 @@ record requests independent review; it does not approve or merge the work.
 REVIEW_REQUEST
 Project: <project ID>
 Task/assignment: <task ID> / <review assignment ID>
-Review exact candidate: <repository and head SHA or artifact digest>
+Review exact candidate: <repository>
+Base SHA: <exact 40-hex SHA>
+Head SHA: <exact 40-hex SHA or artifact digest>
 Producer/material authors: <names>
 Scope: <changed files or artifact scope>
 Acceptance evidence: <concise exact evidence>

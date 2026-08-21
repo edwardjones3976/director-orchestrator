@@ -1,3 +1,7 @@
+# Canonical project profile template (director-project-profile/v1).
+# Do not place secrets, credentials, tokens, or raw private source here.
+# Workflow skills are procedure overlays, not permission grants.
+# Provider roles and debate rules: docs/team-operating-charter.md
 schema_version: "director-project-profile/v1"
 
 project:
@@ -31,7 +35,7 @@ outcomes:
 
 surfaces:
   slack:
-    channel: "<dedicated channel or none>"
+    channel: "<slack channel ID or configured placeholder; not a hardcoded workspace name>"
     thread: "<thread timestamp/link or not_created>"
     status: "provisional"
   repositories:
@@ -89,6 +93,7 @@ team:
         - "<bounded responsibility>"
       forbidden_authority:
         - "<authority this lane must not infer>"
+        # gemini_antigravity: never POSITION/REBUTTAL debate; advisory weight never cast (see team-operating-charter.md)
   shared_skill_catalog:
     cursor_agent_workflow: "unknown" # discovered | unavailable | unknown
     antigravity_sandbox_workflow: "unknown"
@@ -109,6 +114,7 @@ controls:
   revision_limit: "<bounded count>"
   hop_limit: "<bounded count>"
   allowlists:
+    # Intent-only placeholders until owner-approved values are configured in runtime policy.
     projects: []
     repositories: []
     starting_refs: []

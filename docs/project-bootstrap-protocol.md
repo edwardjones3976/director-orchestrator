@@ -77,64 +77,31 @@ analysis-only mode and refine the profile from evidence.
 The profile is a living project-local contract, not a duplicate of the global
 charter. It gives the team a shared frame while leaving room for discovery.
 
-```yaml
-project:
-  id: "<short-stable-project-id>"
-  name: "<working name>"
-  proposition: "<what this project may achieve or clarify>"
-  source_thread: "<optional link or identifier>"
-  state: "exploring | framing | building | validating | operating | paused | closed"
+The canonical machine-readable schema is
+[`docs/templates/project-bootstrap/project-profile.yaml`](templates/project-bootstrap/project-profile.yaml)
+with `schema_version: director-project-profile/v1`. Copy that template into the
+project; do not maintain a divergent inline schema here.
 
-outcomes:
-  desired: ["<tentative or confirmed outcomes>"]
-  non_goals: ["<things this project is not trying to do>"]
-  stopping_point: "<decision, evidence, budget, deadline, or safety condition>"
-
-surfaces:
-  slack_channel: "<dedicated project channel, or none>"
-  repositories: []                 # exact names only when approved
-  starting_refs: []                # durable refs only when approved
-  systems_and_data: ["<known scope or 'unknown'>"]
-  browser_conversations: []        # continuity only, never execution authority
-
-modules:
-  discovery: enabled
-  research_and_evidence: optional
-  design_and_decision: optional
-  implementation: optional
-  quality_and_security: optional
-  review_to_merge: optional
-  operations: disabled
-  learning_and_reuse: optional
-
-team:
-  director: "OpenAI"
-  primary_lanes: ["Claude", "Cursor"]
-  supplemental_lanes: ["Gemini/Antigravity", "Perplexity", "Firecrawl"]
-  coordination_transport: "Slack"
-  execution_transport: "local provider CLI in verified project worktree"
-  canonical_review_and_merge: "GitHub"
-  conversation_continuity: "existing browser conversations"
-
-controls:
-  budget: "<per-phase ceiling or owner decision required>"
-  timeout: "<per-phase bound>"
-  evidence_standard: "<what must be demonstrated>"
-  external_effects: "analysis_only | explicitly scoped"
-  owner_decisions: ["<known decisions that cannot be inferred>"]
-  data_handling: "<public, private, sensitive, or unknown>"
-  acceptance_checks: ["<observable checks>"]
-
-working_assumptions:
-  confirmed: []
-  provisional: []
-  unknown: []
-  not_applicable: []
-```
+| Section | Purpose |
+| --- | --- |
+| `project` | Identity, proposition, lifecycle state, owner, timestamps. |
+| `source_context` | What to preserve, reshape, or discard from the source thread; `inherited_authority: false` by default. |
+| `outcomes` | Desired results, non-goals, evidence standard, and stopping point. |
+| `surfaces` | Slack channel/thread placeholders, repositories, worktrees, data classification, and external-effect mode. |
+| `modules` | Which modular work kit entries are enabled, optional, disabled, or unknown. |
+| `team` | Director lane, provider lanes, workflow-skill selectors, and forbidden authority per lane. |
+| `coordination` | Live transport, execution transport, review/merge surface, and relay rules. |
+| `controls` | Budgets, bounds, intent-only allowlist placeholders, approval gates, and acceptance checks. |
+| `review_chain` | Producer, eligible reviewer, exact candidate SHAs/digest, and invalidation rule. |
+| `assumptions` | Confirmed, provisional, unknown, and not-applicable working assumptions. |
+| `fallbacks` | Safe degradation when providers, evidence, or scope are incomplete. |
+| `next` | One bounded next action and expected evidence. |
 
 The profile may begin as a short list rather than complete YAML. The fields
 exist to expose uncertainty and prevent accidental inheritance; they are not a
-requirement to perform paperwork before useful exploration.
+requirement to perform paperwork before useful exploration. Do not place secrets,
+credentials, tokens, or raw private source in the profile. Workflow skills are
+procedure overlays, not permission grants.
 
 ## Companion template kit
 
@@ -183,7 +150,10 @@ combination, then expand only where expected information gain justifies it.
 
 Provider roles are selectors, not a rigid staffing chart. Fit, independence,
 capacity, current availability, and the desired evidence determine the
-assignment.
+assignment. Canonical provider roles, debate rules, committee weights, and
+strict research contracts live in
+[`docs/team-operating-charter.md`](team-operating-charter.md); restate only
+project-local fit here and link back for authority boundaries.
 
 | Provider or capability | Good project-local use | Never infer from this role |
 | --- | --- | --- |
@@ -194,6 +164,9 @@ assignment.
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
 | Codex Security | independent security evidence for eligible repository changes | product direction, acceptance, merge, or deployment authority |
+
+Each row summarizes the canonical role definitions in
+[`team-operating-charter.md`](team-operating-charter.md#roles).
 
 ### Shared provider workflow skills
 
@@ -233,40 +206,53 @@ review and merge evidence; local provider CLIs are the preferred execution
 transport; browser conversations preserve continuity only.
 
 For each live project, use its dedicated project channel and one
-Director-owned, assignment-correlated thread. For the existing workspace:
-
-- **Edge Engine:** `#edge-engine`
-- **Director Orchestrator:** `#project-director`
-- **Edge Oracle:** `#edge-oracle-ops`
-- **Workspace-wide announcements:** `#all-edgeengine`, only when the message
-  is explicitly relevant beyond its project
+Director-owned, assignment-correlated thread. Name the channel only from the
+project profile (`surfaces.slack.channel`) or runtime configuration—use the
+configured channel ID or an explicit project-local placeholder such as
+`<slack-channel-id-from-profile>`. Do not hardcode workspace channel names or
+assert workspace facts in protocol or template artifacts.
 
 Before any local CLI assignment, verify the named repository, isolated
 worktree, and branch. Never launch a provider from `System32` or a generic
 directory. Keep repository context, credentials, provider outputs, budgets, and
 Slack threads separated by project.
 
-The minimum useful event sequence is:
+Use one event vocabulary across the protocol, intake template, workstream plan,
+and state report:
 
-1. `BOOTSTRAP` — project proposition, current bounds, selected modules.
-2. `PLAN` — bounded workstreams, owners, dependencies, budget/time limits,
-   acceptance checks, and stopping point.
-3. `WORKING` / `EVIDENCE` — concise, correlated status or result with
-   source and uncertainty.
-4. `REVIEW_READY` — the completed artifact and a structured handoff for an
-   eligible different-provider reviewer.
-5. `DECISION` / `OWNER_DECISION_REQUIRED` — the recommendation, dissent,
-   exact question, and decision needed.
-6. `COMPLETE`, `PAUSED`, or `RESHAPED` — outcome, evidence, remaining
-   risk, and next responsible party.
+| Marker | Meaning |
+| --- | --- |
+| `PROJECT_BOOTSTRAP` | Intake record: the shaping request copied from [`intake.md`](templates/project-bootstrap/intake.md). |
+| `BOOTSTRAP` | Thread event after the Director accepts the intake: proposition, current bounds, and selected modules. |
+| `PLAN` | Bounded workstreams, owners, dependencies, budget/time limits, acceptance checks, and stopping point. |
+| `WORKING` | Concise in-progress status with correlation ID. |
+| `EVIDENCE` | Accepted or reported result with source and uncertainty. |
+| `REVIEW_READY` | Completed artifact and structured handoff for a different eligible reviewer. |
+| `DECISION` | Recommendation, dissent, and rationale when no owner gate is required. |
+| `OWNER_DECISION_REQUIRED` | Exact owner question when authority, scope, cost, privacy, or safety requires it. |
+| `RESHAPED` | Module, provider, or scope change with updated bounds. |
+| `PAUSED` | Bounded stop with next responsible party. |
+| `COMPLETE` | Phase or project outcome with evidence and remaining risk. |
+
+The minimum useful sequence is:
+`PROJECT_BOOTSTRAP` → `BOOTSTRAP` → `PLAN` → (`WORKING` | `EVIDENCE`)\* →
+(`REVIEW_READY` when reviewable) → (`DECISION` | `OWNER_DECISION_REQUIRED`) →
+(`COMPLETE` | `PAUSED` | `RESHAPED`).
 
 Providers communicate through the Director's correlated transport rather than
 starting unbounded, cross-project conversations. They may debate when it helps:
-collect independent positions first, allow one focused rebuttal round, preserve
-evidence and dissent, and keep the discussion scoped to the active decision.
+collect independent `POSITION` statements from Claude and Cursor first, allow
+one focused `REBUTTAL` round, preserve evidence and dissent, and keep the
+discussion scoped to the active decision. Antigravity cannot participate in
+`POSITION` or `REBUTTAL`: none of the question, options, or peer arguments may
+cross its outbound contract. Its configured advisory weight stays in the
+immutable committee denominator and is never cast, exactly like an unavailable
+member—see [`team-operating-charter.md`](team-operating-charter.md).
 
-Producer votes count at their full configured advisory weight. Voting is still
-not acceptance: the producing provider cannot be its own independent reviewer,
+Producer votes count at their full configured advisory weight for seated
+members. Antigravity is never seated in debate and never casts its configured
+weight; it remains in the immutable denominator only. Voting is still not
+acceptance: the producing provider cannot be its own independent reviewer,
 and no vote overrides deterministic policy, approval, budget, allowlist,
 exact-SHA, CI, security, or serious-safety requirements. An ordinary tie is an
 OpenAI evidence judgment; when the tied choices materially differ in cost,
@@ -333,7 +319,8 @@ For an Edge Engine effort, a provider can take a useful Director or Edge Oracle
 thread and retain the collaboration pattern while creating an Edge Engine
 profile:
 
-- route live coordination to `#edge-engine`;
+- route live coordination to the Edge Engine project's configured Slack channel
+  (`surfaces.slack.channel` in its profile);
 - name only Edge Engine repositories, paths, refs, data, and acceptance checks;
 - select research, design, implementation, QA, and review modules as needed;
 - use Perplexity and Firecrawl only for bounded external evidence;

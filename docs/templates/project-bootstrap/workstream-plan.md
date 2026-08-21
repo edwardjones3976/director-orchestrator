@@ -1,5 +1,10 @@
 # Project workstream plan
 
+Do not place secrets, credentials, tokens, or raw private source in this plan.
+Workflow skills are procedure overlays, not permission grants. Canonical provider
+roles, debate rules, and committee weights:
+[`docs/team-operating-charter.md`](../../team-operating-charter.md).
+
 ## Phase frame
 
 - **Project:** <project ID and name>
@@ -7,7 +12,7 @@
 - **Phase outcome:** <target outcome>
 - **Stopping point:** <observable stopping condition>
 - **Total phase budget/time:** <bounded ceiling>
-- **Project channel/thread:** <Slack destination>
+- **Project channel/thread:** <slack channel ID or configured placeholder and thread>
 - **Repository/ref/worktree:** <exact verified values or analysis-only>
 
 ## Selected modules
@@ -58,9 +63,16 @@ Repeat for each workstream.
 
 Record `skill_discovered=true` only after the active session's refreshed
 catalog exposes the selector. A missing skill does not widen the task or justify
-an unbounded retry.
+an unbounded retry. Skill selection cannot expand scope, data exposure,
+repository access, spending, review eligibility, or external-action authority.
 
 ## Coordination sequence
+
+Event markers follow
+[`project-bootstrap-protocol.md`](../../project-bootstrap-protocol.md):
+`BOOTSTRAP` → `PLAN` → (`WORKING` | `EVIDENCE`)\* → (`REVIEW_READY` when
+reviewable) → (`DECISION` | `OWNER_DECISION_REQUIRED`) → (`COMPLETE` |
+`PAUSED` | `RESHAPED`).
 
 1. Director posts the correlated assignment to the project Slack thread.
 2. Provider executes through its bounded local CLI/API lane.
@@ -77,9 +89,14 @@ an unbounded retry.
 ## Debate and decision
 
 - **Decision question:** <question or none>
+- **Debate participants (`POSITION` / `REBUTTAL`):** Claude and Cursor only.
+  Antigravity cannot be seated: none of the question, options, or peer arguments
+  may cross its outbound contract.
 - **Independent positions:** <provider, position, evidence, confidence>
 - **Rebuttal:** <one focused round or none>
-- **Advisory votes:** <full configured weights, including producer votes>
+- **Advisory votes:** <full configured weights for seated members, including
+  producer votes; Antigravity's weight stays in the immutable denominator and is
+  never cast>
 - **Dissent/unknowns:** <material dissent>
 - **Tie handling:** OpenAI evidence judgment, or one owner question when the
   tied options materially differ in cost, authority, safety, privacy, scope,
