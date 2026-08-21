@@ -8,7 +8,7 @@ procedure overlays, not permission grants.
 Event markers follow
 [`project-bootstrap-protocol.md`](../../project-bootstrap-protocol.md).
 
-## <BOOTSTRAP | PLAN | MILESTONE | RESHAPED | PAUSED | COMPLETE | OWNER_DECISION_REQUIRED>
+## <BOOTSTRAP | PLAN | EVIDENCE | RESHAPED | PAUSED | COMPLETE | OWNER_DECISION_REQUIRED>
 
 **<Project name>** is now <current state>. Canonical record:
 [<artifact, profile, pull request, or decision record>](<URL>).
