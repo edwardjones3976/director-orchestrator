@@ -111,6 +111,10 @@ controls:
   phase_budget: "<ceiling or owner decision required>"
   timeout: "<bounded duration>"
   provider_contact_attempt_limit: 3
+  minimal_fix:
+    enabled: true
+    attempt_limit: 1
+    changed_candidate_invalidates_evidence: true
   revision_limit: "<bounded count>"
   hop_limit: "<bounded count>"
   allowlists:

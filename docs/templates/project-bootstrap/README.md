@@ -13,6 +13,7 @@ kit.
 | [`workstream-plan.md`](workstream-plan.md) | Split the current phase into bounded, non-conflicting assignments and select provider workflow skills. |
 | [`review-ready.md`](review-ready.md) | Prompt a different eligible provider to review an exact candidate and carry it toward the configured merge gate. |
 | [`project-state-report.md`](project-state-report.md) | Report a bootstrap, reshaped plan, milestone, pause, or completion without implying unperformed actions. |
+| [`minimal-fix.md`](minimal-fix.md) | Record one eligible low-cost mechanical correction and its focused proof. |
 
 ## Use
 
@@ -36,6 +37,8 @@ kit.
    `PROJECT_BOOTSTRAP` (intake record), `BOOTSTRAP`, `PLAN`, `WORKING`,
    `EVIDENCE`, `REVIEW_READY`, `DECISION`, `OWNER_DECISION_REQUIRED`,
    `RESHAPED`, `PAUSED`, `COMPLETE`.
+9. Use `minimal-fix.md` only for the charter's one-attempt minimal-fix lane;
+   changed candidates still require fresh exact-candidate evidence.
 
 Do not place secrets, credentials, tokens, raw private source, or unnecessary
 source-thread content in any template. Name Slack destinations only from the

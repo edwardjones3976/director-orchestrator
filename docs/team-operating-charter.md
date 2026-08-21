@@ -195,6 +195,36 @@ provider's conclusions.
 Efficiency never weakens quality or safety. Concision may not omit uncertainty,
 required evidence, dissent, limitations, approval gates, or unresolved risks.
 
+## Minimal integration fix procedure
+
+Use the minimal-fix lane only for one trivial, unambiguous, reversible
+correction whose expected state is already established, whose surface is
+explicitly tiny, and whose correctness can be proven by an existing focused
+check. Prefer, in order: a deterministic repository autofix; a micro-fix by
+the provider already handling the assignment; one batch of compatible minor
+corrections; then normal reassignment. Do not start a new paid provider merely
+to restate an obvious correction that an eligible cheaper method can prove.
+
+The lane is ineligible for uncertain intent, architecture, business logic,
+public APIs, schemas, migrations, authentication, authorization, credentials,
+privacy, security controls, dependencies, provider contracts, budgets,
+permissions, deployment, publication, merge policy, unexplained failures,
+destructive work, or serious-safety signals. Uncertainty makes the normal
+bounded workflow mandatory.
+
+Permit one attempt. Apply only the declared surface, run the narrowest
+authoritative check, confirm that no unrelated behavior or authority changed,
+and record `MINIMAL_FIX` with the issue, eligibility classification, method,
+surface, change, validation, authority change, behavioral expansion, exact
+candidate, and next action. A failed, expanded, or uncertain attempt exits to
+normal reassignment.
+
+A minimal fix reduces coordination cost; it never preserves stale evidence.
+When it changes a reviewable artifact, record the new exact SHA or digest and
+invalidate all review, security, CI, and merge evidence tied to the previous
+candidate. Batch compatible trivial corrections before the new independent
+review when doing so does not conceal risk.
+
 ## Review-to-merge handoff
 
 Every requested draft PR or other reviewable implementation must reserve a
@@ -272,6 +302,6 @@ request as `team_operating_charter` with schema version
 
 <!-- TEAM_CHARTER_MANIFEST_BEGIN -->
 ```json
-{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"minimal_fix_attempt_limit":1,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->

@@ -86,6 +86,21 @@ reviewable) → (`DECISION` | `OWNER_DECISION_REQUIRED`) → (`COMPLETE` |
 7. Record `COMPLETE`, `RESHAPED`, `PAUSED`, or
    `OWNER_DECISION_REQUIRED` with the next responsible party.
 
+## Minimal correction routing
+
+- **Eligible defect/surface:** <tiny, unambiguous, reversible surface or none>
+- **Established expected state:** <existing contract or evidence>
+- **Method:** <deterministic_autofix | current_session_micro_fix | batched_minor_fix>
+- **Focused validation:** <existing authoritative check>
+- **Attempt:** <1 of 1>
+- **Exit:** <continue current chain or normal reassignment>
+
+Use [`minimal-fix.md`](minimal-fix.md) for the compact `MINIMAL_FIX` record. Do not use this
+lane for architecture, behavior, schemas, security/privacy/credentials,
+dependencies, provider contracts, budgets, permissions, deployment,
+publication, merge policy, unexplained failures, destructive work, or a
+serious-safety signal. Any changed candidate invalidates prior review evidence.
+
 ## Debate and decision
 
 - **Decision question:** <question or none>

@@ -281,6 +281,23 @@ The reviewer returns `ACCEPT`, `CHANGES_REQUIRED`, or
 through the project's configured independent security, CI, and deterministic
 merge gates. A changed candidate restarts this evidence chain.
 
+## Minimal integration fix lane
+
+Before opening a new correction assignment, check whether the defect qualifies
+for the one-attempt minimal-fix procedure in
+[`team-operating-charter.md`](team-operating-charter.md#minimal-integration-fix-procedure).
+Use it only for a tiny, unambiguous, reversible, mechanically correctable
+surface with an already-established expected result and an existing focused
+validation. Use the cheapest eligible method and emit the compact
+[`MINIMAL_FIX` record](templates/project-bootstrap/minimal-fix.md).
+
+The lane never covers architecture, behavior contracts, schemas, security,
+privacy, credentials, dependencies, provider contracts, budgets, permissions,
+deployment, publication, merge policy, unexplained failures, destructive work,
+or serious-safety signals. A failed or expanding attempt immediately returns to
+normal assignment. A changed candidate always receives a new exact identity
+and fresh review, security, CI, and merge evidence.
+
 ## Project-shaping loop
 
 Use this lightweight loop whenever the project is new or has changed enough to
