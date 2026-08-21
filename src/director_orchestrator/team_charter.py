@@ -164,7 +164,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "minimal_fix_invalidates_evidence": True,
         "rules": [
             "Report decisions, evidence, uncertainty, next action.",
-            "Correct inaccuracies before paid calls.",
+            "Correct inaccuracies before dependencies or paid calls.",
             "Repeat only for changed state, ambiguity, or coverage.",
             "Retry only for named information gain.",
             "Minimize context; retain safety evidence.",

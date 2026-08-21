@@ -234,6 +234,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(efficiency["repeat_requires_new_information"])
         self.assertTrue(any("information gain" in rule for rule in efficiency["rules"]))
         self.assertTrue(any("safety evidence" in rule for rule in efficiency["rules"]))
+        self.assertTrue(any("dependencies" in rule for rule in efficiency["rules"]))
         self.assertEqual(efficiency["minimal_fix_attempt_limit"], 1)
         self.assertTrue(efficiency["minimal_fix_invalidates_evidence"])
 
