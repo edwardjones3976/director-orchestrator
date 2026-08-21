@@ -136,6 +136,28 @@ The profile may begin as a short list rather than complete YAML. The fields
 exist to expose uncertainty and prevent accidental inheritance; they are not a
 requirement to perform paperwork before useful exploration.
 
+## Companion template kit
+
+Copy only the artifacts the project needs from
+[`docs/templates/project-bootstrap/`](templates/project-bootstrap/):
+
+- [`intake.md`](templates/project-bootstrap/intake.md) molds a source thread
+  into a concise `PROJECT_BOOTSTRAP` request.
+- [`project-profile.yaml`](templates/project-bootstrap/project-profile.yaml)
+  records the living project-local profile.
+- [`workstream-plan.md`](templates/project-bootstrap/workstream-plan.md)
+  composes bounded modules, provider assignments, workflow skills, and
+  fallbacks.
+- [`review-ready.md`](templates/project-bootstrap/review-ready.md) carries an
+  exact candidate from its producer to a different eligible reviewer.
+- [`project-state-report.md`](templates/project-bootstrap/project-state-report.md)
+  reports bootstrap, milestone, reshaping, pause, or completion state.
+
+The templates are scaffolding, not mandatory ceremony. Start with the intake
+and add the other files only when they improve coordination, evidence, or
+repeatability. Delete irrelevant fields and mark material uncertainty instead
+of filling placeholders with guesses.
+
 ## Modular work kit
 
 Select modules by the project's present needs. The modules below have loose
