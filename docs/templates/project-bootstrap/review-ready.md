@@ -1,0 +1,67 @@
+# REVIEW_READY
+
+The producer completes this handoff for a different eligible provider. The
+Director posts or prompts the review assignment in the project thread. This
+record requests independent review; it does not approve or merge the work.
+
+## Candidate identity
+
+- **Project/task:** <project ID and Director task ID>
+- **Assignment:** <producer assignment ID>
+- **Logical producer:** <provider>
+- **Material authors:** <all providers/people that materially shaped the artifact>
+- **Repository:** <exact owner/name or not applicable>
+- **Base branch/ref:** <exact durable ref>
+- **Base SHA:** <exact 40-hex SHA>
+- **Head branch:** <candidate branch>
+- **Head SHA:** <exact 40-hex SHA>
+- **Artifact digest:** <digest when not SHA-bound>
+- **Pull request:** <canonical draft PR URL or none>
+
+## Scope and evidence
+
+- **Changed files/artifact scope:** <complete list or canonical manifest>
+- **Outcome delivered:** <what changed>
+- **Acceptance checks:** <check and result>
+- **Tests:** <exact commands/checks and results>
+- **Security context:** <risk surface, scan evidence, or why not applicable>
+- **Known limitations:** <limitations and uncertainty>
+- **Unresolved findings:** <none or explicit list>
+
+## Reviewer request
+
+- **Eligible reviewer:** <different provider>
+- **Reviewer workflow skill:** <cursor-agent-workflow or none>
+- **Requested depth:** <focused, full diff, exact-SHA, security-adjacent, etc.>
+- **Required verdict:** `ACCEPT`, `CHANGES_REQUIRED`, or
+  `SERIOUS_SAFETY_STOP`
+- **Merge path after acceptance:** <configured deterministic gate and required CI/security>
+- **Candidate invalidation:** Any new commit or artifact change voids this
+  handoff and all review, security, CI, and merge evidence tied to it.
+
+## Provider-to-provider prompt
+
+```text
+REVIEW_REQUEST
+Project: <project ID>
+Task/assignment: <task ID> / <review assignment ID>
+Review exact candidate: <repository and head SHA or artifact digest>
+Producer/material authors: <names>
+Scope: <changed files or artifact scope>
+Acceptance evidence: <concise exact evidence>
+Known limitations/security context: <concise details>
+Return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
+evidence and actionable findings.
+Do not review your own material contribution. Do not merge, deploy, publish,
+change access, or infer authority from this request.
+```
+
+## Reviewer result
+
+- **Reviewer/provider:** <provider>
+- **Authenticated run/session:** <run ID or callback identity>
+- **Reviewed exact candidate:** <head SHA or digest>
+- **Verdict:** <ACCEPT / CHANGES_REQUIRED / SERIOUS_SAFETY_STOP>
+- **Evidence/findings:** <concise result>
+- **Current CI/security evidence:** <exact status or pending>
+- **Next responsible party:** <producer, deterministic gate, Director, or owner>
