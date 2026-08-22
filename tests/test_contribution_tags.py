@@ -1,8 +1,11 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from dataclasses import replace
@@ -143,6 +146,39 @@ class ContributionTagContractTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_frontmatter_closing_rule_may_carry_trailing_whitespace(self):
+        begin = "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]] -->"
+        end = "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]] -->"
+        text = (
+            "---\n"
+            "description: Contribution attribution\n"
+            "--- \n"
+            f"{begin}\n# Rule\n{end}\n"
+        )
+        self.assertEqual(
+            validate_inline_contribution_tags(
+                ".cursor/rules/contribution-attribution.mdc",
+                text,
+                added_lines=[begin, end],
+            ),
+            [],
+        )
+
+    def test_leading_horizontal_rule_reports_the_missing_begin_tag(self):
+        begin = "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]] -->"
+        end = "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]] -->"
+        text = f"---\n{begin}\n# Title\n{end}\n"
+        errors = validate_inline_contribution_tags(
+            "docs/example.md", text, added_lines=[begin, end]
+        )
+        self.assertTrue(any("BEGIN contribution tag" in error for error in errors))
+        self.assertFalse(any("frontmatter" in error for error in errors))
+
+    def test_environment_files_are_never_asked_to_carry_inline_tags(self):
+        self.assertEqual(contribution_tag_policy(".env"), "envelope_only")
+        self.assertEqual(contribution_tag_policy("deploy/production.env"), "envelope_only")
+        self.assertEqual(contribution_tag_policy(".env.example"), "inline")
 
     def test_forbidden_format_rejects_inline_tag_text(self):
         payload = (
@@ -343,6 +379,52 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         )
         self.assertTrue(errors)
 
+    def test_submodule_pointers_are_skipped_instead_of_read_as_text(self):
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            "check_contribution_tags_gitlink",
+            root / "scripts" / "check_contribution_tags.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                    cwd=repo,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                ).stdout.decode("utf-8")
+
+            git("init", "--quiet", "-b", "main")
+            (repo / "seed.txt.fixture").write_text("seed\n", encoding="utf-8")
+            git("add", "seed.txt.fixture")
+            git("commit", "--quiet", "-m", "seed")
+            base = git("rev-parse", "HEAD").strip()
+            pointer = git("rev-parse", "HEAD").strip()
+            git("update-index", "--add", "--cacheinfo", f"160000,{pointer},vendor")
+            git("commit", "--quiet", "-m", "add submodule pointer")
+            head = git("rev-parse", "HEAD").strip()
+
+            cwd = Path.cwd()
+            try:
+                os.chdir(repo)
+                self.assertEqual(checker._tree_mode(head, "vendor"), checker.GITLINK_MODE)
+                self.assertIsNone(checker._tree_mode(head, "absent"))
+                with patch(
+                    "sys.argv",
+                    ["check_contribution_tags.py", "--base", base, "--head", head],
+                ):
+                    self.assertEqual(checker.main(), 0)
+            finally:
+                os.chdir(cwd)
+
     def test_push_commit_message_requires_outer_boundaries(self):
         root = Path(__file__).resolve().parents[1]
         spec = importlib.util.spec_from_file_location(
@@ -380,3 +462,4 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
