@@ -61,7 +61,7 @@
       "blob_sha": "4cf688a8d17745da4601bbca04f60dda519608d5"
     }
   ],
-  "authority_snapshot_digest": "sha256:bb4dea5a650cdad78041f44bb33a0b787e47ce5936f2faf51c7a485f2ae476b6",
+  "authority_snapshot_digest": "sha256:da40f5b103bc610b3835052559b46840a5b55f2cb87e5e956bf683bbd508f07f",
   "dependencies": [],
   "constraints": [
     "Start from the exact bound main SHA and preserve the accepted Gate 0 evidence from PR #18",
