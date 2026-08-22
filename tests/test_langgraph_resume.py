@@ -12,6 +12,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from director_orchestrator.approvals import apply_owner_approval
 from director_orchestrator.callbacks import apply_claude_callback
+from director_orchestrator.config import langgraph_resume_claim_path
 from director_orchestrator.langgraph_resume import (
     LangGraphResumeRuntime,
     ResumeHandle,
@@ -37,6 +38,7 @@ AUTHORITY_B = "sha256:" + "b" * 64
 
 def _resume_process(
     database: str,
+    legacy_database: str,
     record_json: str,
     handle_payload: dict[str, object],
     start_event,
@@ -45,7 +47,9 @@ def _resume_process(
     connection = sqlite3.connect(database, check_same_thread=False)
     try:
         runtime = LangGraphResumeRuntime(
-            SqliteSaver(connection), checkpoint_namespace="resume-tests"
+            SqliteSaver(connection),
+            checkpoint_namespace="resume-tests",
+            legacy_database_path=legacy_database,
         )
         payload = dict(handle_payload)
         payload["kind"] = ResumeKind(str(payload["kind"]))
@@ -62,6 +66,7 @@ class LangGraphResumeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.database = Path(self.tempdir.name) / "resume.sqlite3"
+        self.legacy_database = Path(self.tempdir.name) / "legacy.sqlite3"
         self.connections: list[sqlite3.Connection] = []
 
     def tearDown(self) -> None:
@@ -84,6 +89,7 @@ class LangGraphResumeTests(unittest.TestCase):
                 SqliteSaver(connection),
                 checkpoint_namespace="resume-tests",
                 graph_version=graph_version,
+                legacy_database_path=str(self.legacy_database),
             ),
             connection,
         )
@@ -173,6 +179,45 @@ class LangGraphResumeTests(unittest.TestCase):
         self.assertEqual(snapshot.values["phase"], ResumeStatus.PAUSED.value)
         self.assertNotIn("Implement the bounded fixture", str(snapshot.values))
         self.assertNotIn("Run a bounded recovery proof", str(snapshot.values))
+
+    def test_runtime_rechecks_claim_identity_before_creating_tables(self) -> None:
+        legacy = sqlite3.connect(self.legacy_database)
+        try:
+            legacy.execute("CREATE TABLE legacy_authority (value TEXT NOT NULL)")
+            legacy.execute("INSERT INTO legacy_authority VALUES ('unchanged')")
+            legacy.commit()
+        finally:
+            legacy.close()
+        connection = sqlite3.connect(self.database, check_same_thread=False)
+        self.connections.append(connection)
+        claim_path = Path(langgraph_resume_claim_path(str(self.database)))
+        try:
+            claim_path.hardlink_to(self.legacy_database)
+        except OSError as exc:
+            self.skipTest(f"hardlinks unavailable: {exc}")
+
+        with self.assertRaisesRegex(ValueError, "databases must be isolated"):
+            LangGraphResumeRuntime(
+                SqliteSaver(connection),
+                checkpoint_namespace="resume-tests",
+                legacy_database_path=str(self.legacy_database),
+            )
+
+        legacy = sqlite3.connect(self.legacy_database)
+        try:
+            tables = {
+                row[0]
+                for row in legacy.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            self.assertEqual(tables, {"legacy_authority"})
+            self.assertEqual(
+                legacy.execute("SELECT value FROM legacy_authority").fetchone(),
+                ("unchanged",),
+            )
+        finally:
+            legacy.close()
 
     def test_unapproved_and_stale_assignment_resumes_fail_closed(self) -> None:
         record = self.record()
@@ -431,6 +476,7 @@ class LangGraphResumeTests(unittest.TestCase):
                 target=_resume_process,
                 args=(
                     str(self.database),
+                    str(self.legacy_database),
                     record.model_dump_json(),
                     paused.handle.as_dict(),
                     start_event,

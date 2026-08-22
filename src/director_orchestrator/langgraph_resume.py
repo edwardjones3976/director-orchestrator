@@ -29,6 +29,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from .approvals import assignment_approval_digest, assignment_is_approved
+from .config import _paths_are_isolated, langgraph_resume_claim_path
 from .models import Assignment, ProviderName, ProviderRun, TaskRecord
 
 
@@ -287,17 +288,22 @@ class LangGraphResumeRuntime:
         *,
         checkpoint_namespace: str = DEFAULT_CHECKPOINT_NAMESPACE,
         graph_version: str = GRAPH_VERSION,
+        legacy_database_path: str,
     ) -> None:
         if not checkpoint_namespace.strip() or not graph_version.strip():
             raise ValueError("checkpoint namespace and graph version are required")
         self.checkpoint_namespace = checkpoint_namespace
         self.graph_version = graph_version
-        self._claim_database = self._claim_database_path(checkpointer)
+        self._checkpoint_database, self._claim_database = self._database_paths(
+            checkpointer
+        )
+        self._legacy_database = Path(legacy_database_path)
+        self._validate_runtime_storage_isolation()
         self._setup_claim_store()
         self._graph = _build_graph(checkpointer)
 
     @staticmethod
-    def _claim_database_path(checkpointer: BaseCheckpointSaver) -> Path:
+    def _database_paths(checkpointer: BaseCheckpointSaver) -> tuple[Path, Path]:
         connection = getattr(checkpointer, "conn", None)
         if not isinstance(connection, sqlite3.Connection):
             raise ValueError("approval resume requires a durable SQLite checkpointer")
@@ -305,11 +311,25 @@ class LangGraphResumeRuntime:
         database = next((str(row[2]) for row in rows if row[1] == "main"), "")
         if not database or database == ":memory:":
             raise ValueError("approval resume requires a file-backed SQLite checkpointer")
-        return Path(database + ".resume-claims.sqlite3")
+        return Path(database), Path(langgraph_resume_claim_path(database))
+
+    def _validate_runtime_storage_isolation(self) -> None:
+        pairs = (
+            (self._checkpoint_database, self._legacy_database),
+            (self._claim_database, self._legacy_database),
+            (self._claim_database, self._checkpoint_database),
+        )
+        if not all(_paths_are_isolated(str(left), str(right)) for left, right in pairs):
+            raise ValueError(
+                "LangGraph checkpoint, resume claim, and legacy databases must be isolated"
+            )
 
     def _setup_claim_store(self) -> None:
         connection = sqlite3.connect(self._claim_database, timeout=30)
         try:
+            # Recheck after SQLite has opened/created the claim path and before
+            # any table write, closing the configuration-to-creation race.
+            self._validate_runtime_storage_isolation()
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS resume_claims (

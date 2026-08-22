@@ -11,7 +11,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from director_orchestrator.config import Settings
+from director_orchestrator.config import Settings, langgraph_resume_claim_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +86,50 @@ class LangGraphConfigurationTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ValueError, "must differ from SQLITE_PATH"):
+                settings.validate_langgraph_configuration()
+
+    def test_enabled_lane_rejects_claim_database_hardlinked_to_legacy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "legacy.sqlite3"
+            checkpoint = Path(directory) / "checkpoint.sqlite3"
+            claim = Path(langgraph_resume_claim_path(str(checkpoint)))
+            legacy.write_bytes(b"legacy")
+            checkpoint.write_bytes(b"checkpoint")
+            try:
+                os.link(legacy, claim)
+            except OSError as exc:
+                self.skipTest(f"hardlinks unavailable: {exc}")
+            settings = replace(
+                self.base_settings(),
+                langgraph_approval_resume_enabled=True,
+                sqlite_path=str(legacy),
+                langgraph_checkpoint_path=str(checkpoint),
+                langgraph_checkpoint_namespace="claim-hardlink-proof",
+            )
+
+            with self.assertRaisesRegex(ValueError, "claim database"):
+                settings.validate_langgraph_configuration()
+
+    def test_enabled_lane_rejects_claim_database_hardlinked_to_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "legacy.sqlite3"
+            checkpoint = Path(directory) / "checkpoint.sqlite3"
+            claim = Path(langgraph_resume_claim_path(str(checkpoint)))
+            legacy.write_bytes(b"legacy")
+            checkpoint.write_bytes(b"checkpoint")
+            try:
+                os.link(checkpoint, claim)
+            except OSError as exc:
+                self.skipTest(f"hardlinks unavailable: {exc}")
+            settings = replace(
+                self.base_settings(),
+                langgraph_approval_resume_enabled=True,
+                sqlite_path=str(legacy),
+                langgraph_checkpoint_path=str(checkpoint),
+                langgraph_checkpoint_namespace="claim-checkpoint-hardlink-proof",
+            )
+
+            with self.assertRaisesRegex(ValueError, "claim database"):
                 settings.validate_langgraph_configuration()
 
     def test_isolated_enabled_configuration_is_valid_but_not_runtime_active(self):

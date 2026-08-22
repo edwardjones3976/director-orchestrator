@@ -50,6 +50,10 @@ def _paths_are_isolated(left: str, right: str) -> bool:
     if left_exists != os.path.exists(left) or right_exists != os.path.exists(right):
         return False
     return True
+
+
+def langgraph_resume_claim_path(checkpoint_path: str) -> str:
+    return checkpoint_path.strip() + ".resume-claims.sqlite3"
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 
 
@@ -287,6 +291,17 @@ class Settings:
         checkpoint_isolated = checkpoint_configured and _paths_are_isolated(
             checkpoint_path, self.sqlite_path
         )
+        claim_path = (
+            langgraph_resume_claim_path(checkpoint_path)
+            if checkpoint_configured
+            else ""
+        )
+        claim_isolated = checkpoint_configured and all(
+            (
+                _paths_are_isolated(claim_path, self.sqlite_path),
+                _paths_are_isolated(claim_path, checkpoint_path),
+            )
+        )
         namespace_configured = bool(self.langgraph_checkpoint_namespace.strip())
         feature_enabled = (
             self.langgraph_shadow_enabled or self.langgraph_approval_resume_enabled
@@ -301,6 +316,7 @@ class Settings:
             or (
                 checkpoint_configured
                 and checkpoint_isolated
+                and claim_isolated
                 and namespace_configured
             ),
             "runtime_active": False,
@@ -319,6 +335,16 @@ class Settings:
             problems.append("LANGGRAPH_CHECKPOINT_PATH must be configured")
         elif not readiness["checkpoint_path_isolated"]:
             problems.append("LANGGRAPH_CHECKPOINT_PATH must differ from SQLITE_PATH")
+        elif not _paths_are_isolated(
+            langgraph_resume_claim_path(self.langgraph_checkpoint_path),
+            self.sqlite_path,
+        ) or not _paths_are_isolated(
+            langgraph_resume_claim_path(self.langgraph_checkpoint_path),
+            self.langgraph_checkpoint_path,
+        ):
+            problems.append(
+                "LangGraph resume claim database must differ from SQLITE_PATH and checkpoint database"
+            )
         if not readiness["checkpoint_namespace_configured"]:
             problems.append("LANGGRAPH_CHECKPOINT_NAMESPACE must be configured")
         raise ValueError("Invalid enabled LangGraph configuration: " + "; ".join(problems))
