@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 from dataclasses import dataclass
 
@@ -153,11 +154,21 @@ class Settings:
     slack_bot_token: str = os.getenv("SLACK_BOT_TOKEN", "")
     slack_channel_id: str = os.getenv("SLACK_DIRECTOR_CHANNEL_ID", "")
     slack_owner_user_id: str = os.getenv("SLACK_OWNER_USER_ID", "")
+    slack_gateway_secret: str = os.getenv("SLACK_GATEWAY_SECRET", "")
     n8n_webhook_url: str = os.getenv("N8N_DIRECTOR_WEBHOOK_URL", "")
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
     openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "medium")
+    # Explicit accounting estimates for Director calls. Defaults preserve the
+    # existing deployment budget while allowing operators to reserve a
+    # conservative amount for every planning/review call.
+    openai_plan_estimated_cost_usd: float = _float(
+        "OPENAI_PLAN_ESTIMATED_COST_USD", 0.0
+    )
+    openai_review_estimated_cost_usd: float = _float(
+        "OPENAI_REVIEW_ESTIMATED_COST_USD", 0.0
+    )
 
     cursor_api_key: str = os.getenv("CURSOR_API_KEY", "")
     cursor_api_base: str = os.getenv("CURSOR_API_BASE", "https://api.cursor.com")
@@ -255,8 +266,21 @@ class Settings:
         }
 
     def readiness(self) -> dict[str, bool]:
+        slack_gateway_ready = bool(
+            len(self.slack_gateway_secret) >= 32
+            and (
+                not self.shared_secret
+                or not hmac.compare_digest(
+                    self.slack_gateway_secret, self.shared_secret
+                )
+            )
+        )
         return {
-            "slack": bool(self.slack_app_token and self.slack_bot_token),
+            "slack": bool(
+                self.slack_app_token
+                and self.slack_bot_token
+                and slack_gateway_ready
+            ),
             "openai_director": bool(self.openai_api_key),
             "cursor": bool(self.cursor_api_key),
             "claude": bool(self.claude_routine_url and self.claude_routine_token),

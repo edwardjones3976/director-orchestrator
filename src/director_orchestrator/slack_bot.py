@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import logging
 import re
 import threading
@@ -10,19 +11,50 @@ import httpx
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+from .approvals import (
+    build_slack_gateway_proof,
+    failed_retry_decision_digest,
+    parse_approval_button_value,
+)
 from .config import Settings
+from .models import OwnerApproval, TaskRecord, TaskStatus
 
 
 settings = Settings()
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 log = logging.getLogger("director.slack")
 
-if not settings.slack_bot_token or not settings.slack_app_token:
-    raise SystemExit("SLACK_BOT_TOKEN and SLACK_APP_TOKEN are required")
+if (
+    not settings.slack_bot_token
+    or not settings.slack_app_token
+    or not settings.slack_gateway_secret
+    or len(settings.slack_gateway_secret) < 32
+    or (
+        settings.shared_secret
+        and hmac.compare_digest(
+            settings.slack_gateway_secret, settings.shared_secret
+        )
+    )
+):
+    raise SystemExit(
+        "Slack tokens and a distinct 32+ character SLACK_GATEWAY_SECRET are required"
+    )
 
 app = App(token=settings.slack_bot_token)
 _seen_events: dict[str, float] = {}
 _seen_lock = threading.Lock()
+
+
+def _log_boundary_failure(operation: str, exc: Exception) -> None:
+    """Log only bounded diagnostics for failures involving Slack input.
+
+    Validation exceptions can embed the rejected note or payload in their
+    message and traceback. Slack is an untrusted boundary, so neither is
+    logged; the exception class is enough to distinguish validation,
+    transport, and service failures operationally.
+    """
+
+    log.warning("%s (%s)", operation, type(exc).__name__)
 
 
 def _claim_event(event_id: str) -> bool:
@@ -39,6 +71,36 @@ def _claim_event(event_id: str) -> bool:
 
 def _clean_text(text: str) -> str:
     return re.sub(r"<@[A-Z0-9]+>", "", text).strip()
+
+
+def _signed_owner_payload(
+    task_id: str,
+    record: TaskRecord,
+    task_version: int,
+    payload: dict,
+) -> dict:
+    approval = OwnerApproval.model_validate(payload)
+    proof = build_slack_gateway_proof(
+        settings.slack_gateway_secret,
+        settings.shared_secret,
+        record,
+        task_version,
+        approval,
+        channel_id=settings.slack_channel_id,
+        path=f"/v1/tasks/{task_id}/approve",
+    )
+    return {
+        **payload,
+        "slack_gateway_proof": proof.model_dump(mode="json"),
+    }
+
+
+def _task_and_version(response) -> tuple[TaskRecord, int]:
+    response.raise_for_status()
+    raw_version = response.headers.get("X-Task-Record-Version")
+    if raw_version is None or not raw_version.isdigit():
+        raise ValueError("Director task response omitted its record version")
+    return TaskRecord.model_validate(response.json()), int(raw_version)
 
 
 def _forward(event: dict, client, *, require_prefix: bool) -> None:
@@ -81,7 +143,7 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
         task_id = body.get("task_id") or body.get("data", {}).get("task_id") or "queued"
         client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=f"*{task_id} — QUEUED*\nThe Director accepted this work order in dry-run or live mode according to the configured safety switch.")
     except Exception as exc:
-        log.exception("Failed to forward Director event")
+        _log_boundary_failure("Failed to forward Director event", exc)
         client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=f"*DIRECTOR — BLOCKED*\nThe local orchestrator could not accept this request: `{type(exc).__name__}`.")
 
 
@@ -106,16 +168,41 @@ def command_handler(ack, command, client, respond):
     if approval:
         task_id, note = approval.group(1).upper(), approval.group(2) or "Approved"
         try:
+            payload = {
+                "owner_user_id": command["user_id"],
+                "note": note,
+                "source": "slack_command",
+            }
+            current = httpx.get(
+                f"{settings.orchestrator_base_url}/v1/tasks/{task_id}",
+                headers={"Authorization": f"Bearer {settings.shared_secret}"},
+                timeout=20,
+            )
+            record, task_version = _task_and_version(current)
+            if record.status == TaskStatus.FAILED:
+                assignments = sorted(
+                    record.plan.assignments if record.plan else [],
+                    key=lambda item: item.sequence,
+                )
+                if record.next_assignment_index >= len(assignments):
+                    raise ValueError("Failed task has no pending assignment")
+                payload["assignment_sequence"] = assignments[
+                    record.next_assignment_index
+                ].sequence
+                payload["retry_decision_digest"] = failed_retry_decision_digest(
+                    record
+                )
+            payload = _signed_owner_payload(task_id, record, task_version, payload)
             response = httpx.post(
                 f"{settings.orchestrator_base_url}/v1/tasks/{task_id}/approve",
                 headers={"Authorization": f"Bearer {settings.shared_secret}"},
-                json={"owner_user_id": command["user_id"], "note": note},
+                json=payload,
                 timeout=20,
             )
             response.raise_for_status()
             respond(f"*{task_id} — RESUMING*\nYour approval or clarification was recorded.", response_type="ephemeral")
         except Exception as exc:
-            log.exception("Failed to approve Director task")
+            _log_boundary_failure("Failed to approve Director task", exc)
             respond(f"*{task_id} — BLOCKED*\nApproval was not recorded: `{type(exc).__name__}`.", response_type="ephemeral")
         return
 
@@ -145,17 +232,29 @@ def approval_button_handler(ack, body, client):
     ack()
     user_id = body.get("user", {}).get("id")
     channel_id = body.get("channel", {}).get("id")
-    # The button value is "<task_id>" for a plan-level approval, or
-    # "<task_id>|<assignment_sequence>" for an assignment the owner was shown.
-    # Sending the sequence back lets the orchestrator reject a stale button.
-    raw_value = body.get("actions", [{}])[0].get("value", "")
-    task_id, _, raw_sequence = raw_value.partition("|")
-    payload = {"owner_user_id": user_id, "note": "Approved from Slack"}
-    if raw_sequence.isdigit():
-        payload["assignment_sequence"] = int(raw_sequence)
     if user_id != settings.slack_owner_user_id or channel_id != settings.slack_channel_id:
         return
+    task_id = "UNKNOWN"
     try:
+        raw_value = body.get("actions", [{}])[0].get("value", "")
+        task_id, assignment_sequence, decision_digest = parse_approval_button_value(
+            raw_value
+        )
+        payload = {
+            "owner_user_id": user_id,
+            "note": "Approved from Slack",
+            "source": "slack_button",
+            "decision_digest": decision_digest,
+        }
+        if assignment_sequence is not None:
+            payload["assignment_sequence"] = assignment_sequence
+        current = httpx.get(
+            f"{settings.orchestrator_base_url}/v1/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {settings.shared_secret}"},
+            timeout=20,
+        )
+        record, task_version = _task_and_version(current)
+        payload = _signed_owner_payload(task_id, record, task_version, payload)
         response = httpx.post(
             f"{settings.orchestrator_base_url}/v1/tasks/{task_id}/approve",
             headers={"Authorization": f"Bearer {settings.shared_secret}"},
@@ -170,7 +269,7 @@ def approval_button_handler(ack, body, client):
             text=f"*{task_id} — RESUMING*\nOwner approval was recorded from Slack.",
         )
     except Exception as exc:
-        log.exception("Failed to approve Director task from button")
+        _log_boundary_failure("Failed to approve Director task from button", exc)
         message = body.get("message", {})
         client.chat_postMessage(
             channel=channel_id,

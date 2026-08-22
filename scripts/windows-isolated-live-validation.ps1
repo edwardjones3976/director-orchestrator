@@ -17,7 +17,8 @@ $composeEnvironmentNames = @(
     "DIRECTOR_ENV_FILE", "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT",
     "N8N_HOST_PORT", "APP_ENV", "LOG_LEVEL", "TZ", "ORCHESTRATOR_BASE_URL",
     "ORCHESTRATOR_SHARED_SECRET", "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN",
-    "SLACK_DIRECTOR_CHANNEL_ID", "SLACK_OWNER_USER_ID", "N8N_DIRECTOR_WEBHOOK_URL",
+    "SLACK_DIRECTOR_CHANNEL_ID", "SLACK_OWNER_USER_ID", "SLACK_GATEWAY_SECRET",
+    "N8N_DIRECTOR_WEBHOOK_URL",
     "N8N_POSTGRES_PASSWORD", "N8N_ENCRYPTION_KEY", "N8N_IMAGE"
 )
 $originalProcessEnvironment = @{}
@@ -200,7 +201,7 @@ function Assert-NoProfileCollisions {
     $identityNames = @(
         "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT", "N8N_HOST_PORT", "SQLITE_PATH",
         "ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N_ENCRYPTION_KEY",
-        "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_REVIEW_SECRET",
+        "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_REVIEW_SECRET", "SLACK_GATEWAY_SECRET",
         "ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64",
         "SLACK_DIRECTOR_CHANNEL_ID", "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"
     )
@@ -377,8 +378,11 @@ $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 if ($LASTEXITCODE -ne 0) { throw "Unable to restrict $profilePath permissions before secret handling." }
 
 $profileText = Get-Content -LiteralPath $profilePath -Raw
-foreach ($name in @("ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N_ENCRYPTION_KEY", "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_REVIEW_SECRET")) {
-    if ($profileText -match "(?m)^$([Regex]::Escape($name))=REPLACE_WITH_RANDOM_SECRET\s*$") {
+if ($profileText -notmatch '(?m)^SLACK_GATEWAY_SECRET=') {
+    $profileText = $profileText.TrimEnd() + "`r`nSLACK_GATEWAY_SECRET=REPLACE_WITH_DISTINCT_RANDOM_SECRET`r`n"
+}
+foreach ($name in @("ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N_ENCRYPTION_KEY", "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_REVIEW_SECRET", "SLACK_GATEWAY_SECRET")) {
+    if ($profileText -match "(?m)^$([Regex]::Escape($name))=REPLACE_WITH_(?:DISTINCT_)?RANDOM_SECRET\s*$") {
         $profileText = Set-DotEnvValue -Text $profileText -Name $name -Value (New-RandomSecret)
     }
 }
@@ -433,7 +437,8 @@ $requiredConfiguration = @(
 )
 if (-not $ApiOnly) {
     $requiredConfiguration += @(
-        "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SLACK_DIRECTOR_CHANNEL_ID"
+        "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SLACK_DIRECTOR_CHANNEL_ID",
+        "SLACK_GATEWAY_SECRET"
     )
 }
 Assert-Configured -Values $values -Names $requiredConfiguration
