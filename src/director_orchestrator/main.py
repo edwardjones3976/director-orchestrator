@@ -14,8 +14,9 @@ from .approvals import (
     apply_ambiguous_dispatch_resolution,
     apply_failed_predispatch_retry,
     apply_owner_approval,
+    apply_owner_clarification,
+    clarification_required,
     owner_identity_matches,
-    reset_for_owner_clarification,
 )
 from .callbacks import (
     CallbackConflict,
@@ -30,7 +31,6 @@ from .models import (
     ClaudeCallback,
     ManualRunCompletion,
     OwnerApproval,
-    ProviderName,
     SlackIntake,
     TaskRecord,
     TaskStatus,
@@ -169,16 +169,11 @@ def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) 
         return stored
     if record.status != TaskStatus.OWNER_DECISION_REQUIRED:
         raise HTTPException(status_code=409, detail="Task is not awaiting an owner decision")
-    assignments = sorted(record.plan.assignments, key=lambda item: item.sequence) if record.plan else []
-    owner_assignment = (
-        record.next_assignment_index < len(assignments)
-        and assignments[record.next_assignment_index].agent == ProviderName.OWNER
-    )
-    if record.plan and (record.plan.owner_question or owner_assignment):
-        if not approval.note.strip() or approval.note == "Approved":
-            raise HTTPException(status_code=409, detail="This task needs a written clarification, not a bare approval")
-        record.intake.text += f"\n\nOwner clarification: {approval.note.strip()}"
-        reset_for_owner_clarification(record)
+    if clarification_required(record):
+        try:
+            apply_owner_clarification(record, approval)
+        except StaleApproval as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     else:
         try:
             apply_owner_approval(record, approval)

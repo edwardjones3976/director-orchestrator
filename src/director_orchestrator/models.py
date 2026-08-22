@@ -386,6 +386,8 @@ class TaskRecord(BaseModel):
 
 
 class OwnerApproval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     owner_user_id: str
     note: str = Field(default="Approved", max_length=2_000)
     # The assignment the owner was actually shown. Slack approval buttons persist

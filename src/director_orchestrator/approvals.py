@@ -20,6 +20,9 @@ class StaleApproval(ValueError):
     pass
 
 
+_SYNTHETIC_APPROVAL_NOTES = frozenset({"Approved", "Approved from Slack"})
+
+
 def owner_identity_matches(provided: str, configured: str) -> bool:
     """Constant-time owner check that fails closed when no owner is configured.
 
@@ -214,6 +217,45 @@ def reset_for_owner_clarification(record: TaskRecord) -> None:
     record.error = None
 
 
+def clarification_required(record: TaskRecord) -> bool:
+    """Whether the pending stop needs a written answer rather than a bare approval.
+
+    Mirrors the two engine stops that ask the owner a question: a plan-level
+    owner_question, and an assignment addressed to the owner.
+    """
+    if record.plan is None:
+        return False
+    if record.plan.owner_question:
+        return True
+    # The engine evaluates the plan-level approval gate before it reaches an
+    # OWNER assignment. Preserve that separation so a written answer cannot
+    # accidentally replace the exact plan approval that is currently pending.
+    if plan_gate_pending(record):
+        return False
+    pending = pending_assignment(record)
+    return bool(pending is not None and pending.agent == ProviderName.OWNER)
+
+
+def apply_owner_clarification(record: TaskRecord, approval: OwnerApproval) -> None:
+    """Fold a written clarification into the intake and discard the answered plan.
+
+    The plan is rebuilt from the clarified text, so every piece of state keyed to
+    the discarded plan's sequence numbers must be discarded with it. Accepted
+    outcomes are part of that state: left behind, a rebuilt assignment could
+    satisfy its depends_on check, or inherit handoff evidence, from work the new
+    plan never authorized.
+    """
+    if approval.assignment_sequence is not None:
+        raise StaleApproval(
+            "A written clarification cannot be bound to an assignment approval"
+        )
+    note = approval.note.strip()
+    if not note or note in _SYNTHETIC_APPROVAL_NOTES:
+        raise StaleApproval("This task needs a written clarification, not a bare approval")
+    record.intake.text += f"\n\nOwner clarification: {note}"
+    reset_for_owner_clarification(record)
+
+
 def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) -> None:
     """Retry a failed assignment only when no provider run was recorded."""
     if record.status != TaskStatus.FAILED:
@@ -227,8 +269,9 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
         raise StaleApproval("Ambiguous provider dispatch requires explicit reconciliation")
     if any(run.assignment_sequence == pending.sequence for run in record.provider_runs):
         raise StaleApproval("A provider run already exists; retry could duplicate dispatch")
-    if not approval.note.strip() or approval.note == "Approved":
+    note = approval.note.strip()
+    if not note or note in _SYNTHETIC_APPROVAL_NOTES:
         raise StaleApproval("A failed retry requires an explicit owner note")
     record.status = TaskStatus.QUEUED
     record.error = None
-    record.message = approval.note.strip()
+    record.message = note
