@@ -422,6 +422,26 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
                     ["check_contribution_tags.py", "--base", base, "--head", head],
                 ):
                     self.assertEqual(checker.main(), 0)
+
+                # An unreadable path must be reported as one finding rather than
+                # aborting the range and hiding every other result.
+                git("update-index", "--force-remove", "vendor")
+                (repo / "note.md").write_text("no tags here\n", encoding="utf-8")
+                git("add", "note.md")
+                git("commit", "--quiet", "-m", "add untagged note")
+                unreadable_head = git("rev-parse", "HEAD").strip()
+                failure = subprocess.CalledProcessError(128, ["git", "show"])
+                with patch.object(checker, "_content_at", side_effect=failure), patch(
+                    "sys.argv",
+                    [
+                        "check_contribution_tags.py",
+                        "--base",
+                        base,
+                        "--head",
+                        unreadable_head,
+                    ],
+                ):
+                    self.assertEqual(checker.main(), 1)
             finally:
                 os.chdir(cwd)
 
