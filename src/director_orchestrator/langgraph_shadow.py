@@ -4,6 +4,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:51 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 """Provider-neutral LangGraph shadow of the legacy task-status lifecycle.
 
 This module deliberately has no provider adapter, store, Slack, GitHub, or other
@@ -28,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from director_orchestrator.approvals import (
     assignment_is_approved,
+    current_owner_decision,
     pending_assignment,
     plan_gate_pending,
 )
@@ -130,6 +132,7 @@ class ShadowGraphState(TypedDict, total=False):
     pending_assignment_requires_approval: bool
     pending_assignment_approved: bool
     owner_clarification_pending: bool
+    observed_legacy_approval_required: bool
     policy_blocked: bool
     plan_gate_pending: bool
     assignment_gate_pending: bool
@@ -167,6 +170,7 @@ class ShadowTaskSnapshot(BaseModel):
     pending_assignment_requires_approval: bool = False
     pending_assignment_approved: bool = False
     owner_clarification_pending: bool = False
+    observed_legacy_approval_required: bool = False
 
     @model_validator(mode="after")
     def validate_compact_projection(self) -> "ShadowTaskSnapshot":
@@ -204,6 +208,7 @@ class ShadowTaskSnapshot(BaseModel):
             "pending_assignment_requires_approval": self.pending_assignment_requires_approval,
             "pending_assignment_approved": self.pending_assignment_approved,
             "owner_clarification_pending": self.owner_clarification_pending,
+            "observed_legacy_approval_required": self.observed_legacy_approval_required,
             "visited_nodes": [],
         }
 
@@ -399,6 +404,13 @@ def snapshot_from_task_record(
         effective_assignment_requires_approval
         and not assignment_is_approved(record, pending)
     )
+    legacy_decision = current_owner_decision(record)
+    observed_legacy_approval_required = bool(
+        not dry_run
+        and not raw_policy_errors
+        and legacy_decision is not None
+        and legacy_decision.kind in {"plan_approval", "assignment_approval"}
+    )
     return ShadowTaskSnapshot(
         task_id=record.task_id,
         status=record.status,
@@ -426,6 +438,7 @@ def snapshot_from_task_record(
             and assignment_is_approved(record, pending)
         ),
         owner_clarification_pending=owner_clarification_pending,
+        observed_legacy_approval_required=observed_legacy_approval_required,
     )
 
 
@@ -499,6 +512,7 @@ def _validate_observation(state: ShadowGraphState) -> ShadowGraphState:
         "pending_assignment_requires_approval",
         "pending_assignment_approved",
         "owner_clarification_pending",
+        "observed_legacy_approval_required",
     )
     if any(type(state.get(field)) is not bool for field in boolean_fields):
         raise ValueError("approval projection fields must be booleans")
@@ -601,13 +615,10 @@ def _compare_with_legacy(state: ShadowGraphState) -> ShadowGraphState:
             f"terminal mismatch: legacy={legacy_is_terminal}, shadow={shadow_is_terminal}"
         )
 
-    # OWNER_DECISION_REQUIRED is a general stop classification.  Clarification,
-    # provider unavailability, and other owner decisions are not approvals.  The
-    # approval comparison therefore derives only from explicit legacy gate facts,
-    # after the same policy-block precedence used by the shadow projection.
-    legacy_approval_required = not state["policy_blocked"] and (
-        state["plan_gate_pending"] or state["assignment_gate_pending"]
-    )
+    # This fact is projected independently by current_owner_decision from the
+    # legacy TaskRecord.  It must not be reconstructed from the shadow graph's
+    # own plan/assignment gate outputs or approval agreement becomes tautological.
+    legacy_approval_required = state["observed_legacy_approval_required"]
     shadow_approval_required = state["shadow_approval_required"]
     if legacy_approval_required != shadow_approval_required:
         differences.append(

@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 from __future__ import annotations
 
 import hmac
@@ -38,17 +39,21 @@ def _normalized_path(value: str) -> str:
 def _paths_are_isolated(left: str, right: str) -> bool:
     """Compare path spelling and file identity, failing closed on stat races."""
 
-    if _normalized_path(left) == _normalized_path(right):
+    normalized_left = _normalized_path(left)
+    normalized_right = _normalized_path(right)
+    if normalized_left == normalized_right:
         return False
-    left_exists = os.path.exists(left)
-    right_exists = os.path.exists(right)
+    left_exists = os.path.exists(normalized_left)
+    right_exists = os.path.exists(normalized_right)
     if left_exists and right_exists:
         try:
-            return not os.path.samefile(left, right)
+            return not os.path.samefile(normalized_left, normalized_right)
         except OSError:
             return False
     # A path that disappears during identity inspection is not proven isolated.
-    if left_exists != os.path.exists(left) or right_exists != os.path.exists(right):
+    if left_exists != os.path.exists(normalized_left) or right_exists != os.path.exists(
+        normalized_right
+    ):
         return False
     return True
 

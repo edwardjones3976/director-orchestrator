@@ -1,6 +1,7 @@
 """Default-off and isolation contracts for the LangGraph proof lanes."""
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 
 from __future__ import annotations
 
@@ -85,6 +86,29 @@ class LangGraphConfigurationTests(unittest.TestCase):
                 langgraph_checkpoint_namespace="hardlink-proof",
             )
 
+            with self.assertRaisesRegex(ValueError, "must differ from SQLITE_PATH"):
+                settings.validate_langgraph_configuration()
+
+    def test_enabled_lane_rejects_padded_hardlink_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "legacy.sqlite3"
+            checkpoint = Path(directory) / "checkpoint.sqlite3"
+            legacy.write_bytes(b"legacy")
+            try:
+                os.link(legacy, checkpoint)
+            except OSError as exc:
+                self.skipTest(f"hardlinks unavailable: {exc}")
+            settings = replace(
+                self.base_settings(),
+                langgraph_shadow_enabled=True,
+                sqlite_path=f"  {legacy}  ",
+                langgraph_checkpoint_path=str(checkpoint),
+                langgraph_checkpoint_namespace="padded-hardlink-proof",
+            )
+
+            self.assertFalse(
+                settings.langgraph_shadow_readiness()["checkpoint_path_isolated"]
+            )
             with self.assertRaisesRegex(ValueError, "must differ from SQLITE_PATH"):
                 settings.validate_langgraph_configuration()
 

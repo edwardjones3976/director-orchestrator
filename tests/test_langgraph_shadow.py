@@ -4,6 +4,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:51 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 from __future__ import annotations
 
 import json
@@ -55,6 +56,9 @@ class LangGraphShadowTests(unittest.TestCase):
                         previous_status=TaskStatus.QUEUED,
                         transition_reason_code=ShadowReasonCode.LEGACY_OBSERVATION,
                         plan_approval_required=status == TaskStatus.OWNER_DECISION_REQUIRED,
+                        observed_legacy_approval_required=(
+                            status == TaskStatus.OWNER_DECISION_REQUIRED
+                        ),
                     )
                 )
                 self.assertEqual(report.schema_version, SHADOW_SCHEMA_VERSION)
@@ -215,6 +219,7 @@ class LangGraphShadowTests(unittest.TestCase):
                 plan_shape_digest=digest,
                 plan_approval_required=True,
                 owner_approved=False,
+                observed_legacy_approval_required=True,
             )
         )
 
@@ -234,6 +239,7 @@ class LangGraphShadowTests(unittest.TestCase):
                 pending_assignment_sequence=2,
                 pending_assignment_requires_approval=True,
                 pending_assignment_approved=False,
+                observed_legacy_approval_required=True,
             )
         )
 
@@ -241,6 +247,25 @@ class LangGraphShadowTests(unittest.TestCase):
         self.assertTrue(report.assignment_gate_pending)
         self.assertTrue(report.approvals_agree)
         self.assertTrue(report.statuses_agree)
+
+    def test_approval_comparison_exposes_independent_legacy_mismatch(self):
+        report = run_shadow_comparison(
+            ShadowTaskSnapshot(
+                task_id="DIR-APPROVAL-MISMATCH",
+                status=TaskStatus.OWNER_DECISION_REQUIRED,
+                plan_approval_required=True,
+                owner_approved=False,
+                observed_legacy_approval_required=False,
+            )
+        )
+
+        self.assertFalse(report.legacy_approval_required)
+        self.assertTrue(report.shadow_approval_required)
+        self.assertFalse(report.approvals_agree)
+        self.assertIn(
+            "approval mismatch: legacy=False, shadow=True",
+            report.differences,
+        )
 
     def test_owner_clarification_stop_is_not_misclassified_as_approval(self):
         report = run_shadow_comparison(

@@ -1,4 +1,5 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 from __future__ import annotations
 
 import sqlite3
@@ -200,7 +201,7 @@ class LangGraphResumeTests(unittest.TestCase):
             LangGraphResumeRuntime(
                 SqliteSaver(connection),
                 checkpoint_namespace="resume-tests",
-                legacy_database_path=str(self.legacy_database),
+                legacy_database_path=f"  {self.legacy_database}  ",
             )
 
         legacy = sqlite3.connect(self.legacy_database)
