@@ -2,6 +2,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:51 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:01 UTC | CHANGE]]
 """Bounded evidence derived from real legacy records and deterministic helpers."""
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from director_orchestrator.approvals import (
     apply_failed_predispatch_retry,
     apply_owner_approval,
+    failed_retry_decision_digest,
     reset_for_owner_clarification,
 )
 from director_orchestrator.config import Settings
@@ -173,6 +175,7 @@ def _legacy_fixture(index: int) -> tuple[str, TaskRecord, Settings, TaskStatus |
                 owner_user_id="U-OWNER",
                 assignment_sequence=1,
                 note="Retry after bounded fixture correction",
+                retry_decision_digest=failed_retry_decision_digest(record),
             ),
         )
         previous_status = TaskStatus.FAILED
