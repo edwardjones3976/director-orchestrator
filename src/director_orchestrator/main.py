@@ -154,36 +154,47 @@ def get_task(task_id: str) -> TaskRecord:
     return record
 
 
+def _apply_owner_decision(record: TaskRecord, approval: OwnerApproval) -> None:
+    if record.status == TaskStatus.FAILED:
+        apply_failed_predispatch_retry(record, approval)
+        return
+    if record.status != TaskStatus.OWNER_DECISION_REQUIRED:
+        raise StaleApproval("Task is not awaiting an owner decision")
+    if clarification_required(record):
+        apply_owner_clarification(record, approval)
+    else:
+        apply_owner_approval(record, approval)
+    record.status = TaskStatus.QUEUED
+    record.message = approval.note
+
+
+def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: OwnerApproval) -> TaskRecord:
+    versioned = task_store.get_versioned(task_id)
+    if versioned is None:
+        raise KeyError(task_id)
+    _, expected_version = versioned
+    stored = task_store.mutate_if_version(
+        task_id,
+        expected_version,
+        lambda current: _apply_owner_decision(current, approval),
+    )
+    if stored is None:
+        raise StaleApproval("Owner decision changed or was already consumed")
+    return stored
+
+
 @app.post("/v1/tasks/{task_id}/approve", response_model=TaskRecord, dependencies=[Depends(require_auth)])
 def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) -> TaskRecord:
     if not owner_identity_matches(approval.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
-    record = get_task(task_id)
-    if record.status == TaskStatus.FAILED:
-        try:
-            apply_failed_predispatch_retry(record, approval)
-        except StaleApproval as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        stored = store.save(record)
-        background.add_task(engine.run, task_id)
-        return stored
-    if record.status != TaskStatus.OWNER_DECISION_REQUIRED:
-        raise HTTPException(status_code=409, detail="Task is not awaiting an owner decision")
-    if clarification_required(record):
-        try:
-            apply_owner_clarification(record, approval)
-        except StaleApproval as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    else:
-        try:
-            apply_owner_approval(record, approval)
-        except StaleApproval as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    record.status = TaskStatus.QUEUED
-    record.message = approval.note
-    store.save(record)
+    try:
+        stored = _consume_owner_decision(store, task_id, approval)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Task not found") from exc
+    except StaleApproval as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     background.add_task(engine.run, task_id)
-    return record
+    return stored
 
 
 @app.post(

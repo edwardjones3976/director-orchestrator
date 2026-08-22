@@ -416,7 +416,17 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
     if record.status != TaskStatus.FAILED:
         raise StaleApproval("Task is not failed")
     pending = pending_assignment(record)
-    if pending is None or approval.assignment_sequence != pending.sequence:
+    approval_sequence = approval.assignment_sequence
+    if (
+        pending is not None
+        and approval_sequence is None
+        and approval.source == OwnerApprovalSource.SLACK_COMMAND
+    ):
+        # A typed slash command is a fresh owner action rather than a persistent
+        # button. Bind it server-side to the exact failed assignment loaded in
+        # the same transaction; synthetic/button paths remain exact-bound.
+        approval_sequence = pending.sequence
+    if pending is None or approval_sequence != pending.sequence:
         raise StaleApproval("A failed retry must name the exact pending assignment")
     if pending.requires_approval and not assignment_is_approved(record, pending):
         raise StaleApproval("The pending assignment has not been approved")

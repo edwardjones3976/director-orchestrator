@@ -5,7 +5,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from .models import TaskRecord, TaskStatus, UsageCheckRecord
 
@@ -29,6 +29,8 @@ class TaskStore:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            # Serialize schema migration across concurrently starting workers.
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -41,6 +43,14 @@ class TaskStore:
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "record_version" not in columns:
+                connection.execute(
+                    "ALTER TABLE tasks ADD COLUMN record_version INTEGER NOT NULL DEFAULT 0"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS usage_checks (
@@ -79,11 +89,21 @@ class TaskStore:
             return record, True
 
     def get(self, task_id: str) -> TaskRecord | None:
+        versioned = self.get_versioned(task_id)
+        return versioned[0] if versioned is not None else None
+
+    def get_versioned(self, task_id: str) -> tuple[TaskRecord, int] | None:
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT record_json FROM tasks WHERE task_id = ?", (task_id,)
+                "SELECT record_json, record_version FROM tasks WHERE task_id = ?",
+                (task_id,),
             ).fetchone()
-            return TaskRecord.model_validate_json(row["record_json"]) if row else None
+            if row is None:
+                return None
+            return (
+                TaskRecord.model_validate_json(row["record_json"]),
+                int(row["record_version"]),
+            )
 
     def list_recoverable(self) -> list[TaskRecord]:
         recoverable = {
@@ -104,7 +124,12 @@ class TaskStore:
         record.updated_at = datetime.now(timezone.utc)
         with self._lock, self._connect() as connection:
             connection.execute(
-                "UPDATE tasks SET status = ?, record_json = ?, updated_at = ? WHERE task_id = ?",
+                """
+                UPDATE tasks
+                SET status = ?, record_json = ?, updated_at = ?,
+                    record_version = record_version + 1
+                WHERE task_id = ?
+                """,
                 (
                     record.status.value,
                     record.model_dump_json(),
@@ -113,6 +138,52 @@ class TaskStore:
                 ),
             )
         return record
+
+    def mutate_if_version(
+        self,
+        task_id: str,
+        expected_version: int,
+        mutator: Callable[[TaskRecord], None],
+    ) -> TaskRecord | None:
+        """Atomically validate and consume one persisted task decision.
+
+        The mutator runs against the current persisted record while an immediate
+        SQLite write transaction is held. Every task save advances
+        ``record_version``, so a second process holding the same decision can
+        neither overwrite the winner nor schedule duplicate follow-up work.
+        ``None`` means that another writer consumed or changed the task first.
+        """
+
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT record_json, record_version FROM tasks WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None or int(row["record_version"]) != expected_version:
+                return None
+
+            record = TaskRecord.model_validate_json(row["record_json"])
+            mutator(record)
+            record.updated_at = datetime.now(timezone.utc)
+            updated = connection.execute(
+                """
+                UPDATE tasks
+                SET status = ?, record_json = ?, updated_at = ?,
+                    record_version = record_version + 1
+                WHERE task_id = ? AND record_version = ?
+                """,
+                (
+                    record.status.value,
+                    record.model_dump_json(),
+                    record.updated_at.isoformat(),
+                    task_id,
+                    expected_version,
+                ),
+            )
+            if updated.rowcount != 1:
+                return None
+            return record
 
     def set_status(
         self,

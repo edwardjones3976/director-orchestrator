@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import importlib
+import sqlite3
+import sys
+import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -43,6 +51,7 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
+from director_orchestrator.store import TaskStore
 
 
 def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int] | None = None) -> TaskRecord:
@@ -107,6 +116,19 @@ def _button_approval(
         decision_digest=approval_decision_digest(record, assignment_sequence),
         assignment_sequence=assignment_sequence,
     )
+
+
+class _FakeBoltApp:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    @staticmethod
+    def _decorator(*args, **kwargs):
+        return lambda function: function
+
+    event = _decorator
+    command = _decorator
+    action = _decorator
 
 
 class PlanGateSeparationTests(unittest.TestCase):
@@ -250,6 +272,157 @@ class OwnerApprovalParsingTests(unittest.TestCase):
                 owner_user_id="U0B9UJ86D27",
                 note="Approved from Slack",
             )
+
+
+class AtomicOwnerDecisionTests(unittest.TestCase):
+    def test_concurrent_endpoint_requests_return_one_success_and_one_409(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            record = _record()
+            task_store.create(record)
+            approval = _button_approval(record)
+            test_settings = replace(
+                main.settings,
+                slack_owner_user_id="U0B9UJ86D27",
+            )
+            barrier = threading.Barrier(2)
+            original_get = task_store.get_versioned
+
+            def synchronized_get(task_id: str):
+                versioned = original_get(task_id)
+                barrier.wait(timeout=5)
+                return versioned
+
+            def attempt() -> tuple[int, int]:
+                background = BackgroundTasks()
+                try:
+                    main.approve(record.task_id, approval, background)
+                except HTTPException as exc:
+                    return exc.status_code, len(background.tasks)
+                return 200, len(background.tasks)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(
+                    task_store, "get_versioned", side_effect=synchronized_get
+                ),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                outcomes = list(executor.map(lambda _: attempt(), range(2)))
+
+            self.assertEqual(sorted(outcomes), [(200, 1), (409, 0)])
+            stored, version = task_store.get_versioned(record.task_id)
+            self.assertEqual(stored.status, TaskStatus.QUEUED)
+            self.assertEqual(version, 1)
+
+    def test_two_store_instances_consume_one_button_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            first_store = TaskStore(database)
+            second_store = TaskStore(database)
+            record = _record()
+            record.plan_generation = 1
+            first_store.create(record)
+            approval = _button_approval(record)
+            barrier = threading.Barrier(2)
+
+            def attempt(task_store: TaskStore) -> tuple[str, int]:
+                background = BackgroundTasks()
+                versioned = task_store.get_versioned(record.task_id)
+                self.assertIsNotNone(versioned)
+                _, expected_version = versioned
+                barrier.wait(timeout=5)
+                stored = task_store.mutate_if_version(
+                    record.task_id,
+                    expected_version,
+                    lambda current: main._apply_owner_decision(current, approval),
+                )
+                if stored is None:
+                    return "conflict", len(background.tasks)
+                background.add_task(main.engine.run, record.task_id)
+                return "accepted", len(background.tasks)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                outcomes = list(
+                    executor.map(attempt, (first_store, second_store))
+                )
+
+            self.assertEqual(sorted(outcomes), [("accepted", 1), ("conflict", 0)])
+            stored, version = first_store.get_versioned(record.task_id)
+            self.assertEqual(stored.status, TaskStatus.QUEUED)
+            self.assertTrue(stored.owner_approved)
+            self.assertEqual(version, 1)
+
+    def test_sequential_button_replay_returns_409_without_background_task(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            record = _record()
+            task_store.create(record)
+            approval = _button_approval(record)
+            test_settings = replace(
+                main.settings,
+                slack_owner_user_id="U0B9UJ86D27",
+            )
+            first_background = BackgroundTasks()
+            replay_background = BackgroundTasks()
+
+            with patch.object(main, "settings", test_settings), patch.object(
+                main, "store", task_store
+            ):
+                accepted = main.approve(
+                    record.task_id, approval, first_background
+                )
+                with self.assertRaises(HTTPException) as raised:
+                    main.approve(record.task_id, approval, replay_background)
+
+            self.assertEqual(accepted.status, TaskStatus.QUEUED)
+            self.assertEqual(len(first_background.tasks), 1)
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertEqual(len(replay_background.tasks), 0)
+            _, version = task_store.get_versioned(record.task_id)
+            self.assertEqual(version, 1)
+
+    def test_existing_database_is_migrated_to_versioned_writes(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "legacy.sqlite3")
+            record = _record()
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE tasks (
+                        task_id TEXT PRIMARY KEY,
+                        source_event_id TEXT NOT NULL UNIQUE,
+                        status TEXT NOT NULL,
+                        record_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks(
+                        task_id, source_event_id, status, record_json,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.task_id,
+                        record.intake.source_event_id,
+                        record.status.value,
+                        record.model_dump_json(),
+                        record.created_at.isoformat(),
+                        record.updated_at.isoformat(),
+                    ),
+                )
+
+            task_store = TaskStore(database)
+            loaded, version = task_store.get_versioned(record.task_id)
+            self.assertEqual(version, 0)
+            task_store.save(loaded)
+            _, version = task_store.get_versioned(record.task_id)
+            self.assertEqual(version, 1)
 
 
 class StaleButtonTests(unittest.TestCase):
@@ -572,6 +745,118 @@ class FailedPredispatchRetryTests(unittest.TestCase):
 
         self.assertEqual(record.status, TaskStatus.QUEUED)
         self.assertIsNone(record.error)
+
+    def test_fresh_slack_command_binds_failed_retry_server_side(self):
+        record = _record(owner_approved=True, approved=[1])
+        record.status = TaskStatus.FAILED
+        record.error = "Provider request failed before dispatch"
+
+        apply_failed_predispatch_retry(
+            record,
+            OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                note="Retry after restoring the provider configuration",
+                source=OwnerApprovalSource.SLACK_COMMAND,
+            ),
+        )
+
+        self.assertEqual(record.status, TaskStatus.QUEUED)
+        self.assertIsNone(record.error)
+        self.assertEqual(
+            record.message, "Retry after restoring the provider configuration"
+        )
+
+    def test_unbound_api_retry_remains_rejected_without_mutation(self):
+        record = _record(owner_approved=True, approved=[1])
+        record.status = TaskStatus.FAILED
+        record.error = "Provider request failed before dispatch"
+        before = record.model_dump(mode="json")
+
+        with self.assertRaisesRegex(StaleApproval, "exact pending assignment"):
+            apply_failed_predispatch_retry(
+                record,
+                OwnerApproval(
+                    owner_user_id="U0B9UJ86D27",
+                    note="Retry after restoring the provider configuration",
+                ),
+            )
+
+        self.assertEqual(record.model_dump(mode="json"), before)
+
+    def test_slack_command_handler_reaches_failed_retry_endpoint(self):
+        import director_orchestrator.config as config_module
+        import slack_bolt
+
+        with tempfile.TemporaryDirectory() as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            record = _record(owner_approved=True, approved=[1])
+            record.task_id = "DIR-ABCD"
+            record.status = TaskStatus.FAILED
+            record.error = "Provider request failed before dispatch"
+            task_store.create(record)
+            test_settings = replace(
+                main.settings,
+                shared_secret="test-secret",
+                slack_owner_user_id="U0B9UJ86D27",
+                slack_channel_id="C123",
+                slack_bot_token="xoxb-test",
+                slack_app_token="xapp-test",
+                orchestrator_base_url="http://testserver",
+            )
+            module_name = "director_orchestrator.slack_bot"
+            sys.modules.pop(module_name, None)
+            with (
+                patch.object(config_module, "Settings", return_value=test_settings),
+                patch.object(slack_bolt, "App", _FakeBoltApp),
+            ):
+                slack_bot = importlib.import_module(module_name)
+
+            responses: list[str] = []
+            run = AsyncMock(return_value=None)
+            try:
+                with (
+                    patch.object(main, "settings", test_settings),
+                    patch.object(main, "store", task_store),
+                    patch.object(main.engine, "run", new=run),
+                    patch.object(
+                        main.usage_monitor,
+                        "run_forever",
+                        new=AsyncMock(return_value=None),
+                    ),
+                    TestClient(main.app) as client,
+                ):
+
+                    def route_to_endpoint(url, *, headers, json, timeout):
+                        path = url.removeprefix(test_settings.orchestrator_base_url)
+                        return client.post(path, headers=headers, json=json)
+
+                    with patch.object(
+                        slack_bot.httpx, "post", side_effect=route_to_endpoint
+                    ):
+                        slack_bot.command_handler(
+                            lambda: None,
+                            {
+                                "channel_id": "C123",
+                                "user_id": "U0B9UJ86D27",
+                                "text": (
+                                    "approve DIR-ABCD Retry after restoring "
+                                    "the provider configuration"
+                                ),
+                            },
+                            None,
+                            lambda text, **_: responses.append(text),
+                        )
+            finally:
+                sys.modules.pop(module_name, None)
+
+            stored = task_store.get(record.task_id)
+            self.assertEqual(stored.status, TaskStatus.QUEUED)
+            self.assertIsNone(stored.error)
+            self.assertEqual(
+                stored.message, "Retry after restoring the provider configuration"
+            )
+            self.assertTrue(any("RESUMING" in item for item in responses))
+            run.assert_awaited_once_with(record.task_id)
 
     def test_synthetic_slack_note_cannot_authorize_failed_retry(self):
         record = _record(owner_approved=True, index=1, approved=[1, 2])
