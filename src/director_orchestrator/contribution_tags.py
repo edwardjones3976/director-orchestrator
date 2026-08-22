@@ -1,3 +1,4 @@
+# [[Cursor | Grok 4.6 | 2026-08-22 | 14:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
@@ -249,14 +250,15 @@ def validate_inline_contribution_tags(
     if PurePosixPath(path).suffix.lower() in {".md", ".mdc"} and nonblank[0].strip() == "---":
         # Treat the opening rule as frontmatter only when a closing rule exists:
         # a lone leading "---" is a horizontal rule, not an unterminated header.
-        # Compare stripped lines so a closing rule carrying trailing whitespace
-        # still terminates the block. When no closing rule is present the tag
+        # Compare with rstrip so a closing rule carrying trailing whitespace
+        # still terminates the block, without treating indented "---" inside
+        # YAML values as the closer. When no closing rule is present the tag
         # requirement below reports the missing BEGIN boundary instead.
         closing_index = next(
             (
                 index
                 for index in range(1, len(nonblank))
-                if nonblank[index].strip() == "---"
+                if nonblank[index].rstrip() == "---"
             ),
             None,
         )
@@ -307,3 +309,4 @@ def validate_inline_contribution_tags(
     return errors
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
+# [[Cursor | Grok 4.6 | 2026-08-22 | 14:44 UTC | END]]

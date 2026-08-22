@@ -1,3 +1,4 @@
+# [[Cursor | Grok 4.6 | 2026-08-22 | 14:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
@@ -154,6 +155,27 @@ class ContributionTagContractTests(unittest.TestCase):
             "---\n"
             "description: Contribution attribution\n"
             "--- \n"
+            f"{begin}\n# Rule\n{end}\n"
+        )
+        self.assertEqual(
+            validate_inline_contribution_tags(
+                ".cursor/rules/contribution-attribution.mdc",
+                text,
+                added_lines=[begin, end],
+            ),
+            [],
+        )
+
+    def test_frontmatter_does_not_end_on_indented_rule_inside_multiline_value(self):
+        begin = "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]] -->"
+        end = "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]] -->"
+        text = (
+            "---\n"
+            "description: |\n"
+            "  Documents a markdown rule:\n"
+            "  ---\n"
+            "alwaysApply: true\n"
+            "---\n"
             f"{begin}\n# Rule\n{end}\n"
         )
         self.assertEqual(
@@ -483,3 +505,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
+# [[Cursor | Grok 4.6 | 2026-08-22 | 14:44 UTC | END]]
