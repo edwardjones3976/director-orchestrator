@@ -63,7 +63,9 @@ For always-on operation, enable Docker Desktop's start-on-sign-in option, disabl
 3. Generate an app-level token with `connections:write` for Socket Mode.
 4. Put the app token in `SLACK_APP_TOKEN` and the bot token in `SLACK_BOT_TOKEN` inside `.env`.
 5. Invite the app to the private `#project-director` channel.
-6. Restart only the Slack gateway: `docker compose restart slackbot`.
+6. Generate a distinct `SLACK_GATEWAY_SECRET` for the local Slack gateway. Do
+   not reuse the public orchestrator bearer secret.
+7. Restart only the Slack gateway: `docker compose restart slackbot`.
 
 Never paste tokens into Slack, chat, source control, screenshots, or issue bodies.
 

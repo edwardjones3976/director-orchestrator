@@ -16,6 +16,9 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         cls.script = (
             ROOT / "scripts" / "windows-isolated-live-validation.ps1"
         ).read_text(encoding="utf-8")
+        cls.bootstrap = (
+            ROOT / "scripts" / "windows-bootstrap.ps1"
+        ).read_text(encoding="utf-8")
         cls.compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         cls.profile = (ROOT / ".env.uppercut.example").read_text(encoding="utf-8")
 
@@ -25,6 +28,22 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertNotIn('Set-Content ".env"', self.script)
         self.assertNotIn('WriteAllText((Join-Path (Get-Location) ".env")', self.script)
         self.assertIn("SeedProviderCredentialsFromPrimaryEnv", self.script)
+
+    def test_legacy_profiles_gain_a_fresh_gateway_secret_without_printing_it(self):
+        self.assertIn(
+            "if ($envText -notmatch '(?m)^SLACK_GATEWAY_SECRET=')",
+            self.bootstrap,
+        )
+        self.assertIn(
+            'SLACK_GATEWAY_SECRET=" + (New-RandomSecret)',
+            self.bootstrap,
+        )
+        self.assertIn(
+            "if ($profileText -notmatch '(?m)^SLACK_GATEWAY_SECRET=')",
+            self.script,
+        )
+        self.assertNotIn('Write-Host $envText', self.bootstrap)
+        self.assertNotIn('Write-Host $profileText', self.script)
 
     def test_compose_project_ports_and_state_are_isolated(self):
         self.assertIn("name: ${DIRECTOR_COMPOSE_PROJECT_NAME:-director-orchestrator}", self.compose)

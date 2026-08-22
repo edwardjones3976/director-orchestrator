@@ -53,7 +53,7 @@ from .providers import (
     provider_registry,
 )
 from .review_handoff import bind_review_handoff, transitive_dependency_sequences
-from .store import TaskStore
+from .store import StaleTaskWrite, TaskStore
 from .team_charter import AdvisoryVote, tally_advisory_votes
 
 
@@ -346,6 +346,12 @@ class OrchestrationEngine:
             record.message = "All assignments passed Director review."
             self.store.save(record)
             await self._status_post(record, f"*{task_id} — DONE*\nAll assignments passed the configured acceptance review. Review branches and pull requests before merging.")
+        except StaleTaskWrite:
+            # Another process advanced the task (for example, an owner
+            # clarification while a provider callback was in flight). The
+            # newer SQLite state remains authoritative and must not be marked
+            # failed by this stale engine invocation.
+            return
         except Exception as exc:
             failed = self.store.get(task_id) or record
             failed.status = TaskStatus.FAILED
@@ -553,7 +559,11 @@ class OrchestrationEngine:
                 None,
             )
             if delivered_observation is not None:
-                return True, delivered_observation.run_id
+                # The append-only event proves delivery without retaining the
+                # raw Slack timestamp. A task-level thread timestamp, when one
+                # exists, is the only non-secret routing projection needed by
+                # later messages.
+                return True, record.collaboration_thread_ts
             # Slack's stable client_msg_id is the transport idempotency key. A
             # restart may retry the same key, but cannot create a second
             # externally visible message. Persist the opaque intent first.

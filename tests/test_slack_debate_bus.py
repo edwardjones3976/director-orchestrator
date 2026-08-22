@@ -394,7 +394,8 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 restarted_record, "one safe status", client_msg_id=client_id
             )
 
-            self.assertEqual(first, second)
+            self.assertEqual(first[0], second[0])
+            self.assertIsNone(second[1])
             self.assertEqual(len(notifier.posts), 1)
             self.assertEqual(
                 [item.outcome for item in restarted_record.task_effect_ledger],

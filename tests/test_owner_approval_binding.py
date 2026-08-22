@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sqlite3
 import sys
 import tempfile
@@ -17,6 +18,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import director_orchestrator.main as main
+from director_orchestrator.callbacks import apply_claude_callback
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.approvals import (
     StaleApproval,
@@ -29,6 +31,7 @@ from director_orchestrator.approvals import (
     apply_owner_clarification,
     assignment_approval_digest,
     assignment_is_approved,
+    build_slack_gateway_proof,
     clarification_required,
     clarification_source,
     current_owner_decision,
@@ -47,9 +50,12 @@ from director_orchestrator.models import (
     AmbiguousDispatchResolution,
     Assignment,
     AssignmentOutcome,
+    CollaborationTurn,
+    ClaudeCallback,
     DirectorPlan,
     DebateSynthesis,
     OracleRecoveryApproval,
+    OpaqueEvidenceDigest,
     OwnerApproval,
     OwnerApprovalSource,
     ProviderName,
@@ -62,8 +68,10 @@ from director_orchestrator.models import (
     TaskEffectEvidence,
     TaskRecord,
     TaskStatus,
+    canonical_task_effect_digest,
+    canonical_opaque_identifier_digest,
 )
-from director_orchestrator.store import TaskStore
+from director_orchestrator.store import StaleTaskWrite, TaskStore
 
 
 def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int] | None = None) -> TaskRecord:
@@ -144,6 +152,31 @@ def _retry_approval(
         retry_decision_digest=failed_retry_decision_digest(record),
         note=note,
     )
+
+
+def _signed_slack_approval(
+    record: TaskRecord,
+    version: int,
+    approval: OwnerApproval,
+    *,
+    secret: str = "gateway-test-secret-32-characters!!",
+    shared_secret: str = "public-test-secret",
+    channel_id: str = "C123",
+    nonce: str | None = None,
+    issued_at: int | None = None,
+) -> OwnerApproval:
+    proof = build_slack_gateway_proof(
+        secret,
+        shared_secret,
+        record,
+        version,
+        approval,
+        channel_id=channel_id,
+        path=f"/v1/tasks/{record.task_id}/approve",
+        nonce=nonce,
+        issued_at=issued_at,
+    )
+    return approval.model_copy(update={"slack_gateway_proof": proof})
 
 
 class _FakeBoltApp:
@@ -304,14 +337,19 @@ class OwnerApprovalParsingTests(unittest.TestCase):
 
 class AtomicOwnerDecisionTests(unittest.TestCase):
     def test_concurrent_endpoint_requests_return_one_success_and_one_409(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
             record = _record()
             task_store.create(record)
-            approval = _button_approval(record)
             test_settings = replace(
                 main.settings,
                 slack_owner_user_id="U0B9UJ86D27",
+                slack_channel_id="C123",
+                slack_gateway_secret="gateway-test-secret-32-characters!!",
+            )
+            current, version = task_store.get_versioned(record.task_id)
+            approval = _signed_slack_approval(
+                current, version, _button_approval(current)
             )
             barrier = threading.Barrier(2)
             original_get = task_store.get_versioned
@@ -343,9 +381,14 @@ class AtomicOwnerDecisionTests(unittest.TestCase):
             stored, version = task_store.get_versioned(record.task_id)
             self.assertEqual(stored.status, TaskStatus.QUEUED)
             self.assertEqual(version, 1)
+            with sqlite3.connect(task_store.path) as connection:
+                nonce_count = connection.execute(
+                    "SELECT COUNT(*) FROM slack_gateway_nonces"
+                ).fetchone()[0]
+            self.assertEqual(nonce_count, 1)
 
     def test_two_store_instances_consume_one_button_once(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             database = str(Path(directory) / "director.sqlite3")
             first_store = TaskStore(database)
             second_store = TaskStore(database)
@@ -383,14 +426,19 @@ class AtomicOwnerDecisionTests(unittest.TestCase):
             self.assertEqual(version, 1)
 
     def test_sequential_button_replay_returns_409_without_background_task(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
             record = _record()
             task_store.create(record)
-            approval = _button_approval(record)
             test_settings = replace(
                 main.settings,
                 slack_owner_user_id="U0B9UJ86D27",
+                slack_channel_id="C123",
+                slack_gateway_secret="gateway-test-secret-32-characters!!",
+            )
+            current, version = task_store.get_versioned(record.task_id)
+            approval = _signed_slack_approval(
+                current, version, _button_approval(current)
             )
             first_background = BackgroundTasks()
             replay_background = BackgroundTasks()
@@ -447,10 +495,10 @@ class AtomicOwnerDecisionTests(unittest.TestCase):
 
             task_store = TaskStore(database)
             loaded, version = task_store.get_versioned(record.task_id)
-            self.assertEqual(version, 0)
+            self.assertEqual(version, 1)
             task_store.save(loaded)
             _, version = task_store.get_versioned(record.task_id)
-            self.assertEqual(version, 1)
+            self.assertEqual(version, 2)
 
 
 class StaleButtonTests(unittest.TestCase):
@@ -615,11 +663,9 @@ class OwnerClarificationTests(unittest.TestCase):
         self.assertEqual(record.next_assignment_index, 0)
         self.assertEqual(record.provider_runs, [])
         self.assertEqual(record.assignment_outcomes, [])
-        self.assertEqual([item.run_id for item in record.provider_run_history], ["discarded-run"])
-        self.assertEqual(
-            [item.run_id for item in record.assignment_outcome_history],
-            ["discarded-run"],
-        )
+        self.assertEqual(len(record.provider_run_history), 1)
+        self.assertEqual(len(record.assignment_outcome_history), 1)
+        self.assertNotIn("discarded-run", record.model_dump_json())
         self.assertEqual(len(record.task_effect_ledger), 1)
         self.assertIsNone(record.review)
         self.assertEqual(record.revision_count, 0)
@@ -947,19 +993,25 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
         assignment.estimated_cost_usd = 0.01
         for index in range(199):
             effect_key = f"{index:064x}"
+            effect_data = {
+                "event_version": "v2",
+                "effect_key": effect_key,
+                "kind": "provider_observation",
+                "phase": "dispatch",
+                "outcome": "failed_pre_submit",
+                "plan_generation": 0,
+                "assignment_sequence": 1,
+                "assignment_digest": assignment_approval_digest(assignment),
+                "provider": ProviderName.CURSOR,
+                "attempt": 1,
+                "estimated_cost_usd": 0,
+                "hop_units": 0,
+                "run_id_digest": None,
+            }
             record.task_effect_ledger.append(
                 TaskEffectEvidence(
-                    effect_digest=f"{index + 1:064x}",
-                    effect_key=effect_key,
-                    kind="provider_observation",
-                    phase="dispatch",
-                    outcome="failed_pre_submit",
-                    plan_generation=0,
-                    assignment_sequence=1,
-                    assignment_digest=assignment_approval_digest(assignment),
-                    provider=ProviderName.CURSOR,
-                    attempt=1,
-                    estimated_cost_usd=0,
+                    effect_digest=canonical_task_effect_digest(effect_data),
+                    **effect_data,
                 )
             )
         before = record.model_dump(mode="json")
@@ -1150,10 +1202,8 @@ class OracleRecoveryBindingTests(unittest.TestCase):
         )
         self.assertEqual(record.status, TaskStatus.QUEUED)
         self.assertIsNone(record.plan)
-        self.assertEqual(
-            [item.run_id for item in record.provider_run_history],
-            ["oracle-review-run"],
-        )
+        self.assertEqual(len(record.provider_run_history), 1)
+        self.assertNotIn("oracle-review-run", record.model_dump_json())
         self.assertGreaterEqual(len(record.task_effect_ledger), 2)
 
     def test_replan_rejects_combined_intake_overflow_without_persisting_bad_row(self):
@@ -1339,6 +1389,7 @@ class FailedPredispatchRetryTests(unittest.TestCase):
                 slack_bot_token="xoxb-test",
                 slack_app_token="xapp-test",
                 orchestrator_base_url="http://testserver",
+                slack_gateway_secret="gateway-test-secret-32-characters!!",
             )
             module_name = "director_orchestrator.slack_bot"
             sys.modules.pop(module_name, None)
@@ -1604,11 +1655,12 @@ class OwnerClarificationResetTests(unittest.TestCase):
         self.assertEqual(record.next_assignment_index, 0)
         self.assertEqual(record.provider_runs, [])
         self.assertEqual(record.assignment_outcomes, [])
-        self.assertEqual([item.run_id for item in record.provider_run_history], ["run-1"])
-        self.assertEqual(
-            [item.run_id for item in record.assignment_outcome_history], ["run-1"]
-        )
+        self.assertEqual(len(record.provider_run_history), 1)
+        self.assertEqual(len(record.assignment_outcome_history), 1)
         self.assertEqual(len(record.provider_contact_attempt_history), 1)
+        serialized = record.model_dump_json()
+        for marker in ("run-1", "old result", "old acceptance", "timeout"):
+            self.assertNotIn(marker, serialized)
         self.assertEqual(len(record.task_effect_ledger), 1)
         self.assertEqual(record.cumulative_estimated_cost_usd, 0.75)
         self.assertEqual(record.review_handoff_digests, {})
@@ -1618,15 +1670,542 @@ class OwnerClarificationResetTests(unittest.TestCase):
         self.assertEqual(record.availability_impacts, [])
         self.assertEqual(record.collaboration_thread_ts, "123.45")
         self.assertTrue(record.collaboration_thread_opened)
-        self.assertEqual(
-            record.collaboration_delivery_errors, ["preserved delivery audit"]
-        )
+        self.assertEqual(record.collaboration_turns, [])
+        self.assertEqual(record.collaboration_delivery_errors, [])
         self.assertIsNone(record.review)
         self.assertEqual(record.revision_count, 0)
         self.assertFalse(record.owner_approved)
         self.assertEqual(record.approved_assignments, [])
         self.assertEqual(record.approved_assignment_digests, {})
         self.assertIsNone(record.error)
+
+    def test_repeated_resets_keep_digest_history_reloadable_at_200(self):
+        record = _record()
+        record.plan = None
+        for index in range(201):
+            record.provider_runs = [
+                ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    assignment_sequence=1,
+                    run_id=f"run-{index}",
+                    status="FINISHED",
+                    result=f"result-{index}",
+                )
+            ]
+            reset_for_owner_clarification(record)
+
+        self.assertEqual(len(record.provider_run_history), 200)
+        reloaded = TaskRecord.model_validate_json(record.model_dump_json())
+        self.assertEqual(reloaded.provider_run_history, record.provider_run_history)
+        self.assertNotEqual(
+            reloaded.provider_run_history[0],
+            OpaqueEvidenceDigest.from_value(
+                ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    assignment_sequence=1,
+                    run_id="run-0",
+                    status="FINISHED",
+                    result="result-0",
+                )
+            ),
+        )
+
+
+class DurableEffectStoreTests(unittest.TestCase):
+    def test_legacy_private_history_is_physically_scrubbed_during_migration(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "legacy-private.sqlite3")
+            marker = "LEGACY-PRIVATE-PROVIDER-MARKER-7f10"
+            private_blob = marker + ("X" * 4_096)
+            record = _record(owner_approved=True, approved=[1])
+            legacy_payload = record.model_dump(mode="json")
+            legacy_payload["provider_run_history"] = [
+                {
+                    "provider": "claude",
+                    "assignment_sequence": 1,
+                    "run_id": "legacy-private-run",
+                    "status": "FINISHED",
+                    "result": private_blob,
+                    "raw": {"transcript": private_blob, "extra": private_blob},
+                }
+            ]
+            legacy_payload["assignment_outcome_history"] = [
+                {
+                    "assignment_sequence": 1,
+                    "provider": "claude",
+                    "run_id": "legacy-private-run",
+                    "result": private_blob,
+                    "review_summary": private_blob,
+                    "evidence": [private_blob],
+                }
+            ]
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    """CREATE TABLE tasks (
+                        task_id TEXT PRIMARY KEY,
+                        source_event_id TEXT NOT NULL UNIQUE,
+                        status TEXT NOT NULL,
+                        record_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        record.task_id,
+                        record.intake.source_event_id,
+                        record.status.value,
+                        json.dumps(legacy_payload),
+                        record.created_at.isoformat(),
+                        record.updated_at.isoformat(),
+                    ),
+                )
+            self.assertIn(marker.encode(), Path(database).read_bytes())
+
+            migrated = TaskStore(database)
+            loaded = migrated.get(record.task_id)
+            self.assertEqual(len(loaded.provider_run_history), 1)
+            self.assertEqual(len(loaded.assignment_outcome_history), 1)
+            self.assertNotIn(marker, loaded.model_dump_json())
+            self.assertNotIn(marker.encode(), Path(database).read_bytes())
+
+    def test_sqlite_effect_rows_resist_update_delete_replace_and_upsert(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            store = TaskStore(database)
+            record = _record(owner_approved=True, approved=[1])
+            store.create(record)
+            loaded = store.get(record.task_id)
+            reserve_provider_effect(
+                loaded,
+                loaded.plan.assignments[0],
+                phase="dispatch",
+                max_task_budget_usd=2.0,
+            )
+            store.save(loaded)
+
+            with sqlite3.connect(database) as connection:
+                before = connection.execute(
+                    "SELECT * FROM task_effect_events WHERE task_id = ?",
+                    (record.task_id,),
+                ).fetchone()
+                statements = (
+                    "UPDATE task_effect_events SET event_json='{}' WHERE task_id=?",
+                    "DELETE FROM task_effect_events WHERE task_id=?",
+                    """INSERT OR REPLACE INTO task_effect_events
+                    SELECT task_id,event_digest,effect_key,event_kind,'{}',recorded_at
+                    FROM task_effect_events WHERE task_id=?""",
+                    """INSERT INTO task_effect_events(
+                        task_id,event_digest,effect_key,event_kind,event_json,recorded_at
+                    ) SELECT task_id,event_digest,effect_key,event_kind,'{}',recorded_at
+                    FROM task_effect_events WHERE task_id=?
+                    ON CONFLICT(task_id,event_digest) DO UPDATE SET event_json='{}'""",
+                )
+                for statement in statements:
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        connection.execute(statement, (record.task_id,))
+                    connection.rollback()
+                after = connection.execute(
+                    "SELECT * FROM task_effect_events WHERE task_id = ?",
+                    (record.task_id,),
+                ).fetchone()
+            self.assertEqual(before, after)
+
+    def test_stale_save_cannot_erase_append_only_effect_or_accounting(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            first = TaskStore(database)
+            second = TaskStore(database)
+            record = _record(owner_approved=True, approved=[1])
+            record.plan.assignments[0].estimated_cost_usd = 0.75
+            first.create(record)
+
+            stale = first.get(record.task_id)
+            fresh = second.get(record.task_id)
+            reserve_provider_effect(
+                fresh,
+                fresh.plan.assignments[0],
+                phase="dispatch",
+                max_task_budget_usd=2.0,
+            )
+            second.save(fresh)
+
+            stale.message = "late callback projection"
+            with self.assertRaises(StaleTaskWrite):
+                first.save(stale)
+
+            restarted = TaskStore(database).get(record.task_id)
+            self.assertNotEqual(restarted.message, "late callback projection")
+            self.assertEqual(len(restarted.task_effect_ledger), 1)
+            self.assertEqual(restarted.cumulative_estimated_cost_usd, 0.75)
+            with sqlite3.connect(database) as connection:
+                raw = connection.execute(
+                    "SELECT record_json FROM tasks WHERE task_id = ?",
+                    (record.task_id,),
+                ).fetchone()[0]
+                event_count = connection.execute(
+                    "SELECT COUNT(*) FROM task_effect_events WHERE task_id = ?",
+                    (record.task_id,),
+                ).fetchone()[0]
+            self.assertEqual(event_count, 1)
+            self.assertEqual(TaskRecord.model_validate_json(raw).task_effect_ledger, [])
+
+    def test_stale_callback_snapshot_cannot_restore_an_older_plan_generation(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            owner_store = TaskStore(database)
+            callback_store = TaskStore(database)
+            record = _record(owner_approved=True, approved=[1])
+            record.provider_runs = [
+                ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    assignment_sequence=1,
+                    run_id="callback-race-run",
+                    status="WAITING_CALLBACK",
+                )
+            ]
+            owner_store.create(record)
+            stale_callback = callback_store.get(record.task_id)
+            current = owner_store.get(record.task_id)
+            current.plan_generation += 1
+            current.plan.owner_question = "Current replacement-plan question"
+            current.message = "new generation remains authoritative"
+            owner_store.save(current)
+
+            apply_claude_callback(
+                stale_callback,
+                ClaudeCallback(
+                    run_id="callback-race-run",
+                    status="completed",
+                    result="late old-generation result",
+                ),
+            )
+            with self.assertRaises(StaleTaskWrite):
+                callback_store.save(stale_callback)
+
+            persisted = TaskStore(database).get(record.task_id)
+            self.assertEqual(persisted.plan_generation, 1)
+            self.assertEqual(persisted.plan.owner_question, "Current replacement-plan question")
+            self.assertEqual(persisted.message, "new generation remains authoritative")
+            self.assertEqual(persisted.provider_runs[0].status, "WAITING_CALLBACK")
+
+    def test_legacy_effect_projection_is_backfilled_then_removed_from_task_json(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "legacy.sqlite3")
+            record = _record(owner_approved=True, approved=[1])
+            effect_key = reserve_provider_effect(
+                record,
+                record.plan.assignments[0],
+                phase="dispatch",
+                max_task_budget_usd=2.0,
+            )
+            record_provider_effect_observation(
+                record,
+                record.plan.assignments[0],
+                effect_key=effect_key,
+                phase="dispatch",
+                outcome="submitted",
+                run_id="legacy-run-identifier",
+            )
+            legacy_payload = record.model_dump(mode="json")
+            legacy_observation = legacy_payload["task_effect_ledger"][1]
+            legacy_observation.pop("event_version")
+            legacy_observation.pop("run_id_digest")
+            legacy_observation["run_id"] = "legacy-run-identifier"
+            legacy_observation["effect_digest"] = "0" * 64
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    """CREATE TABLE tasks (
+                        task_id TEXT PRIMARY KEY,
+                        source_event_id TEXT NOT NULL UNIQUE,
+                        status TEXT NOT NULL,
+                        record_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        record.task_id,
+                        record.intake.source_event_id,
+                        record.status.value,
+                        json.dumps(legacy_payload),
+                        record.created_at.isoformat(),
+                        record.updated_at.isoformat(),
+                    ),
+                )
+
+            migrated = TaskStore(database)
+            loaded = migrated.get(record.task_id)
+            self.assertEqual(len(loaded.task_effect_ledger), 2)
+            self.assertEqual(
+                loaded.task_effect_ledger[1].run_id_digest,
+                canonical_opaque_identifier_digest("legacy-run-identifier"),
+            )
+            with sqlite3.connect(database) as connection:
+                raw, status = connection.execute(
+                    "SELECT record_json, effect_migration_status FROM tasks"
+                ).fetchone()
+                event_count = connection.execute(
+                    "SELECT COUNT(*) FROM task_effect_events"
+                ).fetchone()[0]
+            self.assertEqual(status, "complete")
+            self.assertEqual(event_count, 2)
+            self.assertEqual(TaskRecord.model_validate_json(raw).task_effect_ledger, [])
+
+    def test_reset_and_storage_never_retain_provider_text_or_raw_identifiers(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            marker = "PRIVATE-PROVIDER-MARKER-7f10"
+            record = _record(owner_approved=True, approved=[1])
+            record.provider_runs = [
+                ProviderRun(
+                    provider=ProviderName.CURSOR,
+                    assignment_sequence=1,
+                    run_id=marker,
+                    status="FINISHED",
+                    result=marker,
+                    raw={"extra": marker, "transcript": marker},
+                )
+            ]
+            record.assignment_outcomes = [
+                AssignmentOutcome(
+                    assignment_sequence=1,
+                    provider=ProviderName.CURSOR,
+                    run_id=marker,
+                    result=marker,
+                    review_summary=marker,
+                    evidence=[marker],
+                )
+            ]
+            record.collaboration_turns = [
+                CollaborationTurn(
+                    assignment_sequence=1,
+                    provider=ProviderName.CURSOR,
+                    phase="work_result",
+                    correlation_id="marker-turn",
+                    run_id=marker,
+                    position=marker,
+                    evidence=[marker],
+                    contradictions=[marker],
+                    confidence=0.5,
+                )
+            ]
+            record.collaboration_delivery_errors = [marker]
+            reset_for_owner_clarification(record)
+            store = TaskStore(database)
+            store.create(record)
+            first = store.get(record.task_id)
+            restarted = TaskStore(database).get(record.task_id)
+            self.assertEqual(first.provider_run_history, restarted.provider_run_history)
+            self.assertEqual(
+                first.assignment_outcome_history,
+                restarted.assignment_outcome_history,
+            )
+            self.assertNotIn(marker, restarted.model_dump_json())
+            self.assertNotIn(marker.encode(), Path(database).read_bytes())
+
+
+class SlackGatewayProofTests(unittest.TestCase):
+    def _settings(self):
+        return replace(
+            main.settings,
+            shared_secret="public-test-secret",
+            slack_owner_user_id="U0B9UJ86D27",
+            slack_channel_id="C123",
+            slack_gateway_secret="distinct-gateway-secret-32-characters",
+        )
+
+    def _client_context(self, task_store: TaskStore):
+        return (
+            patch.object(main, "settings", self._settings()),
+            patch.object(main, "store", task_store),
+            patch.object(main.engine, "run", new=AsyncMock(return_value=None)),
+            patch.object(
+                main.usage_monitor,
+                "run_forever",
+                new=AsyncMock(return_value=None),
+            ),
+        )
+
+    def test_slack_readiness_requires_gateway_secret_without_exposing_it(self):
+        incomplete = replace(
+            main.settings,
+            slack_app_token="xapp-test",
+            slack_bot_token="xoxb-test",
+            slack_gateway_secret="",
+        )
+        ready = replace(
+            incomplete,
+            slack_gateway_secret="distinct-secret-value-32-characters",
+        )
+        self.assertFalse(incomplete.readiness()["slack"])
+        self.assertTrue(ready.readiness()["slack"])
+        self.assertNotIn(
+            "distinct-secret-value-32-characters", json.dumps(ready.readiness())
+        )
+
+    def test_gateway_secret_equal_to_public_bearer_is_rejected(self):
+        reused = "same-secret-value-at-least-32-characters"
+        unsafe = replace(
+            main.settings,
+            shared_secret=reused,
+            slack_app_token="xapp-test",
+            slack_bot_token="xoxb-test",
+            slack_gateway_secret=reused,
+        )
+        self.assertFalse(unsafe.readiness()["slack"])
+        record = _record()
+        approval = OwnerApproval(
+            owner_user_id="U0B9UJ86D27",
+            note="Approve the exact current plan",
+            source=OwnerApprovalSource.SLACK_COMMAND,
+        )
+        with self.assertRaisesRegex(StaleApproval, "must be distinct"):
+            build_slack_gateway_proof(
+                reused,
+                reused,
+                record,
+                0,
+                approval,
+                channel_id="C123",
+                path=f"/v1/tasks/{record.task_id}/approve",
+            )
+
+    def test_tampered_note_and_expired_proof_fail_without_mutation(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            record = _record()
+            task_store.create(record)
+            current, version = task_store.get_versioned(record.task_id)
+            approval = OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                note="Approve the exact current plan",
+                source=OwnerApprovalSource.SLACK_COMMAND,
+            )
+            signed = _signed_slack_approval(
+                current,
+                version,
+                approval,
+                secret="distinct-gateway-secret-32-characters",
+                issued_at=int(datetime.now(timezone.utc).timestamp()),
+            )
+            before = current.model_dump(mode="json")
+            contexts = self._client_context(task_store)
+            with contexts[0], contexts[1], contexts[2], contexts[3], TestClient(
+                main.app
+            ) as client:
+                tampered = signed.model_dump(mode="json")
+                tampered["note"] = "Altered after signing"
+                bad = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer public-test-secret"},
+                    json=tampered,
+                )
+                expired_approval = _signed_slack_approval(
+                    current,
+                    version,
+                    approval,
+                    secret="distinct-gateway-secret-32-characters",
+                    issued_at=int(datetime.now(timezone.utc).timestamp()) - 301,
+                )
+                expired = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer public-test-secret"},
+                    json=expired_approval.model_dump(mode="json"),
+                )
+            self.assertEqual(bad.status_code, 409)
+            self.assertEqual(expired.status_code, 409)
+            self.assertEqual(task_store.get(record.task_id).model_dump(mode="json"), before)
+
+    def test_valid_proof_is_single_use_across_restart_and_secret_is_not_stored(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            first = TaskStore(database)
+            record = _record()
+            first.create(record)
+            current, version = first.get_versioned(record.task_id)
+            approval = _signed_slack_approval(
+                current,
+                version,
+                OwnerApproval(
+                    owner_user_id="U0B9UJ86D27",
+                    note="Approve the exact current plan",
+                    source=OwnerApprovalSource.SLACK_COMMAND,
+                ),
+                secret="distinct-gateway-secret-32-characters",
+                nonce="N" * 32,
+            )
+            contexts = self._client_context(first)
+            with contexts[0], contexts[1], contexts[2], contexts[3], TestClient(
+                main.app
+            ) as client:
+                accepted = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer public-test-secret"},
+                    json=approval.model_dump(mode="json"),
+                )
+            restarted = TaskStore(database)
+            contexts = self._client_context(restarted)
+            with contexts[0], contexts[1], contexts[2], contexts[3], TestClient(
+                main.app
+            ) as client:
+                replay = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer public-test-secret"},
+                    json=approval.model_dump(mode="json"),
+                )
+            self.assertEqual(accepted.status_code, 200)
+            self.assertEqual(replay.status_code, 409)
+            with sqlite3.connect(database) as connection:
+                nonce_count = connection.execute(
+                    "SELECT COUNT(*) FROM slack_gateway_nonces"
+                ).fetchone()[0]
+            self.assertEqual(nonce_count, 1)
+            database_bytes = Path(database).read_bytes()
+            self.assertNotIn(b"distinct-gateway-secret-32-characters", database_bytes)
+            self.assertNotIn(("N" * 32).encode(), database_bytes)
+
+    def test_public_bearer_cannot_forge_slack_transport_or_copy_a_proof_to_api(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            record = _record()
+            task_store.create(record)
+            current, version = task_store.get_versioned(record.task_id)
+            slack = OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                note="Approve the exact current plan",
+                source=OwnerApprovalSource.SLACK_COMMAND,
+            )
+            signed = _signed_slack_approval(
+                current,
+                version,
+                slack,
+                secret="distinct-gateway-secret-32-characters",
+            )
+            before = current.model_dump(mode="json")
+            contexts = self._client_context(task_store)
+            with contexts[0], contexts[1], contexts[2], contexts[3], TestClient(
+                main.app
+            ) as client:
+                missing = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer public-test-secret"},
+                    json=slack.model_dump(mode="json"),
+                )
+                copied = signed.model_copy(
+                    update={"source": OwnerApprovalSource.API}
+                )
+                forged = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer public-test-secret"},
+                    json=copied.model_dump(mode="json"),
+                )
+            self.assertEqual(missing.status_code, 409)
+            self.assertEqual(forged.status_code, 409)
+            self.assertEqual(task_store.get(record.task_id).model_dump(mode="json"), before)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import hmac
 import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
 
 from . import __version__
@@ -18,6 +18,7 @@ from .approvals import (
     apply_owner_clarification,
     clarification_required,
     owner_identity_matches,
+    verify_slack_gateway_proof,
 )
 from .callbacks import (
     CallbackConflict,
@@ -33,6 +34,7 @@ from .models import (
     ManualRunCompletion,
     OracleRecoveryApproval,
     OwnerApproval,
+    OwnerApprovalSource,
     SlackIntake,
     TaskRecord,
     TaskStatus,
@@ -149,10 +151,12 @@ def intake(payload: SlackIntake, background: BackgroundTasks) -> TaskRecord:
 
 
 @app.get("/v1/tasks/{task_id}", response_model=TaskRecord, dependencies=[Depends(require_auth)])
-def get_task(task_id: str) -> TaskRecord:
-    record = store.get(task_id)
-    if record is None:
+def get_task(task_id: str, response: Response) -> TaskRecord:
+    versioned = store.get_versioned(task_id)
+    if versioned is None:
         raise HTTPException(status_code=404, detail="Task not found")
+    record, version = versioned
+    response.headers["X-Task-Record-Version"] = str(version)
     return record
 
 
@@ -174,11 +178,34 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
     versioned = task_store.get_versioned(task_id)
     if versioned is None:
         raise KeyError(task_id)
-    _, expected_version = versioned
+    current, expected_version = versioned
+    gateway_nonce_digest: str | None = None
+    gateway_nonce_expires_at: int | None = None
+    if approval.source in {
+        OwnerApprovalSource.SLACK_BUTTON,
+        OwnerApprovalSource.SLACK_COMMAND,
+    }:
+        gateway_nonce_digest, gateway_nonce_expires_at = verify_slack_gateway_proof(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            current,
+            expected_version,
+            approval,
+            channel_id=settings.slack_channel_id,
+            path=f"/v1/tasks/{task_id}/approve",
+        )
+    elif approval.slack_gateway_proof is not None:
+        raise StaleApproval("Slack gateway proof cannot authorize an API request")
+    elif current.status == TaskStatus.FAILED:
+        raise StaleApproval(
+            "Failed retry requires an authenticated Slack gateway proof"
+        )
     stored = task_store.mutate_if_version(
         task_id,
         expected_version,
         lambda current: _apply_owner_decision(current, approval),
+        gateway_nonce_digest=gateway_nonce_digest,
+        gateway_nonce_expires_at=gateway_nonce_expires_at,
     )
     if stored is None:
         raise StaleApproval("Owner decision changed or was already consumed")
@@ -263,12 +290,20 @@ def reconcile_dispatch(
 ) -> TaskRecord:
     if not owner_identity_matches(resolution.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
-    record = get_task(task_id)
+    versioned = store.get_versioned(task_id)
+    if versioned is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    _, expected_version = versioned
     try:
-        apply_ambiguous_dispatch_resolution(record, resolution)
+        stored = store.mutate_if_version(
+            task_id,
+            expected_version,
+            lambda record: apply_ambiguous_dispatch_resolution(record, resolution),
+        )
     except StaleApproval as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    stored = store.save(record)
+    if stored is None:
+        raise HTTPException(status_code=409, detail="Task changed during reconciliation")
     background.add_task(engine.run, task_id)
     return stored
 
@@ -279,12 +314,22 @@ def reconcile_dispatch(
     dependencies=[Depends(require_claude_callback_auth)],
 )
 def claude_callback(task_id: str, callback: ClaudeCallback, background: BackgroundTasks) -> TaskRecord:
-    record = get_task(task_id)
+    versioned = store.get_versioned(task_id)
+    if versioned is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    record, expected_version = versioned
+    changed = False
+
+    def apply(current: TaskRecord) -> None:
+        nonlocal changed
+        changed = apply_claude_callback(current, callback)
+
     try:
-        changed = apply_claude_callback(record, callback)
+        stored = store.mutate_if_version(task_id, expected_version, apply)
     except CallbackConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    stored = store.save(record) if changed else record
+    if stored is None:
+        raise HTTPException(status_code=409, detail="Task changed during callback processing")
     if changed or stored.status in {
         TaskStatus.QUEUED,
         TaskStatus.RUNNING,
@@ -307,11 +352,19 @@ def complete_run(
 ) -> TaskRecord:
     if not owner_identity_matches(completion.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
-    record = get_task(task_id)
+    versioned = store.get_versioned(task_id)
+    if versioned is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    _, expected_version = versioned
     try:
-        apply_manual_run_completion(record, run_id, completion)
+        stored = store.mutate_if_version(
+            task_id,
+            expected_version,
+            lambda record: apply_manual_run_completion(record, run_id, completion),
+        )
     except CallbackConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    stored = store.save(record)
+    if stored is None:
+        raise HTTPException(status_code=409, detail="Task changed during run completion")
     background.add_task(engine.run, task_id)
     return stored

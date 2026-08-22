@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -13,15 +14,19 @@ from .models import (
     AssignmentOutcome,
     OracleRecoveryApproval,
     OracleRecoveryState,
+    OpaqueEvidenceDigest,
     OwnerApproval,
     OwnerApprovalSource,
     ProviderContactAttempt,
     ProviderName,
     ProviderRun,
     ReviewVerdict,
+    SlackGatewayProof,
     TaskEffectEvidence,
     TaskRecord,
     TaskStatus,
+    canonical_opaque_identifier_digest,
+    canonical_task_effect_digest,
 )
 from .team_charter import AdvisoryVoteTally
 
@@ -34,6 +39,9 @@ _SYNTHETIC_APPROVAL_NOTES = frozenset({"Approved", "Approved from Slack"})
 _BUTTON_VALUE_VERSION = "v1"
 _SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_TASK_EFFECTS = 200
+_SLACK_GATEWAY_PROOF_TTL_SECONDS = 300
+_SLACK_GATEWAY_FUTURE_SKEW_SECONDS = 30
+_SLACK_GATEWAY_MIN_SECRET_LENGTH = 32
 
 
 def owner_identity_matches(provided: str, configured: str) -> bool:
@@ -74,6 +82,10 @@ def _canonical_digest(payload: object) -> str:
 
 def provider_run_digest(run: ProviderRun) -> str:
     return _canonical_digest(run.model_dump(mode="json"))
+
+
+def opaque_identifier_digest(value: str) -> str:
+    return canonical_opaque_identifier_digest(value)
 
 
 def _refresh_cumulative_cost(record: TaskRecord) -> None:
@@ -138,6 +150,7 @@ def _append_generic_task_effect(
     )
     provider = assignment.agent if assignment is not None else provider
     payload = {
+        "event_version": "v2",
         "effect_key": effect_key,
         "kind": kind,
         "phase": phase,
@@ -147,12 +160,12 @@ def _append_generic_task_effect(
         "assignment_digest": assignment_digest,
         "provider": provider.value if provider else None,
         "attempt": attempt,
-        "run_id": run_id,
+        "run_id_digest": opaque_identifier_digest(run_id) if run_id else None,
         "estimated_cost_usd": estimated_cost_usd,
         "hop_units": hop_units,
     }
     effect = TaskEffectEvidence(
-        effect_digest=_canonical_digest(payload),
+        effect_digest=canonical_task_effect_digest(payload),
         effect_key=effect_key,
         kind=kind,
         phase=phase,
@@ -162,7 +175,7 @@ def _append_generic_task_effect(
         assignment_digest=assignment_digest,
         provider=provider,
         attempt=attempt,
-        run_id=run_id,
+        run_id_digest=opaque_identifier_digest(run_id) if run_id else None,
         estimated_cost_usd=estimated_cost_usd,
         hop_units=hop_units,
     )
@@ -610,6 +623,143 @@ def failed_retry_decision_digest(record: TaskRecord) -> str:
     )
 
 
+def _slack_gateway_decision(record: TaskRecord) -> tuple[str, str]:
+    if record.status == TaskStatus.FAILED:
+        return "failed_predispatch_retry", failed_retry_decision_digest(record)
+    decision = current_owner_decision(record)
+    if decision is None:
+        raise StaleApproval("Task is not awaiting an owner decision")
+    return decision.kind, decision.digest
+
+
+def _slack_gateway_payload(
+    record: TaskRecord,
+    approval: OwnerApproval,
+    proof: SlackGatewayProof,
+    *,
+    path: str,
+) -> bytes:
+    decision_kind, decision_digest = _slack_gateway_decision(record)
+    body_digest = _canonical_digest(
+        {
+            "owner_user_id": approval.owner_user_id,
+            "note": approval.note,
+            "source": approval.source.value,
+            "decision_digest": approval.decision_digest,
+            "retry_decision_digest": approval.retry_decision_digest,
+            "assignment_sequence": approval.assignment_sequence,
+        }
+    )
+    payload = {
+        "version": proof.version,
+        "method": "POST",
+        "path": path,
+        "task_id": record.task_id,
+        "task_version": proof.task_version,
+        "plan_generation": record.plan_generation,
+        "decision_kind": decision_kind,
+        "decision_digest": decision_digest,
+        "body_digest": body_digest,
+        "owner_user_id": approval.owner_user_id,
+        "channel_id": proof.channel_id,
+        "assignment_sequence": approval.assignment_sequence,
+        "issued_at": proof.issued_at,
+        "nonce": proof.nonce,
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def build_slack_gateway_proof(
+    secret: str,
+    shared_secret: str,
+    record: TaskRecord,
+    task_version: int,
+    approval: OwnerApproval,
+    *,
+    channel_id: str,
+    path: str,
+    issued_at: int | None = None,
+    nonce: str | None = None,
+) -> SlackGatewayProof:
+    """Create a short-lived exact-decision proof inside the Slack gateway."""
+
+    if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Slack gateway signing secret is not securely configured")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Slack gateway signing secret must be distinct")
+    if approval.source not in {
+        OwnerApprovalSource.SLACK_BUTTON,
+        OwnerApprovalSource.SLACK_COMMAND,
+    }:
+        raise StaleApproval("Only the Slack gateway may request a Slack proof")
+    unsigned = SlackGatewayProof(
+        task_version=task_version,
+        channel_id=channel_id,
+        issued_at=(
+            issued_at
+            if issued_at is not None
+            else int(datetime.now(timezone.utc).timestamp())
+        ),
+        nonce=nonce or secrets.token_urlsafe(32),
+        signature="0" * 64,
+    )
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        _slack_gateway_payload(record, approval, unsigned, path=path),
+        hashlib.sha256,
+    ).hexdigest()
+    return unsigned.model_copy(update={"signature": signature})
+
+
+def verify_slack_gateway_proof(
+    secret: str,
+    shared_secret: str,
+    record: TaskRecord,
+    expected_version: int,
+    approval: OwnerApproval,
+    *,
+    channel_id: str,
+    path: str,
+    now: int | None = None,
+) -> tuple[str, int]:
+    """Verify transport provenance and return the durable nonce claim."""
+
+    proof = approval.slack_gateway_proof
+    if proof is None or len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Authenticated Slack gateway proof is required")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Slack gateway signing secret must be distinct")
+    if approval.source not in {
+        OwnerApprovalSource.SLACK_BUTTON,
+        OwnerApprovalSource.SLACK_COMMAND,
+    }:
+        raise StaleApproval("Slack gateway proof cannot authorize an API request")
+    if proof.task_version != expected_version:
+        raise StaleApproval("Slack gateway proof targets a stale task version")
+    if not channel_id or not hmac.compare_digest(proof.channel_id, channel_id):
+        raise StaleApproval("Slack gateway proof targets a different channel")
+    current_time = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    age = current_time - proof.issued_at
+    if age < -_SLACK_GATEWAY_FUTURE_SKEW_SECONDS or age > _SLACK_GATEWAY_PROOF_TTL_SECONDS:
+        raise StaleApproval("Slack gateway proof is expired or not yet valid")
+    expected_signature = hmac.new(
+        secret.encode("utf-8"),
+        _slack_gateway_payload(record, approval, proof, path=path),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(proof.signature, expected_signature):
+        raise StaleApproval("Slack gateway proof signature is invalid")
+    nonce_digest = _canonical_digest(
+        {"task_id": record.task_id, "nonce": proof.nonce}
+    )
+    return nonce_digest, proof.issued_at + _SLACK_GATEWAY_PROOF_TTL_SECONDS
+
+
 def record_oracle_recovery(
     record: TaskRecord,
     run: ProviderRun,
@@ -918,19 +1068,16 @@ def reset_for_owner_clarification(record: TaskRecord) -> None:
     assignments = {
         item.sequence: item for item in (record.plan.assignments if record.plan else [])
     }
-    known_runs = {
-        (item.provider, item.run_id, item.assignment_sequence)
-        for item in record.provider_run_history
-    }
+    known_runs = {item.digest for item in record.provider_run_history}
     for run in record.provider_runs:
-        identity = (run.provider, run.run_id, run.assignment_sequence)
-        if identity not in known_runs:
-            record.provider_run_history.append(run.model_copy(deep=True))
-            known_runs.add(identity)
+        history = OpaqueEvidenceDigest.from_value(run)
+        if history.digest not in known_runs:
+            record.provider_run_history.append(history)
+            known_runs.add(history.digest)
         assignment = assignments.get(run.assignment_sequence or -1)
         if assignment is not None and not any(
             item.kind == "provider_observation"
-            and item.run_id == run.run_id
+            and item.run_id_digest == opaque_identifier_digest(run.run_id)
             and item.assignment_digest == assignment_approval_digest(assignment)
             for item in record.task_effect_ledger
         ):
@@ -953,39 +1100,20 @@ def reset_for_owner_clarification(record: TaskRecord) -> None:
                 attempt=max(1, run.attempt_count),
                 run_id=run.run_id,
             )
-    known_outcomes = {
-        (item.provider, item.run_id, item.assignment_sequence)
-        for item in record.assignment_outcome_history
-    }
-    record.assignment_outcome_history.extend(
-        item.model_copy(deep=True)
-        for item in record.assignment_outcomes
-        if (item.provider, item.run_id, item.assignment_sequence) not in known_outcomes
-    )
-    known_attempts = {
-        (
-            item.provider,
-            item.assignment_sequence,
-            item.ordinal,
-            item.phase,
-            item.outcome,
-            item.run_id,
-        )
-        for item in record.provider_contact_attempt_history
-    }
-    record.provider_contact_attempt_history.extend(
-        item.model_copy(deep=True)
-        for item in record.provider_contact_attempts
-        if (
-            item.provider,
-            item.assignment_sequence,
-            item.ordinal,
-            item.phase,
-            item.outcome,
-            item.run_id,
-        )
-        not in known_attempts
-    )
+    known_outcomes = {item.digest for item in record.assignment_outcome_history}
+    for outcome in record.assignment_outcomes:
+        history = OpaqueEvidenceDigest.from_value(outcome)
+        if history.digest not in known_outcomes:
+            record.assignment_outcome_history.append(history)
+            known_outcomes.add(history.digest)
+    known_attempts = {item.digest for item in record.provider_contact_attempt_history}
+    for attempt in record.provider_contact_attempts:
+        history = OpaqueEvidenceDigest.from_value(attempt)
+        if history.digest not in known_attempts:
+            record.provider_contact_attempt_history.append(history)
+            known_attempts.add(history.digest)
+
+    record.compact_history_projections()
 
     record.plan = None
     record.next_assignment_index = 0
@@ -996,8 +1124,12 @@ def reset_for_owner_clarification(record: TaskRecord) -> None:
     record.unavailable_providers = []
     record.deferred_assignments = []
     record.availability_impacts = []
-    # Keep the task thread, delivered turns, and delivery errors as its audit
-    # trail. Only transient plan-local fallback state is reset.
+    # The thread identifier is routing metadata, but turn content and delivery
+    # errors may contain provider or private prose. Durable Slack effects remain
+    # represented by opaque append-only event digests, so raw turn projections
+    # are discarded with the answered plan.
+    record.collaboration_turns = []
+    record.collaboration_delivery_errors = []
     record.collaboration_fallback_active = False
     record.collaboration_fallback_reason = None
     record.debate_tally = None

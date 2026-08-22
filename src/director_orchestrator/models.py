@@ -1,10 +1,61 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
+
+
+def canonical_opaque_identifier_digest(value: str) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def canonical_task_effect_digest(value: dict[str, Any]) -> str:
+    provider = value.get("provider")
+    if isinstance(provider, ProviderName):
+        provider = provider.value
+    payload = {
+        "event_version": "v2",
+        "effect_key": value.get("effect_key"),
+        "kind": value.get("kind"),
+        "phase": value.get("phase"),
+        "outcome": value.get("outcome"),
+        "plan_generation": int(value.get("plan_generation", 0)),
+        "assignment_sequence": (
+            int(value["assignment_sequence"])
+            if value.get("assignment_sequence") is not None
+            else None
+        ),
+        "assignment_digest": value.get("assignment_digest"),
+        "provider": provider,
+        "attempt": int(value.get("attempt", 1)),
+        "run_id_digest": value.get("run_id_digest"),
+        "estimated_cost_usd": float(value.get("estimated_cost_usd", 0)),
+        "hop_units": int(value.get("hop_units", 0)),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class TaskStatus(StrEnum):
@@ -354,6 +405,7 @@ class TaskEffectEvidence(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    event_version: Literal["v2"] = "v2"
     effect_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     effect_key: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     kind: Literal[
@@ -392,10 +444,35 @@ class TaskEffectEvidence(BaseModel):
     )
     provider: ProviderName | None = None
     attempt: int = Field(default=1, ge=1, le=10)
-    run_id: str | None = Field(default=None, min_length=1, max_length=255)
+    run_id_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
     estimated_cost_usd: float = Field(default=0, ge=0, le=1_000)
     hop_units: int = Field(default=0, ge=0, le=10)
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_event(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        migrated = dict(value)
+        run_id = migrated.pop("run_id", None)
+        if run_id and not migrated.get("run_id_digest"):
+            migrated["run_id_digest"] = canonical_opaque_identifier_digest(
+                str(run_id)
+            )
+        if migrated.get("event_version") != "v2":
+            migrated["event_version"] = "v2"
+            migrated["effect_digest"] = canonical_task_effect_digest(migrated)
+        return migrated
+
+    @model_validator(mode="after")
+    def verify_canonical_digest(self) -> TaskEffectEvidence:
+        expected = canonical_task_effect_digest(self.model_dump(mode="python"))
+        if self.effect_digest != expected:
+            raise ValueError("Task effect digest does not match its canonical v2 event")
+        return self
 
 
 class OracleRecoveryState(BaseModel):
@@ -427,8 +504,50 @@ class OracleRecoveryState(BaseModel):
     approved: bool = False
 
 
+class OpaqueEvidenceDigest(BaseModel):
+    """Bounded proof that discarded plan-local evidence once existed.
+
+    The original provider payload is intentionally unrecoverable from this
+    projection. Durable external-effect accounting lives in TaskStore's
+    append-only SQLite event table instead.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+    @classmethod
+    def from_value(cls, value: object) -> OpaqueEvidenceDigest:
+        if isinstance(value, cls):
+            return value
+        if (
+            isinstance(value, dict)
+            and set(value) == {"digest"}
+            and isinstance(value.get("digest"), str)
+            and len(value["digest"]) == 64
+            and all(character in "0123456789abcdef" for character in value["digest"])
+        ):
+            return cls.model_validate(value)
+        if isinstance(value, BaseModel):
+            value = value.model_dump(mode="json")
+        encoded = json.dumps(
+            value,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+        return cls(digest=hashlib.sha256(encoded).hexdigest())
+
+
 class TaskRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    # SQLite's optimistic concurrency token is deliberately not part of the
+    # API or persisted task JSON. TaskStore attaches it to records loaded from
+    # one exact row version so a stale in-memory callback/result cannot restore
+    # an older workflow generation.
+    _store_version: int | None = PrivateAttr(default=None)
 
     task_id: str
     status: TaskStatus
@@ -439,11 +558,13 @@ class TaskRecord(BaseModel):
     plan_generation: int = Field(default=0, ge=0)
     provider_runs: list[ProviderRun] = Field(default_factory=list)
     assignment_outcomes: list[AssignmentOutcome] = Field(default_factory=list)
-    provider_run_history: list[ProviderRun] = Field(default_factory=list, max_length=200)
-    assignment_outcome_history: list[AssignmentOutcome] = Field(
+    provider_run_history: list[OpaqueEvidenceDigest] = Field(
         default_factory=list, max_length=200
     )
-    provider_contact_attempt_history: list[ProviderContactAttempt] = Field(
+    assignment_outcome_history: list[OpaqueEvidenceDigest] = Field(
+        default_factory=list, max_length=200
+    )
+    provider_contact_attempt_history: list[OpaqueEvidenceDigest] = Field(
         default_factory=list, max_length=200
     )
     task_effect_ledger: list[TaskEffectEvidence] = Field(
@@ -484,6 +605,57 @@ class TaskRecord(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @field_validator(
+        "provider_run_history",
+        "assignment_outcome_history",
+        "provider_contact_attempt_history",
+        mode="before",
+    )
+    @classmethod
+    def migrate_legacy_history_to_digests(cls, value: object) -> object:
+        """Accept legacy task JSON without retaining its provider text."""
+
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return value
+        return [OpaqueEvidenceDigest.from_value(item) for item in value]
+
+    def compact_history_projections(self) -> None:
+        """Keep only the newest 200 unique opaque history digests."""
+
+        for field_name in (
+            "provider_run_history",
+            "assignment_outcome_history",
+            "provider_contact_attempt_history",
+        ):
+            values = getattr(self, field_name)
+            kept_reversed: list[OpaqueEvidenceDigest] = []
+            seen: set[str] = set()
+            for item in reversed(values):
+                if item.digest in seen:
+                    continue
+                kept_reversed.append(item)
+                seen.add(item.digest)
+                if len(kept_reversed) == 200:
+                    break
+            setattr(self, field_name, list(reversed(kept_reversed)))
+
+
+class SlackGatewayProof(BaseModel):
+    """Short-lived proof emitted only by the local Slack gateway."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal["v1"] = "v1"
+    task_version: int = Field(ge=0)
+    channel_id: str = Field(min_length=1, max_length=64)
+    issued_at: int = Field(ge=0)
+    nonce: str = Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    signature: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+
 
 class OwnerApproval(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -508,6 +680,7 @@ class OwnerApproval(BaseModel):
     # happens to be pending now. None means "whatever is pending", which is only
     # safe for an approval the owner types fresh, such as the slash command.
     assignment_sequence: int | None = Field(default=None, ge=1, le=20)
+    slack_gateway_proof: SlackGatewayProof | None = None
 
     @model_validator(mode="after")
     def validate_source_binding(self) -> OwnerApproval:

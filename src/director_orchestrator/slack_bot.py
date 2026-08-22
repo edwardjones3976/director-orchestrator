@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import logging
 import re
 import threading
@@ -10,17 +11,34 @@ import httpx
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from .approvals import failed_retry_decision_digest, parse_approval_button_value
+from .approvals import (
+    build_slack_gateway_proof,
+    failed_retry_decision_digest,
+    parse_approval_button_value,
+)
 from .config import Settings
-from .models import TaskRecord, TaskStatus
+from .models import OwnerApproval, TaskRecord, TaskStatus
 
 
 settings = Settings()
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 log = logging.getLogger("director.slack")
 
-if not settings.slack_bot_token or not settings.slack_app_token:
-    raise SystemExit("SLACK_BOT_TOKEN and SLACK_APP_TOKEN are required")
+if (
+    not settings.slack_bot_token
+    or not settings.slack_app_token
+    or not settings.slack_gateway_secret
+    or len(settings.slack_gateway_secret) < 32
+    or (
+        settings.shared_secret
+        and hmac.compare_digest(
+            settings.slack_gateway_secret, settings.shared_secret
+        )
+    )
+):
+    raise SystemExit(
+        "Slack tokens and a distinct 32+ character SLACK_GATEWAY_SECRET are required"
+    )
 
 app = App(token=settings.slack_bot_token)
 _seen_events: dict[str, float] = {}
@@ -41,6 +59,36 @@ def _claim_event(event_id: str) -> bool:
 
 def _clean_text(text: str) -> str:
     return re.sub(r"<@[A-Z0-9]+>", "", text).strip()
+
+
+def _signed_owner_payload(
+    task_id: str,
+    record: TaskRecord,
+    task_version: int,
+    payload: dict,
+) -> dict:
+    approval = OwnerApproval.model_validate(payload)
+    proof = build_slack_gateway_proof(
+        settings.slack_gateway_secret,
+        settings.shared_secret,
+        record,
+        task_version,
+        approval,
+        channel_id=settings.slack_channel_id,
+        path=f"/v1/tasks/{task_id}/approve",
+    )
+    return {
+        **payload,
+        "slack_gateway_proof": proof.model_dump(mode="json"),
+    }
+
+
+def _task_and_version(response) -> tuple[TaskRecord, int]:
+    response.raise_for_status()
+    raw_version = response.headers.get("X-Task-Record-Version")
+    if raw_version is None or not raw_version.isdigit():
+        raise ValueError("Director task response omitted its record version")
+    return TaskRecord.model_validate(response.json()), int(raw_version)
 
 
 def _forward(event: dict, client, *, require_prefix: bool) -> None:
@@ -111,14 +159,14 @@ def command_handler(ack, command, client, respond):
             payload = {
                 "owner_user_id": command["user_id"],
                 "note": note,
+                "source": "slack_command",
             }
             current = httpx.get(
                 f"{settings.orchestrator_base_url}/v1/tasks/{task_id}",
                 headers={"Authorization": f"Bearer {settings.shared_secret}"},
                 timeout=20,
             )
-            current.raise_for_status()
-            record = TaskRecord.model_validate(current.json())
+            record, task_version = _task_and_version(current)
             if record.status == TaskStatus.FAILED:
                 assignments = sorted(
                     record.plan.assignments if record.plan else [],
@@ -132,6 +180,7 @@ def command_handler(ack, command, client, respond):
                 payload["retry_decision_digest"] = failed_retry_decision_digest(
                     record
                 )
+            payload = _signed_owner_payload(task_id, record, task_version, payload)
             response = httpx.post(
                 f"{settings.orchestrator_base_url}/v1/tasks/{task_id}/approve",
                 headers={"Authorization": f"Bearer {settings.shared_secret}"},
@@ -187,6 +236,13 @@ def approval_button_handler(ack, body, client):
         }
         if assignment_sequence is not None:
             payload["assignment_sequence"] = assignment_sequence
+        current = httpx.get(
+            f"{settings.orchestrator_base_url}/v1/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {settings.shared_secret}"},
+            timeout=20,
+        )
+        record, task_version = _task_and_version(current)
+        payload = _signed_owner_payload(task_id, record, task_version, payload)
         response = httpx.post(
             f"{settings.orchestrator_base_url}/v1/tasks/{task_id}/approve",
             headers={"Authorization": f"Bearer {settings.shared_secret}"},
