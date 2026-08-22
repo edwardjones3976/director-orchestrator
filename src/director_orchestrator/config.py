@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 from __future__ import annotations
 
 import hmac
@@ -30,6 +31,38 @@ def _csv_exact(name: str, default: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+# [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
+def _normalized_path(value: str) -> str:
+    return os.path.normcase(os.path.abspath(os.path.realpath(value.strip())))
+
+
+def _paths_are_isolated(left: str, right: str) -> bool:
+    """Compare path spelling and file identity, failing closed on stat races."""
+
+    normalized_left = _normalized_path(left)
+    normalized_right = _normalized_path(right)
+    if normalized_left == normalized_right:
+        return False
+    left_exists = os.path.exists(normalized_left)
+    right_exists = os.path.exists(normalized_right)
+    if left_exists and right_exists:
+        try:
+            return not os.path.samefile(normalized_left, normalized_right)
+        except OSError:
+            return False
+    # A path that disappears during identity inspection is not proven isolated.
+    if left_exists != os.path.exists(normalized_left) or right_exists != os.path.exists(
+        normalized_right
+    ):
+        return False
+    return True
+
+
+def langgraph_resume_claim_path(checkpoint_path: str) -> str:
+    return checkpoint_path.strip() + ".resume-claims.sqlite3"
+# [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = os.getenv("APP_ENV", "local")
@@ -43,6 +76,18 @@ class Settings:
     provider_poll_seconds: int = _int("PROVIDER_POLL_SECONDS", 15)
     provider_timeout_seconds: int = _int("PROVIDER_TIMEOUT_SECONDS", 3600)
     sqlite_path: str = os.getenv("SQLITE_PATH", "/data/director.sqlite3")
+    # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
+    langgraph_shadow_enabled: bool = _bool("LANGGRAPH_SHADOW_ENABLED", False)
+    langgraph_approval_resume_enabled: bool = _bool(
+        "LANGGRAPH_APPROVAL_RESUME_ENABLED", False
+    )
+    langgraph_checkpoint_path: str = os.getenv(
+        "LANGGRAPH_CHECKPOINT_PATH", ""
+    ).strip()
+    langgraph_checkpoint_namespace: str = os.getenv(
+        "LANGGRAPH_CHECKPOINT_NAMESPACE", ""
+    ).strip()
+    # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
     project_allowlist: tuple[str, ...] = _csv("PROJECT_ALLOWLIST", "")
     repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
     allowed_starting_refs: tuple[str, ...] = _csv_exact("ALLOWED_STARTING_REFS", "main")
@@ -265,6 +310,74 @@ class Settings:
             "starting_refs_configured": bool(self.allowed_starting_refs),
             "claude_callback_configured": bool(self.claude_callback_secret),
         }
+
+    # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
+    def langgraph_shadow_readiness(self) -> dict[str, bool]:
+        """Report configuration only; the legacy engine remains the sole writer."""
+
+        checkpoint_path = self.langgraph_checkpoint_path.strip()
+        checkpoint_configured = bool(checkpoint_path)
+        checkpoint_isolated = checkpoint_configured and _paths_are_isolated(
+            checkpoint_path, self.sqlite_path
+        )
+        claim_path = (
+            langgraph_resume_claim_path(checkpoint_path)
+            if checkpoint_configured
+            else ""
+        )
+        claim_isolated = checkpoint_configured and all(
+            (
+                _paths_are_isolated(claim_path, self.sqlite_path),
+                _paths_are_isolated(claim_path, checkpoint_path),
+            )
+        )
+        namespace_configured = bool(self.langgraph_checkpoint_namespace.strip())
+        feature_enabled = (
+            self.langgraph_shadow_enabled or self.langgraph_approval_resume_enabled
+        )
+        return {
+            "shadow_enabled": self.langgraph_shadow_enabled,
+            "approval_resume_enabled": self.langgraph_approval_resume_enabled,
+            "checkpoint_path_configured": checkpoint_configured,
+            "checkpoint_path_isolated": checkpoint_isolated,
+            "checkpoint_namespace_configured": namespace_configured,
+            "configuration_valid": not feature_enabled
+            or (
+                checkpoint_configured
+                and checkpoint_isolated
+                and claim_isolated
+                and namespace_configured
+            ),
+            "runtime_active": False,
+            "legacy_sole_writer": True,
+        }
+
+    def validate_langgraph_configuration(self) -> None:
+        """Fail startup closed when an enabled proof lane is not isolated."""
+
+        readiness = self.langgraph_shadow_readiness()
+        if readiness["configuration_valid"]:
+            return
+
+        problems: list[str] = []
+        if not readiness["checkpoint_path_configured"]:
+            problems.append("LANGGRAPH_CHECKPOINT_PATH must be configured")
+        elif not readiness["checkpoint_path_isolated"]:
+            problems.append("LANGGRAPH_CHECKPOINT_PATH must differ from SQLITE_PATH")
+        elif not _paths_are_isolated(
+            langgraph_resume_claim_path(self.langgraph_checkpoint_path),
+            self.sqlite_path,
+        ) or not _paths_are_isolated(
+            langgraph_resume_claim_path(self.langgraph_checkpoint_path),
+            self.langgraph_checkpoint_path,
+        ):
+            problems.append(
+                "LangGraph resume claim database must differ from SQLITE_PATH and checkpoint database"
+            )
+        if not readiness["checkpoint_namespace_configured"]:
+            problems.append("LANGGRAPH_CHECKPOINT_NAMESPACE must be configured")
+        raise ValueError("Invalid enabled LangGraph configuration: " + "; ".join(problems))
+    # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 
     def oracle_merge_readiness(self) -> dict[str, bool]:
         app_parts = (
