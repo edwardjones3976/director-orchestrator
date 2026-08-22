@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from multiprocessing import get_context
 from dataclasses import replace
 from pathlib import Path
 
@@ -32,6 +33,29 @@ from director_orchestrator.models import (
 
 AUTHORITY_A = "sha256:" + "a" * 64
 AUTHORITY_B = "sha256:" + "b" * 64
+
+
+def _resume_process(
+    database: str,
+    record_json: str,
+    handle_payload: dict[str, object],
+    start_event,
+    results,
+) -> None:
+    connection = sqlite3.connect(database, check_same_thread=False)
+    try:
+        runtime = LangGraphResumeRuntime(
+            SqliteSaver(connection), checkpoint_namespace="resume-tests"
+        )
+        payload = dict(handle_payload)
+        payload["kind"] = ResumeKind(str(payload["kind"]))
+        handle = ResumeHandle(**payload)
+        record = TaskRecord.model_validate_json(record_json)
+        start_event.wait(10)
+        outcome = runtime.resume(record, handle, AUTHORITY_A)
+        results.put((outcome.status.value, outcome.resume_digest))
+    finally:
+        connection.close()
 
 
 class LangGraphResumeTests(unittest.TestCase):
@@ -308,7 +332,7 @@ class LangGraphResumeTests(unittest.TestCase):
             task_id=paused.handle.task_id,
             kind=paused.handle.kind,
             assignment_sequence=paused.handle.assignment_sequence,
-            callback_run_id="different-run",
+            callback_run_id_digest="sha256:" + "0" * 64,
             authority_snapshot_digest=paused.handle.authority_snapshot_digest,
             record_binding_digest=paused.handle.record_binding_digest,
             graph_version=paused.handle.graph_version,
@@ -321,6 +345,153 @@ class LangGraphResumeTests(unittest.TestCase):
 
         self.assertEqual(result.status, ResumeStatus.REJECTED)
         self.assertIn("callback run", result.reason)
+
+    def test_begin_revalidates_revoked_approval_on_completed_checkpoint(self) -> None:
+        record = self.record()
+        runtime, _ = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.ASSIGNMENT_APPROVAL,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+        )
+        assert paused.handle is not None
+        self.approve(record)
+        self.assertEqual(
+            runtime.resume(record, paused.handle, AUTHORITY_A).status,
+            ResumeStatus.RESUMED,
+        )
+        record.approved_assignment_digests.clear()
+
+        replay = runtime.begin(
+            record,
+            kind=ResumeKind.ASSIGNMENT_APPROVAL,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+        )
+
+        self.assertEqual(replay.status, ResumeStatus.REJECTED)
+        self.assertIn("assignment_is_approved", replay.reason)
+
+    def test_begin_revalidates_changed_callback_on_completed_checkpoint(self) -> None:
+        record = self.record()
+        self.add_waiting_callback(record)
+        runtime, _ = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.PROVIDER_CALLBACK,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+            callback_run_id="claude-run-1",
+        )
+        assert paused.handle is not None
+        self.assertTrue(
+            apply_claude_callback(
+                record,
+                ClaudeCallback(
+                    run_id="claude-run-1",
+                    status="completed",
+                    result="Callback result A.",
+                ),
+            )
+        )
+        self.assertEqual(
+            runtime.resume(record, paused.handle, AUTHORITY_A).status,
+            ResumeStatus.RESUMED,
+        )
+        record.provider_runs[0].result = "Callback result B."
+
+        replay = runtime.begin(
+            record,
+            kind=ResumeKind.PROVIDER_CALLBACK,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+            callback_run_id="claude-run-1",
+        )
+
+        self.assertEqual(replay.status, ResumeStatus.REJECTED)
+        self.assertIn("current legacy authority evidence", replay.reason)
+
+    def test_two_process_resume_has_one_durable_command_winner(self) -> None:
+        record = self.record()
+        runtime, _ = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.ASSIGNMENT_APPROVAL,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+        )
+        assert paused.handle is not None
+        self.approve(record)
+        context = get_context("spawn")
+        start_event = context.Event()
+        results = context.Queue()
+        workers = [
+            context.Process(
+                target=_resume_process,
+                args=(
+                    str(self.database),
+                    record.model_dump_json(),
+                    paused.handle.as_dict(),
+                    start_event,
+                    results,
+                ),
+            )
+            for _ in range(2)
+        ]
+        for worker in workers:
+            worker.start()
+        start_event.set()
+        outcomes = [results.get(timeout=30) for _ in workers]
+        for worker in workers:
+            worker.join(30)
+            self.assertEqual(worker.exitcode, 0)
+
+        statuses = sorted(status for status, _ in outcomes)
+        self.assertEqual(statuses, ["already_resumed", "resumed"])
+        self.assertEqual(len({digest for _, digest in outcomes}), 1)
+
+    def test_callback_checkpoint_persists_only_opaque_run_digest(self) -> None:
+        marker = "private-callback-run-marker-9d4c7f"
+        result_marker = "private-result-marker-301b2a"
+        record = self.record()
+        self.add_waiting_callback(record, marker)
+        runtime, connection = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.PROVIDER_CALLBACK,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+            callback_run_id=marker,
+        )
+        assert paused.handle is not None
+        self.assertNotIn(marker, paused.handle.as_dict().values())
+        self.assertTrue(
+            apply_claude_callback(
+                record,
+                ClaudeCallback(
+                    run_id=marker,
+                    status="completed",
+                    result=result_marker,
+                ),
+            )
+        )
+        self.assertEqual(
+            runtime.resume(record, paused.handle, AUTHORITY_A).status,
+            ResumeStatus.RESUMED,
+        )
+        connection.commit()
+        connection.close()
+        self.connections.remove(connection)
+
+        persisted = b"".join(
+            path.read_bytes()
+            for path in self.database.parent.glob(self.database.name + "*")
+            if path.is_file()
+        )
+        self.assertNotIn(marker.encode(), persisted)
+        self.assertNotIn(result_marker.encode(), persisted)
+        self.assertIn(paused.handle.callback_run_id_digest.encode(), persisted)
 
     def test_process_restart_resumes_same_sqlite_checkpoint(self) -> None:
         record = self.record()

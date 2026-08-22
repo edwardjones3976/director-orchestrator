@@ -32,6 +32,24 @@ def _csv_exact(name: str, default: str) -> tuple[str, ...]:
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 def _normalized_path(value: str) -> str:
     return os.path.normcase(os.path.abspath(os.path.realpath(value.strip())))
+
+
+def _paths_are_isolated(left: str, right: str) -> bool:
+    """Compare path spelling and file identity, failing closed on stat races."""
+
+    if _normalized_path(left) == _normalized_path(right):
+        return False
+    left_exists = os.path.exists(left)
+    right_exists = os.path.exists(right)
+    if left_exists and right_exists:
+        try:
+            return not os.path.samefile(left, right)
+        except OSError:
+            return False
+    # A path that disappears during identity inspection is not proven isolated.
+    if left_exists != os.path.exists(left) or right_exists != os.path.exists(right):
+        return False
+    return True
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 
 
@@ -266,8 +284,8 @@ class Settings:
 
         checkpoint_path = self.langgraph_checkpoint_path.strip()
         checkpoint_configured = bool(checkpoint_path)
-        checkpoint_isolated = checkpoint_configured and (
-            _normalized_path(checkpoint_path) != _normalized_path(self.sqlite_path)
+        checkpoint_isolated = checkpoint_configured and _paths_are_isolated(
+            checkpoint_path, self.sqlite_path
         )
         namespace_configured = bool(self.langgraph_checkpoint_namespace.strip())
         feature_enabled = (

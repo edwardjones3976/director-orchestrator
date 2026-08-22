@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import ast
+import os
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -64,6 +66,27 @@ class LangGraphConfigurationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "must differ from SQLITE_PATH"):
             settings.validate_langgraph_configuration()
+
+    def test_enabled_lane_rejects_hardlinked_legacy_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "legacy.sqlite3"
+            checkpoint = Path(directory) / "checkpoint.sqlite3"
+            legacy.write_bytes(b"legacy")
+            try:
+                os.link(legacy, checkpoint)
+            except OSError as exc:
+                self.skipTest(f"hardlinks unavailable: {exc}")
+            self.assertTrue(os.path.samefile(legacy, checkpoint))
+            settings = replace(
+                self.base_settings(),
+                langgraph_shadow_enabled=True,
+                sqlite_path=str(legacy),
+                langgraph_checkpoint_path=str(checkpoint),
+                langgraph_checkpoint_namespace="hardlink-proof",
+            )
+
+            with self.assertRaisesRegex(ValueError, "must differ from SQLITE_PATH"):
+                settings.validate_langgraph_configuration()
 
     def test_isolated_enabled_configuration_is_valid_but_not_runtime_active(self):
         settings = replace(

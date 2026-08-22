@@ -17,8 +17,11 @@ import hashlib
 import hmac
 import json
 import re
+import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Mapping, TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -74,12 +77,16 @@ def _secure_equal(left: str, right: str) -> bool:
     return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
 
 
+def _opaque_identifier_digest(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class ResumeHandle:
     task_id: str
     kind: ResumeKind
     assignment_sequence: int
-    callback_run_id: str | None
+    callback_run_id_digest: str | None
     authority_snapshot_digest: str
     record_binding_digest: str
     graph_version: str
@@ -92,7 +99,7 @@ class ResumeHandle:
             "task_id": self.task_id,
             "kind": self.kind.value,
             "assignment_sequence": self.assignment_sequence,
-            "callback_run_id": self.callback_run_id,
+            "callback_run_id_digest": self.callback_run_id_digest,
             "authority_snapshot_digest": self.authority_snapshot_digest,
             "record_binding_digest": self.record_binding_digest,
             "graph_version": self.graph_version,
@@ -134,14 +141,16 @@ def _find_callback_run(
     record: TaskRecord,
     *,
     assignment_sequence: int,
-    callback_run_id: str,
+    callback_run_id_digest: str,
 ) -> ProviderRun:
     matches = [
         run
         for run in record.provider_runs
         if run.provider == ProviderName.CLAUDE
         and run.assignment_sequence == assignment_sequence
-        and _secure_equal(run.run_id, callback_run_id)
+        and _secure_equal(
+            _opaque_identifier_digest(run.run_id), callback_run_id_digest
+        )
     ]
     if len(matches) != 1:
         raise ResumeRejected("resume does not identify exactly one current callback run")
@@ -161,7 +170,7 @@ def _record_binding_digest(
     *,
     kind: ResumeKind,
     assignment: Assignment,
-    callback_run_id: str | None,
+    callback_run_id_digest: str | None,
 ) -> str:
     """Bind current legacy records without confusing this with external authority."""
 
@@ -176,19 +185,19 @@ def _record_binding_digest(
         "plan_digest": _digest(record.plan.model_dump(mode="json")),
     }
     if kind == ResumeKind.PROVIDER_CALLBACK:
-        if not callback_run_id:
+        if not callback_run_id_digest:
             raise ResumeRejected("callback pause requires an exact run ID")
         run = _find_callback_run(
             record,
             assignment_sequence=assignment.sequence,
-            callback_run_id=callback_run_id,
+            callback_run_id_digest=callback_run_id_digest,
         )
         payload["callback"] = {
             "provider": run.provider.value,
             "assignment_sequence": run.assignment_sequence,
-            "run_id": run.run_id,
+            "run_id_digest": callback_run_id_digest,
         }
-    elif callback_run_id is not None:
+    elif callback_run_id_digest is not None:
         raise ResumeRejected("approval pause cannot be bound to a callback run")
     return _digest(payload)
 
@@ -198,7 +207,8 @@ def _new_handle(
     *,
     kind: ResumeKind,
     assignment_sequence: int,
-    callback_run_id: str | None,
+    callback_run_id: str | None = None,
+    callback_run_id_digest: str | None = None,
     authority_snapshot_digest: str,
     graph_version: str,
     checkpoint_namespace: str,
@@ -207,17 +217,21 @@ def _new_handle(
         authority_snapshot_digest
     )
     assignment = _find_assignment(record, assignment_sequence)
+    if callback_run_id is not None and callback_run_id_digest is not None:
+        raise ResumeRejected("callback binding must use one identifier form")
+    if callback_run_id is not None:
+        callback_run_id_digest = _opaque_identifier_digest(callback_run_id)
     record_digest = _record_binding_digest(
         record,
         kind=kind,
         assignment=assignment,
-        callback_run_id=callback_run_id,
+        callback_run_id_digest=callback_run_id_digest,
     )
     binding_payload = {
         "task_id": record.task_id,
         "kind": kind.value,
         "assignment_sequence": assignment_sequence,
-        "callback_run_id": callback_run_id,
+        "callback_run_id_digest": callback_run_id_digest,
         "authority_snapshot_digest": authority_snapshot_digest,
         "record_binding_digest": record_digest,
         "graph_version": graph_version,
@@ -228,7 +242,7 @@ def _new_handle(
         task_id=record.task_id,
         kind=kind,
         assignment_sequence=assignment_sequence,
-        callback_run_id=callback_run_id,
+        callback_run_id_digest=callback_run_id_digest,
         authority_snapshot_digest=authority_snapshot_digest,
         record_binding_digest=record_digest,
         graph_version=graph_version,
@@ -278,7 +292,55 @@ class LangGraphResumeRuntime:
             raise ValueError("checkpoint namespace and graph version are required")
         self.checkpoint_namespace = checkpoint_namespace
         self.graph_version = graph_version
+        self._claim_database = self._claim_database_path(checkpointer)
+        self._setup_claim_store()
         self._graph = _build_graph(checkpointer)
+
+    @staticmethod
+    def _claim_database_path(checkpointer: BaseCheckpointSaver) -> Path:
+        connection = getattr(checkpointer, "conn", None)
+        if not isinstance(connection, sqlite3.Connection):
+            raise ValueError("approval resume requires a durable SQLite checkpointer")
+        rows = connection.execute("PRAGMA database_list").fetchall()
+        database = next((str(row[2]) for row in rows if row[1] == "main"), "")
+        if not database or database == ":memory:":
+            raise ValueError("approval resume requires a file-backed SQLite checkpointer")
+        return Path(database + ".resume-claims.sqlite3")
+
+    def _setup_claim_store(self) -> None:
+        connection = sqlite3.connect(self._claim_database, timeout=30)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS resume_claims (
+                    thread_id TEXT PRIMARY KEY,
+                    binding_digest TEXT NOT NULL,
+                    resume_digest TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('CLAIMED', 'COMPLETED'))
+                )
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    @contextmanager
+    def _claim_transaction(self):
+        connection = sqlite3.connect(
+            self._claim_database,
+            timeout=30,
+            isolation_level=None,
+        )
+        try:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            connection.execute("BEGIN IMMEDIATE")
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def _config(self, handle: ResumeHandle) -> dict[str, dict[str, str]]:
         return {
@@ -310,7 +372,7 @@ class LangGraphResumeRuntime:
             record,
             kind=handle.kind,
             assignment_sequence=handle.assignment_sequence,
-            callback_run_id=handle.callback_run_id,
+            callback_run_id_digest=handle.callback_run_id_digest,
             authority_snapshot_digest=current_authority_digest,
             graph_version=self.graph_version,
             checkpoint_namespace=self.checkpoint_namespace,
@@ -366,17 +428,35 @@ class LangGraphResumeRuntime:
             snapshot = self._state(handle)
             if snapshot.values:
                 self._verify_checkpoint_binding(handle, snapshot.values)
-                status = (
-                    ResumeStatus.ALREADY_RESUMED
-                    if snapshot.values.get("phase") == ResumeStatus.RESUMED.value
+                completed = (
+                    snapshot.values.get("phase") == ResumeStatus.RESUMED.value
                     and not snapshot.next
-                    else ResumeStatus.PAUSED
                 )
+                if completed:
+                    evidence_digest = self._legacy_authority_evidence(record, handle)
+                    expected_resume_digest = self._expected_resume_digest(
+                        handle, evidence_digest
+                    )
+                    stored_resume_digest = str(
+                        snapshot.values.get("resume_digest") or ""
+                    )
+                    if not _secure_equal(
+                        stored_resume_digest, expected_resume_digest
+                    ):
+                        raise ResumeRejected(
+                            "completed checkpoint does not match current legacy authority evidence"
+                        )
                 return ResumeOutcome(
-                    status=status,
+                    status=(
+                        ResumeStatus.ALREADY_RESUMED
+                        if completed
+                        else ResumeStatus.PAUSED
+                    ),
                     reason="existing bound checkpoint reused",
                     handle=handle,
-                    resume_digest=snapshot.values.get("resume_digest"),
+                    resume_digest=(
+                        stored_resume_digest if completed else None
+                    ),
                 )
             result = self._graph.invoke(
                 {"handle": handle.as_dict(), "phase": ResumeStatus.PAUSED.value},
@@ -417,12 +497,12 @@ class LangGraphResumeRuntime:
                 }
             )
 
-        if not handle.callback_run_id:
+        if not handle.callback_run_id_digest:
             raise ResumeRejected("callback resume lacks its exact run binding")
         run = _find_callback_run(
             record,
             assignment_sequence=assignment.sequence,
-            callback_run_id=handle.callback_run_id,
+            callback_run_id_digest=handle.callback_run_id_digest,
         )
         if (
             run.status not in {"completed", "failed", "cancelled"}
@@ -436,7 +516,7 @@ class LangGraphResumeRuntime:
             {
                 "kind": handle.kind.value,
                 "assignment_sequence": assignment.sequence,
-                "callback_run_id": run.run_id,
+                "callback_run_id_digest": handle.callback_run_id_digest,
                 "callback_status": run.status,
                 "callback_result_digest": hashlib.sha256(
                     run.result.encode("utf-8")
@@ -510,46 +590,85 @@ class LangGraphResumeRuntime:
                 raise ResumeRejected(
                     "prepared resume digest does not match current legacy authority evidence"
                 )
-            snapshot = self._state(prepared.handle)
-            if not snapshot.values:
-                raise CheckpointUnavailable(
-                    "LangGraph checkpoint is missing; use legacy recovery"
-                )
-            self._verify_checkpoint_binding(prepared.handle, snapshot.values)
-            if (
-                snapshot.values.get("phase") == ResumeStatus.RESUMED.value
-                and not snapshot.next
-            ):
-                stored_digest = str(snapshot.values.get("resume_digest") or "")
-                if not _secure_equal(stored_digest, expected_resume_digest):
-                    raise ResumeRejected(
-                        "completed checkpoint does not match current legacy authority evidence"
+            with self._claim_transaction() as claim_connection:
+                snapshot = self._state(prepared.handle)
+                if not snapshot.values:
+                    raise CheckpointUnavailable(
+                        "LangGraph checkpoint is missing; use legacy recovery"
                     )
+                self._verify_checkpoint_binding(prepared.handle, snapshot.values)
+                claim = claim_connection.execute(
+                    "SELECT binding_digest, resume_digest, status FROM resume_claims "
+                    "WHERE thread_id = ?",
+                    (prepared.handle.thread_id,),
+                ).fetchone()
+                if claim is not None:
+                    if not _secure_equal(str(claim[0]), prepared.handle.binding_digest):
+                        raise ResumeRejected("resume claim binding is inconsistent")
+                    if not _secure_equal(str(claim[1]), expected_resume_digest):
+                        raise ResumeRejected("resume claim evidence is inconsistent")
+                if (
+                    snapshot.values.get("phase") == ResumeStatus.RESUMED.value
+                    and not snapshot.next
+                ):
+                    stored_digest = str(snapshot.values.get("resume_digest") or "")
+                    if not _secure_equal(stored_digest, expected_resume_digest):
+                        raise ResumeRejected(
+                            "completed checkpoint does not match current legacy authority evidence"
+                        )
+                    claim_connection.execute(
+                        "INSERT INTO resume_claims(thread_id, binding_digest, resume_digest, status) "
+                        "VALUES (?, ?, ?, 'COMPLETED') "
+                        "ON CONFLICT(thread_id) DO UPDATE SET status = 'COMPLETED'",
+                        (
+                            prepared.handle.thread_id,
+                            prepared.handle.binding_digest,
+                            expected_resume_digest,
+                        ),
+                    )
+                    return ResumeOutcome(
+                        ResumeStatus.ALREADY_RESUMED,
+                        "exact resume was already committed",
+                        prepared.handle,
+                        stored_digest,
+                    )
+                if not snapshot.next:
+                    raise CheckpointUnavailable(
+                        "LangGraph checkpoint is not at a resumable interrupt"
+                    )
+                claim_connection.execute(
+                    "INSERT INTO resume_claims(thread_id, binding_digest, resume_digest, status) "
+                    "VALUES (?, ?, ?, 'CLAIMED') "
+                    "ON CONFLICT(thread_id) DO UPDATE SET "
+                    "binding_digest=excluded.binding_digest, "
+                    "resume_digest=excluded.resume_digest, status='CLAIMED'",
+                    (
+                        prepared.handle.thread_id,
+                        prepared.handle.binding_digest,
+                        expected_resume_digest,
+                    ),
+                )
+                result = self._graph.invoke(
+                    Command(resume={"resume_digest": expected_resume_digest}),
+                    self._config(prepared.handle),
+                )
+                if result.get("phase") != ResumeStatus.RESUMED.value:
+                    raise CheckpointUnavailable(
+                        "LangGraph did not reach its terminal resume state"
+                    )
+                stored_digest = str(result.get("resume_digest") or "")
+                if not _secure_equal(stored_digest, expected_resume_digest):
+                    raise ResumeRejected("LangGraph stored different resume evidence")
+                claim_connection.execute(
+                    "UPDATE resume_claims SET status='COMPLETED' WHERE thread_id=?",
+                    (prepared.handle.thread_id,),
+                )
                 return ResumeOutcome(
-                    ResumeStatus.ALREADY_RESUMED,
-                    "exact resume was already committed",
+                    ResumeStatus.RESUMED,
+                    "legacy-authorized resume committed to the graph checkpoint",
                     prepared.handle,
                     stored_digest,
                 )
-            if not snapshot.next:
-                raise CheckpointUnavailable(
-                    "LangGraph checkpoint is not at a resumable interrupt"
-                )
-            result = self._graph.invoke(
-                Command(resume={"resume_digest": expected_resume_digest}),
-                self._config(prepared.handle),
-            )
-            if result.get("phase") != ResumeStatus.RESUMED.value:
-                raise CheckpointUnavailable("LangGraph did not reach its terminal resume state")
-            stored_digest = str(result.get("resume_digest") or "")
-            if not _secure_equal(stored_digest, expected_resume_digest):
-                raise ResumeRejected("LangGraph stored different resume evidence")
-            return ResumeOutcome(
-                ResumeStatus.RESUMED,
-                "legacy-authorized resume committed to the graph checkpoint",
-                prepared.handle,
-                stored_digest,
-            )
         except ResumeRejected as exc:
             return ResumeOutcome(ResumeStatus.REJECTED, str(exc), prepared.handle)
         except CheckpointUnavailable as exc:
