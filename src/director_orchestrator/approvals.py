@@ -12,6 +12,7 @@ from .models import (
     AmbiguousDispatchResolution,
     Assignment,
     AssignmentOutcome,
+    MAX_SLACK_INTAKE_TEXT,
     OracleRecoveryApproval,
     OracleRecoveryState,
     OpaqueEvidenceDigest,
@@ -33,6 +34,10 @@ from .team_charter import AdvisoryVoteTally
 
 class StaleApproval(ValueError):
     pass
+
+
+class EffectAlreadyClaimed(StaleApproval):
+    """Another worker owns the same current external-effect attempt."""
 
 
 _SYNTHETIC_APPROVAL_NOTES = frozenset({"Approved", "Approved from Slack"})
@@ -354,7 +359,7 @@ def reserve_provider_effect(
             and "failed_pre_submit" not in outcomes
             and unresolved_current_attempt
         ):
-            raise StaleApproval(
+            raise EffectAlreadyClaimed(
                 "A provider dispatch intent already exists and must not be duplicated"
             )
     # Migrated observations have no preceding intent but still prove an effect.
@@ -1176,7 +1181,13 @@ def apply_owner_clarification(record: TaskRecord, approval: OwnerApproval) -> No
     note = approval.note.strip()
     if not note or note in _SYNTHETIC_APPROVAL_NOTES:
         raise StaleApproval("This task needs a written clarification, not a bare approval")
-    record.intake.text += f"\n\nOwner clarification: {note}"
+    clarified_text = record.intake.text + f"\n\nOwner clarification: {note}"
+    if len(clarified_text) > MAX_SLACK_INTAKE_TEXT:
+        raise StaleApproval(
+            f"Owner clarification would exceed the {MAX_SLACK_INTAKE_TEXT}-character "
+            "task intake limit"
+        )
+    record.intake.text = clarified_text
     reset_for_owner_clarification(record)
 
 

@@ -13,6 +13,7 @@ import httpx
 from .config import Settings
 from .director import OpenAIDirector
 from .approvals import (
+    EffectAlreadyClaimed,
     StaleApproval,
     approval_button_value,
     assignment_approval_digest,
@@ -41,6 +42,8 @@ from .models import (
     TaskStatus,
 )
 from .oracle_merge import (
+    OracleMergeClaimExpired,
+    OracleMergeInProgress,
     OracleMergeService,
     OracleMergeStatus,
     authenticate_provider_review_artifact,
@@ -196,8 +199,6 @@ class OrchestrationEngine:
                 return
 
             if record.plan is None:
-                record.status = TaskStatus.PLANNING
-                self.store.save(record)
                 reservation = self._reserve_director_effect(
                     record,
                     phase="plan",
@@ -468,17 +469,42 @@ class OrchestrationEngine:
     ) -> tuple[TaskRecord, str] | None:
         """Atomically reserve one paid OpenAI call before network I/O."""
 
-        versioned = self.store.get_versioned(record.task_id)
-        if versioned is None:
-            raise StaleApproval("Task disappeared before Director call")
-        latest, expected_version = versioned
-        if latest.plan_generation != record.plan_generation:
-            raise StaleApproval("Task generation changed before Director call")
-        effect_key = task_effect_key(latest, phase=phase, identity=identity)
+        expected_version = record._store_version
+        if expected_version is None:
+            raise StaleApproval("Director call requires a persisted task snapshot")
+        effect_key = task_effect_key(record, phase=phase, identity=identity)
+        existing_intents = [
+            item
+            for item in record.task_effect_ledger
+            if item.effect_key == effect_key and item.kind == "director_intent"
+        ]
+        failed_before_submit = any(
+            item.effect_key == effect_key
+            and item.kind == "director_observation"
+            and item.outcome == "failed_pre_submit"
+            for item in record.task_effect_ledger
+        )
+        if existing_intents and not failed_before_submit:
+            if any(self._effect_owner_is_live(item.recorded_at) for item in existing_intents):
+                return None
+            raise StaleApproval(
+                "A persisted Director call has an ambiguous outcome and must not be repeated"
+            )
 
         def reserve(current: TaskRecord) -> None:
-            if current.plan_generation != record.plan_generation:
-                raise StaleApproval("Task generation changed before Director call")
+            if current.plan_generation != record.plan_generation or (
+                phase == "plan" and current.plan is not None
+            ):
+                raise EffectAlreadyClaimed(
+                    "Task planning authority changed before Director call"
+                )
+            if any(
+                item.effect_key == effect_key and item.kind == "director_intent"
+                for item in current.task_effect_ledger
+            ):
+                raise EffectAlreadyClaimed(
+                    "A Director planning intent already exists and must not be duplicated"
+                )
             reserve_task_effect(
                 current,
                 effect_key=effect_key,
@@ -489,10 +515,15 @@ class OrchestrationEngine:
                 hop_units=1,
                 max_task_budget_usd=self.settings.max_task_budget_usd,
             )
+            if phase == "plan":
+                current.status = TaskStatus.PLANNING
 
-        stored = self.store.mutate_if_version(
-            record.task_id, expected_version, reserve
-        )
+        try:
+            stored = self.store.mutate_if_version(
+                record.task_id, expected_version, reserve
+            )
+        except EffectAlreadyClaimed:
+            return None
         if stored is None:
             return None
         return stored, effect_key
@@ -1039,6 +1070,12 @@ class OrchestrationEngine:
     def _provider_run_count(record: TaskRecord) -> int:
         return len(record.provider_run_history) + len(record.provider_runs)
 
+    def _effect_owner_is_live(self, recorded_at) -> bool:
+        """Bound the window in which an intent is owned by another process."""
+
+        lease_seconds = max(180, self.settings.provider_timeout_seconds) + 60
+        return time.time() - recorded_at.timestamp() <= lease_seconds
+
     def _reserve_effect_intent(
         self,
         record: TaskRecord,
@@ -1053,10 +1090,36 @@ class OrchestrationEngine:
         without calling a provider or overwriting the winner's ledger entry.
         """
 
-        versioned = self.store.get_versioned(record.task_id)
-        if versioned is None:
-            raise StaleApproval("Task disappeared before provider dispatch")
-        _, expected_version = versioned
+        expected_version = record._store_version
+        if expected_version is None:
+            raise StaleApproval("Provider dispatch requires a persisted task snapshot")
+        assignment_digest = assignment_approval_digest(assignment)
+        unresolved_intents = [
+            item
+            for item in record.task_effect_ledger
+            if item.kind == "provider_intent"
+            and item.plan_generation == record.plan_generation
+            and item.assignment_digest == assignment_digest
+            and item.phase == phase
+        ]
+        failed_keys = {
+            item.effect_key
+            for item in record.task_effect_ledger
+            if item.kind == "provider_observation"
+            and item.outcome == "failed_pre_submit"
+        }
+        unresolved_intents = [
+            item for item in unresolved_intents if item.effect_key not in failed_keys
+        ]
+        if unresolved_intents:
+            if any(
+                self._effect_owner_is_live(item.recorded_at)
+                for item in unresolved_intents
+            ):
+                return None
+            raise StaleApproval(
+                "A persisted provider dispatch has an ambiguous outcome and requires reconciliation"
+            )
         reserved_key: str | None = None
 
         def reserve(current: TaskRecord) -> None:
@@ -1069,20 +1132,20 @@ class OrchestrationEngine:
                 or assignment_approval_digest(current_assignment)
                 != assignment_approval_digest(assignment)
             ):
-                raise StaleApproval(
+                raise EffectAlreadyClaimed(
                     "The pending assignment changed before provider dispatch"
                 )
             if current_assignment.requires_approval and not assignment_is_approved(
                 current, current_assignment
             ):
-                raise StaleApproval(
+                raise EffectAlreadyClaimed(
                     "The pending assignment approval changed before provider dispatch"
                 )
             if phase == "dispatch" and any(
                 run.assignment_sequence == current_assignment.sequence
                 for run in current.provider_runs
             ):
-                raise StaleApproval(
+                raise EffectAlreadyClaimed(
                     "A provider run already exists and must not be dispatched again"
                 )
             if self._provider_run_count(current) >= self._provider_run_limit(current):
@@ -1095,9 +1158,12 @@ class OrchestrationEngine:
             )
             current.status = TaskStatus.RUNNING
 
-        stored = self.store.mutate_if_version(
-            record.task_id, expected_version, reserve
-        )
+        try:
+            stored = self.store.mutate_if_version(
+                record.task_id, expected_version, reserve
+            )
+        except EffectAlreadyClaimed:
+            return None
         if stored is None:
             return None
         if reserved_key is None:
@@ -1139,6 +1205,11 @@ class OrchestrationEngine:
                 "artifact_digest": artifact.digest(),
             },
         )
+        intent_preexisting = any(
+            item.effect_key == oracle_effect_key
+            and item.kind == "oracle_merge_intent"
+            for item in record.task_effect_ledger
+        )
         reserve_task_effect(
             record,
             effect_key=oracle_effect_key,
@@ -1159,9 +1230,41 @@ class OrchestrationEngine:
         )
         if prior_merge is not None:
             return True
-        self.store.save(record)
+        if not intent_preexisting:
+            self.store.save(record)
         try:
             result = service.process(artifact)
+        except OracleMergeInProgress:
+            # A different process owns the exact artifact evaluation. This
+            # observer must not mutate task state or invalidate the owner's
+            # eventual exact-SHA result.
+            return False
+        except OracleMergeClaimExpired as exc:
+            record_oracle_recovery(
+                record,
+                run,
+                kind="automerge_claim_expired",
+                evidence={"error_type": type(exc).__name__},
+                artifact_id=artifact.artifact_id,
+                retryable=False,
+            )
+            record_task_effect_observation(
+                record,
+                effect_key=oracle_effect_key,
+                intent_kind="oracle_merge_intent",
+                observation_kind="oracle_merge_observation",
+                phase="oracle_merge",
+                outcome="stopped",
+                run_id=artifact.artifact_id,
+            )
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "Oracle merge ownership expired. Reconcile the exact pull request and "
+                "reviewed SHA on GitHub before any further merge action."
+            )
+            self.store.save(record)
+            await self._status_post(record, record.message)
+            return False
         except (RuntimeError, ValueError) as exc:
             attempt_status, retry_not_before = service.store.attempt_recovery_state(
                 artifact.artifact_id

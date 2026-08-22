@@ -70,6 +70,7 @@ oracle_merge_service = OracleMergeService(
 engine = OrchestrationEngine(settings, store, oracle_merge_service)
 usage_monitor = UsageMonitor(settings, store)
 _PRIVACY_CLEANUP_RETRY_SECONDS = 2.0
+_RECOVERABLE_SCAN_SECONDS = 30.0
 
 
 async def _resume_privacy_cleanup_waits_once() -> None:
@@ -168,6 +169,21 @@ async def _privacy_cleanup_recovery_loop() -> None:
         await asyncio.sleep(_PRIVACY_CLEANUP_RETRY_SECONDS)
 
 
+async def _recoverable_tasks_once() -> None:
+    records = store.list_recoverable()
+    if records:
+        await asyncio.gather(
+            *(engine.run(record.task_id) for record in records),
+            return_exceptions=True,
+        )
+
+
+async def _recoverable_task_loop() -> None:
+    while True:
+        await asyncio.sleep(_RECOVERABLE_SCAN_SECONDS)
+        await _recoverable_tasks_once()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initial_resumes = store.claim_privacy_cleanup_resumes()
@@ -185,7 +201,13 @@ async def lifespan(_: FastAPI):
     ]
     monitor_task = asyncio.create_task(usage_monitor.run_forever())
     privacy_recovery_task = asyncio.create_task(_privacy_cleanup_recovery_loop())
-    tasks = [*recovery_tasks, monitor_task, privacy_recovery_task]
+    recoverable_task = asyncio.create_task(_recoverable_task_loop())
+    tasks = [
+        *recovery_tasks,
+        monitor_task,
+        privacy_recovery_task,
+        recoverable_task,
+    ]
     try:
         yield
     finally:

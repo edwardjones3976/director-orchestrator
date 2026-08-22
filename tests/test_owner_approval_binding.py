@@ -574,6 +574,60 @@ class StaleButtonTests(unittest.TestCase):
 
 
 class OwnerClarificationTests(unittest.TestCase):
+    def test_clarification_enforces_intake_limit_before_mutation_and_restarts(self):
+        note = "A"
+        suffix = f"\n\nOwner clarification: {note}"
+        record = _record()
+        record.plan.approval_required = False
+        record.plan.approval_reasons = []
+        record.plan.owner_question = "Which option?"
+        record.intake.text = "x" * (20_000 - len(suffix))
+        apply_owner_clarification(
+            record,
+            OwnerApproval(owner_user_id="U0B9UJ86D27", note=note),
+        )
+        self.assertEqual(len(record.intake.text), 20_000)
+
+        with tempfile.TemporaryDirectory() as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            task_store.create(record)
+            restarted = TaskStore(task_store.path).get(record.task_id)
+            self.assertEqual(restarted.intake.text, record.intake.text)
+
+        overflow = _record()
+        overflow.plan.approval_required = False
+        overflow.plan.approval_reasons = []
+        overflow.plan.owner_question = "Which option?"
+        overflow.intake.text = "x" * (20_001 - len(suffix))
+        before = overflow.model_dump(mode="json")
+        with self.assertRaisesRegex(StaleApproval, "20000-character"):
+            apply_owner_clarification(
+                overflow,
+                OwnerApproval(owner_user_id="U0B9UJ86D27", note=note),
+            )
+        self.assertEqual(overflow.model_dump(mode="json"), before)
+
+        with tempfile.TemporaryDirectory() as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            task_store.create(overflow)
+            persisted_before, version_before = task_store.get_versioned(
+                overflow.task_id
+            )
+            with self.assertRaisesRegex(StaleApproval, "20000-character"):
+                main._consume_owner_decision(
+                    task_store,
+                    overflow.task_id,
+                    OwnerApproval(owner_user_id="U0B9UJ86D27", note=note),
+                )
+            persisted_after, version_after = task_store.get_versioned(
+                overflow.task_id
+            )
+            self.assertEqual(version_after, version_before)
+            self.assertEqual(
+                persisted_after.model_dump(mode="json"),
+                persisted_before.model_dump(mode="json"),
+            )
+
     """A clarification rebuilds the plan, so discarded-plan state must not survive."""
 
     def _answered_record(self) -> TaskRecord:
@@ -873,15 +927,16 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
 
             def attempt(engine: OrchestrationEngine):
                 current = engine.store.get(record.task_id)
-                original_get = engine.store.get_versioned
+                original_mutate = engine.store.mutate_if_version
 
-                def synchronized_get(task_id: str):
-                    versioned = original_get(task_id)
+                def synchronized_mutate(task_id, expected_version, mutator, **kwargs):
                     barrier.wait(timeout=5)
-                    return versioned
+                    return original_mutate(
+                        task_id, expected_version, mutator, **kwargs
+                    )
 
                 with patch.object(
-                    engine.store, "get_versioned", side_effect=synchronized_get
+                    engine.store, "mutate_if_version", side_effect=synchronized_mutate
                 ):
                     return engine._reserve_effect_intent(
                         current,
@@ -901,6 +956,191 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
                 ["provider_intent"],
             )
             self.assertEqual(stored.cumulative_estimated_cost_usd, 0.5)
+
+    def test_late_provider_worker_cannot_overwrite_effect_owner_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            owner_store = TaskStore(database)
+            observer_store = TaskStore(database)
+            record = _record(owner_approved=True, approved=[1])
+            record.status = TaskStatus.QUEUED
+            record.plan_generation = 1
+            assignment = record.plan.assignments[0]
+            assignment.estimated_cost_usd = 0.5
+            record.approved_assignment_digests[1] = assignment_approval_digest(
+                assignment
+            )
+            owner_store.create(record)
+            settings = replace(
+                main.settings,
+                sqlite_path=database,
+                max_task_budget_usd=2.0,
+            )
+            owner_engine = OrchestrationEngine(settings, owner_store)
+            observer_engine = OrchestrationEngine(settings, observer_store)
+            owner_snapshot = owner_store.get(record.task_id)
+            start = threading.Barrier(2)
+            owner_reserved = threading.Event()
+            observer_checked = threading.Event()
+            owner_saved = threading.Event()
+
+            def own_and_finish() -> None:
+                start.wait(timeout=5)
+                reservation = owner_engine._reserve_effect_intent(
+                    owner_snapshot, assignment, phase="dispatch"
+                )
+                self.assertIsNotNone(reservation)
+                owned, effect_key = reservation
+                owner_reserved.set()
+                self.assertTrue(observer_checked.wait(timeout=5))
+                record_provider_effect_observation(
+                    owned,
+                    assignment,
+                    effect_key=effect_key,
+                    phase="dispatch",
+                    outcome="submitted",
+                    run_id="winner-run",
+                )
+                owned.provider_runs.append(
+                    ProviderRun(
+                        provider=assignment.agent,
+                        assignment_sequence=assignment.sequence,
+                        run_id="winner-run",
+                        status="FINISHED",
+                        result="winner-result",
+                    )
+                )
+                owned.status = TaskStatus.REVIEWING
+                owner_store.save(owned)
+                owner_saved.set()
+
+            def observe_late() -> object:
+                start.wait(timeout=5)
+                self.assertTrue(owner_reserved.wait(timeout=5))
+                observer_snapshot, version_before = observer_store.get_versioned(
+                    record.task_id
+                )
+                try:
+                    result = observer_engine._reserve_effect_intent(
+                        observer_snapshot, assignment, phase="dispatch"
+                    )
+                    _, version_after = observer_store.get_versioned(record.task_id)
+                    self.assertEqual(version_after, version_before)
+                    return result
+                finally:
+                    observer_checked.set()
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                owner_future = executor.submit(own_and_finish)
+                observer_future = executor.submit(observe_late)
+                owner_future.result(timeout=10)
+                self.assertIsNone(observer_future.result(timeout=10))
+
+            stored, version = TaskStore(database).get_versioned(record.task_id)
+            self.assertEqual(version, 2)
+            self.assertEqual(stored.status, TaskStatus.REVIEWING)
+            self.assertEqual(stored.provider_runs[0].run_id, "winner-run")
+            self.assertEqual(stored.provider_runs[0].result, "winner-result")
+            self.assertEqual(
+                [item.kind for item in stored.task_effect_ledger],
+                ["provider_intent", "provider_observation"],
+            )
+
+    def test_late_revision_worker_cannot_overwrite_effect_owner_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            owner_store = TaskStore(database)
+            observer_store = TaskStore(database)
+            record = _record(owner_approved=True, approved=[1])
+            record.status = TaskStatus.REVIEWING
+            record.plan_generation = 1
+            record.plan.max_revisions = 1
+            assignment = record.plan.assignments[0]
+            assignment.estimated_cost_usd = 0.25
+            record.approved_assignment_digests[1] = assignment_approval_digest(
+                assignment
+            )
+            record.provider_runs = [
+                ProviderRun(
+                    provider=assignment.agent,
+                    assignment_sequence=assignment.sequence,
+                    run_id="initial-run",
+                    status="FINISHED",
+                    result="initial-result",
+                )
+            ]
+            owner_store.create(record)
+            settings = replace(
+                main.settings,
+                sqlite_path=database,
+                max_task_budget_usd=2.0,
+            )
+            owner_engine = OrchestrationEngine(settings, owner_store)
+            observer_engine = OrchestrationEngine(settings, observer_store)
+            owner_snapshot = owner_store.get(record.task_id)
+            start = threading.Barrier(2)
+            owner_reserved = threading.Event()
+            observer_checked = threading.Event()
+            owner_saved = threading.Event()
+
+            def own_and_finish() -> None:
+                start.wait(timeout=5)
+                reservation = owner_engine._reserve_effect_intent(
+                    owner_snapshot, assignment, phase="revision"
+                )
+                self.assertIsNotNone(reservation)
+                owned, effect_key = reservation
+                owner_reserved.set()
+                self.assertTrue(observer_checked.wait(timeout=5))
+                record_provider_effect_observation(
+                    owned,
+                    assignment,
+                    effect_key=effect_key,
+                    phase="revision",
+                    outcome="submitted",
+                    run_id="revised-run",
+                )
+                owned.provider_runs[-1] = ProviderRun(
+                    provider=assignment.agent,
+                    assignment_sequence=assignment.sequence,
+                    run_id="revised-run",
+                    status="FINISHED",
+                    result="revised-result",
+                )
+                owned.status = TaskStatus.REVIEWING
+                owner_store.save(owned)
+                owner_saved.set()
+
+            def observe_late() -> object:
+                start.wait(timeout=5)
+                self.assertTrue(owner_reserved.wait(timeout=5))
+                observer_snapshot, version_before = observer_store.get_versioned(
+                    record.task_id
+                )
+                try:
+                    result = observer_engine._reserve_effect_intent(
+                        observer_snapshot, assignment, phase="revision"
+                    )
+                    _, version_after = observer_store.get_versioned(record.task_id)
+                    self.assertEqual(version_after, version_before)
+                    return result
+                finally:
+                    observer_checked.set()
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                owner_future = executor.submit(own_and_finish)
+                observer_future = executor.submit(observe_late)
+                owner_future.result(timeout=10)
+                self.assertIsNone(observer_future.result(timeout=10))
+
+            stored = TaskStore(database).get(record.task_id)
+            self.assertEqual(stored.status, TaskStatus.REVIEWING)
+            self.assertEqual(stored.provider_runs[-1].run_id, "revised-run")
+            self.assertEqual(stored.provider_runs[-1].result, "revised-result")
+            self.assertEqual(
+                [item.phase for item in stored.task_effect_ledger],
+                ["revision", "revision"],
+            )
 
     def test_restart_and_replan_preserve_intent_and_block_duplicate_effect(self):
         record = _record(owner_approved=True, approved=[1])

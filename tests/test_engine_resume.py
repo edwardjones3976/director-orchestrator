@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
+import director_orchestrator.main as main
 from director_orchestrator.config import Settings
 from director_orchestrator.approvals import (
     apply_oracle_recovery,
     assignment_approval_digest,
     reset_for_owner_clarification,
+    record_provider_effect_observation,
+    reserve_task_effect,
+    task_effect_key,
 )
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
@@ -30,7 +39,11 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.oracle_merge import OracleMergeResult, OracleMergeStatus
+from director_orchestrator.oracle_merge import (
+    OracleMergeInProgress,
+    OracleMergeResult,
+    OracleMergeStatus,
+)
 from director_orchestrator.providers import ProviderError
 from director_orchestrator.store import TaskStore
 
@@ -57,6 +70,269 @@ class NoRedispatchAdapter:
 
 
 class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_late_planning_observer_does_not_mutate_live_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                openai_plan_estimated_cost_usd=0.1,
+                sqlite_path=database,
+            )
+            task = TaskRecord(
+                task_id="DIR-LATE-PLAN-OBSERVER",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-late-plan-observer",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Build one bounded plan",
+                ),
+            )
+            owner_store = TaskStore(database)
+            owner_store.create(task)
+            owner_engine = OrchestrationEngine(settings, owner_store)
+            identity = {
+                "intake": hashlib.sha256(
+                    task.intake.model_dump_json().encode("utf-8")
+                ).hexdigest(),
+                "target_generation": 1,
+            }
+            owner = owner_store.get(task.task_id)
+            self.assertIsNotNone(
+                owner_engine._reserve_director_effect(
+                    owner,
+                    phase="plan",
+                    identity=identity,
+                    estimated_cost_usd=0.1,
+                )
+            )
+
+            observer_store = TaskStore(database)
+            observer, version_before = observer_store.get_versioned(task.task_id)
+            observer_engine = OrchestrationEngine(settings, observer_store)
+            self.assertIsNone(
+                observer_engine._reserve_director_effect(
+                    observer,
+                    phase="plan",
+                    identity=identity,
+                    estimated_cost_usd=0.1,
+                )
+            )
+            current, version_after = observer_store.get_versioned(task.task_id)
+            self.assertEqual(version_after, version_before)
+            self.assertEqual(current.status, TaskStatus.PLANNING)
+            self.assertEqual(
+                [item.kind for item in current.task_effect_ledger],
+                ["director_intent"],
+            )
+
+            lease_expiry = (
+                current.task_effect_ledger[0].recorded_at.timestamp()
+                + max(180, settings.provider_timeout_seconds)
+                + 61
+            )
+            status_post = AsyncMock(return_value=None)
+            with (
+                patch("director_orchestrator.engine.time.time", return_value=lease_expiry),
+                patch.object(main, "store", observer_store),
+                patch.object(main, "engine", observer_engine),
+                patch.object(observer_engine, "_status_post", new=status_post),
+            ):
+                await main._recoverable_tasks_once()
+            expired = observer_store.get(task.task_id)
+            self.assertEqual(expired.status, TaskStatus.FAILED)
+            self.assertIn("ambiguous outcome", expired.error)
+            status_post.assert_awaited_once()
+
+    async def test_oracle_observer_does_not_invalidate_live_merge_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            assignment = Assignment(
+                sequence=1,
+                agent=ProviderName.CURSOR,
+                task="Review one exact SHA",
+                acceptance=["Return signed exact-SHA evidence"],
+                repository="edwardjones3976/edge_engine",
+            )
+            run = ProviderRun(
+                provider=ProviderName.CURSOR,
+                assignment_sequence=1,
+                run_id="review-run",
+                status="FINISHED",
+                result="accepted artifact",
+            )
+            record = TaskRecord(
+                task_id="DIR-ORACLE-OBSERVER",
+                status=TaskStatus.REVIEWING,
+                intake=SlackIntake(
+                    source_event_id="evt-oracle-observer",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Review one exact SHA",
+                ),
+                plan=DirectorPlan(
+                    project="edge-oracle",
+                    normalized_outcome="Review one exact SHA",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[assignment],
+                    final_acceptance=["Exact review recorded"],
+                ),
+                provider_runs=[run],
+            )
+            artifact = SimpleNamespace(
+                artifact_id="artifact-live-owner",
+                digest=lambda: "artifact-digest",
+            )
+            effect_key = task_effect_key(
+                record,
+                phase="oracle_merge",
+                identity={
+                    "artifact_id": artifact.artifact_id,
+                    "artifact_digest": artifact.digest(),
+                },
+            )
+            reserve_task_effect(
+                record,
+                effect_key=effect_key,
+                kind="oracle_merge_intent",
+                phase="oracle_merge",
+                assignment=assignment,
+                replay_safe=True,
+            )
+            task_store = TaskStore(database)
+            task_store.create(record)
+            observer, version_before = task_store.get_versioned(record.task_id)
+
+            class ActiveService:
+                policy = SimpleNamespace(
+                    enabled=True,
+                    kill_switch=False,
+                    review_secret="test-secret",
+                )
+
+                @staticmethod
+                def process(candidate):
+                    raise OracleMergeInProgress("exact artifact has a live owner")
+
+            engine = OrchestrationEngine(
+                replace(Settings(), sqlite_path=database),
+                task_store,
+                ActiveService(),
+            )
+            status_post = AsyncMock(return_value=None)
+            with (
+                patch(
+                    "director_orchestrator.engine.authenticate_provider_review_artifact",
+                    return_value=artifact,
+                ),
+                patch.object(engine, "_status_post", new=status_post),
+            ):
+                self.assertFalse(
+                    await engine._process_exact_sha_review(observer, run)
+                )
+
+            current, version_after = task_store.get_versioned(record.task_id)
+            self.assertEqual(version_after, version_before)
+            self.assertEqual(current.status, TaskStatus.REVIEWING)
+            self.assertIsNone(current.oracle_recovery)
+            status_post.assert_not_awaited()
+
+    async def test_two_process_planners_have_one_intent_owner_and_keep_its_result(self):
+        class PlanningDirector:
+            def __init__(self):
+                self.calls = 0
+                self.lock = threading.Lock()
+
+            async def plan(self, record: TaskRecord) -> DirectorPlan:
+                with self.lock:
+                    self.calls += 1
+                return DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Preserve the winning plan",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    owner_question="Confirm the winning plan",
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.OWNER,
+                            task="Confirm the winning plan",
+                            acceptance=["Owner confirms"],
+                        )
+                    ],
+                    final_acceptance=["Plan persisted"],
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                openai_plan_estimated_cost_usd=0.1,
+                project_allowlist=("demo",),
+                sqlite_path=database,
+            )
+            task = TaskRecord(
+                task_id="DIR-PLAN-RACE",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-plan-race",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Build one bounded plan",
+                ),
+            )
+            first_store = TaskStore(database)
+            first_store.create(task)
+            stores = (first_store, TaskStore(database))
+            director = PlanningDirector()
+            engines = tuple(OrchestrationEngine(settings, item) for item in stores)
+            for engine in engines:
+                engine.director = director
+                engine._status_post = AsyncMock(return_value=None)
+            barrier = threading.Barrier(2)
+
+            def run_engine(engine: OrchestrationEngine) -> None:
+                original = engine.store.mutate_if_version
+
+                def synchronized(task_id: str, expected_version: int, mutator, **kwargs):
+                    barrier.wait(timeout=5)
+                    return original(task_id, expected_version, mutator, **kwargs)
+
+                with patch.object(
+                    engine.store, "mutate_if_version", side_effect=synchronized
+                ):
+                    asyncio.run(engine.run(task.task_id))
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(run_engine, engine) for engine in engines]
+                for future in futures:
+                    future.result(timeout=15)
+
+            stored = TaskStore(database).get(task.task_id)
+            self.assertEqual(director.calls, 1)
+            self.assertEqual(stored.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stored.plan.normalized_outcome, "Preserve the winning plan")
+            self.assertEqual(
+                [item.kind for item in stored.task_effect_ledger],
+                ["director_intent", "director_observation"],
+            )
+            self.assertEqual(
+                sum(engine._status_post.await_count for engine in engines),
+                1,
+            )
+
     async def test_paid_director_plan_is_reserved_once_and_survives_replan_reset(self):
         class PlanningDirector:
             def __init__(self):

@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -59,6 +60,20 @@ class OracleMergeStatus(StrEnum):
     SERIOUS_SAFETY_STOP = "SERIOUS_SAFETY_STOP"
     MERGED = "MERGED"
     ERROR = "ERROR"
+
+
+class OracleMergeInProgress(RuntimeError):
+    """A different live worker owns this exact merge evaluation."""
+
+
+class OracleMergeClaimExpired(RuntimeError):
+    """The prior merge owner is no longer provably live; reconciliation is required."""
+
+
+@dataclass(frozen=True)
+class OracleMergeClaim:
+    token: str
+    lease_until: datetime
 
 
 class OracleReviewArtifact(BaseModel):
@@ -636,6 +651,7 @@ class OracleMergePolicy:
 class OracleMergeStore:
     _EVALUATING = "EVALUATING"
     _RECOVERABLE = "RECOVERABLE"
+    _AMBIGUOUS = "AMBIGUOUS"
 
     def __init__(self, path: str):
         self.path = path
@@ -709,6 +725,7 @@ class OracleMergeStore:
                 """
             )
             self._ensure_retry_not_before_column(connection)
+            self._ensure_claim_columns(connection)
 
     @staticmethod
     def _ensure_retry_not_before_column(connection: sqlite3.Connection) -> None:
@@ -738,6 +755,182 @@ class OracleMergeStore:
                 }
                 if "retry_not_before" not in columns:
                     raise
+
+    @staticmethod
+    def _ensure_claim_columns(connection: sqlite3.Connection) -> None:
+        """Add nullable claim metadata without granting legacy rows live ownership."""
+
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(oracle_merge_attempts)")
+        }
+        for name in ("claim_token", "claim_lease_until"):
+            if name in columns:
+                continue
+            try:
+                connection.execute(
+                    f"ALTER TABLE oracle_merge_attempts ADD COLUMN {name} TEXT"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+
+    def claim(
+        self,
+        artifact: OracleReviewArtifact,
+        *,
+        lease_seconds: int,
+    ) -> OracleMergeClaim | OracleMergeResult:
+        """Atomically claim one evaluation or classify its persisted owner.
+
+        A fresh lease means another process may still perform the one-shot merge and
+        is therefore an observer-only condition. An expired or legacy owner is
+        durably converted to AMBIGUOUS; it can never be reclaimed for another merge.
+        """
+
+        if lease_seconds < 60:
+            raise ValueError("Oracle merge claim lease must be at least 60 seconds")
+        digest = artifact.digest()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        lease_until = now_dt + timedelta(seconds=lease_seconds)
+        token = secrets.token_hex(32)
+        with self._lock, self._connect(immediate=True) as connection:
+            existing = connection.execute(
+                "SELECT artifact_digest, status, result_json, retry_not_before, "
+                "claim_token, claim_lease_until FROM oracle_merge_attempts "
+                "WHERE artifact_id = ?",
+                (artifact.artifact_id,),
+            ).fetchone()
+            if existing:
+                if existing["artifact_digest"] != digest:
+                    raise ValueError(
+                        "review artifact identifier was reused with different content"
+                    )
+                if existing["result_json"]:
+                    return OracleMergeResult.model_validate_json(existing["result_json"])
+                if existing["status"] == self._EVALUATING:
+                    deadline = _parse_stored_deadline(existing["claim_lease_until"])
+                    if existing["claim_token"] and deadline and deadline > now_dt:
+                        raise OracleMergeInProgress(
+                            "the review artifact is already being evaluated by a live owner"
+                        )
+                    changed = connection.execute(
+                        "UPDATE oracle_merge_attempts SET status = ?, claim_token = NULL, "
+                        "claim_lease_until = NULL, updated_at = ? WHERE artifact_id = ? "
+                        "AND status = ? AND result_json IS NULL",
+                        (
+                            self._AMBIGUOUS,
+                            now,
+                            artifact.artifact_id,
+                            self._EVALUATING,
+                        ),
+                    ).rowcount
+                    if changed == 1:
+                        self._append(
+                            connection,
+                            artifact.artifact_id,
+                            "merge_evaluation_claim_expired",
+                            {"artifact_digest": digest},
+                        )
+                        # This classification must survive the exception used to stop
+                        # the caller; otherwise the context manager would roll it back
+                        # and every observer could repeat the transition.
+                        connection.commit()
+                    raise OracleMergeClaimExpired(
+                        "the prior merge evaluation claim expired; exact-SHA reconciliation is required"
+                    )
+                if existing["status"] == self._AMBIGUOUS:
+                    raise OracleMergeClaimExpired(
+                        "the prior merge evaluation outcome is ambiguous; exact-SHA reconciliation is required"
+                    )
+                if existing["status"] != self._RECOVERABLE:
+                    raise RuntimeError("the review artifact has an unresolved terminal state")
+                if _is_unparseable_nonempty_deadline(existing["retry_not_before"]):
+                    repaired = self._repair_unparseable_retry_deadline(
+                        connection,
+                        artifact,
+                        digest,
+                        existing["retry_not_before"],
+                        now,
+                    )
+                    if repaired is not None:
+                        return repaired
+                    raise OracleMergeInProgress(
+                        "the review artifact retry deadline changed concurrently"
+                    )
+                hold = self._retry_hold_result(
+                    artifact, digest, existing["retry_not_before"]
+                )
+                if hold is not None:
+                    return hold
+                rearmed = connection.execute(
+                    "UPDATE oracle_merge_attempts SET status = ?, updated_at = ?, "
+                    "retry_not_before = NULL, claim_token = ?, claim_lease_until = ? "
+                    "WHERE artifact_id = ? AND status = ? AND result_json IS NULL "
+                    "AND (retry_not_before IS NULL OR retry_not_before <= ?)",
+                    (
+                        self._EVALUATING,
+                        now,
+                        token,
+                        lease_until.isoformat(),
+                        artifact.artifact_id,
+                        self._RECOVERABLE,
+                        now,
+                    ),
+                ).rowcount
+                if rearmed != 1:
+                    raise OracleMergeInProgress(
+                        "the review artifact retry was claimed concurrently"
+                    )
+                self._append(
+                    connection,
+                    artifact.artifact_id,
+                    "review_artifact_retried",
+                    self._reservation_payload(artifact, digest),
+                )
+                return OracleMergeClaim(token=token, lease_until=lease_until)
+
+            assignment = connection.execute(
+                "SELECT artifact_id FROM oracle_merge_attempts WHERE assignment_id = ?",
+                (artifact.assignment_id,),
+            ).fetchone()
+            if assignment:
+                raise ValueError("assignment already has terminal review authority")
+            review_run = connection.execute(
+                "SELECT artifact_id FROM oracle_merge_attempts WHERE review_run_id = ?",
+                (artifact.review_run_id,),
+            ).fetchone()
+            if review_run:
+                raise ValueError("review run was reused for another merge artifact")
+            try:
+                connection.execute(
+                    "INSERT INTO oracle_merge_attempts("
+                    "artifact_id, artifact_digest, assignment_id, review_run_id, "
+                    "status, result_json, created_at, updated_at, retry_not_before, "
+                    "claim_token, claim_lease_until) "
+                    "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?)",
+                    (
+                        artifact.artifact_id,
+                        digest,
+                        artifact.assignment_id,
+                        artifact.review_run_id,
+                        self._EVALUATING,
+                        now,
+                        now,
+                        token,
+                        lease_until.isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("assignment or review run was already consumed") from exc
+            self._append(
+                connection,
+                artifact.artifact_id,
+                "review_artifact_reserved",
+                self._reservation_payload(artifact, digest),
+            )
+        return OracleMergeClaim(token=token, lease_until=lease_until)
 
     def reserve(self, artifact: OracleReviewArtifact) -> OracleMergeResult | None:
         digest = artifact.digest()
@@ -878,17 +1071,70 @@ class OracleMergeStore:
             ),
         )
 
-    def complete(self, result: OracleMergeResult) -> OracleMergeResult:
-        with self._lock, self._connect() as connection:
-            connection.execute(
-                "UPDATE oracle_merge_attempts SET status = ?, result_json = ?, updated_at = ? WHERE artifact_id = ?",
+    def renew_claim(
+        self, artifact_id: str, claim_token: str, *, lease_seconds: int
+    ) -> datetime:
+        """Renew only the still-live owner; stale tokens never regain authority."""
+
+        if lease_seconds < 60:
+            raise ValueError("Oracle merge claim lease must be at least 60 seconds")
+        now_dt = datetime.now(timezone.utc)
+        lease_until = now_dt + timedelta(seconds=lease_seconds)
+        with self._lock, self._connect(immediate=True) as connection:
+            renewed = connection.execute(
+                "UPDATE oracle_merge_attempts SET claim_lease_until = ?, updated_at = ? "
+                "WHERE artifact_id = ? AND status = ? AND result_json IS NULL "
+                "AND claim_token = ? AND claim_lease_until > ?",
                 (
-                    result.status.value,
-                    result.model_dump_json(),
-                    datetime.now(timezone.utc).isoformat(),
-                    result.artifact_id,
+                    lease_until.isoformat(),
+                    now_dt.isoformat(),
+                    artifact_id,
+                    self._EVALUATING,
+                    claim_token,
+                    now_dt.isoformat(),
                 ),
-            )
+            ).rowcount
+            if renewed != 1:
+                raise OracleMergeClaimExpired(
+                    "Oracle merge evaluation claim is no longer current"
+                )
+        return lease_until
+
+    def complete(
+        self,
+        result: OracleMergeResult,
+        *,
+        claim_token: str | None = None,
+    ) -> OracleMergeResult:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connect(immediate=True) as connection:
+            if claim_token is None:
+                where = (
+                    "artifact_id = ? AND status = ? AND result_json IS NULL "
+                    "AND claim_token IS NULL"
+                )
+                parameters = (result.artifact_id, self._EVALUATING)
+            else:
+                where = (
+                    "artifact_id = ? AND status = ? AND result_json IS NULL "
+                    "AND claim_token = ? AND claim_lease_until > ?"
+                )
+                parameters = (
+                    result.artifact_id,
+                    self._EVALUATING,
+                    claim_token,
+                    now,
+                )
+            completed = connection.execute(
+                "UPDATE oracle_merge_attempts SET status = ?, result_json = ?, "
+                "updated_at = ?, claim_token = NULL, claim_lease_until = NULL WHERE "
+                + where,
+                (result.status.value, result.model_dump_json(), now, *parameters),
+            ).rowcount
+            if completed != 1:
+                raise OracleMergeClaimExpired(
+                    "Oracle merge result does not belong to the current live claim"
+                )
             self._append(
                 connection,
                 result.artifact_id,
@@ -982,6 +1228,7 @@ class OracleMergeStore:
         result: OracleMergeResult,
         *,
         retry_not_before: datetime | None = None,
+        claim_token: str | None = None,
     ) -> OracleMergeResult:
         """Record a fail-closed outcome that the same artifact may retry.
 
@@ -1003,15 +1250,29 @@ class OracleMergeStore:
                     "only an unresolved merge attempt can be released for retry"
                 )
             stored = _later_deadline_text(current["retry_not_before"], retry_not_before)
+            now = datetime.now(timezone.utc).isoformat()
+            if claim_token is None:
+                owner_clause = "status IN (?, ?) AND claim_token IS NULL"
+                owner_parameters: tuple[str, ...] = (
+                    self._EVALUATING,
+                    self._RECOVERABLE,
+                )
+            else:
+                owner_clause = (
+                    "status = ? AND claim_token = ? AND claim_lease_until > ?"
+                )
+                owner_parameters = (self._EVALUATING, claim_token, now)
             released = connection.execute(
                 "UPDATE oracle_merge_attempts SET status = ?, updated_at = ?, "
-                "retry_not_before = ? "
-                "WHERE artifact_id = ? AND result_json IS NULL",
+                "retry_not_before = ?, claim_token = NULL, claim_lease_until = NULL "
+                "WHERE artifact_id = ? AND result_json IS NULL AND "
+                + owner_clause,
                 (
                     self._RECOVERABLE,
-                    datetime.now(timezone.utc).isoformat(),
+                    now,
                     stored,
                     result.artifact_id,
+                    *owner_parameters,
                 ),
             ).rowcount
             if released != 1:
@@ -1085,6 +1346,7 @@ class OracleMergeService:
         mergeable_poll_stale_draft_reads: int = 3,
         mergeable_poll_base_delay_seconds: float = 1.0,
         mergeable_poll_max_delay_seconds: float = 8.0,
+        evaluation_lease_seconds: int = 7_200,
         sleep: Callable[[float], None] = time.sleep,
     ):
         if mergeable_poll_attempts < 1:
@@ -1098,6 +1360,8 @@ class OracleMergeService:
             or mergeable_poll_max_delay_seconds < mergeable_poll_base_delay_seconds
         ):
             raise ValueError("mergeability backoff bounds are invalid")
+        if evaluation_lease_seconds < 60:
+            raise ValueError("Oracle merge evaluation lease must be at least 60 seconds")
         self.policy = policy
         self.store = store
         self.github = github
@@ -1106,14 +1370,19 @@ class OracleMergeService:
         self._poll_stale_draft_reads = mergeable_poll_stale_draft_reads
         self._poll_base_delay = mergeable_poll_base_delay_seconds
         self._poll_max_delay = mergeable_poll_max_delay_seconds
+        self._evaluation_lease_seconds = evaluation_lease_seconds
+        self._claim_context = threading.local()
         self._sleep = sleep
 
     def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
         if not artifact.signature_is_valid(self.policy.review_secret):
             raise ValueError("review artifact signature is invalid")
-        existing = self.store.reserve(artifact)
-        if existing is not None:
-            return existing
+        claim = self.store.claim(
+            artifact, lease_seconds=self._evaluation_lease_seconds
+        )
+        if isinstance(claim, OracleMergeResult):
+            return claim
+        self._claim_context.token = claim.token
 
         if not self.policy.enabled or self.policy.kill_switch:
             placeholder = OraclePullRequestSnapshot(
@@ -1132,9 +1401,9 @@ class OracleMergeService:
                 changed_files=[],
                 checks=[],
             )
-            return self.store.complete(self.policy.evaluate(artifact, placeholder))
+            return self._complete(self.policy.evaluate(artifact, placeholder))
         if self.github is None:
-            return self.store.complete(
+            return self._complete(
                 OracleMergeResult(
                     artifact_id=artifact.artifact_id,
                     artifact_digest=artifact.digest(),
@@ -1169,8 +1438,9 @@ class OracleMergeService:
                 )
             ]
             if blocking or preflight.serious_safety_reasons:
-                return self.store.complete(preflight)
+                return self._complete(preflight)
             try:
+                self._renew_claim(artifact)
                 ready = self.github.mark_ready(
                     self.policy.repository,
                     artifact.pull_number,
@@ -1179,6 +1449,8 @@ class OracleMergeService:
                 )
                 if not ready:
                     raise RuntimeError("GitHub refused to mark the pull request ready")
+            except OracleMergeClaimExpired:
+                raise
             except OracleRateLimitError as exc:
                 return self._release_for_rate_limit(artifact, exc)
             except Exception as exc:
@@ -1186,7 +1458,7 @@ class OracleMergeService:
                 preflight.reasons = [
                     f"GitHub ready-for-review transition failed closed: {type(exc).__name__}"
                 ]
-                return self.store.complete(preflight)
+                return self._complete(preflight)
         if snapshot.draft or snapshot.mergeable is None:
             # The stale draft snapshot must be refetched after the ready transition,
             # and GitHub may report mergeability as unresolved while it recalculates.
@@ -1198,7 +1470,7 @@ class OracleMergeService:
             snapshot = resolved
         decision = self.policy.evaluate(artifact, snapshot)
         if decision.reasons or decision.serious_safety_reasons:
-            return self.store.complete(decision)
+            return self._complete(decision)
 
         # The first evaluation can race the mutation. Take one complete snapshot
         # and re-run the full policy immediately before GitHub merge; a changed
@@ -1216,31 +1488,50 @@ class OracleMergeService:
             return unreadable
         decision = self.policy.evaluate(artifact, final_snapshot)
         if decision.reasons or decision.serious_safety_reasons:
-            return self.store.complete(decision)
+            return self._complete(decision)
 
         try:
+            self._renew_claim(artifact)
             merged = self.github.merge(
                 self.policy.repository,
                 artifact.pull_number,
                 artifact.head_sha,
                 artifact.base_sha,
             )
+        except OracleMergeClaimExpired:
+            raise
         except OracleRateLimitError as exc:
             return self._release_for_rate_limit(artifact, exc)
         except Exception as exc:
             decision.status = OracleMergeStatus.ERROR
             decision.reasons = [f"GitHub merge failed closed: {type(exc).__name__}"]
-            return self.store.complete(decision)
+            return self._complete(decision)
         if not merged.merged or not merged.merge_commit_sha:
             decision.status = OracleMergeStatus.ERROR
             decision.reasons = ["GitHub refused the exact-SHA merge"]
             decision.actor = merged.actor
-            return self.store.complete(decision)
+            return self._complete(decision)
 
         decision.status = OracleMergeStatus.MERGED
         decision.merge_commit_sha = merged.merge_commit_sha
         decision.actor = merged.actor
-        return self.store.complete(decision)
+        return self._complete(decision)
+
+    def _claim_token(self) -> str:
+        token = getattr(self._claim_context, "token", None)
+        if not token:
+            raise OracleMergeClaimExpired("Oracle merge evaluation has no active claim")
+        return str(token)
+
+    def _renew_claim(self, artifact: OracleReviewArtifact) -> None:
+        self.store.renew_claim(
+            artifact.artifact_id,
+            self._claim_token(),
+            lease_seconds=self._evaluation_lease_seconds,
+        )
+
+    def _complete(self, result: OracleMergeResult) -> OracleMergeResult:
+        return self.store.complete(result, claim_token=self._claim_token())
 
     def _read_snapshot(
         self, artifact: OracleReviewArtifact
@@ -1264,10 +1555,13 @@ class OracleMergeService:
                 delay = min(delay * 2, self._poll_max_delay)
             reads += 1
             try:
+                self._renew_claim(artifact)
                 return (
                     self.github.snapshot(artifact.repository, artifact.pull_number),
                     None,
                 )
+            except OracleMergeClaimExpired:
+                raise
             except OracleDiffError as exc:
                 return None, self._complete_evidence_failure(artifact, exc)
             except OracleRateLimitError as exc:
@@ -1319,7 +1613,7 @@ class OracleMergeService:
                 )
             ]
             if blocking or decision.serious_safety_reasons:
-                return None, self.store.complete(decision)
+                return None, self._complete(decision)
             if not stale_draft:
                 return snapshot, None
             stale_draft_allowance -= 1
@@ -1334,10 +1628,13 @@ class OracleMergeService:
                 self._sleep(delay)
                 delay = min(delay * 2, self._poll_max_delay)
                 try:
+                    self._renew_claim(artifact)
                     snapshot = self.github.snapshot(
                         artifact.repository, artifact.pull_number
                     )
                     break
+                except OracleMergeClaimExpired:
+                    raise
                 except OracleDiffError as exc:
                     return None, self._complete_evidence_failure(artifact, exc)
                 except OracleRateLimitError as exc:
@@ -1401,9 +1698,12 @@ class OracleMergeService:
                 delay = min(delay * 2, self._poll_max_delay)
             reads += 1
             try:
+                self._renew_claim(artifact)
                 snapshot = self.github.snapshot(
                     artifact.repository, artifact.pull_number
                 )
+            except OracleMergeClaimExpired:
+                raise
             except OracleDiffError as exc:
                 return None, self._complete_evidence_failure(artifact, exc)
             except OracleRateLimitError as exc:
@@ -1428,7 +1728,7 @@ class OracleMergeService:
                 reason for reason in interim.reasons if reason not in transient
             ]
             if blocking or interim.serious_safety_reasons:
-                return None, self.store.complete(interim)
+                return None, self._complete(interim)
             if not transient:
                 return snapshot, None
             if unresolved:
@@ -1458,7 +1758,7 @@ class OracleMergeService:
     def _complete_evidence_failure(
         self, artifact: OracleReviewArtifact, exc: OracleDiffError
     ) -> OracleMergeResult:
-        return self.store.complete(
+        return self._complete(
             OracleMergeResult(
                 artifact_id=artifact.artifact_id,
                 artifact_digest=artifact.digest(),
@@ -1487,6 +1787,7 @@ class OracleMergeService:
                 ],
             ),
             retry_not_before=exc.retry_not_before,
+            claim_token=self._claim_token(),
         )
 
     def _release_for_retry(
@@ -1501,7 +1802,8 @@ class OracleMergeService:
                 pull_number=artifact.pull_number,
                 reviewed_sha=artifact.head_sha,
                 reasons=[reason],
-            )
+            ),
+            claim_token=self._claim_token(),
         )
 
 

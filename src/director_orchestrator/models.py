@@ -180,6 +180,9 @@ class UsageCheckStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+MAX_SLACK_INTAKE_TEXT = 20_000
+
+
 class SlackIntake(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -187,7 +190,7 @@ class SlackIntake(BaseModel):
     channel_id: str = Field(min_length=1, max_length=64)
     thread_ts: str = Field(min_length=1, max_length=64)
     user_id: str = Field(min_length=1, max_length=64)
-    text: str = Field(min_length=1, max_length=20_000)
+    text: str = Field(min_length=1, max_length=MAX_SLACK_INTAKE_TEXT)
     permalink: str | None = Field(default=None, max_length=2_000)
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -482,6 +485,7 @@ class OracleRecoveryState(BaseModel):
 
     kind: Literal[
         "artifact_authentication_failed",
+        "automerge_claim_expired",
         "automerge_runtime_failed",
         "merge_policy_stopped",
     ]
