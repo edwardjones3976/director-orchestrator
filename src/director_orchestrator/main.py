@@ -110,6 +110,7 @@ def health() -> dict:
         "execution_profile": settings.execution_profile_readiness(),
         "oracle_merge": settings.oracle_merge_readiness(),
         "usage_monitor": usage_monitor.health(),
+        "privacy_cleanup_pending": store.privacy_cleanup_pending(),
     }
 
 
@@ -318,24 +319,33 @@ def claude_callback(task_id: str, callback: ClaudeCallback, background: Backgrou
     if versioned is None:
         raise HTTPException(status_code=404, detail="Task not found")
     record, expected_version = versioned
-    changed = False
-
-    def apply(current: TaskRecord) -> None:
-        nonlocal changed
-        changed = apply_claude_callback(current, callback)
-
     try:
-        stored = store.mutate_if_version(task_id, expected_version, apply)
+        if not apply_claude_callback(record.model_copy(deep=True), callback):
+            # Authenticated redelivery of the exact accepted callback is a
+            # read-only success. It must not consume a task version or queue
+            # another engine pass.
+            return record
+        stored = store.mutate_if_version(
+            task_id,
+            expected_version,
+            lambda current: apply_claude_callback(current, callback),
+        )
     except CallbackConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if stored is None:
+        # A concurrent identical callback may have won the CAS. Re-evaluate
+        # against fresh authority so exact redelivery remains idempotent while
+        # any different callback or workflow transition still conflicts.
+        latest = store.get(task_id)
+        if latest is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            if not apply_claude_callback(latest.model_copy(deep=True), callback):
+                return latest
+        except CallbackConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         raise HTTPException(status_code=409, detail="Task changed during callback processing")
-    if changed or stored.status in {
-        TaskStatus.QUEUED,
-        TaskStatus.RUNNING,
-        TaskStatus.REVIEWING,
-    }:
-        background.add_task(engine.run, task_id)
+    background.add_task(engine.run, task_id)
     return stored
 
 

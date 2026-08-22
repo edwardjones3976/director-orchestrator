@@ -53,7 +53,7 @@ from .providers import (
     provider_registry,
 )
 from .review_handoff import bind_review_handoff, transitive_dependency_sequences
-from .store import StaleTaskWrite, TaskStore
+from .store import PrivacyCleanupPending, StaleTaskWrite, TaskStore
 from .team_charter import AdvisoryVote, tally_advisory_votes
 
 
@@ -346,7 +346,7 @@ class OrchestrationEngine:
             record.message = "All assignments passed Director review."
             self.store.save(record)
             await self._status_post(record, f"*{task_id} — DONE*\nAll assignments passed the configured acceptance review. Review branches and pull requests before merging.")
-        except StaleTaskWrite:
+        except (PrivacyCleanupPending, StaleTaskWrite):
             # Another process advanced the task (for example, an owner
             # clarification while a provider callback was in flight). The
             # newer SQLite state remains authoritative and must not be marked

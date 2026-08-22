@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -23,6 +24,10 @@ _MAX_TASK_EFFECTS = 200
 
 class StaleTaskWrite(RuntimeError):
     """An in-memory task snapshot no longer matches SQLite authority."""
+
+
+class PrivacyCleanupPending(RuntimeError):
+    """Private task projections remain pinned in SQLite's WAL."""
 
 
 class TaskStore:
@@ -75,6 +80,22 @@ class TaskStore:
                 connection.execute(
                     "ALTER TABLE tasks ADD COLUMN effect_migration_status TEXT NOT NULL DEFAULT 'pending'"
                 )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS privacy_cleanup_state (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                    pending_generation INTEGER NOT NULL DEFAULT 0,
+                    completed_generation INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """INSERT OR IGNORE INTO privacy_cleanup_state(
+                    singleton, pending_generation, completed_generation, updated_at
+                ) VALUES (1, 0, 0, ?)""",
+                (datetime.now(timezone.utc).isoformat(),),
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS task_effect_events (
@@ -154,6 +175,10 @@ class TaskStore:
                 ON slack_gateway_nonces(expires_at)"""
             )
             self._migrate_effect_ledgers(connection)
+            if self._journal_mode(connection) == "wal":
+                # A pre-upgrade WAL may still contain raw task JSON even when
+                # every logical row already uses the compact schema.
+                self._mark_privacy_cleanup_pending(connection)
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS usage_checks (
@@ -169,26 +194,149 @@ class TaskStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_usage_checks_provider_time ON usage_checks(provider, checked_at DESC)"
             )
-        self._checkpoint_wal()
+        self._attempt_privacy_cleanup()
 
-    def _checkpoint_wal(self) -> None:
-        """Remove pre-migration task JSON from an existing WAL, if enabled."""
+    @staticmethod
+    def _journal_mode(connection: sqlite3.Connection) -> str:
+        return str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
 
-        connection = sqlite3.connect(self.path, timeout=30)
+    @staticmethod
+    def _mark_privacy_cleanup_pending(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """UPDATE privacy_cleanup_state
+            SET pending_generation = pending_generation + 1, updated_at = ?
+            WHERE singleton = 1""",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+
+    @staticmethod
+    def _privacy_cleanup_pending_in(
+        connection: sqlite3.Connection,
+    ) -> bool:
+        row = connection.execute(
+            """SELECT pending_generation, completed_generation
+            FROM privacy_cleanup_state WHERE singleton = 1"""
+        ).fetchone()
+        return bool(row and int(row[0]) > int(row[1]))
+
+    def _attempt_privacy_cleanup(self) -> bool:
+        """Boundedly checkpoint private WAL frames without blocking callers.
+
+        The generation comparison prevents a checkpoint from marking cleanup
+        complete when a concurrent writer requested another cleanup. A pinned
+        reader leaves the durable state pending; ordinary reads remain
+        available, while new external-effect intents fail closed.
+        """
+
+        connection = sqlite3.connect(self.path, timeout=0.2)
         try:
+            connection.execute("PRAGMA busy_timeout = 200")
             connection.execute("PRAGMA secure_delete = ON")
-            mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
-            if mode != "wal":
-                return
-            busy, _, _ = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            if int(busy) != 0:
-                raise RuntimeError(
-                    "SQLite WAL checkpoint is busy; legacy private evidence remains blocked"
+            row = connection.execute(
+                """SELECT pending_generation, completed_generation
+                FROM privacy_cleanup_state WHERE singleton = 1"""
+            ).fetchone()
+            if row is None or int(row[0]) <= int(row[1]):
+                return True
+            target_generation = int(row[0])
+            if self._journal_mode(connection) != "wal":
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """UPDATE privacy_cleanup_state
+                    SET completed_generation = pending_generation, updated_at = ?
+                    WHERE singleton = 1""",
+                    (datetime.now(timezone.utc).isoformat(),),
                 )
+                connection.commit()
+                return True
+            busy, _, _ = connection.execute(
+                "PRAGMA wal_checkpoint(TRUNCATE)"
+            ).fetchone()
+            if int(busy) != 0:
+                return False
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                """SELECT pending_generation FROM privacy_cleanup_state
+                WHERE singleton = 1"""
+            ).fetchone()
+            if current is None or int(current[0]) != target_generation:
+                connection.rollback()
+                return False
+            connection.execute(
+                """UPDATE privacy_cleanup_state
+                SET completed_generation = ?, updated_at = ?
+                WHERE singleton = 1""",
+                (
+                    target_generation,
+                    datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            connection.commit()
+            return True
+        except sqlite3.OperationalError:
+            return False
         finally:
             connection.close()
 
+    def privacy_cleanup_pending(self) -> bool:
+        self._attempt_privacy_cleanup()
+        connection = sqlite3.connect(self.path, timeout=0.2)
+        try:
+            connection.execute("PRAGMA busy_timeout = 200")
+            return self._privacy_cleanup_pending_in(connection)
+        except sqlite3.OperationalError:
+            return True
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _private_runtime_projection(record_json: str) -> dict[str, object] | None:
+        try:
+            payload = json.loads(record_json)
+        except (TypeError, ValueError):
+            return None
+        return {
+            field: payload.get(field)
+            for field in (
+                "plan",
+                "provider_runs",
+                "assignment_outcomes",
+                "provider_contact_attempts",
+                "availability_impacts",
+                "collaboration_turns",
+                "collaboration_delivery_errors",
+                "collaboration_fallback_reason",
+                "debate_tally",
+                "debate_synthesis",
+                "review",
+                "oracle_recovery",
+                "error",
+            )
+            if payload.get(field)
+        }
+
+    def _mark_cleanup_for_rewrite(
+        self,
+        connection: sqlite3.Connection,
+        previous_json: str,
+        replacement_json: str,
+    ) -> None:
+        previous_projection = self._private_runtime_projection(previous_json)
+        replacement_projection = self._private_runtime_projection(replacement_json)
+        if previous_projection is None or replacement_projection is None:
+            changed_private_projection = previous_json != replacement_json
+        else:
+            changed_private_projection = previous_projection != replacement_projection
+        had_private_projection = previous_projection is None or bool(previous_projection)
+        if (
+            changed_private_projection
+            and had_private_projection
+            and self._journal_mode(connection) == "wal"
+        ):
+            self._mark_privacy_cleanup_pending(connection)
+
     def create(self, record: TaskRecord) -> tuple[TaskRecord, bool]:
+        self._attempt_privacy_cleanup()
         with self._lock, self._connect() as connection:
             existing = connection.execute(
                 "SELECT * FROM tasks WHERE source_event_id = ?",
@@ -221,13 +369,15 @@ class TaskStore:
                 ),
             )
             record._store_version = 0
-            return record, True
+        self._attempt_privacy_cleanup()
+        return record, True
 
     def get(self, task_id: str) -> TaskRecord | None:
         versioned = self.get_versioned(task_id)
         return versioned[0] if versioned is not None else None
 
     def get_versioned(self, task_id: str) -> tuple[TaskRecord, int] | None:
+        self._attempt_privacy_cleanup()
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM tasks WHERE task_id = ?",
@@ -241,6 +391,7 @@ class TaskStore:
             )
 
     def list_recoverable(self) -> list[TaskRecord]:
+        self._attempt_privacy_cleanup()
         recoverable = {
             TaskStatus.QUEUED.value,
             TaskStatus.PLANNING.value,
@@ -256,10 +407,12 @@ class TaskStore:
             return [self._record_from_row(connection, row) for row in rows]
 
     def save(self, record: TaskRecord) -> TaskRecord:
+        self._attempt_privacy_cleanup()
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT effect_migration_status, record_version FROM tasks WHERE task_id = ?",
+                """SELECT effect_migration_status, record_version, record_json
+                FROM tasks WHERE task_id = ?""",
                 (record.task_id,),
             ).fetchone()
             if row is None:
@@ -271,8 +424,13 @@ class TaskStore:
                     "Task changed after this snapshot was loaded; stale write rejected"
                 )
             record.updated_at = datetime.now(timezone.utc)
+            replacement_json = self._record_json_without_effect_projection(record)
+            self._mark_cleanup_for_rewrite(
+                connection, row["record_json"], replacement_json
+            )
             self._append_effects(connection, record.task_id, record.task_effect_ledger)
             self._hydrate_effects(connection, record)
+            replacement_json = self._record_json_without_effect_projection(record)
             updated = connection.execute(
                 """
                 UPDATE tasks
@@ -282,7 +440,7 @@ class TaskStore:
                 """,
                 (
                     record.status.value,
-                    self._record_json_without_effect_projection(record),
+                    replacement_json,
                     record.updated_at.isoformat(),
                     record.task_id,
                     current_version,
@@ -293,6 +451,7 @@ class TaskStore:
                     "Task changed while the write was being committed"
                 )
             record._store_version = current_version + 1
+        self._attempt_privacy_cleanup()
         return record
 
     def mutate_if_version(
@@ -313,6 +472,7 @@ class TaskStore:
         ``None`` means that another writer consumed or changed the task first.
         """
 
+        self._attempt_privacy_cleanup()
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -342,9 +502,14 @@ class TaskStore:
                     )
                 except sqlite3.IntegrityError:
                     return None
+            replacement_json = self._record_json_without_effect_projection(record)
+            self._mark_cleanup_for_rewrite(
+                connection, row["record_json"], replacement_json
+            )
             self._append_effects(connection, task_id, record.task_effect_ledger)
             self._hydrate_effects(connection, record)
             record.updated_at = datetime.now(timezone.utc)
+            replacement_json = self._record_json_without_effect_projection(record)
             updated = connection.execute(
                 """
                 UPDATE tasks
@@ -354,7 +519,7 @@ class TaskStore:
                 """,
                 (
                     record.status.value,
-                    self._record_json_without_effect_projection(record),
+                    replacement_json,
                     record.updated_at.isoformat(),
                     task_id,
                     expected_version,
@@ -363,7 +528,8 @@ class TaskStore:
             if updated.rowcount != 1:
                 return None
             record._store_version = expected_version + 1
-            return record
+        self._attempt_privacy_cleanup()
+        return record
 
     def list_task_effects(self, task_id: str) -> list[TaskEffectEvidence]:
         with self._lock, self._connect() as connection:
@@ -397,6 +563,8 @@ class TaskStore:
         connection: sqlite3.Connection,
         task_id: str,
         effects: list[TaskEffectEvidence],
+        *,
+        allow_privacy_pending: bool = False,
     ) -> None:
         existing_count = int(
             connection.execute(
@@ -419,6 +587,14 @@ class TaskStore:
                 seen.add(effect.effect_digest)
         if existing_count + len(new_effects) > _MAX_TASK_EFFECTS:
             raise ValueError("Immutable task effect ledger is full")
+        if (
+            not allow_privacy_pending
+            and any(effect.kind in _INTENT_KINDS for effect in new_effects)
+            and self._privacy_cleanup_pending_in(connection)
+        ):
+            raise PrivacyCleanupPending(
+                "Private SQLite WAL cleanup is pending; external work remains blocked"
+            )
         for effect in new_effects:
             if effect.kind in _INTENT_KINDS:
                 prior = connection.execute(
@@ -496,7 +672,12 @@ class TaskStore:
         for row in rows:
             try:
                 record = TaskRecord.model_validate_json(row["record_json"])
-                self._append_effects(connection, record.task_id, record.task_effect_ledger)
+                self._append_effects(
+                    connection,
+                    record.task_id,
+                    record.task_effect_ledger,
+                    allow_privacy_pending=True,
+                )
                 self._hydrate_effects(connection, record)
                 connection.execute(
                     """UPDATE tasks SET record_json = ?, effect_migration_status = 'complete',
@@ -504,6 +685,8 @@ class TaskStore:
                     WHERE task_id = ?""",
                     (self._record_json_without_effect_projection(record), record.task_id),
                 )
+                if self._journal_mode(connection) == "wal":
+                    self._mark_privacy_cleanup_pending(connection)
             except Exception:
                 connection.execute(
                     "UPDATE tasks SET effect_migration_status = 'failed' WHERE task_id = ?",

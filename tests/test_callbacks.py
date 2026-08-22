@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -182,6 +185,100 @@ class ClaudeCallbackTests(unittest.TestCase):
             self.assertEqual(completion.json()["status"], "QUEUED")
             self.assertEqual(task_store.get(callback_record.task_id)._store_version, 1)
             self.assertEqual(task_store.get(manual_record.task_id)._store_version, 1)
+
+    def test_authenticated_exact_callback_replay_is_an_http_no_op(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            record = self._record()
+            task_store.create(record)
+            settings = replace(
+                main.settings,
+                claude_callback_secret="callback-test-secret",
+            )
+            run = AsyncMock(return_value=None)
+            payload = {
+                "run_id": "claude-session-1",
+                "status": "completed",
+                "result": "Authenticated callback evidence",
+            }
+            with (
+                patch.object(main, "settings", settings),
+                patch.object(main, "store", task_store),
+                patch.object(main.engine, "run", new=run),
+                patch.object(
+                    main.usage_monitor,
+                    "run_forever",
+                    new=AsyncMock(return_value=None),
+                ),
+                TestClient(main.app) as client,
+            ):
+                first = client.post(
+                    f"/v1/callbacks/claude/{record.task_id}",
+                    headers={"Authorization": "Bearer callback-test-secret"},
+                    json=payload,
+                )
+                first_version = task_store.get(record.task_id)._store_version
+                replay = client.post(
+                    f"/v1/callbacks/claude/{record.task_id}",
+                    headers={"Authorization": "Bearer callback-test-secret"},
+                    json=payload,
+                )
+                conflict = client.post(
+                    f"/v1/callbacks/claude/{record.task_id}",
+                    headers={"Authorization": "Bearer callback-test-secret"},
+                    json={**payload, "result": "Conflicting callback evidence"},
+                )
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(replay.status_code, 200)
+            self.assertEqual(conflict.status_code, 409)
+            self.assertEqual(first_version, 1)
+            self.assertEqual(task_store.get(record.task_id)._store_version, first_version)
+            self.assertEqual(run.await_count, 1)
+
+    def test_concurrent_exact_callbacks_have_one_cas_winner_and_one_no_op(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            record = self._record()
+            task_store.create(record)
+            callback = ClaudeCallback(
+                run_id="claude-session-1",
+                status="completed",
+                result="Concurrent authenticated evidence",
+            )
+            barrier = threading.Barrier(2)
+            calls_lock = threading.Lock()
+            initial_reads = 0
+            real_get_versioned = task_store.get_versioned
+
+            def synchronized_get_versioned(task_id: str):
+                nonlocal initial_reads
+                result = real_get_versioned(task_id)
+                with calls_lock:
+                    initial_reads += 1
+                    should_wait = initial_reads <= 2
+                if should_wait:
+                    barrier.wait(timeout=5)
+                return result
+
+            def submit_callback() -> tuple[TaskRecord, int]:
+                background = BackgroundTasks()
+                result = main.claude_callback(record.task_id, callback, background)
+                return result, len(background.tasks)
+
+            with (
+                patch.object(main, "store", task_store),
+                patch.object(task_store, "get_versioned", side_effect=synchronized_get_versioned),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                results = list(pool.map(lambda _: submit_callback(), range(2)))
+
+            self.assertEqual(
+                [result.status for result, _ in results],
+                [TaskStatus.REVIEWING] * 2,
+            )
+            self.assertEqual(sum(task_count for _, task_count in results), 1)
+            self.assertEqual(task_store.get(record.task_id)._store_version, 1)
 
 
 if __name__ == "__main__":

@@ -71,7 +71,7 @@ from director_orchestrator.models import (
     canonical_task_effect_digest,
     canonical_opaque_identifier_digest,
 )
-from director_orchestrator.store import StaleTaskWrite, TaskStore
+from director_orchestrator.store import PrivacyCleanupPending, StaleTaskWrite, TaskStore
 
 
 def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int] | None = None) -> TaskRecord:
@@ -1712,6 +1712,82 @@ class OwnerClarificationResetTests(unittest.TestCase):
 
 
 class DurableEffectStoreTests(unittest.TestCase):
+    @staticmethod
+    def _sqlite_bytes(database: str) -> bytes:
+        content = bytearray()
+        for suffix in ("", "-wal", "-shm"):
+            path = Path(database + suffix)
+            if path.exists():
+                content.extend(path.read_bytes())
+        return bytes(content)
+
+    def test_pinned_wal_cleanup_survives_restart_and_blocks_new_effects(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            marker_id = "PINNED-WAL-PRIVATE-MARKER-2f97"
+            marker = marker_id + ("X" * 4_096)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute("PRAGMA journal_mode=WAL").fetchone()[0],
+                    "wal",
+                )
+            store = TaskStore(database)
+            record = _record(owner_approved=True, approved=[1])
+            store.create(record)
+
+            reader = sqlite3.connect(database)
+            reader.execute("BEGIN")
+            clean_pinned_json = reader.execute(
+                "SELECT record_json FROM tasks WHERE task_id = ?",
+                (record.task_id,),
+            ).fetchone()[0]
+            self.assertNotIn(marker, clean_pinned_json)
+            try:
+                private = store.get(record.task_id)
+                private.provider_runs = [
+                    ProviderRun(
+                        provider=ProviderName.CURSOR,
+                        assignment_sequence=1,
+                        run_id="private-run",
+                        status="FINISHED",
+                        result=marker,
+                        raw={"transcript": marker},
+                    )
+                ]
+                store.save(private)
+                self.assertIn(marker_id.encode(), self._sqlite_bytes(database))
+
+                compacted = store.get(record.task_id)
+                reset_for_owner_clarification(compacted)
+                store.save(compacted)
+
+                self.assertTrue(store.privacy_cleanup_pending())
+                self.assertNotIn(marker, store.get(record.task_id).model_dump_json())
+                self.assertIn(marker_id.encode(), self._sqlite_bytes(database))
+
+                blocked = store.get(record.task_id)
+                reserve_task_effect(
+                    blocked,
+                    effect_key="e" * 64,
+                    kind="director_intent",
+                    phase="plan",
+                    provider=ProviderName.OPENAI,
+                )
+                with self.assertRaises(PrivacyCleanupPending):
+                    store.save(blocked)
+
+                restarted_while_pinned = TaskStore(database)
+                self.assertTrue(restarted_while_pinned.privacy_cleanup_pending())
+                self.assertIsNotNone(restarted_while_pinned.get(record.task_id))
+            finally:
+                reader.rollback()
+                reader.close()
+
+            recovered = TaskStore(database)
+            self.assertFalse(recovered.privacy_cleanup_pending())
+            self.assertNotIn(marker, recovered.get(record.task_id).model_dump_json())
+            self.assertNotIn(marker_id.encode(), self._sqlite_bytes(database))
+
     def test_legacy_private_history_is_physically_scrubbed_during_migration(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             database = str(Path(directory) / "legacy-private.sqlite3")
