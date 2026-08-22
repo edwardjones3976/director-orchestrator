@@ -45,6 +45,18 @@ _seen_events: dict[str, float] = {}
 _seen_lock = threading.Lock()
 
 
+def _log_boundary_failure(operation: str, exc: Exception) -> None:
+    """Log only bounded diagnostics for failures involving Slack input.
+
+    Validation exceptions can embed the rejected note or payload in their
+    message and traceback. Slack is an untrusted boundary, so neither is
+    logged; the exception class is enough to distinguish validation,
+    transport, and service failures operationally.
+    """
+
+    log.warning("%s (%s)", operation, type(exc).__name__)
+
+
 def _claim_event(event_id: str) -> bool:
     now = time.monotonic()
     with _seen_lock:
@@ -131,7 +143,7 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
         task_id = body.get("task_id") or body.get("data", {}).get("task_id") or "queued"
         client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=f"*{task_id} — QUEUED*\nThe Director accepted this work order in dry-run or live mode according to the configured safety switch.")
     except Exception as exc:
-        log.exception("Failed to forward Director event")
+        _log_boundary_failure("Failed to forward Director event", exc)
         client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=f"*DIRECTOR — BLOCKED*\nThe local orchestrator could not accept this request: `{type(exc).__name__}`.")
 
 
@@ -190,7 +202,7 @@ def command_handler(ack, command, client, respond):
             response.raise_for_status()
             respond(f"*{task_id} — RESUMING*\nYour approval or clarification was recorded.", response_type="ephemeral")
         except Exception as exc:
-            log.exception("Failed to approve Director task")
+            _log_boundary_failure("Failed to approve Director task", exc)
             respond(f"*{task_id} — BLOCKED*\nApproval was not recorded: `{type(exc).__name__}`.", response_type="ephemeral")
         return
 
@@ -257,7 +269,7 @@ def approval_button_handler(ack, body, client):
             text=f"*{task_id} — RESUMING*\nOwner approval was recorded from Slack.",
         )
     except Exception as exc:
-        log.exception("Failed to approve Director task from button")
+        _log_boundary_failure("Failed to approve Director task from button", exc)
         message = body.get("message", {})
         client.chat_postMessage(
             channel=channel_id,

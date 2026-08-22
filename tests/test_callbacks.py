@@ -29,6 +29,7 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
+from director_orchestrator.approvals import reset_for_owner_clarification
 from director_orchestrator.store import TaskStore
 
 
@@ -279,6 +280,64 @@ class ClaudeCallbackTests(unittest.TestCase):
             )
             self.assertEqual(sum(task_count for _, task_count in results), 1)
             self.assertEqual(task_store.get(record.task_id)._store_version, 1)
+
+    def test_stale_exact_replay_cannot_return_pre_clarification_private_state(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            task_store = TaskStore(str(Path(directory) / "director.sqlite3"))
+            record = self._record()
+            task_store.create(record)
+            callback = ClaudeCallback(
+                run_id="claude-session-1",
+                status="completed",
+                result="PRIVATE-STALE-CALLBACK-MARKER",
+            )
+            accepted = task_store.get(record.task_id)
+            apply_claude_callback(accepted, callback)
+            task_store.save(accepted)
+            stale, stale_version = task_store.get_versioned(record.task_id)
+            current = task_store.get(record.task_id)
+            reset_for_owner_clarification(current)
+            current.status = TaskStatus.PLANNING
+            task_store.save(current)
+            current_version = task_store.get(record.task_id)._store_version
+            real_get_versioned = task_store.get_versioned
+            calls = 0
+
+            def stale_then_current(task_id: str):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    return stale.model_copy(deep=True), stale_version
+                return real_get_versioned(task_id)
+
+            settings = replace(
+                main.settings,
+                claude_callback_secret="callback-test-secret",
+            )
+            run = AsyncMock(return_value=None)
+            with (
+                patch.object(main, "settings", settings),
+                patch.object(main, "store", task_store),
+                patch.object(task_store, "get_versioned", side_effect=stale_then_current),
+                patch.object(main.engine, "run", new=run),
+                patch.object(
+                    main.usage_monitor,
+                    "run_forever",
+                    new=AsyncMock(return_value=None),
+                ),
+                TestClient(main.app) as client,
+            ):
+                run.reset_mock()
+                response = client.post(
+                    f"/v1/callbacks/claude/{record.task_id}",
+                    headers={"Authorization": "Bearer callback-test-secret"},
+                    json=callback.model_dump(mode="json"),
+                )
+
+            self.assertEqual(response.status_code, 409)
+            self.assertNotIn("PRIVATE-STALE-CALLBACK-MARKER", response.text)
+            self.assertEqual(task_store.get(record.task_id)._store_version, current_version)
+            run.assert_not_awaited()
 
 
 if __name__ == "__main__":

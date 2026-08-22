@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 import threading
+from dataclasses import dataclass
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -28,6 +30,15 @@ class StaleTaskWrite(RuntimeError):
 
 class PrivacyCleanupPending(RuntimeError):
     """Private task projections remain pinned in SQLite's WAL."""
+
+
+@dataclass(frozen=True)
+class PrivacyCleanupResume:
+    task_id: str
+    effect_kind: str
+    effect_key: str
+    phase: str
+    lease_token: str
 
 
 class TaskStore:
@@ -95,6 +106,55 @@ class TaskStore:
                     singleton, pending_generation, completed_generation, updated_at
                 ) VALUES (1, 0, 0, ?)""",
                 (datetime.now(timezone.utc).isoformat(),),
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS privacy_cleanup_waits (
+                    task_id TEXT PRIMARY KEY,
+                    effect_kind TEXT NOT NULL,
+                    effect_key TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    lease_token TEXT,
+                    lease_until TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                )
+                """
+            )
+            wait_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(privacy_cleanup_waits)"
+                ).fetchall()
+            }
+            # Development builds briefly shipped a task/requested_at-only
+            # wait table. Preserve those durable waits during upgrade and make
+            # them fail closed until a fresh effect reservation replaces the
+            # placeholder identity.
+            wait_migrations = {
+                "effect_kind": "TEXT NOT NULL DEFAULT 'provider_intent'",
+                "effect_key": f"TEXT NOT NULL DEFAULT '{'0' * 64}'",
+                "phase": "TEXT NOT NULL DEFAULT 'dispatch'",
+                "lease_token": "TEXT",
+                "lease_until": "TEXT",
+            }
+            for name, declaration in wait_migrations.items():
+                if name not in wait_columns:
+                    connection.execute(
+                        f"ALTER TABLE privacy_cleanup_waits ADD COLUMN {name} {declaration}"
+                    )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS privacy_cleanup_effect_resolutions (
+                    task_id TEXT NOT NULL,
+                    original_effect_key TEXT NOT NULL,
+                    recovery_effect_key TEXT NOT NULL,
+                    recovery_event_digest TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(task_id, original_effect_key),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                )
+                """
             )
             connection.execute(
                 """
@@ -288,6 +348,190 @@ class TaskStore:
             return True
         finally:
             connection.close()
+
+    def claim_privacy_cleanup_resumes(
+        self,
+        *,
+        limit: int = 20,
+        lease_seconds: int = 7_200,
+    ) -> list[PrivacyCleanupResume]:
+        """Lease a bounded batch once physical cleanup has completed.
+
+        Waits are retained until explicit acknowledgement. A process crash
+        leaves the row reclaimable after the bounded lease, including for task
+        statuses outside the ordinary startup recovery scan.
+        """
+
+        if limit < 1 or limit > 100:
+            raise ValueError("Privacy cleanup resume limit must be between 1 and 100")
+        if lease_seconds < 1 or lease_seconds > 86_400:
+            raise ValueError("Privacy cleanup lease must be between 1 and 86400 seconds")
+        if not self._attempt_privacy_cleanup():
+            return []
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if self._privacy_cleanup_pending_in(connection):
+                return []
+            now = datetime.now(timezone.utc)
+            rows = connection.execute(
+                """SELECT task_id, effect_kind, effect_key, phase
+                FROM privacy_cleanup_waits
+                WHERE lease_until IS NULL OR lease_until <= ?
+                ORDER BY requested_at, task_id LIMIT ?""",
+                (now.isoformat(), limit),
+            ).fetchall()
+            resumes: list[PrivacyCleanupResume] = []
+            for row in rows:
+                token = secrets.token_hex(16)
+                connection.execute(
+                    """UPDATE privacy_cleanup_waits
+                    SET lease_token = ?, lease_until = ?
+                    WHERE task_id = ? AND (lease_until IS NULL OR lease_until <= ?)""",
+                    (
+                        token,
+                        (now + timedelta(seconds=lease_seconds)).isoformat(),
+                        row["task_id"],
+                        now.isoformat(),
+                    ),
+                )
+                resumes.append(
+                    PrivacyCleanupResume(
+                        task_id=str(row["task_id"]),
+                        effect_kind=str(row["effect_kind"]),
+                        effect_key=str(row["effect_key"]),
+                        phase=str(row["phase"]),
+                        lease_token=token,
+                    )
+                )
+            return resumes
+
+    def acknowledge_privacy_cleanup_resume(
+        self,
+        resume: PrivacyCleanupResume,
+    ) -> bool:
+        with self._lock, self._connect() as connection:
+            deleted = connection.execute(
+                """DELETE FROM privacy_cleanup_waits
+                WHERE task_id = ? AND lease_token = ?""",
+                (resume.task_id, resume.lease_token),
+            )
+            return deleted.rowcount == 1
+
+    def prepare_privacy_slack_recovery(
+        self,
+        resume: PrivacyCleanupResume,
+        recovery_effect: TaskEffectEvidence,
+    ) -> str:
+        """Atomically choose the original or recovery Slack identity.
+
+        SQLite serializes this decision with normal effect reservations. If
+        the original intent already won, its wait is acknowledged without a
+        second post. If recovery wins, a durable resolution prevents a stale
+        writer from reserving the original identity afterward.
+        """
+
+        if resume.effect_kind != "slack_intent":
+            raise ValueError("Only Slack cleanup waits use Slack recovery")
+        if recovery_effect.kind != "slack_intent":
+            raise ValueError("Slack recovery requires a Slack intent")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            wait = connection.execute(
+                """SELECT 1 FROM privacy_cleanup_waits
+                WHERE task_id = ? AND lease_token = ?""",
+                (resume.task_id, resume.lease_token),
+            ).fetchone()
+            if wait is None:
+                return "stale_lease"
+            # A private rewrite may begin after this wait was leased. Recheck
+            # under the same write transaction that would reserve recovery;
+            # never let the caller's earlier clean observation authorize I/O.
+            if self._privacy_cleanup_pending_in(connection):
+                return "pending"
+            original = connection.execute(
+                """SELECT 1 FROM task_effect_events
+                WHERE task_id = ? AND effect_key = ? AND event_kind = 'slack_intent'""",
+                (resume.task_id, resume.effect_key),
+            ).fetchone()
+            if original is not None:
+                connection.execute(
+                    """DELETE FROM privacy_cleanup_waits
+                    WHERE task_id = ? AND lease_token = ?""",
+                    (resume.task_id, resume.lease_token),
+                )
+                return "original"
+            resolution = connection.execute(
+                """SELECT recovery_effect_key, recovery_event_digest
+                FROM privacy_cleanup_effect_resolutions
+                WHERE task_id = ? AND original_effect_key = ?""",
+                (resume.task_id, resume.effect_key),
+            ).fetchone()
+            if resolution is None:
+                connection.execute(
+                    """INSERT INTO privacy_cleanup_effect_resolutions(
+                        task_id, original_effect_key, recovery_effect_key,
+                        recovery_event_digest, created_at
+                    ) VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        resume.task_id,
+                        resume.effect_key,
+                        recovery_effect.effect_key,
+                        recovery_effect.effect_digest,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                self._append_effects(
+                    connection,
+                    resume.task_id,
+                    [recovery_effect],
+                    allow_privacy_pending=True,
+                )
+            elif (
+                resolution["recovery_effect_key"] != recovery_effect.effect_key
+                or resolution["recovery_event_digest"] != recovery_effect.effect_digest
+            ):
+                raise StaleTaskWrite("Privacy recovery identity changed")
+            completed = connection.execute(
+                """SELECT 1 FROM task_effect_events
+                WHERE task_id = ? AND effect_key = ?
+                AND event_kind = 'slack_observation'
+                AND json_extract(event_json, '$.outcome') IN ('delivered', 'ambiguous')""",
+                (resume.task_id, recovery_effect.effect_key),
+            ).fetchone()
+            if completed is not None:
+                connection.execute(
+                    """DELETE FROM privacy_cleanup_waits
+                    WHERE task_id = ? AND lease_token = ?""",
+                    (resume.task_id, resume.lease_token),
+                )
+                return "completed"
+            return "recovery"
+
+    @staticmethod
+    def _defer_for_privacy_cleanup(
+        connection: sqlite3.Connection,
+        task_id: str,
+        effect: TaskEffectEvidence,
+    ) -> None:
+        # Discard every mutation made in the caller's transaction, then commit
+        # only the durable recovery request before raising. This preserves the
+        # pre-effect reservation boundary without losing the task on restart.
+        connection.rollback()
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """INSERT OR IGNORE INTO privacy_cleanup_waits(
+                task_id, effect_kind, effect_key, phase, requested_at,
+                lease_token, lease_until
+            ) VALUES (?, ?, ?, ?, ?, NULL, NULL)""",
+            (
+                task_id,
+                effect.kind,
+                effect.effect_key,
+                effect.phase,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        connection.commit()
 
     @staticmethod
     def _private_runtime_projection(record_json: str) -> dict[str, object] | None:
@@ -592,11 +836,21 @@ class TaskStore:
             and any(effect.kind in _INTENT_KINDS for effect in new_effects)
             and self._privacy_cleanup_pending_in(connection)
         ):
+            self._defer_for_privacy_cleanup(connection, task_id, new_effects[0])
             raise PrivacyCleanupPending(
                 "Private SQLite WAL cleanup is pending; external work remains blocked"
             )
         for effect in new_effects:
             if effect.kind in _INTENT_KINDS:
+                superseded = connection.execute(
+                    """SELECT 1 FROM privacy_cleanup_effect_resolutions
+                    WHERE task_id = ? AND original_effect_key = ?""",
+                    (task_id, effect.effect_key),
+                ).fetchone()
+                if superseded is not None:
+                    raise StaleTaskWrite(
+                        "Original external-effect intent was superseded by durable recovery"
+                    )
                 prior = connection.execute(
                     """SELECT event_digest FROM task_effect_events
                     WHERE task_id = ? AND effect_key = ? AND event_kind IN (

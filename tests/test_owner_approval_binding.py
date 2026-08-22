@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import sqlite3
@@ -11,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
@@ -71,7 +72,11 @@ from director_orchestrator.models import (
     canonical_task_effect_digest,
     canonical_opaque_identifier_digest,
 )
-from director_orchestrator.store import PrivacyCleanupPending, StaleTaskWrite, TaskStore
+from director_orchestrator.store import (
+    PrivacyCleanupPending,
+    StaleTaskWrite,
+    TaskStore,
+)
 
 
 def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int] | None = None) -> TaskRecord:
@@ -1453,6 +1458,74 @@ class FailedPredispatchRetryTests(unittest.TestCase):
             self.assertTrue(any("RESUMING" in item for item in responses))
             run.assert_awaited_once_with(record.task_id)
 
+    def test_slack_validation_failures_never_log_malformed_owner_content(self):
+        import director_orchestrator.config as config_module
+        import slack_bolt
+
+        marker = "PRIVATE-MALFORMED-SLACK-NOTE-7d31"
+        test_settings = replace(
+            main.settings,
+            shared_secret="test-secret",
+            slack_owner_user_id="U0B9UJ86D27",
+            slack_channel_id="C123",
+            slack_bot_token="xoxb-test",
+            slack_app_token="xapp-test",
+            orchestrator_base_url="http://testserver",
+            slack_gateway_secret="gateway-test-secret-32-characters!!",
+        )
+        module_name = "director_orchestrator.slack_bot"
+        sys.modules.pop(module_name, None)
+        with (
+            patch.object(config_module, "Settings", return_value=test_settings),
+            patch.object(slack_bolt, "App", _FakeBoltApp),
+        ):
+            slack_bot = importlib.import_module(module_name)
+
+        record = _record()
+        task_response = MagicMock()
+        task_response.headers = {"X-Task-Record-Version": "0"}
+        task_response.json.return_value = record.model_dump(mode="json")
+        task_response.raise_for_status.return_value = None
+        responses: list[str] = []
+        client = MagicMock()
+        try:
+            with (
+                patch.object(slack_bot.httpx, "get", return_value=task_response),
+                patch.object(slack_bot.httpx, "post") as post,
+                self.assertLogs("director.slack", level="WARNING") as captured,
+            ):
+                slack_bot.command_handler(
+                    lambda: None,
+                    {
+                        "channel_id": "C123",
+                        "user_id": "U0B9UJ86D27",
+                        "text": f"approve DIR-ABCD {marker}" + ("X" * 2_100),
+                    },
+                    client,
+                    lambda text, **_: responses.append(text),
+                )
+                slack_bot.approval_button_handler(
+                    lambda: None,
+                    {
+                        "user": {"id": "U0B9UJ86D27"},
+                        "channel": {"id": "C123"},
+                        "actions": [{"value": marker}],
+                        "message": {"ts": "123.45"},
+                    },
+                    client,
+                )
+        finally:
+            sys.modules.pop(module_name, None)
+
+        logs = "\n".join(captured.output)
+        self.assertNotIn(marker, logs)
+        self.assertNotIn("Traceback", logs)
+        self.assertIn("ValidationError", logs)
+        self.assertIn("StaleApproval", logs)
+        self.assertTrue(any("BLOCKED" in item for item in responses))
+        client.chat_postMessage.assert_called_once()
+        post.assert_not_called()
+
     def test_synthetic_slack_note_cannot_authorize_failed_retry(self):
         record = _record(owner_approved=True, index=1, approved=[1, 2])
         record.status = TaskStatus.FAILED
@@ -1779,14 +1852,279 @@ class DurableEffectStoreTests(unittest.TestCase):
                 restarted_while_pinned = TaskStore(database)
                 self.assertTrue(restarted_while_pinned.privacy_cleanup_pending())
                 self.assertIsNotNone(restarted_while_pinned.get(record.task_id))
+                with sqlite3.connect(database) as connection:
+                    self.assertEqual(
+                        connection.execute(
+                            "SELECT COUNT(*) FROM privacy_cleanup_waits"
+                        ).fetchone()[0],
+                        1,
+                    )
+                pinned_run = AsyncMock(return_value=None)
+                with (
+                    patch.object(main, "store", restarted_while_pinned),
+                    patch.object(main.engine, "run", new=pinned_run),
+                ):
+                    asyncio.run(main._resume_privacy_cleanup_waits_once())
+                pinned_run.assert_not_awaited()
             finally:
                 reader.rollback()
                 reader.close()
 
             recovered = TaskStore(database)
             self.assertFalse(recovered.privacy_cleanup_pending())
-            self.assertNotIn(marker, recovered.get(record.task_id).model_dump_json())
+            first_claim = recovered.claim_privacy_cleanup_resumes(
+                lease_seconds=60
+            )
+            self.assertEqual([item.task_id for item in first_claim], [record.task_id])
+            restarted_after_claim = TaskStore(database)
+            self.assertEqual(restarted_after_claim.list_recoverable(), [])
+            self.assertEqual(
+                restarted_after_claim.claim_privacy_cleanup_resumes(
+                    lease_seconds=60
+                ),
+                [],
+            )
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE privacy_cleanup_waits SET lease_until = ?",
+                    ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),),
+                )
+            reclaimed = restarted_after_claim.claim_privacy_cleanup_resumes(
+                lease_seconds=60
+            )
+            self.assertEqual([item.task_id for item in reclaimed], [record.task_id])
+            self.assertNotEqual(
+                reclaimed[0].lease_token,
+                first_claim[0].lease_token,
+            )
+            self.assertFalse(
+                recovered.acknowledge_privacy_cleanup_resume(first_claim[0])
+            )
+
+            async def record_recovered_intent(task_id: str) -> None:
+                resumed = restarted_after_claim.get(task_id)
+                reserve_task_effect(
+                    resumed,
+                    effect_key="e" * 64,
+                    kind="director_intent",
+                    phase="plan",
+                    provider=ProviderName.OPENAI,
+                )
+                restarted_after_claim.save(resumed)
+
+            recovered_run = AsyncMock(side_effect=record_recovered_intent)
+            with (
+                patch.object(main, "store", restarted_after_claim),
+                patch.object(main.engine, "run", new=recovered_run),
+            ):
+                asyncio.run(main._resume_privacy_cleanup_wait(reclaimed[0]))
+                asyncio.run(main._resume_privacy_cleanup_waits_once())
+            recovered_run.assert_awaited_once_with(record.task_id)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM privacy_cleanup_waits"
+                    ).fetchone()[0],
+                    0,
+                )
+            self.assertNotIn(
+                marker,
+                restarted_after_claim.get(record.task_id).model_dump_json(),
+            )
             self.assertNotIn(marker_id.encode(), self._sqlite_bytes(database))
+
+    def test_slack_cleanup_recovery_and_original_reservation_have_one_winner(self):
+        for ordinal in range(8):
+            with self.subTest(ordinal=ordinal), tempfile.TemporaryDirectory(
+                ignore_cleanup_errors=True
+            ) as directory:
+                database = str(Path(directory) / "director.sqlite3")
+                original_key = f"{ordinal:064x}"
+                first_store = TaskStore(database)
+                first_store.create(_record())
+                with sqlite3.connect(database) as connection:
+                    connection.execute(
+                        """INSERT INTO privacy_cleanup_waits(
+                            task_id, effect_kind, effect_key, phase, requested_at
+                        ) VALUES (?, 'slack_intent', ?, 'slack_delivery', ?)""",
+                        (
+                            "DIR-BIND",
+                            original_key,
+                            datetime.now(timezone.utc).isoformat(),
+                        ),
+                    )
+                resume = first_store.claim_privacy_cleanup_resumes(
+                    lease_seconds=60
+                )[0]
+                second_store = TaskStore(database)
+
+                original_record = first_store.get("DIR-BIND")
+                reserve_task_effect(
+                    original_record,
+                    effect_key=original_key,
+                    kind="slack_intent",
+                    phase="slack_delivery",
+                    replay_safe=True,
+                )
+                recovery_record = second_store.get("DIR-BIND")
+                client_msg_id = main.engine._slack_client_id(
+                    "DIR-BIND", "privacy-recovery", original_key
+                )
+                recovery_key = task_effect_key(
+                    recovery_record,
+                    phase="slack_delivery",
+                    identity={"client_msg_id": client_msg_id},
+                )
+                recovery_effect = reserve_task_effect(
+                    recovery_record,
+                    effect_key=recovery_key,
+                    kind="slack_intent",
+                    phase="slack_delivery",
+                    replay_safe=True,
+                )
+                barrier = threading.Barrier(2)
+
+                def save_original() -> str:
+                    barrier.wait()
+                    try:
+                        first_store.save(original_record)
+                        return "original"
+                    except StaleTaskWrite:
+                        return "superseded"
+
+                def reserve_recovery() -> str:
+                    barrier.wait()
+                    return second_store.prepare_privacy_slack_recovery(
+                        resume, recovery_effect
+                    )
+
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    original_result = pool.submit(save_original)
+                    recovery_result = pool.submit(reserve_recovery)
+                    original_outcome = original_result.result(timeout=10)
+                    recovery_outcome = recovery_result.result(timeout=10)
+
+                intents = [
+                    effect
+                    for effect in first_store.list_task_effects("DIR-BIND")
+                    if effect.kind == "slack_intent"
+                ]
+                self.assertEqual(len(intents), 1)
+                if recovery_outcome == "original":
+                    self.assertEqual(original_outcome, "original")
+                    self.assertEqual(intents[0].effect_key, original_key)
+                else:
+                    self.assertEqual(recovery_outcome, "recovery")
+                    self.assertEqual(original_outcome, "superseded")
+                    self.assertEqual(intents[0].effect_key, recovery_key)
+
+                recovery_post = AsyncMock(return_value=None)
+                with (
+                    patch.object(main, "store", second_store),
+                    patch.object(main.engine, "_status_post", new=recovery_post),
+                ):
+                    asyncio.run(main._resume_privacy_cleanup_wait(resume))
+                if recovery_outcome == "original":
+                    recovery_post.assert_not_awaited()
+                else:
+                    recovery_post.assert_awaited_once()
+                    self.assertEqual(
+                        recovery_post.await_args.kwargs["client_msg_id"],
+                        client_msg_id,
+                    )
+
+    def test_slack_recovery_rechecks_privacy_gate_after_lease_claim(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            task_store.create(_record())
+            original_key = "a" * 64
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    """INSERT INTO privacy_cleanup_waits(
+                        task_id, effect_kind, effect_key, phase, requested_at
+                    ) VALUES (?, 'slack_intent', ?, 'slack_delivery', ?)""",
+                    (
+                        "DIR-BIND",
+                        original_key,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+            first_lease = task_store.claim_privacy_cleanup_resumes(
+                lease_seconds=60
+            )[0]
+            record = task_store.get("DIR-BIND")
+            client_msg_id = main.engine._slack_client_id(
+                "DIR-BIND", "privacy-recovery", original_key
+            )
+            recovery_key = task_effect_key(
+                record,
+                phase="slack_delivery",
+                identity={"client_msg_id": client_msg_id},
+            )
+            recovery_effect = reserve_task_effect(
+                record,
+                effect_key=recovery_key,
+                kind="slack_intent",
+                phase="slack_delivery",
+                replay_safe=True,
+            )
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    """UPDATE privacy_cleanup_state
+                    SET pending_generation = completed_generation + 1
+                    WHERE singleton = 1"""
+                )
+
+            self.assertEqual(
+                task_store.prepare_privacy_slack_recovery(
+                    first_lease, recovery_effect
+                ),
+                "pending",
+            )
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM privacy_cleanup_effect_resolutions"
+                    ).fetchone()[0],
+                    0,
+                )
+            self.assertEqual(task_store.list_task_effects("DIR-BIND"), [])
+            recovery_post = AsyncMock(return_value=None)
+            with (
+                patch.object(main, "store", task_store),
+                patch.object(task_store, "_attempt_privacy_cleanup", return_value=False),
+                patch.object(main.engine, "_status_post", new=recovery_post),
+            ):
+                asyncio.run(main._resume_privacy_cleanup_wait(first_lease))
+            recovery_post.assert_not_awaited()
+
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    """UPDATE privacy_cleanup_state
+                    SET completed_generation = pending_generation WHERE singleton = 1"""
+                )
+                connection.execute(
+                    "UPDATE privacy_cleanup_waits SET lease_until = ?",
+                    ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),),
+                )
+            reclaimed = task_store.claim_privacy_cleanup_resumes(
+                lease_seconds=60
+            )[0]
+            with (
+                patch.object(main, "store", task_store),
+                patch.object(main.engine, "_status_post", new=recovery_post),
+            ):
+                asyncio.run(main._resume_privacy_cleanup_wait(reclaimed))
+            recovery_post.assert_awaited_once()
+            self.assertEqual(
+                [
+                    effect.effect_key
+                    for effect in task_store.list_task_effects("DIR-BIND")
+                    if effect.kind == "slack_intent"
+                ],
+                [recovery_key],
+            )
 
     def test_legacy_private_history_is_physically_scrubbed_during_migration(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:

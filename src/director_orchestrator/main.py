@@ -18,6 +18,8 @@ from .approvals import (
     apply_owner_clarification,
     clarification_required,
     owner_identity_matches,
+    reserve_task_effect,
+    task_effect_key,
     verify_slack_gateway_proof,
 )
 from .callbacks import (
@@ -47,7 +49,7 @@ from .oracle_merge import (
     OracleMergeService,
     OracleMergeStore,
 )
-from .store import TaskStore
+from .store import PrivacyCleanupResume, TaskStore
 from .usage import UsageMonitor
 
 
@@ -67,13 +69,123 @@ oracle_merge_service = OracleMergeService(
 )
 engine = OrchestrationEngine(settings, store, oracle_merge_service)
 usage_monitor = UsageMonitor(settings, store)
+_PRIVACY_CLEANUP_RETRY_SECONDS = 2.0
+
+
+async def _resume_privacy_cleanup_waits_once() -> None:
+    resumes = store.claim_privacy_cleanup_resumes()
+    if resumes:
+        await asyncio.gather(
+            *(_resume_privacy_cleanup_wait(resume) for resume in resumes),
+            return_exceptions=True,
+        )
+
+
+async def _resume_privacy_cleanup_wait(resume: PrivacyCleanupResume) -> None:
+    record = store.get(resume.task_id)
+    if record is None:
+        store.acknowledge_privacy_cleanup_resume(resume)
+        return
+    try:
+        if resume.effect_kind == "slack_intent":
+            recovery_message = (
+                f"*{record.task_id} — {record.status.value}*\n"
+                "A delayed Director status delivery resumed after local privacy cleanup."
+            )
+            # This transport identity is derived from the original blocked
+            # effect, so crash recovery always retries the same Slack post.
+            client_msg_id = engine._slack_client_id(
+                record.task_id, "privacy-recovery", resume.effect_key
+            )
+            recovery_effect_key = task_effect_key(
+                record,
+                phase="slack_delivery",
+                identity={"client_msg_id": client_msg_id},
+            )
+            recovery_record = record.model_copy(deep=True)
+            recovery_effect = reserve_task_effect(
+                recovery_record,
+                effect_key=recovery_effect_key,
+                kind="slack_intent",
+                phase="slack_delivery",
+                replay_safe=True,
+            )
+            disposition = store.prepare_privacy_slack_recovery(
+                resume, recovery_effect
+            )
+            if disposition in {
+                "original",
+                "completed",
+                "pending",
+                "stale_lease",
+            }:
+                return
+            # Reload after the atomic reservation so _status_post sees the
+            # authoritative recovery intent rather than trying to create it.
+            record = store.get(resume.task_id)
+            if record is None:
+                return
+            await engine._status_post(
+                record,
+                recovery_message,
+                client_msg_id=client_msg_id,
+            )
+        else:
+            recovery_effect_key = None
+            await engine.run(record.task_id)
+    except Exception:
+        # The durable lease remains and becomes reclaimable. Raw provider or
+        # Slack errors are intentionally not logged from this boundary.
+        return
+    if store.privacy_cleanup_pending():
+        return
+    current = store.get(resume.task_id)
+    effect_recorded = bool(
+        current
+        and any(
+            item.effect_key == resume.effect_key
+            and item.kind == resume.effect_kind
+            for item in current.task_effect_ledger
+        )
+    )
+    slack_terminal = bool(
+        current
+        and recovery_effect_key
+        and any(
+            item.effect_key == recovery_effect_key
+            and item.kind == "slack_observation"
+            and item.outcome in {"delivered", "ambiguous"}
+            for item in current.task_effect_ledger
+        )
+    )
+    if current is None or effect_recorded or slack_terminal:
+        store.acknowledge_privacy_cleanup_resume(resume)
+
+
+async def _privacy_cleanup_recovery_loop() -> None:
+    while True:
+        await _resume_privacy_cleanup_waits_once()
+        await asyncio.sleep(_PRIVACY_CLEANUP_RETRY_SECONDS)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    recovery_tasks = [asyncio.create_task(engine.run(record.task_id)) for record in store.list_recoverable()]
+    initial_resumes = store.claim_privacy_cleanup_resumes()
+    resumed_ids = {resume.task_id for resume in initial_resumes}
+    initial_task_ids = {
+        record.task_id
+        for record in store.list_recoverable()
+        if record.task_id not in resumed_ids
+    }
+    recovery_tasks = [
+        asyncio.create_task(engine.run(task_id)) for task_id in initial_task_ids
+    ] + [
+        asyncio.create_task(_resume_privacy_cleanup_wait(resume))
+        for resume in initial_resumes
+    ]
     monitor_task = asyncio.create_task(usage_monitor.run_forever())
-    tasks = [*recovery_tasks, monitor_task]
+    privacy_recovery_task = asyncio.create_task(_privacy_cleanup_recovery_loop())
+    tasks = [*recovery_tasks, monitor_task, privacy_recovery_task]
     try:
         yield
     finally:
@@ -324,7 +436,23 @@ def claude_callback(task_id: str, callback: ClaudeCallback, background: Backgrou
             # Authenticated redelivery of the exact accepted callback is a
             # read-only success. It must not consume a task version or queue
             # another engine pass.
-            return record
+            authoritative = store.get_versioned(task_id)
+            if authoritative is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+            latest, latest_version = authoritative
+            if latest_version == expected_version:
+                return latest
+            try:
+                if not apply_claude_callback(
+                    latest.model_copy(deep=True), callback
+                ):
+                    return latest
+            except CallbackConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=409,
+                detail="Task changed during callback replay validation",
+            )
         stored = store.mutate_if_version(
             task_id,
             expected_version,
