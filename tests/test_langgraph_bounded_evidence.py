@@ -1,5 +1,6 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-22 16:14 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
 """Bounded evidence derived from real legacy records and deterministic helpers."""
 
 from __future__ import annotations
@@ -29,13 +30,14 @@ from director_orchestrator.models import (
     DirectorPlan,
     OwnerApproval,
     ProviderName,
+    ProviderContactAttempt,
     ProviderRun,
     RiskLevel,
     SlackIntake,
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.policy import preview_plan
+from director_orchestrator.policy import execution_policy_errors, preview_plan
 
 
 def _settings(*, paid: bool = True) -> Settings:
@@ -297,6 +299,85 @@ class LangGraphBoundedEvidenceTests(unittest.TestCase):
         self.assertFalse(report.shadow_approval_required)
         self.assertTrue(report.approvals_agree)
         self.assertTrue(report.statuses_agree)
+
+    def test_owner_assignment_is_clarification_even_when_marked_requires_approval(self):
+        plan = _plan(410)
+        plan.assignments = [
+            Assignment(
+                sequence=1,
+                agent=ProviderName.OWNER,
+                task="provide bounded clarification",
+                acceptance=["clarification recorded"],
+                requires_approval=True,
+            )
+        ]
+        record = _record(410, status=TaskStatus.OWNER_DECISION_REQUIRED, plan=plan)
+        record.unavailable_providers = [ProviderName.CURSOR]
+        record.provider_contact_attempts = [
+            ProviderContactAttempt(
+                assignment_sequence=1,
+                provider=ProviderName.OWNER,
+                ordinal=1,
+                phase="reconciliation",
+                outcome="reconciled_not_created",
+                error="bounded recovery fixture",
+            )
+        ]
+
+        snapshot = snapshot_from_task_record(record, _settings())
+        report = run_shadow_comparison(snapshot)
+
+        self.assertEqual(report.transition_reason_code, ShadowReasonCode.OWNER_CLARIFICATION)
+        self.assertEqual(report.pending_assignment_sequence, 1)
+        self.assertFalse(report.pending_assignment_requires_approval)
+        self.assertFalse(report.pending_assignment_approved)
+        self.assertFalse(report.legacy_approval_required)
+        self.assertFalse(report.shadow_approval_required)
+        self.assertTrue(report.approvals_agree)
+        self.assertTrue(report.statuses_agree)
+        self.assertEqual(report.shadow_status, TaskStatus.OWNER_DECISION_REQUIRED)
+
+    def test_more_than_twenty_policy_errors_are_aggregated_without_losing_block(self):
+        assignments = [
+            Assignment(
+                sequence=sequence,
+                agent=ProviderName.OPENAI,
+                task=f"adversarial bounded assignment {sequence}",
+                acceptance=["bounded evidence"],
+                repository=f"example/not-allowed-{sequence}",
+                starting_ref=f"feature/{sequence}",
+                allow_draft_pr=True,
+                requires_approval=False,
+            )
+            for sequence in range(1, 21)
+        ]
+        plan = DirectorPlan(
+            project="not-allowlisted",
+            normalized_outcome="adversarial policy cardinality fixture",
+            risk_level=RiskLevel.HIGH,
+            approval_required=False,
+            max_hops=20,
+            max_revisions=10,
+            assignments=assignments,
+            final_acceptance=["bounded evidence"],
+        )
+        settings = _settings()
+        raw_errors = execution_policy_errors(plan, settings)
+        self.assertGreater(len(raw_errors), 20)
+        record = _record(420, status=TaskStatus.BLOCKED, plan=plan)
+
+        snapshot = snapshot_from_task_record(record, settings)
+        report = run_shadow_comparison(snapshot)
+
+        self.assertTrue(snapshot.policy_blocked)
+        self.assertEqual(snapshot.policy_error_count, len(raw_errors))
+        self.assertEqual(len(snapshot.policy_errors), 20)
+        self.assertIsNotNone(snapshot.policy_error_digest)
+        self.assertTrue(report.policy_blocked)
+        self.assertEqual(report.policy_error_count, len(raw_errors))
+        self.assertEqual(report.policy_error_digest, snapshot.policy_error_digest)
+        self.assertTrue(report.statuses_agree)
+        self.assertEqual(report.shadow_status, TaskStatus.BLOCKED)
 
     def test_sqlite_checkpoints_exclude_secret_prompt_and_transcript_markers(self):
         markers = (

@@ -2,6 +2,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:10 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:12 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
 from __future__ import annotations
 
 import json
@@ -121,6 +122,7 @@ class LangGraphShadowTests(unittest.TestCase):
             ({**valid, "plan_shape_digest": "bad"}, "plan_shape_digest must be"),
             ({**valid, "policy_errors": ["duplicate", "duplicate"]}, "duplicate codes"),
             ({**valid, "policy_errors": ["This is policy prose"]}, "compact lowercase codes"),
+            ({**valid, "policy_blocked": True}, "must match policy_error_count"),
             ({**valid, "plan_approval_required": 1}, "must be booleans"),
             (
                 {**valid, "pending_assignment_requires_approval": True},
@@ -263,11 +265,15 @@ class LangGraphShadowTests(unittest.TestCase):
                 task_id="DIR-POLICY-BLOCK",
                 status=TaskStatus.RUNNING,
                 policy_errors=("repository_not_allowlisted",),
+                policy_blocked=True,
+                policy_error_count=1,
+                policy_error_digest="d" * 64,
             )
         )
 
         self.assertTrue(report.policy_blocked)
         self.assertEqual(report.policy_errors, ("repository_not_allowlisted",))
+        self.assertEqual(report.policy_error_count, 1)
         self.assertEqual(report.shadow_status, TaskStatus.BLOCKED)
         self.assertFalse(report.statuses_agree)
         self.assertTrue(report.approvals_agree)
