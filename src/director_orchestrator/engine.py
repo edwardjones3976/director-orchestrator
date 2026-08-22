@@ -13,8 +13,19 @@ import httpx
 from .config import Settings
 from .director import OpenAIDirector
 from .approvals import (
+    StaleApproval,
     approval_button_value,
+    assignment_approval_digest,
     assignment_is_approved,
+    oracle_recovery_matches,
+    pending_assignment,
+    record_oracle_merge_success,
+    record_oracle_recovery,
+    record_provider_effect_observation,
+    record_task_effect_observation,
+    reserve_provider_effect,
+    reserve_task_effect,
+    task_effect_key,
     unresolved_ambiguous_dispatch,
 )
 from .models import (
@@ -167,6 +178,7 @@ class OrchestrationEngine:
         if record is None:
             return
         try:
+            plan_installed = False
             if record.status == TaskStatus.DONE:
                 return
             if not self.settings.allow_paid_runs:
@@ -186,9 +198,45 @@ class OrchestrationEngine:
             if record.plan is None:
                 record.status = TaskStatus.PLANNING
                 self.store.save(record)
-                plan = await self.director.plan(record)
+                reservation = self._reserve_director_effect(
+                    record,
+                    phase="plan",
+                    identity={
+                        "intake": hashlib.sha256(
+                            record.intake.model_dump_json().encode("utf-8")
+                        ).hexdigest(),
+                        "target_generation": record.plan_generation + 1,
+                    },
+                    estimated_cost_usd=self.settings.openai_plan_estimated_cost_usd,
+                )
+                if reservation is None:
+                    return
+                record, effect_key = reservation
+                try:
+                    plan = await self.director.plan(record)
+                except Exception:
+                    record_task_effect_observation(
+                        record,
+                        effect_key=effect_key,
+                        intent_kind="director_intent",
+                        observation_kind="director_observation",
+                        phase="plan",
+                        outcome="ambiguous",
+                    )
+                    self.store.save(record)
+                    raise
+                record_task_effect_observation(
+                    record,
+                    effect_key=effect_key,
+                    intent_kind="director_intent",
+                    observation_kind="director_observation",
+                    phase="plan",
+                    outcome="completed",
+                    run_id=self._result_digest(plan),
+                )
                 record.plan = enforce_plan(plan, record.intake.text, self.settings)
                 record.plan_generation += 1
+                plan_installed = True
             policy_errors = execution_policy_errors(record.plan, self.settings)
             if policy_errors:
                 record.status = TaskStatus.BLOCKED
@@ -196,6 +244,28 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, f"*{task_id} — BLOCKED*\n{record.message}")
                 return
+            if plan_installed:
+                prospective_cost = sum(
+                    item.estimated_cost_usd for item in record.plan.assignments
+                )
+                if record.plan.debate is not None:
+                    prospective_cost += record.plan.debate.estimated_synthesis_cost_usd
+                if (
+                    record.cumulative_estimated_cost_usd + prospective_cost
+                    > self.settings.max_task_budget_usd
+                ):
+                    record.status = TaskStatus.BLOCKED
+                    record.message = (
+                        "Cumulative task budget blocks the replacement plan: "
+                        f"reserved ${record.cumulative_estimated_cost_usd:.2f} plus "
+                        f"new plan ${prospective_cost:.2f} exceeds "
+                        f"${self.settings.max_task_budget_usd:.2f}."
+                    )
+                    self.store.save(record)
+                    await self._status_post(
+                        record, f"*{task_id} — BLOCKED*\n{record.message}"
+                    )
+                    return
             if record.plan.owner_question or (record.plan.approval_required and not record.owner_approved):
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = record.plan.owner_question or "; ".join(record.plan.approval_reasons)
@@ -373,6 +443,55 @@ class OrchestrationEngine:
         return str(uuid5(NAMESPACE_URL, ":".join(str(part) for part in parts)))
 
     @staticmethod
+    def _result_digest(value: object) -> str:
+        if hasattr(value, "model_dump_json"):
+            encoded = value.model_dump_json().encode("utf-8")
+        else:
+            encoded = json.dumps(
+                value, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+            ).encode("utf-8")
+        return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+    def _reserve_director_effect(
+        self,
+        record: TaskRecord,
+        *,
+        phase: str,
+        identity: object,
+        estimated_cost_usd: float,
+    ) -> tuple[TaskRecord, str] | None:
+        """Atomically reserve one paid OpenAI call before network I/O."""
+
+        versioned = self.store.get_versioned(record.task_id)
+        if versioned is None:
+            raise StaleApproval("Task disappeared before Director call")
+        latest, expected_version = versioned
+        if latest.plan_generation != record.plan_generation:
+            raise StaleApproval("Task generation changed before Director call")
+        effect_key = task_effect_key(latest, phase=phase, identity=identity)
+
+        def reserve(current: TaskRecord) -> None:
+            if current.plan_generation != record.plan_generation:
+                raise StaleApproval("Task generation changed before Director call")
+            reserve_task_effect(
+                current,
+                effect_key=effect_key,
+                kind="director_intent",
+                phase=phase,
+                provider=ProviderName.OPENAI,
+                estimated_cost_usd=estimated_cost_usd,
+                hop_units=1,
+                max_task_budget_usd=self.settings.max_task_budget_usd,
+            )
+
+        stored = self.store.mutate_if_version(
+            record.task_id, expected_version, reserve
+        )
+        if stored is None:
+            return None
+        return stored, effect_key
+
+    @staticmethod
     def _slack_safe_text(value: str, *, limit: int = 2_000) -> str:
         """Redact credential-shaped values and raw source blocks before Slack relay."""
 
@@ -411,11 +530,50 @@ class OrchestrationEngine:
             self._slack_client_id(record.task_id, "slack", message),
         )
         event_id = str(kwargs["client_msg_id"])
+        slack_effect_key: str | None = None
+        if self.settings.slack_bot_token:
+            slack_effect_key = task_effect_key(
+                record, phase="slack_delivery", identity={"client_msg_id": event_id}
+            )
+            reserve_task_effect(
+                record,
+                effect_key=slack_effect_key,
+                kind="slack_intent",
+                phase="slack_delivery",
+                replay_safe=True,
+            )
+            delivered_observation = next(
+                (
+                    item
+                    for item in record.task_effect_ledger
+                    if item.effect_key == slack_effect_key
+                    and item.kind == "slack_observation"
+                    and item.outcome == "delivered"
+                ),
+                None,
+            )
+            if delivered_observation is not None:
+                return True, delivered_observation.run_id
+            # Slack's stable client_msg_id is the transport idempotency key. A
+            # restart may retry the same key, but cannot create a second
+            # externally visible message. Persist the opaque intent first.
+            self.store.save(record)
         for attempt in range(1, 4):
             try:
                 timestamp = await self.notifier.post(record, message, **kwargs)
                 if self.settings.slack_bot_token and not timestamp:
                     raise RuntimeError("Slack did not return a message timestamp")
+                if slack_effect_key is not None:
+                    record_task_effect_observation(
+                        record,
+                        effect_key=slack_effect_key,
+                        intent_kind="slack_intent",
+                        observation_kind="slack_observation",
+                        phase="slack_delivery",
+                        outcome="delivered",
+                        run_id=timestamp,
+                    )
+                    self.store.save(record)
                 return True, timestamp
             except Exception as exc:
                 error = (
@@ -429,6 +587,15 @@ class OrchestrationEngine:
                 if attempt < 3:
                     await asyncio.sleep(0)
 
+        if slack_effect_key is not None:
+            record_task_effect_observation(
+                record,
+                effect_key=slack_effect_key,
+                intent_kind="slack_intent",
+                observation_kind="slack_observation",
+                phase="slack_delivery",
+                outcome="ambiguous",
+            )
         record.collaboration_fallback_active = True
         record.collaboration_fallback_reason = (
             "Slack was unavailable after three bounded idempotent attempts; continuing through "
@@ -647,7 +814,48 @@ class OrchestrationEngine:
         if debate is None or assignment.sequence != max(debate.rebuttal_assignments):
             return True
         if record.debate_synthesis is None:
-            record.debate_synthesis = await self.director.synthesize_debate(record)
+            synthesis_identity = {
+                "debate": hashlib.sha256(
+                    debate.model_dump_json().encode("utf-8")
+                ).hexdigest(),
+                "turns": [
+                    self._result_digest(turn)
+                    for turn in record.collaboration_turns
+                    if turn.phase in {"position", "rebuttal"}
+                ],
+            }
+            reservation = self._reserve_director_effect(
+                record,
+                phase="debate_synthesis",
+                identity=synthesis_identity,
+                estimated_cost_usd=debate.estimated_synthesis_cost_usd,
+            )
+            if reservation is None:
+                return False
+            record, effect_key = reservation
+            try:
+                synthesis = await self.director.synthesize_debate(record)
+            except Exception:
+                record_task_effect_observation(
+                    record,
+                    effect_key=effect_key,
+                    intent_kind="director_intent",
+                    observation_kind="director_observation",
+                    phase="debate_synthesis",
+                    outcome="ambiguous",
+                )
+                self.store.save(record)
+                raise
+            record_task_effect_observation(
+                record,
+                effect_key=effect_key,
+                intent_kind="director_intent",
+                observation_kind="director_observation",
+                phase="debate_synthesis",
+                outcome="completed",
+                run_id=self._result_digest(synthesis),
+            )
+            record.debate_synthesis = synthesis
             self.store.save(record)
         synthesis = record.debate_synthesis
         if synthesis.openai_vote_option not in debate.vote_options and not synthesis.openai_abstains:
@@ -817,6 +1025,75 @@ class OrchestrationEngine:
             record.plan.max_hops * (1 + record.plan.max_revisions),
         )
 
+    @staticmethod
+    def _provider_run_count(record: TaskRecord) -> int:
+        return len(record.provider_run_history) + len(record.provider_runs)
+
+    def _reserve_effect_intent(
+        self,
+        record: TaskRecord,
+        assignment: Assignment,
+        *,
+        phase: str,
+    ) -> tuple[TaskRecord, str] | None:
+        """Atomically persist one external-effect intent before provider I/O.
+
+        Separate workers may resume the same recoverable task. The task-store
+        version CAS makes exactly one of them the effect owner; a loser exits
+        without calling a provider or overwriting the winner's ledger entry.
+        """
+
+        versioned = self.store.get_versioned(record.task_id)
+        if versioned is None:
+            raise StaleApproval("Task disappeared before provider dispatch")
+        _, expected_version = versioned
+        reserved_key: str | None = None
+
+        def reserve(current: TaskRecord) -> None:
+            nonlocal reserved_key
+            current_assignment = pending_assignment(current)
+            if (
+                current.plan_generation != record.plan_generation
+                or current_assignment is None
+                or current_assignment.sequence != assignment.sequence
+                or assignment_approval_digest(current_assignment)
+                != assignment_approval_digest(assignment)
+            ):
+                raise StaleApproval(
+                    "The pending assignment changed before provider dispatch"
+                )
+            if current_assignment.requires_approval and not assignment_is_approved(
+                current, current_assignment
+            ):
+                raise StaleApproval(
+                    "The pending assignment approval changed before provider dispatch"
+                )
+            if phase == "dispatch" and any(
+                run.assignment_sequence == current_assignment.sequence
+                for run in current.provider_runs
+            ):
+                raise StaleApproval(
+                    "A provider run already exists and must not be dispatched again"
+                )
+            if self._provider_run_count(current) >= self._provider_run_limit(current):
+                raise StaleApproval("Maximum agent hops reached")
+            reserved_key = reserve_provider_effect(
+                current,
+                current_assignment,
+                phase=phase,
+                max_task_budget_usd=self.settings.max_task_budget_usd,
+            )
+            current.status = TaskStatus.RUNNING
+
+        stored = self.store.mutate_if_version(
+            record.task_id, expected_version, reserve
+        )
+        if stored is None:
+            return None
+        if reserved_key is None:
+            raise RuntimeError("Provider effect reservation lost its identity")
+        return stored, reserved_key
+
     async def _process_exact_sha_review(
         self, record: TaskRecord, run: ProviderRun
     ) -> bool | None:
@@ -828,6 +1105,13 @@ class OrchestrationEngine:
                 record, run, service.policy.review_secret
             )
         except (ValueError, TypeError) as exc:
+            record_oracle_recovery(
+                record,
+                run,
+                kind="artifact_authentication_failed",
+                evidence={"error_type": type(exc).__name__, "error": str(exc)},
+                retryable=True,
+            )
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = (
                 "Oracle review artifact failed closed: " + str(exc)
@@ -837,9 +1121,60 @@ class OrchestrationEngine:
             return False
         if artifact is None:
             return None
+        oracle_effect_key = task_effect_key(
+            record,
+            phase="oracle_merge",
+            identity={
+                "artifact_id": artifact.artifact_id,
+                "artifact_digest": artifact.digest(),
+            },
+        )
+        reserve_task_effect(
+            record,
+            effect_key=oracle_effect_key,
+            kind="oracle_merge_intent",
+            phase="oracle_merge",
+            assignment=pending_assignment(record),
+            replay_safe=True,
+        )
+        prior_merge = next(
+            (
+                item
+                for item in record.task_effect_ledger
+                if item.effect_key == oracle_effect_key
+                and item.kind == "oracle_merge_observation"
+                and item.outcome == "merged"
+            ),
+            None,
+        )
+        if prior_merge is not None:
+            return True
+        self.store.save(record)
         try:
             result = service.process(artifact)
         except (RuntimeError, ValueError) as exc:
+            attempt_status, retry_not_before = service.store.attempt_recovery_state(
+                artifact.artifact_id
+            )
+            recoverable = attempt_status == "RECOVERABLE"
+            record_oracle_recovery(
+                record,
+                run,
+                kind="automerge_runtime_failed",
+                evidence={"error_type": type(exc).__name__},
+                artifact_id=artifact.artifact_id,
+                retryable=recoverable,
+                retry_not_before=retry_not_before,
+            )
+            record_task_effect_observation(
+                record,
+                effect_key=oracle_effect_key,
+                intent_kind="oracle_merge_intent",
+                observation_kind="oracle_merge_observation",
+                phase="oracle_merge",
+                outcome="stopped",
+                run_id=artifact.artifact_id,
+            )
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = (
                 "Oracle automatic merge failed closed: " + type(exc).__name__
@@ -849,6 +1184,35 @@ class OrchestrationEngine:
             return False
         if result.status != OracleMergeStatus.MERGED:
             evidence = [*result.serious_safety_reasons, *result.reasons]
+            attempt_status, retry_not_before = service.store.attempt_recovery_state(
+                artifact.artifact_id
+            )
+            recoverable = (
+                result.status == OracleMergeStatus.ERROR
+                and attempt_status == "RECOVERABLE"
+            )
+            record_oracle_recovery(
+                record,
+                run,
+                kind="merge_policy_stopped",
+                evidence={
+                    "status": result.status.value,
+                    "reasons": evidence,
+                    "artifact_digest": result.artifact_digest,
+                },
+                artifact_id=artifact.artifact_id,
+                retryable=recoverable,
+                retry_not_before=retry_not_before,
+            )
+            record_task_effect_observation(
+                record,
+                effect_key=oracle_effect_key,
+                intent_kind="oracle_merge_intent",
+                observation_kind="oracle_merge_observation",
+                phase="oracle_merge",
+                outcome="stopped",
+                run_id=artifact.artifact_id,
+            )
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = (
                 "Oracle automatic merge stopped: "
@@ -857,6 +1221,44 @@ class OrchestrationEngine:
             self.store.save(record)
             await self._status_post(record, record.message)
             return False
+        if not result.merge_commit_sha:
+            record_oracle_recovery(
+                record,
+                run,
+                kind="automerge_runtime_failed",
+                evidence={"error_type": "missing_merge_commit_sha"},
+                artifact_id=artifact.artifact_id,
+                retryable=False,
+            )
+            record_task_effect_observation(
+                record,
+                effect_key=oracle_effect_key,
+                intent_kind="oracle_merge_intent",
+                observation_kind="oracle_merge_observation",
+                phase="oracle_merge",
+                outcome="stopped",
+                run_id=artifact.artifact_id,
+            )
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = "Oracle merge result lacked a merge commit SHA"
+            self.store.save(record)
+            await self._status_post(record, record.message)
+            return False
+        record_oracle_merge_success(
+            record,
+            run,
+            artifact_id=artifact.artifact_id,
+            merge_commit_sha=result.merge_commit_sha,
+        )
+        record_task_effect_observation(
+            record,
+            effect_key=oracle_effect_key,
+            intent_kind="oracle_merge_intent",
+            observation_kind="oracle_merge_observation",
+            phase="oracle_merge",
+            outcome="merged",
+            run_id=result.merge_commit_sha,
+        )
         record.message = (
             f"Oracle exact-SHA merge completed at {result.merge_commit_sha} "
             f"by {result.actor}."
@@ -1043,16 +1445,33 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
-            if len(record.provider_runs) >= self._provider_run_limit(record):
-                raise ProviderError("Maximum agent hops reached")
-            record.status = TaskStatus.RUNNING
-            self.store.save(record)
+            try:
+                reservation = self._reserve_effect_intent(
+                    record, assignment, phase="dispatch"
+                )
+            except ValueError as exc:
+                record = self.store.get(record.task_id) or record
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(record, record.message)
+                return False
+            if reservation is None:
+                return False
+            record, effect_key = reservation
             try:
                 run = await adapter.dispatch(
                     assignment,
                     context=self._handoff_context(record, assignment),
                 )
             except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=effect_key,
+                    phase="dispatch",
+                    outcome="ambiguous",
+                )
                 self._record_contact_attempt(
                     record,
                     assignment,
@@ -1079,8 +1498,26 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
+            except Exception:
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=effect_key,
+                    phase="dispatch",
+                    outcome="failed_pre_submit",
+                )
+                self.store.save(record)
+                raise
             run.assignment_sequence = assignment.sequence
             run.evidence_source = "provider_authenticated"
+            record_provider_effect_observation(
+                record,
+                assignment,
+                effect_key=effect_key,
+                phase="dispatch",
+                outcome="submitted",
+                run_id=run.run_id,
+            )
             record.provider_runs.append(run)
             self.store.save(record)
             await self._status_post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
@@ -1106,9 +1543,72 @@ class OrchestrationEngine:
             await self._status_post(record, f"*{record.task_id} — OWNER DECISION REQUIRED*\nThe `{assignment.agent.value}` run must be reviewed at its provider session before the loop can continue." + (f" [Open run]({run.url})" if run.url else ""))
             return False
 
+        if oracle_recovery_matches(record, assignment, run):
+            decision = record.review
+            if decision is None or decision.verdict != ReviewVerdict.ACCEPT:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    "Oracle recovery lost its exact accepted review evidence"
+                )
+                self.store.save(record)
+                return False
+            if not await self._bind_review_candidate(record, assignment, run):
+                return False
+            merge_result = await self._process_exact_sha_review(record, run)
+            if merge_result is not True:
+                if merge_result is None:
+                    record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                    record.message = (
+                        "Oracle recovery could not reach its exact enabled merge service"
+                    )
+                    self.store.save(record)
+                return False
+            self._record_outcome(record, assignment, run, decision)
+            self.store.save(record)
+            if not await self._record_and_publish_collaboration_turn(
+                record, assignment, run, decision
+            ):
+                return False
+            return await self._finalize_debate(record, assignment)
+
         record.status = TaskStatus.REVIEWING
         self.store.save(record)
-        decision = await self.director.review(record, run.result)
+        review_identity = {
+            "assignment": assignment_approval_digest(assignment),
+            "run": self._result_digest(run),
+            "revision_count": record.revision_count,
+        }
+        reservation = self._reserve_director_effect(
+            record,
+            phase="acceptance_review",
+            identity=review_identity,
+            estimated_cost_usd=self.settings.openai_review_estimated_cost_usd,
+        )
+        if reservation is None:
+            return False
+        record, review_effect_key = reservation
+        try:
+            decision = await self.director.review(record, run.result)
+        except Exception:
+            record_task_effect_observation(
+                record,
+                effect_key=review_effect_key,
+                intent_kind="director_intent",
+                observation_kind="director_observation",
+                phase="acceptance_review",
+                outcome="ambiguous",
+            )
+            self.store.save(record)
+            raise
+        record_task_effect_observation(
+            record,
+            effect_key=review_effect_key,
+            intent_kind="director_intent",
+            observation_kind="director_observation",
+            phase="acceptance_review",
+            outcome="completed",
+            run_id=self._result_digest(decision),
+        )
         record.review = decision
         self.store.save(record)
         if decision.verdict == ReviewVerdict.ACCEPT:
@@ -1125,8 +1625,20 @@ class OrchestrationEngine:
                 return False
             return await self._finalize_debate(record, assignment)
         if decision.verdict == ReviewVerdict.REVISE and record.revision_count < record.plan.max_revisions:
-            if len(record.provider_runs) >= self._provider_run_limit(record):
-                raise ProviderError("Maximum agent hops reached before revision")
+            try:
+                reservation = self._reserve_effect_intent(
+                    record, assignment, phase="revision"
+                )
+            except ValueError as exc:
+                record = self.store.get(record.task_id) or record
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(record, record.message)
+                return False
+            if reservation is None:
+                return False
+            record, revision_effect_key = reservation
             try:
                 revised = await adapter.revise(
                     run,
@@ -1135,6 +1647,13 @@ class OrchestrationEngine:
                     context=self._handoff_context(record, assignment),
                 )
             except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=revision_effect_key,
+                    phase="revision",
+                    outcome="ambiguous",
+                )
                 self._record_contact_attempt(
                     record,
                     assignment,
@@ -1161,9 +1680,27 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
+            except Exception:
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=revision_effect_key,
+                    phase="revision",
+                    outcome="failed_pre_submit",
+                )
+                self.store.save(record)
+                raise
             record.revision_count += 1
             revised.assignment_sequence = assignment.sequence
             revised.evidence_source = "provider_authenticated"
+            record_provider_effect_observation(
+                record,
+                assignment,
+                effect_key=revision_effect_key,
+                phase="revision",
+                outcome="submitted",
+                run_id=revised.run_id,
+            )
             record.provider_runs.append(revised)
             self.store.save(record)
             try:
@@ -1185,7 +1722,42 @@ class OrchestrationEngine:
                     + (f" [Open run]({revised.url})" if revised.url else ""),
                 )
                 return False
-            final_decision = await self.director.review(record, revised.result)
+            final_review_identity = {
+                "assignment": assignment_approval_digest(assignment),
+                "run": self._result_digest(revised),
+                "revision_count": record.revision_count,
+            }
+            reservation = self._reserve_director_effect(
+                record,
+                phase="acceptance_review",
+                identity=final_review_identity,
+                estimated_cost_usd=self.settings.openai_review_estimated_cost_usd,
+            )
+            if reservation is None:
+                return False
+            record, final_review_effect_key = reservation
+            try:
+                final_decision = await self.director.review(record, revised.result)
+            except Exception:
+                record_task_effect_observation(
+                    record,
+                    effect_key=final_review_effect_key,
+                    intent_kind="director_intent",
+                    observation_kind="director_observation",
+                    phase="acceptance_review",
+                    outcome="ambiguous",
+                )
+                self.store.save(record)
+                raise
+            record_task_effect_observation(
+                record,
+                effect_key=final_review_effect_key,
+                intent_kind="director_intent",
+                observation_kind="director_observation",
+                phase="acceptance_review",
+                outcome="completed",
+                run_id=self._result_digest(final_decision),
+            )
             record.review = final_decision
             if final_decision.verdict == ReviewVerdict.ACCEPT:
                 if not await self._bind_review_candidate(record, assignment, revised):

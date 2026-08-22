@@ -1041,6 +1041,27 @@ class OracleMergeStore:
             for row in rows
         ]
 
+    def attempt_status(self, artifact_id: str) -> str | None:
+        """Return the persisted recovery class without exposing artifact content."""
+
+        status, _ = self.attempt_recovery_state(artifact_id)
+        return status
+
+    def attempt_recovery_state(
+        self, artifact_id: str
+    ) -> tuple[str | None, datetime | None]:
+        """Return the recovery class and bounded not-before deadline."""
+
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT status, retry_not_before FROM oracle_merge_attempts "
+                "WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            return None, None
+        return str(row["status"]), _parse_stored_deadline(row["retry_not_before"])
+
 
 class OracleMergeService:
     """Deterministic exact-SHA merge gate.

@@ -10,8 +10,9 @@ import httpx
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from .approvals import parse_approval_button_value
+from .approvals import failed_retry_decision_digest, parse_approval_button_value
 from .config import Settings
+from .models import TaskRecord, TaskStatus
 
 
 settings = Settings()
@@ -107,14 +108,34 @@ def command_handler(ack, command, client, respond):
     if approval:
         task_id, note = approval.group(1).upper(), approval.group(2) or "Approved"
         try:
+            payload = {
+                "owner_user_id": command["user_id"],
+                "note": note,
+            }
+            current = httpx.get(
+                f"{settings.orchestrator_base_url}/v1/tasks/{task_id}",
+                headers={"Authorization": f"Bearer {settings.shared_secret}"},
+                timeout=20,
+            )
+            current.raise_for_status()
+            record = TaskRecord.model_validate(current.json())
+            if record.status == TaskStatus.FAILED:
+                assignments = sorted(
+                    record.plan.assignments if record.plan else [],
+                    key=lambda item: item.sequence,
+                )
+                if record.next_assignment_index >= len(assignments):
+                    raise ValueError("Failed task has no pending assignment")
+                payload["assignment_sequence"] = assignments[
+                    record.next_assignment_index
+                ].sequence
+                payload["retry_decision_digest"] = failed_retry_decision_digest(
+                    record
+                )
             response = httpx.post(
                 f"{settings.orchestrator_base_url}/v1/tasks/{task_id}/approve",
                 headers={"Authorization": f"Bearer {settings.shared_secret}"},
-                json={
-                    "owner_user_id": command["user_id"],
-                    "note": note,
-                    "source": "slack_command",
-                },
+                json=payload,
                 timeout=20,
             )
             response.raise_for_status()

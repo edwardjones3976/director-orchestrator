@@ -13,6 +13,7 @@ from .approvals import (
     StaleApproval,
     apply_ambiguous_dispatch_resolution,
     apply_failed_predispatch_retry,
+    apply_oracle_recovery,
     apply_owner_approval,
     apply_owner_clarification,
     clarification_required,
@@ -30,6 +31,7 @@ from .models import (
     AmbiguousDispatchResolution,
     ClaudeCallback,
     ManualRunCompletion,
+    OracleRecoveryApproval,
     OwnerApproval,
     SlackIntake,
     TaskRecord,
@@ -194,6 +196,58 @@ def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) 
     except StaleApproval as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     background.add_task(engine.run, task_id)
+    return stored
+
+
+@app.post(
+    "/v1/tasks/{task_id}/oracle-recovery",
+    response_model=TaskRecord,
+    dependencies=[Depends(require_auth)],
+)
+def recover_oracle_stop(
+    task_id: str,
+    approval: OracleRecoveryApproval,
+    background: BackgroundTasks,
+) -> TaskRecord:
+    if not owner_identity_matches(approval.owner_user_id, settings.slack_owner_user_id):
+        raise HTTPException(status_code=403, detail="Owner identity mismatch")
+    versioned = store.get_versioned(task_id)
+    if versioned is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    current, expected_version = versioned
+    oracle_attempt_status = None
+    oracle_retry_not_before = None
+    if (
+        approval.action == "retry_recoverable"
+        and current.oracle_recovery is not None
+        and current.oracle_recovery.artifact_id is not None
+    ):
+        (
+            oracle_attempt_status,
+            oracle_retry_not_before,
+        ) = oracle_merge_store.attempt_recovery_state(
+            current.oracle_recovery.artifact_id
+        )
+    try:
+        stored = store.mutate_if_version(
+            task_id,
+            expected_version,
+            lambda current: apply_oracle_recovery(
+                current,
+                approval,
+                oracle_attempt_status=oracle_attempt_status,
+                oracle_retry_not_before=oracle_retry_not_before,
+            ),
+        )
+    except StaleApproval as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if stored is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Oracle recovery decision changed or was already consumed",
+        )
+    if stored.status == TaskStatus.QUEUED:
+        background.add_task(engine.run, task_id)
     return stored
 
 

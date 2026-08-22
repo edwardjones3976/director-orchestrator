@@ -10,12 +10,17 @@ from types import SimpleNamespace
 import httpx
 
 from director_orchestrator.config import Settings
-from director_orchestrator.approvals import assignment_approval_digest
+from director_orchestrator.approvals import (
+    apply_oracle_recovery,
+    assignment_approval_digest,
+    reset_for_owner_clarification,
+)
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
     DirectorPlan,
+    OracleRecoveryApproval,
     ProviderName,
     ProviderRun,
     ReviewDecision,
@@ -52,6 +57,130 @@ class NoRedispatchAdapter:
 
 
 class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_paid_director_plan_is_reserved_once_and_survives_replan_reset(self):
+        class PlanningDirector:
+            def __init__(self):
+                self.calls = 0
+
+            async def plan(self, record: TaskRecord) -> DirectorPlan:
+                self.calls += 1
+                return DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Choose one bounded option",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    owner_question="Which bounded option should continue?",
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.OWNER,
+                            task="Choose one bounded option",
+                            acceptance=["Owner supplies the choice"],
+                        )
+                    ],
+                    final_acceptance=["Choice recorded"],
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                openai_plan_estimated_cost_usd=0.1,
+                project_allowlist=("demo",),
+                sqlite_path=database,
+            )
+            task = TaskRecord(
+                task_id="DIR-DIRECTOR-LEDGER",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-director-ledger",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="PRIVATE_PROMPT_MARKER choose one bounded option",
+                ),
+            )
+            store = TaskStore(database)
+            store.create(task)
+            director = PlanningDirector()
+            engine = OrchestrationEngine(settings, store)
+            engine.director = director
+
+            await engine.run(task.task_id)
+            stored = store.get(task.task_id)
+            self.assertEqual(director.calls, 1)
+            self.assertEqual(
+                [item.kind for item in stored.task_effect_ledger],
+                ["director_intent", "director_observation"],
+            )
+            self.assertEqual(stored.cumulative_estimated_cost_usd, 0.1)
+            self.assertEqual(stored.cumulative_effect_hops, 1)
+            self.assertNotIn(
+                "PRIVATE_PROMPT_MARKER",
+                json.dumps(
+                    [item.model_dump(mode="json") for item in stored.task_effect_ledger]
+                ),
+            )
+
+            reset_for_owner_clarification(stored)
+            store.save(stored)
+            restarted = TaskStore(database).get(task.task_id)
+            self.assertEqual(len(restarted.task_effect_ledger), 2)
+            self.assertEqual(restarted.cumulative_estimated_cost_usd, 0.1)
+            self.assertEqual(restarted.cumulative_effect_hops, 1)
+
+    async def test_ambiguous_director_plan_is_not_repeated_after_restart(self):
+        class AmbiguousDirector:
+            def __init__(self):
+                self.calls = 0
+
+            async def plan(self, record: TaskRecord) -> DirectorPlan:
+                self.calls += 1
+                raise httpx.TimeoutError("response outcome unknown")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                openai_plan_estimated_cost_usd=0.2,
+                sqlite_path=database,
+            )
+            task = TaskRecord(
+                task_id="DIR-DIRECTOR-AMBIGUOUS",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-director-ambiguous",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Create one bounded plan",
+                ),
+            )
+            store = TaskStore(database)
+            store.create(task)
+            director = AmbiguousDirector()
+            engine = OrchestrationEngine(settings, store)
+            engine.director = director
+
+            await engine.run(task.task_id)
+            await OrchestrationEngine(settings, TaskStore(database)).run(task.task_id)
+
+            stored = TaskStore(database).get(task.task_id)
+            self.assertEqual(director.calls, 1)
+            self.assertEqual(stored.status, TaskStatus.FAILED)
+            self.assertEqual(
+                [item.outcome for item in stored.task_effect_ledger],
+                ["reserved", "ambiguous"],
+            )
+            self.assertEqual(stored.cumulative_estimated_cost_usd, 0.2)
+            self.assertEqual(stored.cumulative_effect_hops, 1)
+
     async def test_interactions_non_success_terminal_states_fail_without_polling(self):
         class NeverPollAdapter:
             async def poll(self, run: ProviderRun) -> ProviderRun:
@@ -176,9 +305,27 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                         review_secret="test-review-secret",
                     )
                     self.artifact = None
+                    self.calls = 0
+                    self.store = SimpleNamespace(
+                        attempt_recovery_state=lambda artifact_id: (
+                            "RECOVERABLE",
+                            None,
+                        )
+                    )
 
                 def process(self, artifact):
+                    self.calls += 1
                     self.artifact = artifact
+                    if self.calls == 1:
+                        return OracleMergeResult(
+                            artifact_id=artifact.artifact_id,
+                            artifact_digest=artifact.digest(),
+                            status=OracleMergeStatus.ERROR,
+                            repository=artifact.repository,
+                            pull_number=artifact.pull_number,
+                            reviewed_sha=artifact.head_sha,
+                            reasons=["Transient exact-SHA evidence read failed"],
+                        )
                     return OracleMergeResult(
                         artifact_id=artifact.artifact_id,
                         artifact_digest=artifact.digest(),
@@ -197,10 +344,51 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
             await engine.run(record.task_id)
 
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertIsNotNone(stopped.oracle_recovery)
+            self.assertTrue(stopped.oracle_recovery.retryable)
+            apply_oracle_recovery(
+                stopped,
+                OracleRecoveryApproval(
+                    owner_user_id="U0B9UJ86D27",
+                    decision_digest=stopped.oracle_recovery.decision_digest,
+                    action="retry_recoverable",
+                    note="Retry the unchanged recoverable exact-SHA artifact",
+                ),
+                oracle_attempt_status="RECOVERABLE",
+            )
+            store.save(stopped)
+
+            class NoSecondReview:
+                async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                    raise AssertionError("Oracle recovery must reuse the accepted exact-run review")
+
+            engine.director = NoSecondReview()
+            await engine.run(record.task_id)
+
             completed = store.get(record.task_id)
             self.assertEqual(completed.status, TaskStatus.DONE)
+            self.assertEqual(merge_service.calls, 2)
             self.assertEqual(merge_service.artifact.reviewer_provider, "cursor")
             self.assertTrue(merge_service.artifact.signature_is_valid("test-review-secret"))
+            self.assertEqual(
+                [
+                    (item.kind, item.outcome)
+                    for item in completed.task_effect_ledger
+                    if item.effect_key
+                    == next(
+                        effect.effect_key
+                        for effect in completed.task_effect_ledger
+                        if effect.kind == "oracle_merge_intent"
+                    )
+                ],
+                [
+                    ("oracle_merge_intent", "reserved"),
+                    ("oracle_merge_observation", "stopped"),
+                    ("oracle_merge_observation", "merged"),
+                ],
+            )
 
     async def test_manual_handoff_stays_eligible_for_the_next_assignment(self):
         """An owner-recovered ordinary handoff is not an exact-SHA review artifact.

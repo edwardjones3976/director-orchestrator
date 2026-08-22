@@ -349,6 +349,84 @@ class ProviderContactAttempt(BaseModel):
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class TaskEffectEvidence(BaseModel):
+    """Immutable, compact evidence for a paid or externally effective run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    effect_digest: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    effect_key: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    kind: Literal[
+        "provider_intent",
+        "provider_observation",
+        "director_intent",
+        "director_observation",
+        "slack_intent",
+        "slack_observation",
+        "oracle_merge_intent",
+        "oracle_merge_observation",
+    ]
+    phase: Literal[
+        "dispatch",
+        "revision",
+        "plan",
+        "acceptance_review",
+        "debate_synthesis",
+        "slack_delivery",
+        "oracle_merge",
+    ]
+    outcome: Literal[
+        "reserved",
+        "submitted",
+        "failed_pre_submit",
+        "ambiguous",
+        "completed",
+        "delivered",
+        "merged",
+        "stopped",
+    ]
+    plan_generation: int = Field(ge=0)
+    assignment_sequence: int | None = Field(default=None, ge=1, le=20)
+    assignment_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    provider: ProviderName | None = None
+    attempt: int = Field(default=1, ge=1, le=10)
+    run_id: str | None = Field(default=None, min_length=1, max_length=255)
+    estimated_cost_usd: float = Field(default=0, ge=0, le=1_000)
+    hop_units: int = Field(default=0, ge=0, le=10)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class OracleRecoveryState(BaseModel):
+    """Exact-bound owner recovery state for a stopped Oracle merge attempt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal[
+        "artifact_authentication_failed",
+        "automerge_runtime_failed",
+        "merge_policy_stopped",
+    ]
+    plan_generation: int = Field(ge=0)
+    assignment_sequence: int = Field(ge=1, le=20)
+    provider_run_id: str = Field(min_length=1, max_length=255)
+    provider_run_digest: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    evidence_digest: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    artifact_id: str | None = Field(default=None, min_length=1, max_length=255)
+    retry_not_before: datetime | None = None
+    ordinal: int = Field(default=1, ge=1, le=3)
+    decision_digest: str = Field(
+        min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$"
+    )
+    retryable: bool = False
+    approved: bool = False
+
+
 class TaskRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -361,6 +439,18 @@ class TaskRecord(BaseModel):
     plan_generation: int = Field(default=0, ge=0)
     provider_runs: list[ProviderRun] = Field(default_factory=list)
     assignment_outcomes: list[AssignmentOutcome] = Field(default_factory=list)
+    provider_run_history: list[ProviderRun] = Field(default_factory=list, max_length=200)
+    assignment_outcome_history: list[AssignmentOutcome] = Field(
+        default_factory=list, max_length=200
+    )
+    provider_contact_attempt_history: list[ProviderContactAttempt] = Field(
+        default_factory=list, max_length=200
+    )
+    task_effect_ledger: list[TaskEffectEvidence] = Field(
+        default_factory=list, max_length=200
+    )
+    cumulative_estimated_cost_usd: float = Field(default=0, ge=0, le=100_000)
+    cumulative_effect_hops: int = Field(default=0, ge=0, le=10_000)
     review_handoff_digests: dict[int, str] = Field(default_factory=dict)
     provider_contact_attempts: list[ProviderContactAttempt] = Field(default_factory=list, max_length=200)
     unavailable_providers: list[ProviderName] = Field(default_factory=list)
@@ -375,6 +465,7 @@ class TaskRecord(BaseModel):
     debate_tally: dict[str, Any] | None = None
     debate_synthesis: DebateSynthesis | None = None
     review: ReviewDecision | None = None
+    oracle_recovery: OracleRecoveryState | None = None
     next_assignment_index: int = Field(default=0, ge=0, le=20)
     revision_count: int = 0
     # Approval that the plan as a whole may proceed. Does not by itself clear
@@ -406,6 +497,12 @@ class OwnerApproval(BaseModel):
         max_length=71,
         pattern=r"^sha256:[0-9a-f]{64}$",
     )
+    retry_decision_digest: str | None = Field(
+        default=None,
+        min_length=71,
+        max_length=71,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
     # The assignment the owner was actually shown. Slack approval buttons persist
     # in the channel, so an old button must not approve whatever assignment
     # happens to be pending now. None means "whatever is pending", which is only
@@ -420,12 +517,27 @@ class OwnerApproval(BaseModel):
                 raise ValueError("Slack button approval requires an exact decision digest")
             if note != "Approved from Slack":
                 raise ValueError("Slack button approval must use the generated button note")
+            if self.retry_decision_digest is not None:
+                raise ValueError("Slack approval buttons cannot authorize failed retries")
         else:
             if self.decision_digest is not None:
                 raise ValueError("Only a Slack button may carry a decision digest")
             if note == "Approved from Slack":
                 raise ValueError("Unbound legacy Slack button approval is not accepted")
+        if self.retry_decision_digest is not None and self.assignment_sequence is None:
+            raise ValueError("Failed retry digest requires an assignment sequence")
         return self
+
+
+class OracleRecoveryApproval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    owner_user_id: str = Field(min_length=1, max_length=64)
+    decision_digest: str = Field(
+        min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$"
+    )
+    action: Literal["retry_recoverable", "replan_with_remediation", "cancel"]
+    note: str = Field(min_length=3, max_length=2_000)
 
 
 class AmbiguousDispatchResolution(BaseModel):

@@ -118,6 +118,15 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
     openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "medium")
+    # Explicit accounting estimates for Director calls. Defaults preserve the
+    # existing deployment budget while allowing operators to reserve a
+    # conservative amount for every planning/review call.
+    openai_plan_estimated_cost_usd: float = _float(
+        "OPENAI_PLAN_ESTIMATED_COST_USD", 0.0
+    )
+    openai_review_estimated_cost_usd: float = _float(
+        "OPENAI_REVIEW_ESTIMATED_COST_USD", 0.0
+    )
 
     cursor_api_key: str = os.getenv("CURSOR_API_KEY", "")
     cursor_api_base: str = os.getenv("CURSOR_API_BASE", "https://api.cursor.com")

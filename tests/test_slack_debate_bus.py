@@ -266,6 +266,25 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     for turn in completed.collaboration_turns
                 )
             )
+            self.assertEqual(
+                [
+                    item.kind
+                    for item in completed.task_effect_ledger
+                    if item.phase == "acceptance_review"
+                ],
+                ["director_intent", "director_observation"],
+            )
+            self.assertGreaterEqual(
+                len(
+                    [
+                        item
+                        for item in completed.task_effect_ledger
+                        if item.phase == "slack_delivery"
+                        and item.outcome == "delivered"
+                    ]
+                ),
+                1,
+            )
             post_count = len(notifier.posts)
             await engine.run(task.task_id)
             self.assertEqual(len(notifier.posts), post_count)
@@ -331,6 +350,56 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(set(notifier.attempt_ids)), 1)
             self.assertEqual(len(persisted.collaboration_delivery_errors), 2)
             self.assertFalse(persisted.collaboration_fallback_active)
+            self.assertEqual(
+                [
+                    item.kind
+                    for item in persisted.task_effect_ledger
+                    if item.phase == "slack_delivery"
+                ],
+                ["slack_intent", "slack_observation"],
+            )
+
+    async def test_delivered_slack_effect_replays_from_ledger_without_second_post(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                slack_bot_token="test-slack",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-SLACK-LEDGER-REPLAY",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-slack-ledger-replay",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Record one delivery",
+                ),
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            notifier = RecordingNotifier()
+            engine = OrchestrationEngine(settings, store)
+            engine.notifier = notifier
+            client_id = engine._slack_client_id(task.task_id, "stable-status")
+
+            first = await engine._deliver_collaboration_message(
+                task, "one safe status", client_msg_id=client_id
+            )
+            restarted_record = TaskStore(settings.sqlite_path).get(task.task_id)
+            second_engine = OrchestrationEngine(settings, TaskStore(settings.sqlite_path))
+            second_engine.notifier = notifier
+            second = await second_engine._deliver_collaboration_message(
+                restarted_record, "one safe status", client_msg_id=client_id
+            )
+
+            self.assertEqual(first, second)
+            self.assertEqual(len(notifier.posts), 1)
+            self.assertEqual(
+                [item.outcome for item in restarted_record.task_effect_ledger],
+                ["reserved", "delivered"],
+            )
 
     async def test_three_slack_failures_fall_back_without_repeating_paid_work(self):
         class CountingDirector:
@@ -497,6 +566,18 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('"dependency_outcomes": []', cursor.contexts[0])
             self.assertIn('"assignment_sequence": 1', claude.contexts[1])
             self.assertIn('"assignment_sequence": 2', claude.contexts[1])
+            self.assertEqual(
+                [
+                    (item.kind, item.outcome)
+                    for item in completed.task_effect_ledger
+                    if item.phase == "debate_synthesis"
+                ],
+                [
+                    ("director_intent", "reserved"),
+                    ("director_observation", "completed"),
+                ],
+            )
+            self.assertGreaterEqual(completed.cumulative_effect_hops, 9)
 
     async def test_material_tie_stops_for_owner_and_never_authorizes_action(self):
         with tempfile.TemporaryDirectory() as directory:
