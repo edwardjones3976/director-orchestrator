@@ -7,7 +7,7 @@ import threading
 import unittest
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from director_orchestrator.config import Settings
@@ -17,6 +17,10 @@ from director_orchestrator.oracle_merge import (
     OracleCheckRun,
     OracleGitHubMerge,
     OracleMergePolicy,
+    OracleMergeClaim,
+    OracleMergeClaimExpired,
+    OracleMergeInProgress,
+    OracleMergeResult,
     OracleMergeService,
     OracleMergeStatus,
     OracleMergeStore,
@@ -210,6 +214,100 @@ class OracleMergeGateTests(unittest.TestCase):
             github,
             sleep=self.sleeps.append,
         )
+
+    def test_live_merge_claim_is_observer_only_and_expiry_is_terminal(self):
+        artifact = self.artifact()
+        first_store = OracleMergeStore(self.database)
+        second_store = OracleMergeStore(self.database)
+
+        claim = first_store.claim(artifact, lease_seconds=120)
+        self.assertIsInstance(claim, OracleMergeClaim)
+        with self.assertRaises(OracleMergeInProgress):
+            second_store.claim(artifact, lease_seconds=120)
+
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute(
+                "UPDATE oracle_merge_attempts SET claim_lease_until = ? "
+                "WHERE artifact_id = ?",
+                (
+                    (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                    artifact.artifact_id,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        with self.assertRaises(OracleMergeClaimExpired):
+            second_store.claim(artifact, lease_seconds=120)
+        self.assertEqual(first_store.attempt_status(artifact.artifact_id), "AMBIGUOUS")
+        with self.assertRaises(OracleMergeClaimExpired):
+            first_store.renew_claim(
+                artifact.artifact_id, claim.token, lease_seconds=120
+            )
+        self.assertEqual(
+            [item["event_type"] for item in first_store.audit_events(artifact.artifact_id)],
+            ["review_artifact_reserved", "merge_evaluation_claim_expired"],
+        )
+
+    def test_claim_token_guards_release_rearm_and_completion(self):
+        artifact = self.artifact()
+        store = OracleMergeStore(self.database)
+        first = store.claim(artifact, lease_seconds=120)
+        self.assertIsInstance(first, OracleMergeClaim)
+        retryable = OracleMergeResult(
+            artifact_id=artifact.artifact_id,
+            artifact_digest=artifact.digest(),
+            status=OracleMergeStatus.ERROR,
+            repository=artifact.repository,
+            pull_number=artifact.pull_number,
+            reviewed_sha=artifact.head_sha,
+            reasons=["bounded transient read failure"],
+        )
+        store.release(retryable, claim_token=first.token)
+        second = store.claim(artifact, lease_seconds=120)
+        self.assertIsInstance(second, OracleMergeClaim)
+        terminal = retryable.model_copy(update={"reasons": ["terminal"]})
+
+        with self.assertRaises(OracleMergeClaimExpired):
+            store.complete(terminal, claim_token=first.token)
+        stored = store.complete(terminal, claim_token=second.token)
+        self.assertEqual(stored.reasons, ["terminal"])
+        replay = store.claim(artifact, lease_seconds=120)
+        self.assertIsInstance(replay, OracleMergeResult)
+        self.assertEqual(replay.reasons, ["terminal"])
+
+    def test_service_does_not_touch_github_for_live_or_expired_claim(self):
+        artifact = self.artifact()
+        store = OracleMergeStore(self.database)
+        store.claim(artifact, lease_seconds=120)
+        github = FakeGitHub(self.snapshot())
+        service = self.service(github, store=store)
+
+        with self.assertRaises(OracleMergeInProgress):
+            service.process(artifact)
+        self.assertEqual(github.snapshot_calls, 0)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertEqual(github.merge_calls, 0)
+
+        connection = sqlite3.connect(self.database)
+        try:
+            connection.execute(
+                "UPDATE oracle_merge_attempts SET claim_lease_until = ? "
+                "WHERE artifact_id = ?",
+                (
+                    (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                    artifact.artifact_id,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        with self.assertRaises(OracleMergeClaimExpired):
+            service.process(artifact)
+        self.assertEqual(github.snapshot_calls, 0)
+        self.assertEqual(github.ready_calls, 0)
+        self.assertEqual(github.merge_calls, 0)
 
     def callback_record(self, *, include_exact_shas: bool = True) -> TaskRecord:
         review_context = "Independently review the Oracle PR"

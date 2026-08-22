@@ -80,6 +80,11 @@ function Set-DotEnvValue {
 
 $envText = Get-Content ".env" -Raw
 $envText = $envText -replace 'ORCHESTRATOR_SHARED_SECRET=REPLACE_WITH_RANDOM_SECRET', ("ORCHESTRATOR_SHARED_SECRET=" + (New-RandomSecret))
+if ($envText -notmatch '(?m)^SLACK_GATEWAY_SECRET=') {
+    $envText = $envText.TrimEnd() + "`r`nSLACK_GATEWAY_SECRET=" + (New-RandomSecret) + "`r`n"
+} else {
+    $envText = $envText -replace 'SLACK_GATEWAY_SECRET=REPLACE_WITH_DISTINCT_RANDOM_SECRET', ("SLACK_GATEWAY_SECRET=" + (New-RandomSecret))
+}
 $envText = $envText -replace 'N8N_ENCRYPTION_KEY=REPLACE_WITH_RANDOM_SECRET', ("N8N_ENCRYPTION_KEY=" + (New-RandomSecret))
 $envText = $envText -replace 'N8N_POSTGRES_PASSWORD=REPLACE_WITH_RANDOM_SECRET', ("N8N_POSTGRES_PASSWORD=" + (New-RandomSecret))
 $envText = Set-DotEnvValue -Text $envText -Name "ALLOW_PAID_RUNS" -Value "false"
