@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -70,6 +71,10 @@ _FORBIDDEN_NAMES = {
     "requirements.lock.txt",
     "uv.lock",
 }
+# Environment files are deliberately absent: a literal ".env" carries no
+# PurePosixPath suffix, so listing ".env" here only ever classified secondary
+# files such as "production.env". Both now fall through to "envelope_only" so
+# secret-bearing environment files are never asked to carry inline tags.
 _INLINE_SUFFIXES = {
     ".c",
     ".cc",
@@ -77,7 +82,6 @@ _INLINE_SUFFIXES = {
     ".conf",
     ".cpp",
     ".css",
-    ".env",
     ".example",
     ".go",
     ".h",
@@ -243,10 +247,21 @@ def validate_inline_contribution_tags(
     )
     opening_index = 0
     if PurePosixPath(path).suffix.lower() in {".md", ".mdc"} and nonblank[0].strip() == "---":
-        try:
-            opening_index = nonblank.index("---", 1) + 1
-        except ValueError:
-            return [f"{path}: Cursor rule frontmatter is not closed"]
+        # Treat the opening rule as frontmatter only when a closing rule exists:
+        # a lone leading "---" is a horizontal rule, not an unterminated header.
+        # Compare stripped lines so a closing rule carrying trailing whitespace
+        # still terminates the block. When no closing rule is present the tag
+        # requirement below reports the missing BEGIN boundary instead.
+        closing_index = next(
+            (
+                index
+                for index in range(1, len(nonblank))
+                if nonblank[index].strip() == "---"
+            ),
+            None,
+        )
+        if closing_index is not None:
+            opening_index = closing_index + 1
     while opening_index < len(nonblank) and nonblank[opening_index].strip().lower().startswith(
         reserved_prefixes
     ):
@@ -291,3 +306,4 @@ def validate_inline_contribution_tags(
             )
     return errors
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]

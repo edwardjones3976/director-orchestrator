@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from director_orchestrator.contribution_tags import (
 
 
 ZERO_SHA = "0" * 40
+GITLINK_MODE = "160000"
 
 
 def _git(*args: str, binary: bool = False) -> str | bytes:
@@ -60,6 +62,16 @@ def _content_at(head: str, path: str) -> bytes:
     value = _git("show", f"{head}:{path}", binary=True)
     assert isinstance(value, bytes)
     return value
+
+
+def _tree_mode(head: str, path: str) -> str | None:
+    """Return the tree mode for a path, or None when it cannot be resolved."""
+
+    try:
+        entry = str(_git("ls-tree", head, "--", path))
+    except (subprocess.CalledProcessError, UnicodeEncodeError, OSError):
+        return None
+    return entry.split(" ", 1)[0] if entry.strip() else None
 
 
 def _added_lines(base: str, head: str, path: str) -> list[str]:
@@ -161,8 +173,20 @@ def main() -> int:
     for status, path in changed_paths(base, args.head):
         if status.startswith("D"):
             continue
+        if _tree_mode(args.head, path) == GITLINK_MODE:
+            # Submodule pointers carry no taggable content of their own; the
+            # enclosing submission envelope records the change.
+            continue
         policy = contribution_tag_policy(path)
-        content = _content_at(args.head, path)
+        try:
+            content = _content_at(args.head, path)
+        except (subprocess.CalledProcessError, UnicodeEncodeError, OSError):
+            # Report an unreadable path instead of aborting the whole check with
+            # a traceback that hides every other finding in the range.
+            errors.append(
+                f"{path}: contribution validator could not read this path at the head commit"
+            )
+            continue
         if b"\0" in content:
             forbidden.append(path)
             continue
@@ -198,3 +222,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
