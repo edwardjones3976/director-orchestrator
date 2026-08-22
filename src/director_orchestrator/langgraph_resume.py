@@ -1,5 +1,6 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:19 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:24 UTC | CHANGE]]
 """Authority-neutral LangGraph pause and resume proof.
 
 The graph in this module is deliberately incapable of authorizing work.  It
@@ -533,6 +534,10 @@ class LangGraphResumeRuntime:
 
         if not handle.callback_run_id_digest:
             raise ResumeRejected("callback resume lacks its exact run binding")
+        if record.status in {TaskStatus.DONE, TaskStatus.BLOCKED, TaskStatus.FAILED}:
+            raise ResumeRejected(
+                "legacy task is terminal and cannot resume a provider callback"
+            )
         pending = pending_assignment(record)
         if pending is None or pending.sequence != assignment.sequence:
             raise ResumeRejected(

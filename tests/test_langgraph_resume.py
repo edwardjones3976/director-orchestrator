@@ -1,6 +1,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:19 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:24 UTC | CHANGE]]
 from __future__ import annotations
 
 import sqlite3
@@ -258,7 +259,7 @@ class LangGraphResumeTests(unittest.TestCase):
             ResumeStatus.RESUMED,
         )
         record.next_assignment_index = 1
-        record.status = TaskStatus.DONE
+        record.status = TaskStatus.RUNNING
         before = record.model_dump_json()
 
         result = runtime.resume(record, paused.handle, AUTHORITY_A)
@@ -321,12 +322,65 @@ class LangGraphResumeTests(unittest.TestCase):
             )
         )
         record.next_assignment_index = 1
-        record.status = TaskStatus.DONE
+        record.status = TaskStatus.RUNNING
+        before = runtime._graph.get_state(runtime._config(paused.handle))
 
         result = runtime.resume(record, paused.handle, AUTHORITY_A)
+        after = runtime._graph.get_state(runtime._config(paused.handle))
 
         self.assertEqual(result.status, ResumeStatus.REJECTED)
         self.assertIn("advanced beyond", result.reason)
+        self.assertEqual(after.values, before.values)
+        self.assertEqual(after.next, before.next)
+
+    def test_callback_terminal_states_reject_without_checkpoint_write(self) -> None:
+        for terminal_status in (
+            TaskStatus.DONE,
+            TaskStatus.BLOCKED,
+            TaskStatus.FAILED,
+        ):
+            with self.subTest(status=terminal_status):
+                record = self.record()
+                record.task_id = f"DIR-CALLBACK-{terminal_status.value}"
+                self.add_waiting_callback(record)
+                runtime, connection = self.runtime()
+                paused = runtime.begin(
+                    record,
+                    kind=ResumeKind.PROVIDER_CALLBACK,
+                    assignment_sequence=1,
+                    authority_snapshot_digest=AUTHORITY_A,
+                    callback_run_id="claude-run-1",
+                )
+                assert paused.handle is not None
+                self.assertTrue(
+                    apply_claude_callback(
+                        record,
+                        ClaudeCallback(
+                            run_id="claude-run-1",
+                            status="completed",
+                            result="Authenticated callback result.",
+                        ),
+                    )
+                )
+                record.status = terminal_status
+                connection.commit()
+                before = {
+                    path.name: path.read_bytes()
+                    for path in self.database.parent.glob(self.database.name + "*")
+                    if path.is_file()
+                }
+
+                result = runtime.resume(record, paused.handle, AUTHORITY_A)
+                connection.commit()
+                after = {
+                    path.name: path.read_bytes()
+                    for path in self.database.parent.glob(self.database.name + "*")
+                    if path.is_file()
+                }
+
+                self.assertEqual(result.status, ResumeStatus.REJECTED)
+                self.assertIn("terminal", result.reason)
+                self.assertEqual(after, before)
 
     def test_malformed_external_authority_digest_is_rejected_before_checkpoint(self) -> None:
         record = self.record()
