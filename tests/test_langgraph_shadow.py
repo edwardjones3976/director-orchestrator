@@ -5,6 +5,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:51 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:19 UTC | CHANGE]]
 from __future__ import annotations
 
 import json
@@ -115,6 +116,31 @@ class LangGraphShadowTests(unittest.TestCase):
         self.assertNotIn("provider", first.model_dump())
         self.assertNotIn("prompt", first.model_dump())
         self.assertNotIn("artifact", first.model_dump())
+
+    def test_repeated_same_thread_runs_do_not_accumulate_visited_nodes(self):
+        snapshot = ShadowTaskSnapshot(
+            task_id="DIR-BOUNDED-VISITS",
+            status=TaskStatus.RUNNING,
+        )
+        saver = InMemorySaver()
+        config = checkpoint_config(snapshot.task_id, namespace="bounded-visits")
+        graph = build_shadow_graph(checkpointer=saver)
+
+        for _ in range(100):
+            report = comparison_report(graph.invoke(snapshot.graph_input(), config=config))
+            self.assertEqual(
+                report.visited_nodes,
+                (
+                    "observe_legacy_status",
+                    "policy_projection",
+                    "approval_projection",
+                    "status_running",
+                    "compare_with_legacy",
+                ),
+            )
+
+        checkpoint = saver.get_tuple(config).checkpoint["channel_values"]
+        self.assertEqual(len(checkpoint["visited_nodes"]), 5)
 
     def test_invalid_graph_inputs_fail_before_status_routing(self):
         valid = ShadowTaskSnapshot(task_id="DIR-VALID", status=TaskStatus.QUEUED).graph_input()

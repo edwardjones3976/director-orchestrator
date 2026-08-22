@@ -1,5 +1,6 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:19 UTC | CHANGE]]
 from __future__ import annotations
 
 import sqlite3
@@ -241,6 +242,92 @@ class LangGraphResumeTests(unittest.TestCase):
         self.assertEqual(stale.status, ResumeStatus.REJECTED)
         self.assertIn("stale", stale.reason)
 
+    def test_approved_resume_rejects_after_legacy_task_advances(self) -> None:
+        record = self.record()
+        runtime, _ = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.ASSIGNMENT_APPROVAL,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+        )
+        assert paused.handle is not None
+        self.approve(record)
+        self.assertEqual(
+            runtime.resume(record, paused.handle, AUTHORITY_A).status,
+            ResumeStatus.RESUMED,
+        )
+        record.next_assignment_index = 1
+        record.status = TaskStatus.DONE
+        before = record.model_dump_json()
+
+        result = runtime.resume(record, paused.handle, AUTHORITY_A)
+        replayed_begin = runtime.begin(
+            record,
+            kind=ResumeKind.ASSIGNMENT_APPROVAL,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+        )
+
+        self.assertEqual(result.status, ResumeStatus.REJECTED)
+        self.assertEqual(replayed_begin.status, ResumeStatus.REJECTED)
+        self.assertIn("advanced beyond", result.reason)
+        self.assertEqual(record.model_dump_json(), before)
+        snapshot = runtime._graph.get_state(runtime._config(paused.handle))
+        self.assertEqual(snapshot.next, ())
+
+    def test_prepared_approval_rejects_when_legacy_advances_before_commit(self) -> None:
+        record = self.record()
+        runtime, _ = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.ASSIGNMENT_APPROVAL,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+        )
+        assert paused.handle is not None
+        self.approve(record)
+        prepared = runtime.prepare_resume(record, paused.handle, AUTHORITY_A)
+        record.next_assignment_index = 1
+        record.status = TaskStatus.DONE
+
+        result = runtime.commit_resume(record, prepared, AUTHORITY_A)
+
+        self.assertEqual(result.status, ResumeStatus.REJECTED)
+        self.assertIn("advanced beyond", result.reason)
+        snapshot = runtime._graph.get_state(runtime._config(paused.handle))
+        self.assertEqual(snapshot.next, ("pause",))
+
+    def test_callback_resume_rejects_after_legacy_task_advances(self) -> None:
+        record = self.record()
+        self.add_waiting_callback(record)
+        runtime, _ = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.PROVIDER_CALLBACK,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+            callback_run_id="claude-run-1",
+        )
+        assert paused.handle is not None
+        self.assertTrue(
+            apply_claude_callback(
+                record,
+                ClaudeCallback(
+                    run_id="claude-run-1",
+                    status="completed",
+                    result="Authenticated callback result.",
+                ),
+            )
+        )
+        record.next_assignment_index = 1
+        record.status = TaskStatus.DONE
+
+        result = runtime.resume(record, paused.handle, AUTHORITY_A)
+
+        self.assertEqual(result.status, ResumeStatus.REJECTED)
+        self.assertIn("advanced beyond", result.reason)
+
     def test_malformed_external_authority_digest_is_rejected_before_checkpoint(self) -> None:
         record = self.record()
         runtime, connection = self.runtime()
@@ -297,7 +384,7 @@ class LangGraphResumeTests(unittest.TestCase):
         result = runtime.resume(record, first.handle, AUTHORITY_A)
 
         self.assertEqual(result.status, ResumeStatus.REJECTED)
-        self.assertIn("assignment_is_approved", result.reason)
+        self.assertIn("advanced beyond", result.reason)
 
     def test_duplicate_approval_resume_is_idempotent(self) -> None:
         record = self.record()

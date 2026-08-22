@@ -1,4 +1,5 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:19 UTC | CHANGE]]
 """Authority-neutral LangGraph pause and resume proof.
 
 The graph in this module is deliberately incapable of authorizing work.  It
@@ -28,9 +29,13 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
-from .approvals import assignment_approval_digest, assignment_is_approved
+from .approvals import (
+    assignment_approval_digest,
+    assignment_is_approved,
+    pending_assignment,
+)
 from .config import _paths_are_isolated, langgraph_resume_claim_path
-from .models import Assignment, ProviderName, ProviderRun, TaskRecord
+from .models import Assignment, ProviderName, ProviderRun, TaskRecord, TaskStatus
 
 
 GRAPH_VERSION = "director-shadow-resume.v1"
@@ -504,6 +509,15 @@ class LangGraphResumeRuntime:
     ) -> str:
         assignment = _find_assignment(record, handle.assignment_sequence)
         if handle.kind == ResumeKind.ASSIGNMENT_APPROVAL:
+            pending = pending_assignment(record)
+            if (
+                record.status != TaskStatus.OWNER_DECISION_REQUIRED
+                or pending is None
+                or pending.sequence != assignment.sequence
+            ):
+                raise ResumeRejected(
+                    "legacy task has advanced beyond this assignment approval stop"
+                )
             if not assignment_is_approved(record, assignment):
                 raise ResumeRejected(
                     "legacy assignment_is_approved rejected this exact assignment"
@@ -519,6 +533,11 @@ class LangGraphResumeRuntime:
 
         if not handle.callback_run_id_digest:
             raise ResumeRejected("callback resume lacks its exact run binding")
+        pending = pending_assignment(record)
+        if pending is None or pending.sequence != assignment.sequence:
+            raise ResumeRejected(
+                "legacy task has advanced beyond this provider callback stop"
+            )
         run = _find_callback_run(
             record,
             assignment_sequence=assignment.sequence,

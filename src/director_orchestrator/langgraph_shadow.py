@@ -5,6 +5,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:51 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 23:19 UTC | CHANGE]]
 """Provider-neutral LangGraph shadow of the legacy task-status lifecycle.
 
 This module deliberately has no provider adapter, store, Slack, GitHub, or other
@@ -16,7 +17,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import operator
 import re
 from enum import StrEnum
 from types import MappingProxyType
@@ -41,6 +41,7 @@ from director_orchestrator.policy import execution_policy_errors
 SHADOW_SCHEMA_VERSION = "director-shadow/v1"
 PLAN_SHAPE_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 POLICY_ERROR_CODE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
+MAX_VISITED_NODES = 8
 PolicyErrorCode = Annotated[
     str,
     StringConstraints(
@@ -147,7 +148,7 @@ class ShadowGraphState(TypedDict, total=False):
     statuses_agree: bool
     classifications_agree: bool
     differences: tuple[str, ...]
-    visited_nodes: Annotated[list[str], operator.add]
+    visited_nodes: list[str]
 
 
 class ShadowTaskSnapshot(BaseModel):
@@ -530,11 +531,20 @@ def _validate_observation(state: ShadowGraphState) -> ShadowGraphState:
     return {"visited_nodes": ["observe_legacy_status"]}
 
 
+def _visit(state: ShadowGraphState, node_name: str) -> list[str]:
+    """Append one compact trace step without accumulating across new invocations."""
+
+    prior = state.get("visited_nodes", [])
+    if not isinstance(prior, list) or any(not isinstance(item, str) for item in prior):
+        raise ValueError("visited_nodes must contain compact node names")
+    return [*prior, node_name][-MAX_VISITED_NODES:]
+
+
 def _project_policy(state: ShadowGraphState) -> ShadowGraphState:
     policy_blocked = state["policy_blocked"]
     projected: ShadowGraphState = {
         "policy_blocked": policy_blocked,
-        "visited_nodes": ["policy_projection"],
+        "visited_nodes": _visit(state, "policy_projection"),
     }
     if policy_blocked:
         projected["shadow_status"] = TaskStatus.BLOCKED.value
@@ -568,7 +578,7 @@ def _project_approval(state: ShadowGraphState) -> ShadowGraphState:
         "assignment_gate_pending": assignment_gate_pending,
         "shadow_approval_required": shadow_approval_required,
         "shadow_status": shadow_status.value,
-        "visited_nodes": ["approval_projection"],
+        "visited_nodes": _visit(state, "approval_projection"),
     }
 
 
@@ -584,7 +594,7 @@ def _status_node(status: TaskStatus):
             "shadow_status": status.value,
             "shadow_classification": classify_status(status).value,
             "shadow_is_terminal": status in TERMINAL_STATUSES,
-            "visited_nodes": [node_name],
+            "visited_nodes": _visit(_state, node_name),
         }
 
     observe_status.__name__ = node_name
@@ -636,7 +646,7 @@ def _compare_with_legacy(state: ShadowGraphState) -> ShadowGraphState:
         "statuses_agree": legacy_status == shadow_status,
         "classifications_agree": legacy_classification == shadow_classification,
         "differences": tuple(differences),
-        "visited_nodes": ["compare_with_legacy"],
+        "visited_nodes": _visit(state, "compare_with_legacy"),
     }
 
 
