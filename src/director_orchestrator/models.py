@@ -18,6 +18,12 @@ class TaskStatus(StrEnum):
     OWNER_DECISION_REQUIRED = "OWNER_DECISION_REQUIRED"
 
 
+class OwnerApprovalSource(StrEnum):
+    API = "api"
+    SLACK_COMMAND = "slack_command"
+    SLACK_BUTTON = "slack_button"
+
+
 class RiskLevel(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
@@ -350,6 +356,9 @@ class TaskRecord(BaseModel):
     status: TaskStatus
     intake: SlackIntake
     plan: DirectorPlan | None = None
+    # Monotonically increases whenever the engine installs a newly generated
+    # plan. Slack approval buttons bind to this generation and the plan digest.
+    plan_generation: int = Field(default=0, ge=0)
     provider_runs: list[ProviderRun] = Field(default_factory=list)
     assignment_outcomes: list[AssignmentOutcome] = Field(default_factory=list)
     review_handoff_digests: dict[int, str] = Field(default_factory=dict)
@@ -390,11 +399,33 @@ class OwnerApproval(BaseModel):
 
     owner_user_id: str
     note: str = Field(default="Approved", max_length=2_000)
+    source: OwnerApprovalSource = OwnerApprovalSource.API
+    decision_digest: str | None = Field(
+        default=None,
+        min_length=71,
+        max_length=71,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
     # The assignment the owner was actually shown. Slack approval buttons persist
     # in the channel, so an old button must not approve whatever assignment
     # happens to be pending now. None means "whatever is pending", which is only
     # safe for an approval the owner types fresh, such as the slash command.
     assignment_sequence: int | None = Field(default=None, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_source_binding(self) -> OwnerApproval:
+        note = self.note.strip()
+        if self.source == OwnerApprovalSource.SLACK_BUTTON:
+            if self.decision_digest is None:
+                raise ValueError("Slack button approval requires an exact decision digest")
+            if note != "Approved from Slack":
+                raise ValueError("Slack button approval must use the generated button note")
+        else:
+            if self.decision_digest is not None:
+                raise ValueError("Only a Slack button may carry a decision digest")
+            if note == "Approved from Slack":
+                raise ValueError("Unbound legacy Slack button approval is not accepted")
+        return self
 
 
 class AmbiguousDispatchResolution(BaseModel):

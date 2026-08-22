@@ -12,7 +12,11 @@ import httpx
 
 from .config import Settings
 from .director import OpenAIDirector
-from .approvals import assignment_is_approved, unresolved_ambiguous_dispatch
+from .approvals import (
+    approval_button_value,
+    assignment_is_approved,
+    unresolved_ambiguous_dispatch,
+)
 from .models import (
     Assignment,
     AssignmentOutcome,
@@ -81,9 +85,9 @@ class SlackNotifier:
         if client_msg_id:
             body["client_msg_id"] = client_msg_id
         if approvable:
-            # Carry the assignment this button was rendered for, so a button left
-            # sitting in the channel cannot approve a later gated assignment.
-            value = record.task_id if approval_sequence is None else f"{record.task_id}|{approval_sequence}"
+            # Bind the button to the exact current decision, plan generation, and
+            # assignment scope. Sequence numbers alone are reusable after replanning.
+            value = approval_button_value(record, approval_sequence)
             approval_summary = message
             query_block: list[dict] = []
             if approval_query is not None:
@@ -167,6 +171,7 @@ class OrchestrationEngine:
                 return
             if not self.settings.allow_paid_runs:
                 record.plan = preview_plan(record.intake.text, self.settings)
+                record.plan_generation += 1
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = "Dry-run plan created. Live provider execution remains disabled."
                 self.store.save(record)
@@ -183,6 +188,7 @@ class OrchestrationEngine:
                 self.store.save(record)
                 plan = await self.director.plan(record)
                 record.plan = enforce_plan(plan, record.intake.text, self.settings)
+                record.plan_generation += 1
             policy_errors = execution_policy_errors(record.plan, self.settings)
             if policy_errors:
                 record.status = TaskStatus.BLOCKED

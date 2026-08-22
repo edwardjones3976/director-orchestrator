@@ -10,6 +10,7 @@ import httpx
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+from .approvals import parse_approval_button_value
 from .config import Settings
 
 
@@ -109,7 +110,11 @@ def command_handler(ack, command, client, respond):
             response = httpx.post(
                 f"{settings.orchestrator_base_url}/v1/tasks/{task_id}/approve",
                 headers={"Authorization": f"Bearer {settings.shared_secret}"},
-                json={"owner_user_id": command["user_id"], "note": note},
+                json={
+                    "owner_user_id": command["user_id"],
+                    "note": note,
+                    "source": "slack_command",
+                },
                 timeout=20,
             )
             response.raise_for_status()
@@ -145,17 +150,22 @@ def approval_button_handler(ack, body, client):
     ack()
     user_id = body.get("user", {}).get("id")
     channel_id = body.get("channel", {}).get("id")
-    # The button value is "<task_id>" for a plan-level approval, or
-    # "<task_id>|<assignment_sequence>" for an assignment the owner was shown.
-    # Sending the sequence back lets the orchestrator reject a stale button.
-    raw_value = body.get("actions", [{}])[0].get("value", "")
-    task_id, _, raw_sequence = raw_value.partition("|")
-    payload = {"owner_user_id": user_id, "note": "Approved from Slack"}
-    if raw_sequence.isdigit():
-        payload["assignment_sequence"] = int(raw_sequence)
     if user_id != settings.slack_owner_user_id or channel_id != settings.slack_channel_id:
         return
+    task_id = "UNKNOWN"
     try:
+        raw_value = body.get("actions", [{}])[0].get("value", "")
+        task_id, assignment_sequence, decision_digest = parse_approval_button_value(
+            raw_value
+        )
+        payload = {
+            "owner_user_id": user_id,
+            "note": "Approved from Slack",
+            "source": "slack_button",
+            "decision_digest": decision_digest,
+        }
+        if assignment_sequence is not None:
+            payload["assignment_sequence"] = assignment_sequence
         response = httpx.post(
             f"{settings.orchestrator_base_url}/v1/tasks/{task_id}/approve",
             headers={"Authorization": f"Bearer {settings.shared_secret}"},

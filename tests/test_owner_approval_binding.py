@@ -10,6 +10,8 @@ from pydantic import ValidationError
 import director_orchestrator.main as main
 from director_orchestrator.approvals import (
     StaleApproval,
+    approval_button_value,
+    approval_decision_digest,
     apply_ambiguous_dispatch_resolution,
     apply_failed_predispatch_retry,
     apply_owner_approval,
@@ -17,6 +19,9 @@ from director_orchestrator.approvals import (
     assignment_approval_digest,
     assignment_is_approved,
     clarification_required,
+    clarification_source,
+    current_owner_decision,
+    parse_approval_button_value,
     plan_gate_pending,
     reset_for_owner_clarification,
 )
@@ -25,7 +30,9 @@ from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
     DirectorPlan,
+    DebateSynthesis,
     OwnerApproval,
+    OwnerApprovalSource,
     ProviderName,
     ProviderContactAttempt,
     ProviderRun,
@@ -90,6 +97,18 @@ def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int]
     return record
 
 
+def _button_approval(
+    record: TaskRecord, assignment_sequence: int | None = None
+) -> OwnerApproval:
+    return OwnerApproval(
+        owner_user_id="U0B9UJ86D27",
+        note="Approved from Slack",
+        source=OwnerApprovalSource.SLACK_BUTTON,
+        decision_digest=approval_decision_digest(record, assignment_sequence),
+        assignment_sequence=assignment_sequence,
+    )
+
+
 class PlanGateSeparationTests(unittest.TestCase):
     def test_plan_gate_approval_does_not_clear_the_first_assignment(self):
         # The plan prompt lists only approval_reasons -- it never shows what
@@ -126,11 +145,8 @@ class PlanGateSeparationTests(unittest.TestCase):
         self.assertEqual(record.approved_assignments, [1])
 
     def test_plan_approval_button_cannot_be_replayed_as_clarification_or_retry(self):
-        approval = OwnerApproval(
-            owner_user_id="U0B9UJ86D27",
-            note="Approved from Slack",
-        )
         record = _record()
+        approval = _button_approval(record)
 
         apply_owner_approval(record, approval)
         self.assertTrue(record.owner_approved)
@@ -138,7 +154,7 @@ class PlanGateSeparationTests(unittest.TestCase):
         clarification = record.model_copy(deep=True)
         clarification.plan.assignments[0].agent = ProviderName.OWNER
         before_clarification = clarification.model_dump(mode="json")
-        with self.assertRaisesRegex(StaleApproval, "written clarification"):
+        with self.assertRaisesRegex(StaleApproval, "cannot provide written clarification"):
             apply_owner_clarification(clarification, approval)
         self.assertEqual(
             clarification.model_dump(mode="json"), before_clarification
@@ -152,12 +168,36 @@ class PlanGateSeparationTests(unittest.TestCase):
             apply_failed_predispatch_retry(retry, approval)
         self.assertEqual(retry.model_dump(mode="json"), before_retry)
 
+    def test_fresh_slack_command_remains_valid_for_plan_and_assignment_gates(self):
+        record = _record()
+
+        apply_owner_approval(
+            record,
+            OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                note="Approved",
+                source=OwnerApprovalSource.SLACK_COMMAND,
+            ),
+        )
+        self.assertTrue(record.owner_approved)
+        self.assertEqual(record.approved_assignments, [])
+
+        apply_owner_approval(
+            record,
+            OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                note="Approved",
+                source=OwnerApprovalSource.SLACK_COMMAND,
+            ),
+        )
+        self.assertTrue(assignment_is_approved(record, record.plan.assignments[0]))
+
 
 class OwnerApprovalParsingTests(unittest.TestCase):
     def test_unknown_binding_field_is_rejected_by_model_and_http_parser(self):
         payload = {
             "owner_user_id": "U0B9UJ86D27",
-            "note": "Approved from Slack",
+            "note": "Approved",
             "assignment_seq": 1,
         }
         with self.assertRaises(ValidationError):
@@ -183,6 +223,33 @@ class OwnerApprovalParsingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         get_record.assert_not_called()
+
+    def test_button_binding_round_trips_and_legacy_values_fail_closed(self):
+        record = _record()
+        value = approval_button_value(record)
+
+        task_id, sequence, digest = parse_approval_button_value(value)
+
+        self.assertEqual(task_id, record.task_id)
+        self.assertIsNone(sequence)
+        self.assertEqual(digest, approval_decision_digest(record))
+        for legacy in (record.task_id, f"{record.task_id}|1", "v1|DIR-X|1|bad"):
+            with self.subTest(legacy=legacy):
+                with self.assertRaises(StaleApproval):
+                    parse_approval_button_value(legacy)
+
+    def test_button_source_requires_complete_binding_and_legacy_note_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                note="Approved from Slack",
+                source=OwnerApprovalSource.SLACK_BUTTON,
+            )
+        with self.assertRaises(ValidationError):
+            OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                note="Approved from Slack",
+            )
 
 
 class StaleButtonTests(unittest.TestCase):
@@ -214,6 +281,42 @@ class StaleButtonTests(unittest.TestCase):
             apply_owner_approval(
                 record, OwnerApproval(owner_user_id="U0B9UJ86D27", assignment_sequence=2)
             )
+
+    def test_fresh_exact_assignment_button_is_accepted(self):
+        record = _record(owner_approved=True)
+        approval = _button_approval(record, 1)
+
+        apply_owner_approval(record, approval)
+
+        self.assertTrue(assignment_is_approved(record, record.plan.assignments[0]))
+
+    def test_reused_sequence_after_rebuild_rejects_old_button_without_mutation(self):
+        original = _record(owner_approved=True)
+        original.plan_generation = 1
+        stale = _button_approval(original, 1)
+
+        rebuilt = _record(owner_approved=True)
+        rebuilt.plan_generation = 2
+        rebuilt.plan.assignments[0].task = "Different rebuilt assignment scope"
+        before = rebuilt.model_dump(mode="json")
+
+        with self.assertRaisesRegex(StaleApproval, "no longer matches"):
+            apply_owner_approval(rebuilt, stale)
+
+        self.assertEqual(rebuilt.model_dump(mode="json"), before)
+
+    def test_identical_regenerated_plan_rejects_old_plan_button_by_generation(self):
+        original = _record()
+        original.plan_generation = 1
+        stale = _button_approval(original)
+        regenerated = _record()
+        regenerated.plan_generation = 2
+        before = regenerated.model_dump(mode="json")
+
+        with self.assertRaisesRegex(StaleApproval, "no longer matches"):
+            apply_owner_approval(regenerated, stale)
+
+        self.assertEqual(regenerated.model_dump(mode="json"), before)
 
 
 class OwnerClarificationTests(unittest.TestCase):
@@ -270,7 +373,7 @@ class OwnerClarificationTests(unittest.TestCase):
                 OwnerApproval(
                     owner_user_id="U0B9UJ86D27",
                     assignment_sequence=1,
-                    note="Approved from Slack",
+                    note="Answer from an obsolete assignment prompt",
                 ),
             )
 
@@ -279,15 +382,16 @@ class OwnerClarificationTests(unittest.TestCase):
     def test_synthetic_slack_note_cannot_answer_plan_question(self):
         record = self._answered_record()
         before = record.model_dump(mode="json")
+        legacy = OwnerApproval.model_construct(
+            owner_user_id="U0B9UJ86D27",
+            assignment_sequence=None,
+            note="Approved from Slack",
+            source=OwnerApprovalSource.API,
+            decision_digest=None,
+        )
 
         with self.assertRaisesRegex(StaleApproval, "written clarification"):
-            apply_owner_clarification(
-                record,
-                OwnerApproval(
-                    owner_user_id="U0B9UJ86D27",
-                    note="Approved from Slack",
-                ),
-            )
+            apply_owner_clarification(record, legacy)
 
         self.assertEqual(record.model_dump(mode="json"), before)
 
@@ -332,7 +436,7 @@ class OwnerClarificationTests(unittest.TestCase):
                 OwnerApproval(
                     owner_user_id="U0B9UJ86D27",
                     assignment_sequence=2,
-                    note="Approved from Slack",
+                    note="Answer from an obsolete assignment prompt",
                 ),
             )
 
@@ -362,6 +466,93 @@ class OwnerClarificationTests(unittest.TestCase):
         record = _record(owner_approved=True, index=2, approved=[1, 2])
 
         self.assertFalse(clarification_required(record))
+
+    def test_review_owner_stop_routes_written_answer_even_without_owner_question(self):
+        for question in ("Should the implementation change direction?", None):
+            with self.subTest(question=question):
+                record = _record(owner_approved=True, approved=[1])
+                record.review = ReviewDecision(
+                    verdict=ReviewVerdict.OWNER,
+                    summary="Owner judgment is required",
+                    owner_question=question,
+                )
+
+                self.assertEqual(clarification_source(record), "review_clarification")
+                apply_owner_clarification(
+                    record,
+                    OwnerApproval(
+                        owner_user_id="U0B9UJ86D27",
+                        note="Use the conservative implementation path",
+                    ),
+                )
+
+                self.assertIsNone(record.plan)
+                self.assertIn("Use the conservative implementation path", record.intake.text)
+
+    def test_debate_owner_stop_routes_written_answer_with_or_without_question(self):
+        for question in ("Choose A or B?", None):
+            with self.subTest(question=question):
+                record = _record(owner_approved=True, approved=[1])
+                record.review = ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Implementation evidence accepted",
+                )
+                record.debate_tally = {
+                    "configured_weight_total": 6.0,
+                    "cast_weight_total": 6.0,
+                    "option_weights": {"A": 3.0, "B": 3.0},
+                    "abstaining": [],
+                    "unavailable": [],
+                    "winning_options": ["A", "B"],
+                    "resolution": "owner_decision_required",
+                    "authorizes_external_action": False,
+                }
+                record.debate_synthesis = DebateSynthesis(
+                    decision="The weighted evidence is tied",
+                    rationale="Both bounded options have equal support",
+                    dissent=[],
+                    next_action="Ask the owner",
+                    openai_vote_option="A",
+                    confidence=0.5,
+                    owner_question=question,
+                )
+
+                self.assertEqual(clarification_source(record), "debate_clarification")
+                apply_owner_clarification(
+                    record,
+                    OwnerApproval(
+                        owner_user_id="U0B9UJ86D27",
+                        note="Choose option A",
+                    ),
+                )
+
+                self.assertIsNone(record.plan)
+                self.assertIn("Choose option A", record.intake.text)
+
+    def test_malformed_debate_and_manual_completion_stop_are_not_clarifications(self):
+        record = _record(owner_approved=True, approved=[1])
+        record.debate_tally = {"resolution": "owner_decision_required"}
+        record.message = "Untrusted malformed debate output"
+        before = record.model_dump(mode="json")
+
+        self.assertIsNone(current_owner_decision(record))
+        with self.assertRaisesRegex(StaleApproval, "not awaiting"):
+            apply_owner_approval(
+                record,
+                OwnerApproval(owner_user_id="U0B9UJ86D27", note="Approved"),
+            )
+        self.assertEqual(record.model_dump(mode="json"), before)
+
+        manual = _record(owner_approved=True, approved=[1])
+        manual.message = "cursor requires manual completion verification"
+        before_manual = manual.model_dump(mode="json")
+        self.assertIsNone(current_owner_decision(manual))
+        with self.assertRaisesRegex(StaleApproval, "not awaiting"):
+            apply_owner_approval(
+                manual,
+                OwnerApproval(owner_user_id="U0B9UJ86D27", note="Approved"),
+            )
+        self.assertEqual(manual.model_dump(mode="json"), before_manual)
 
 
 class FailedPredispatchRetryTests(unittest.TestCase):
@@ -395,6 +586,8 @@ class FailedPredispatchRetryTests(unittest.TestCase):
                     owner_user_id="U0B9UJ86D27",
                     assignment_sequence=2,
                     note="Approved from Slack",
+                    source=OwnerApprovalSource.SLACK_BUTTON,
+                    decision_digest="sha256:" + "a" * 64,
                 ),
             )
 

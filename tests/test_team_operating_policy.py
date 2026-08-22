@@ -12,7 +12,10 @@ import httpx
 from pydantic import ValidationError
 
 from director_orchestrator.config import Settings
-from director_orchestrator.approvals import assignment_approval_digest
+from director_orchestrator.approvals import (
+    assignment_approval_digest,
+    parse_approval_button_value,
+)
 from director_orchestrator.engine import (
     OrchestrationEngine,
     ProviderUnavailableError,
@@ -788,6 +791,26 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                 user_id="U1",
                 text="DIRECTOR Project: demo Outcome: research",
             ),
+            plan=DirectorPlan(
+                project="demo",
+                normalized_outcome="research",
+                risk_level=RiskLevel.LOW,
+                approval_required=False,
+                approval_reasons=[],
+                max_hops=1,
+                max_revisions=0,
+                assignments=[
+                    Assignment(
+                        sequence=1,
+                        agent=ProviderName.PERPLEXITY,
+                        task="Collect public calibration evidence",
+                        acceptance=["Return cited public evidence"],
+                        public_research_query=query,
+                        requires_approval=True,
+                    )
+                ],
+                final_acceptance=["Evidence is cited"],
+            ),
         )
         message = (
             "*DIR-QUERY-DISPLAY — OWNER DECISION REQUIRED*\n"
@@ -813,6 +836,10 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(blocks[1]["text"]["type"], "plain_text")
         self.assertEqual(blocks[-1]["type"], "actions")
+        value = blocks[-1]["elements"][0]["value"]
+        task_id, sequence, digest = parse_approval_button_value(value)
+        self.assertEqual((task_id, sequence), (record.task_id, 1))
+        self.assertTrue(digest.startswith("sha256:"))
 
 
 class AssignmentBoundaryTests(unittest.TestCase):
