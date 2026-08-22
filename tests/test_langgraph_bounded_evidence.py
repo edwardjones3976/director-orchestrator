@@ -1,6 +1,7 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-22 16:14 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 16:51 UTC | CHANGE]]
 """Bounded evidence derived from real legacy records and deterministic helpers."""
 
 from __future__ import annotations
@@ -336,6 +337,45 @@ class LangGraphBoundedEvidenceTests(unittest.TestCase):
         self.assertTrue(report.approvals_agree)
         self.assertTrue(report.statuses_agree)
         self.assertEqual(report.shadow_status, TaskStatus.OWNER_DECISION_REQUIRED)
+
+    def test_plan_gate_precedes_owner_assignment_then_yields_to_clarification(self):
+        plan = _plan(415, plan_approval=True)
+        plan.assignments = [
+            Assignment(
+                sequence=1,
+                agent=ProviderName.OWNER,
+                task="provide bounded clarification after plan approval",
+                acceptance=["clarification recorded"],
+                requires_approval=True,
+            )
+        ]
+        record = _record(415, status=TaskStatus.OWNER_DECISION_REQUIRED, plan=plan)
+
+        before = run_shadow_comparison(snapshot_from_task_record(record, _settings()))
+
+        self.assertEqual(before.transition_reason_code, ShadowReasonCode.PLAN_APPROVAL_GATE)
+        self.assertTrue(before.plan_gate_pending)
+        self.assertFalse(before.owner_clarification_pending)
+        self.assertTrue(before.legacy_approval_required)
+        self.assertTrue(before.shadow_approval_required)
+        self.assertTrue(before.approvals_agree)
+        self.assertTrue(before.statuses_agree)
+
+        apply_owner_approval(record, OwnerApproval(owner_user_id="U-OWNER"))
+        self.assertTrue(record.owner_approved)
+        self.assertEqual(record.approved_assignments, [])
+
+        after = run_shadow_comparison(snapshot_from_task_record(record, _settings()))
+
+        self.assertEqual(after.transition_reason_code, ShadowReasonCode.OWNER_CLARIFICATION)
+        self.assertFalse(after.plan_gate_pending)
+        self.assertTrue(after.owner_clarification_pending)
+        self.assertFalse(after.pending_assignment_requires_approval)
+        self.assertFalse(after.legacy_approval_required)
+        self.assertFalse(after.shadow_approval_required)
+        self.assertTrue(after.approvals_agree)
+        self.assertTrue(after.statuses_agree)
+        self.assertEqual(after.shadow_status, TaskStatus.OWNER_DECISION_REQUIRED)
 
     def test_more_than_twenty_policy_errors_are_aggregated_without_losing_block(self):
         assignments = [

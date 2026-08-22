@@ -3,6 +3,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:12 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:42 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 16:51 UTC | CHANGE]]
 """Provider-neutral LangGraph shadow of the legacy task-status lifecycle.
 
 This module deliberately has no provider adapter, store, Slack, GitHub, or other
@@ -366,19 +367,20 @@ def snapshot_from_task_record(
     all_policy_error_codes = tuple(sorted(_policy_error_code(error) for error in raw_policy_errors))
     compact_policy_errors = all_policy_error_codes[:20]
     pending = pending_assignment(record)
-    raw_owner_clarification = bool(
-        (record.status == TaskStatus.OWNER_DECISION_REQUIRED and plan is None)
-        or (plan is not None and plan.owner_question is not None)
-        or (pending is not None and pending.agent == ProviderName.OWNER)
-    )
+    owner_question_pending = bool(plan is not None and plan.owner_question is not None)
+    pending_owner_assignment = bool(pending is not None and pending.agent == ProviderName.OWNER)
+    planless_owner_stop = record.status == TaskStatus.OWNER_DECISION_REQUIRED and plan is None
     effective_plan_approval_required = bool(
         not dry_run
         and not raw_policy_errors
         and plan
         and plan.approval_required
-        and not raw_owner_clarification
+        and not owner_question_pending
     )
     plan_gate_is_pending = effective_plan_approval_required and plan_gate_pending(record)
+    raw_owner_clarification = bool(
+        owner_question_pending or pending_owner_assignment or planless_owner_stop
+    )
     owner_clarification_pending = bool(
         not dry_run
         and not raw_policy_errors
