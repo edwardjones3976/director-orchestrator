@@ -1,0 +1,135 @@
+{
+  "schema_version": "1.0",
+  "task_id": "LANGGRAPH-MIGRATION-PART-3",
+  "assignment_id": "LANGGRAPH-MIGRATION-PART-3-CLAUDE-001",
+  "project": "director-orchestrator LangGraph migration",
+  "repository": "edwardjones3976/director-orchestrator",
+  "starting_ref": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+  "objective": "Implement private OpenAI, Claude, and Cursor subgraphs that exchange only validated provider-neutral v1 work and result packets, with provider-specific state confined to private adapter envelopes and no live dispatch.",
+  "non_goals": [
+    "Enable graph-owned provider dispatch",
+    "Perform external writes from the graph",
+    "Deploy or enable the graph in any environment",
+    "Migrate existing state or checkpoints",
+    "Cut over writer authority from the legacy engine",
+    "Change deterministic policy or assignment-scoped approval authority"
+  ],
+  "authority_snapshot": [
+    {
+      "path": "AGENTS.md",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "3c050e2f5171647e00d54d7e0cced753f37f9b26"
+    },
+    {
+      "path": "docs/langgraph-transition-plan.md",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "b7853a7352abc787367496dd8210926d2ee7e228"
+    },
+    {
+      "path": "docs/model-interoperability-contract.md",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "19864f2606cddae0de80fb3bc7797954e7b7c14a"
+    },
+    {
+      "path": "docs/schemas/model-work-packet-v1.schema.json",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "5134fb5c8b62d17589fd532bca17b4c304971049"
+    },
+    {
+      "path": "docs/schemas/model-result-packet-v1.schema.json",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "ea3dbdf577b757a492ec4fcd53617a0fd9270800"
+    },
+    {
+      "path": "src/director_orchestrator/policy.py",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "2a6ad9bad6d025bf1bff80e265ebf76b0b51e8a6"
+    },
+    {
+      "path": "src/director_orchestrator/approvals.py",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "18c01680bfdaa28a3eb0c87515ba48988d905ca2"
+    },
+    {
+      "path": "src/director_orchestrator/engine.py",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "53e9d823665a23f7836003c4ffb19d766097c05a"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "commit_sha": "69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+      "blob_sha": "4cf688a8d17745da4601bbca04f60dda519608d5"
+    }
+  ],
+  "authority_snapshot_digest": "sha256:bb4dea5a650cdad78041f44bb33a0b787e47ce5936f2faf51c7a485f2ae476b6",
+  "dependencies": [],
+  "constraints": [
+    "Start from the exact bound main SHA and preserve the accepted Gate 0 evidence from PR #18",
+    "Keep the legacy engine the sole writer and rollback authority",
+    "Keep every LangGraph feature flag default-off in every configuration profile",
+    "Use a separate SQLite checkpoint namespace and do not write legacy tables",
+    "Fail closed on unknown packet fields, stale approvals, ambiguous authority, or schema mismatch",
+    "Do not modify provider-neutral v1 schemas in this assignment",
+    "Do not merge; request an independent exact-head review after implementation",
+    "Part 3 may be independently authored from main but cannot enter the integration chain until Parts 1 and 2 have accepted outcome digests"
+  ],
+  "prohibited_actions": [
+    "LIVE_PROVIDER_DISPATCH",
+    "EXTERNAL_WRITE",
+    "DEPLOYMENT",
+    "STATE_MIGRATION",
+    "WRITER_CUTOVER",
+    "LEGACY_TABLE_WRITE",
+    "SELF_APPROVAL",
+    "MERGE",
+    "SECRET_ACCESS"
+  ],
+  "allowed_tools": [
+    "READ_REPOSITORY",
+    "WRITE_ASSIGNED_BRANCH",
+    "RUN_LOCAL_TESTS",
+    "RUN_COMPILE_CHECKS",
+    "RUN_COMPOSE_VALIDATION",
+    "CREATE_COMMITS"
+  ],
+  "allowed_external_effects": [
+    "PUSH_COMMITS_TO_ASSIGNED_DRAFT_BRANCH"
+  ],
+  "acceptance_checks": [
+    "All pre-existing tests pass",
+    "All assignment-specific transition, recovery, and shadow-comparison tests pass",
+    "Python compilation passes",
+    "Docker Compose validation passes for every supported profile",
+    "Dependency and lock integrity checks pass",
+    "Provider-neutral packet schemas validate",
+    "Secret-hygiene checks pass",
+    "Independent reviewer accepts the exact implementation head"
+  ],
+  "evidence_requirements": [
+    "Exact starting SHA, implementation head SHA, and complete changed-file list",
+    "Commands and unabridged pass/fail summaries for every required check",
+    "Proof that all graph flags default to false",
+    "Proof that the legacy engine remains the sole writer",
+    "Proof that the LangGraph checkpoint namespace is isolated",
+    "Independent review verdict bound to the exact implementation head"
+  ],
+  "approval_requirements": [
+    "Independent exact-head ACCEPT from Cursor",
+    "Owner approval before merge, deployment, enablement, migration, or writer cutover",
+    "Fresh authority binding if any authority snapshot blob changes"
+  ],
+  "limits": {
+    "budget_usd": 0,
+    "timeout_seconds": 10800,
+    "max_hops": 8,
+    "max_revisions": 3
+  },
+  "idempotency_key": "director-orchestrator:langgraph:part-3:69b1e08c511f14ce3fe6a0e196fdec8c82f3db4a",
+  "correlation": {
+    "correlation_id": "langgraph-migration-part-3",
+    "source_event_id": "scheduled-stage-langgraph-migration-2026-08-22",
+    "slack_thread_ts": null,
+    "github_issue": "48",
+    "github_pull_request": null
+  }
+}
