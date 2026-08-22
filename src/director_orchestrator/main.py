@@ -48,6 +48,9 @@ from .usage import UsageMonitor
 
 
 settings = Settings()
+# [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
+settings.validate_langgraph_configuration()
+# [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 store = TaskStore(settings.sqlite_path)
 oracle_merge_policy = OracleMergePolicy(settings)
 oracle_merge_store = OracleMergeStore(settings.sqlite_path)
@@ -104,6 +107,9 @@ def health() -> dict:
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": settings.readiness(),
         "execution_profile": settings.execution_profile_readiness(),
+        # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
+        "langgraph": settings.langgraph_shadow_readiness(),
+        # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
         "oracle_merge": settings.oracle_merge_readiness(),
         "usage_monitor": usage_monitor.health(),
     }
