@@ -1,6 +1,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:10 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:12 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
 """Provider-neutral LangGraph shadow of the legacy task-status lifecycle.
 
 This module deliberately has no provider adapter, store, Slack, GitHub, or other
@@ -10,6 +11,8 @@ and emits comparison evidence.  The legacy engine remains the sole authority.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import operator
 import re
 from enum import StrEnum
@@ -21,7 +24,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from director_orchestrator.models import TaskStatus
+from director_orchestrator.approvals import (
+    assignment_is_approved,
+    pending_assignment,
+    plan_gate_pending,
+)
+from director_orchestrator.config import Settings
+from director_orchestrator.models import DirectorPlan, TaskRecord, TaskStatus
+from director_orchestrator.policy import execution_policy_errors
 
 
 SHADOW_SCHEMA_VERSION = "director-shadow/v1"
@@ -46,6 +56,20 @@ class ShadowTerminalClassification(StrEnum):
     BLOCKED = "blocked"
     FAILED = "failed"
     OWNER_DECISION_REQUIRED = "owner_decision_required"
+
+
+class ShadowReasonCode(StrEnum):
+    """Bounded transition evidence; arbitrary messages never enter checkpoints."""
+
+    LEGACY_OBSERVATION = "legacy_observation"
+    DRY_RUN = "dry_run"
+    POLICY_BLOCK = "policy_block"
+    PLAN_APPROVAL_GATE = "plan_approval_gate"
+    ASSIGNMENT_APPROVAL_GATE = "assignment_approval_gate"
+    OWNER_CLARIFICATION = "owner_clarification"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    TERMINAL_STATUS = "terminal_status"
+    RECOVERY = "recovery"
 
 
 STATUS_NODE_NAMES: Mapping[TaskStatus, str] = MappingProxyType(
@@ -93,7 +117,7 @@ class ShadowGraphState(TypedDict, total=False):
     task_id: str
     legacy_status: str
     previous_status: str | None
-    transition_reason: str
+    transition_reason_code: str
     plan_shape_digest: str | None
     policy_errors: list[str]
     plan_approval_required: bool
@@ -126,7 +150,7 @@ class ShadowTaskSnapshot(BaseModel):
     task_id: str = Field(min_length=1, max_length=255)
     status: TaskStatus
     previous_status: TaskStatus | None = None
-    transition_reason: str = Field(default="legacy status observation", min_length=1, max_length=512)
+    transition_reason_code: ShadowReasonCode = ShadowReasonCode.LEGACY_OBSERVATION
     plan_shape_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     policy_errors: tuple[PolicyErrorCode, ...] = Field(default_factory=tuple, max_length=20)
     plan_approval_required: bool = False
@@ -153,7 +177,7 @@ class ShadowTaskSnapshot(BaseModel):
             "task_id": self.task_id,
             "legacy_status": self.status.value,
             "previous_status": self.previous_status.value if self.previous_status is not None else None,
-            "transition_reason": self.transition_reason,
+            "transition_reason_code": self.transition_reason_code.value,
             "plan_shape_digest": self.plan_shape_digest,
             "policy_errors": list(self.policy_errors),
             "plan_approval_required": self.plan_approval_required,
@@ -175,7 +199,7 @@ class ShadowComparisonReport(BaseModel):
     legacy_status: TaskStatus
     shadow_status: TaskStatus
     previous_status: TaskStatus | None
-    transition_reason: str
+    transition_reason_code: ShadowReasonCode
     plan_shape_digest: str | None
     policy_errors: tuple[str, ...]
     plan_approval_required: bool
@@ -205,6 +229,161 @@ def classify_status(status: TaskStatus) -> ShadowTerminalClassification:
     return STATUS_CLASSIFICATIONS[status]
 
 
+def plan_shape_digest(plan: DirectorPlan | None) -> str | None:
+    """Digest only structural plan facts, excluding all model-authored prose."""
+
+    if plan is None:
+        return None
+    debate = plan.debate
+    shape = {
+        "risk_level": plan.risk_level.value,
+        "approval_required": plan.approval_required,
+        "approval_reason_count": len(plan.approval_reasons),
+        "max_hops": plan.max_hops,
+        "max_revisions": plan.max_revisions,
+        "assignments": [
+            {
+                "sequence": assignment.sequence,
+                "agent": assignment.agent.value,
+                "kind": assignment.kind.value,
+                "depends_on": sorted(assignment.depends_on),
+                "requires_approval": assignment.requires_approval,
+                "allow_draft_pr": assignment.allow_draft_pr,
+                "discussion_phase": assignment.discussion_phase.value,
+                "has_repository": assignment.repository is not None,
+                "has_public_research_query": assignment.public_research_query is not None,
+                "has_antigravity_directive": assignment.antigravity_directive is not None,
+                "acceptance_count": len(assignment.acceptance),
+            }
+            for assignment in sorted(plan.assignments, key=lambda item: item.sequence)
+        ],
+        "final_acceptance_count": len(plan.final_acceptance),
+        "owner_question_present": plan.owner_question is not None,
+        "debate": (
+            None
+            if debate is None
+            else {
+                "position_assignments": sorted(debate.position_assignments),
+                "rebuttal_assignments": sorted(debate.rebuttal_assignments),
+                "vote_option_count": len(debate.vote_options),
+                "deadline_minutes": debate.deadline_minutes,
+                "max_rebuttal_rounds": debate.max_rebuttal_rounds,
+                "material_risk": debate.material_risk,
+            }
+        ),
+    }
+    canonical = json.dumps(shape, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _policy_error_code(error: str) -> str:
+    """Replace potentially identifying policy prose with a stable opaque code."""
+
+    return "policy:" + hashlib.sha256(error.encode("utf-8")).hexdigest()[:32]
+
+
+def _reason_code_from_record(
+    record: TaskRecord,
+    *,
+    previous_status: TaskStatus | None,
+    dry_run: bool,
+    policy_blocked: bool,
+    plan_gate_is_pending: bool,
+    assignment_gate_is_pending: bool,
+) -> ShadowReasonCode:
+    if dry_run:
+        return ShadowReasonCode.DRY_RUN
+    if policy_blocked:
+        return ShadowReasonCode.POLICY_BLOCK
+    if plan_gate_is_pending:
+        return ShadowReasonCode.PLAN_APPROVAL_GATE
+    if assignment_gate_is_pending:
+        return ShadowReasonCode.ASSIGNMENT_APPROVAL_GATE
+    if record.unavailable_providers:
+        return ShadowReasonCode.PROVIDER_UNAVAILABLE
+    if any(
+        attempt.outcome in {"reconciled_not_created", "reconciled_created"}
+        for attempt in record.provider_contact_attempts
+    ):
+        return ShadowReasonCode.RECOVERY
+    if previous_status in {TaskStatus.FAILED, TaskStatus.BLOCKED} and record.status == TaskStatus.QUEUED:
+        return ShadowReasonCode.RECOVERY
+    if record.status == TaskStatus.OWNER_DECISION_REQUIRED and (
+        record.plan is None or record.plan.owner_question is not None
+    ):
+        return ShadowReasonCode.OWNER_CLARIFICATION
+    if record.status in {TaskStatus.DONE, TaskStatus.BLOCKED, TaskStatus.FAILED}:
+        return ShadowReasonCode.TERMINAL_STATUS
+    return ShadowReasonCode.LEGACY_OBSERVATION
+
+
+def snapshot_from_task_record(
+    record: TaskRecord,
+    settings: Settings,
+    *,
+    previous_status: TaskStatus | None = None,
+) -> ShadowTaskSnapshot:
+    """Project actual deterministic legacy structures into compact shadow input.
+
+    No intake text, plan prose, provider result, message, error, or transcript is
+    copied.  Policy messages are represented only by opaque deterministic codes.
+    """
+
+    plan = record.plan
+    dry_run = not settings.allow_paid_runs and plan is not None
+    raw_policy_errors = (
+        execution_policy_errors(plan, settings)
+        if plan is not None and not dry_run
+        else []
+    )
+    compact_policy_errors = tuple(sorted(_policy_error_code(error) for error in raw_policy_errors))
+    pending = pending_assignment(record)
+    owner_clarification_pending = bool(plan and plan.owner_question is not None)
+    effective_plan_approval_required = bool(
+        not dry_run
+        and not raw_policy_errors
+        and plan
+        and plan.approval_required
+        and not owner_clarification_pending
+    )
+    plan_gate_is_pending = effective_plan_approval_required and plan_gate_pending(record)
+    effective_assignment_requires_approval = bool(
+        not dry_run
+        and not raw_policy_errors
+        and not owner_clarification_pending
+        and not plan_gate_is_pending
+        and pending
+        and pending.requires_approval
+    )
+    assignment_gate_is_pending = bool(
+        effective_assignment_requires_approval
+        and not assignment_is_approved(record, pending)
+    )
+    return ShadowTaskSnapshot(
+        task_id=record.task_id,
+        status=record.status,
+        previous_status=previous_status,
+        transition_reason_code=_reason_code_from_record(
+            record,
+            previous_status=previous_status,
+            dry_run=dry_run,
+            policy_blocked=bool(raw_policy_errors),
+            plan_gate_is_pending=plan_gate_is_pending,
+            assignment_gate_is_pending=assignment_gate_is_pending,
+        ),
+        plan_shape_digest=plan_shape_digest(plan),
+        policy_errors=compact_policy_errors,
+        plan_approval_required=effective_plan_approval_required,
+        owner_approved=record.owner_approved,
+        pending_assignment_sequence=pending.sequence if pending is not None else None,
+        pending_assignment_requires_approval=effective_assignment_requires_approval,
+        pending_assignment_approved=bool(
+            effective_assignment_requires_approval
+            and assignment_is_approved(record, pending)
+        ),
+    )
+
+
 def _validate_observation(state: ShadowGraphState) -> ShadowGraphState:
     if state.get("schema_version") != SHADOW_SCHEMA_VERSION:
         raise ValueError(f"unsupported shadow schema version: {state.get('schema_version')!r}")
@@ -225,9 +404,12 @@ def _validate_observation(state: ShadowGraphState) -> ShadowGraphState:
         except (TypeError, ValueError) as exc:
             raise ValueError(f"unknown previous TaskStatus: {previous_status!r}") from exc
 
-    reason = state.get("transition_reason")
-    if not isinstance(reason, str) or not reason.strip() or len(reason) > 512:
-        raise ValueError("transition_reason must be a non-empty string of at most 512 characters")
+    try:
+        ShadowReasonCode(state.get("transition_reason_code"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"unknown transition reason code: {state.get('transition_reason_code')!r}"
+        ) from exc
 
     plan_shape_digest = state.get("plan_shape_digest")
     if plan_shape_digest is not None and (
@@ -280,15 +462,19 @@ def _project_policy(state: ShadowGraphState) -> ShadowGraphState:
 
 
 def _project_approval(state: ShadowGraphState) -> ShadowGraphState:
-    plan_gate_pending = state["plan_approval_required"] and not state["owner_approved"]
+    plan_gate_pending = (
+        not state["policy_blocked"]
+        and state["plan_approval_required"]
+        and not state["owner_approved"]
+    )
     assignment_gate_pending = (
-        state["pending_assignment_sequence"] is not None
+        not state["policy_blocked"]
+        and not plan_gate_pending
+        and state["pending_assignment_sequence"] is not None
         and state["pending_assignment_requires_approval"]
         and not state["pending_assignment_approved"]
     )
-    shadow_approval_required = not state["policy_blocked"] and (
-        plan_gate_pending or assignment_gate_pending
-    )
+    shadow_approval_required = plan_gate_pending or assignment_gate_pending
     if state["policy_blocked"]:
         shadow_status = TaskStatus.BLOCKED
     elif shadow_approval_required:
@@ -431,7 +617,7 @@ def comparison_report(state: Mapping[str, Any]) -> ShadowComparisonReport:
         "task_id",
         "legacy_status",
         "shadow_status",
-        "transition_reason",
+        "transition_reason_code",
         "plan_shape_digest",
         "policy_errors",
         "plan_approval_required",
@@ -464,7 +650,7 @@ def comparison_report(state: Mapping[str, Any]) -> ShadowComparisonReport:
         legacy_status=state["legacy_status"],
         shadow_status=state["shadow_status"],
         previous_status=state.get("previous_status"),
-        transition_reason=state["transition_reason"],
+        transition_reason_code=state["transition_reason_code"],
         plan_shape_digest=state["plan_shape_digest"],
         policy_errors=tuple(state["policy_errors"]),
         plan_approval_required=state["plan_approval_required"],

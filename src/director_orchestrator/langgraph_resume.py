@@ -445,6 +445,17 @@ class LangGraphResumeRuntime:
             }
         )
 
+    def _expected_resume_digest(
+        self, handle: ResumeHandle, authority_evidence_digest: str
+    ) -> str:
+        return _digest(
+            {
+                "binding_digest": handle.binding_digest,
+                "authority_evidence_digest": authority_evidence_digest,
+                "graph_version": self.graph_version,
+            }
+        )
+
     def prepare_resume(
         self,
         record: TaskRecord,
@@ -459,21 +470,19 @@ class LangGraphResumeRuntime:
         if not snapshot.values:
             raise CheckpointUnavailable("LangGraph checkpoint is missing; use legacy recovery")
         self._verify_checkpoint_binding(handle, snapshot.values)
+        expected_resume_digest = self._expected_resume_digest(handle, evidence_digest)
         if snapshot.values.get("phase") == ResumeStatus.RESUMED.value and not snapshot.next:
-            existing = str(snapshot.values.get("resume_digest") or "")
-            return PreparedResume(handle, evidence_digest, existing)
+            stored_digest = str(snapshot.values.get("resume_digest") or "")
+            if not _secure_equal(stored_digest, expected_resume_digest):
+                raise ResumeRejected(
+                    "completed checkpoint does not match current legacy authority evidence"
+                )
+            return PreparedResume(handle, evidence_digest, expected_resume_digest)
         if not snapshot.next:
             raise CheckpointUnavailable(
                 "LangGraph checkpoint is not at a resumable interrupt"
             )
-        resume_digest = _digest(
-            {
-                "binding_digest": handle.binding_digest,
-                "authority_evidence_digest": evidence_digest,
-                "graph_version": self.graph_version,
-            }
-        )
-        return PreparedResume(handle, evidence_digest, resume_digest)
+        return PreparedResume(handle, evidence_digest, expected_resume_digest)
 
     def commit_resume(
         self,
@@ -492,6 +501,15 @@ class LangGraphResumeRuntime:
                 current_evidence, prepared.authority_evidence_digest
             ):
                 raise ResumeRejected("legacy authority changed after resume preparation")
+            expected_resume_digest = self._expected_resume_digest(
+                prepared.handle, current_evidence
+            )
+            if not _secure_equal(
+                prepared.resume_digest, expected_resume_digest
+            ):
+                raise ResumeRejected(
+                    "prepared resume digest does not match current legacy authority evidence"
+                )
             snapshot = self._state(prepared.handle)
             if not snapshot.values:
                 raise CheckpointUnavailable(
@@ -503,11 +521,9 @@ class LangGraphResumeRuntime:
                 and not snapshot.next
             ):
                 stored_digest = str(snapshot.values.get("resume_digest") or "")
-                if stored_digest and not _secure_equal(
-                    stored_digest, prepared.resume_digest
-                ):
+                if not _secure_equal(stored_digest, expected_resume_digest):
                     raise ResumeRejected(
-                        "completed checkpoint has different resume evidence"
+                        "completed checkpoint does not match current legacy authority evidence"
                     )
                 return ResumeOutcome(
                     ResumeStatus.ALREADY_RESUMED,
@@ -520,13 +536,13 @@ class LangGraphResumeRuntime:
                     "LangGraph checkpoint is not at a resumable interrupt"
                 )
             result = self._graph.invoke(
-                Command(resume={"resume_digest": prepared.resume_digest}),
+                Command(resume={"resume_digest": expected_resume_digest}),
                 self._config(prepared.handle),
             )
             if result.get("phase") != ResumeStatus.RESUMED.value:
                 raise CheckpointUnavailable("LangGraph did not reach its terminal resume state")
             stored_digest = str(result.get("resume_digest") or "")
-            if not _secure_equal(stored_digest, prepared.resume_digest):
+            if not _secure_equal(stored_digest, expected_resume_digest):
                 raise ResumeRejected("LangGraph stored different resume evidence")
             return ResumeOutcome(
                 ResumeStatus.RESUMED,

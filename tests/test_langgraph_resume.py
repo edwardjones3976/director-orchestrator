@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -384,6 +385,29 @@ class LangGraphResumeTests(unittest.TestCase):
         snapshot = runtime._graph.get_state(runtime._config(paused.handle))
         self.assertEqual(snapshot.next, ("pause",))
 
+    def test_tampered_prepared_resume_digest_is_rejected_before_command(self) -> None:
+        record = self.record()
+        runtime, _ = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.ASSIGNMENT_APPROVAL,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+        )
+        assert paused.handle is not None
+        self.approve(record)
+        prepared = runtime.prepare_resume(record, paused.handle, AUTHORITY_A)
+        tampered = replace(prepared, resume_digest="0" * 64)
+        before = record.model_dump_json()
+
+        result = runtime.commit_resume(record, tampered, AUTHORITY_A)
+
+        self.assertEqual(result.status, ResumeStatus.REJECTED)
+        self.assertIn("prepared resume digest", result.reason)
+        self.assertEqual(record.model_dump_json(), before)
+        snapshot = runtime._graph.get_state(runtime._config(paused.handle))
+        self.assertEqual(snapshot.next, ("pause",))
+
     def test_crash_after_command_replays_completed_checkpoint_without_second_resume(self) -> None:
         record = self.record()
         first_runtime, first_connection = self.runtime()
@@ -405,6 +429,37 @@ class LangGraphResumeTests(unittest.TestCase):
 
         self.assertEqual(replay.status, ResumeStatus.ALREADY_RESUMED)
         self.assertEqual(replay.resume_digest, prepared.resume_digest)
+
+    def test_changed_callback_evidence_cannot_replay_completed_checkpoint(self) -> None:
+        record = self.record()
+        self.add_waiting_callback(record)
+        runtime, _ = self.runtime()
+        paused = runtime.begin(
+            record,
+            kind=ResumeKind.PROVIDER_CALLBACK,
+            assignment_sequence=1,
+            authority_snapshot_digest=AUTHORITY_A,
+            callback_run_id="claude-run-1",
+        )
+        assert paused.handle is not None
+        callback = ClaudeCallback(
+            run_id="claude-run-1",
+            status="completed",
+            result="Callback result A.",
+        )
+        self.assertTrue(apply_claude_callback(record, callback))
+        committed = runtime.resume(record, paused.handle, AUTHORITY_A)
+        self.assertEqual(committed.status, ResumeStatus.RESUMED)
+
+        # Simulate corrupt or adversarial legacy persistence after completion;
+        # apply_claude_callback itself correctly rejects this conflict.
+        record.provider_runs[0].result = "Callback result B."
+        before = record.model_dump_json()
+        replay = runtime.resume(record, paused.handle, AUTHORITY_A)
+
+        self.assertEqual(replay.status, ResumeStatus.REJECTED)
+        self.assertIn("current legacy authority evidence", replay.reason)
+        self.assertEqual(record.model_dump_json(), before)
 
     def test_missing_checkpoint_returns_control_to_legacy(self) -> None:
         record = self.record()

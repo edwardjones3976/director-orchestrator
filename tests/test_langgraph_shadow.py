@@ -1,6 +1,7 @@
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:10 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:12 UTC | CHANGE]]
+# [[Codex | GPT-5.6 | 2026-08-22 16:27 UTC | CHANGE]]
 from __future__ import annotations
 
 import json
@@ -13,6 +14,7 @@ from director_orchestrator.langgraph_shadow import (
     STATUS_CLASSIFICATIONS,
     STATUS_NODE_NAMES,
     TERMINAL_STATUSES,
+    ShadowReasonCode,
     ShadowTaskSnapshot,
     ShadowTerminalClassification,
     build_shadow_graph,
@@ -49,7 +51,7 @@ class LangGraphShadowTests(unittest.TestCase):
                         task_id=f"DIR-SHADOW-{status.value}",
                         status=status,
                         previous_status=TaskStatus.QUEUED,
-                        transition_reason="fixture observation",
+                        transition_reason_code=ShadowReasonCode.LEGACY_OBSERVATION,
                         plan_approval_required=status == TaskStatus.OWNER_DECISION_REQUIRED,
                     )
                 )
@@ -97,7 +99,7 @@ class LangGraphShadowTests(unittest.TestCase):
             task_id="DIR-DETERMINISTIC",
             status=TaskStatus.REVIEWING,
             previous_status=TaskStatus.RUNNING,
-            transition_reason="review started",
+            transition_reason_code=ShadowReasonCode.LEGACY_OBSERVATION,
         )
 
         first = run_shadow_comparison(snapshot)
@@ -115,7 +117,7 @@ class LangGraphShadowTests(unittest.TestCase):
             ({**valid, "task_id": ""}, "task_id must be"),
             ({**valid, "legacy_status": "UNKNOWN"}, "unknown legacy TaskStatus"),
             ({**valid, "previous_status": "UNKNOWN"}, "unknown previous TaskStatus"),
-            ({**valid, "transition_reason": ""}, "transition_reason must be"),
+            ({**valid, "transition_reason_code": "secret prompt prose"}, "unknown transition reason code"),
             ({**valid, "plan_shape_digest": "bad"}, "plan_shape_digest must be"),
             ({**valid, "policy_errors": ["duplicate", "duplicate"]}, "duplicate codes"),
             ({**valid, "policy_errors": ["This is policy prose"]}, "compact lowercase codes"),
@@ -150,7 +152,7 @@ class LangGraphShadowTests(unittest.TestCase):
             task_id="DIR-RESTART",
             status=TaskStatus.OWNER_DECISION_REQUIRED,
             previous_status=TaskStatus.RUNNING,
-            transition_reason="deterministic approval gate",
+            transition_reason_code=ShadowReasonCode.PLAN_APPROVAL_GATE,
         )
         config = checkpoint_config(snapshot.task_id, namespace="test-shadow")
         self.assertEqual(config["configurable"]["thread_id"], "test-shadow:DIR-RESTART")
@@ -243,7 +245,7 @@ class LangGraphShadowTests(unittest.TestCase):
                 task_id="DIR-CLARIFICATION",
                 status=TaskStatus.OWNER_DECISION_REQUIRED,
                 previous_status=TaskStatus.PLANNING,
-                transition_reason="clarification required",
+                transition_reason_code=ShadowReasonCode.OWNER_CLARIFICATION,
             )
         )
 
