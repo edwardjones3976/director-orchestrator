@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project bootstrap template kit
 
 These templates turn the
@@ -39,7 +40,13 @@ kit.
    `RESHAPED`, `PAUSED`, `COMPLETE`.
 9. Use `minimal-fix.md` only for the charter's one-attempt minimal-fix lane;
    changed candidates still require fresh exact-candidate evidence.
+10. Preserve existing valid contribution tags and enclose each completed,
+    human-readable template instance in a new matching UTC pair from
+    [`contribution-attribution-policy.md`](../../contribution-attribution-policy.md).
+    Keep tags outside syntax-sensitive or machine-readable payloads and record
+    their authorship in the surrounding submission envelope.
 
 Do not place secrets, credentials, tokens, raw private source, or unnecessary
 source-thread content in any template. Name Slack destinations only from the
 project profile or runtime configuration—never hardcode workspace channel names.
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->

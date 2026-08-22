@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
@@ -7,6 +8,10 @@ procedure overlays, not permission grants.
 
 Event markers follow
 [`project-bootstrap-protocol.md`](../../project-bootstrap-protocol.md).
+When publishing a completed report, preserve prior valid contribution tags and
+enclose the report in a new matching UTC pair. Keep tags out of embedded
+machine-readable payloads and identify those contributors in the surrounding
+report or submission envelope.
 
 ## <BOOTSTRAP | PLAN | EVIDENCE | RESHAPED | PAUSED | COMPLETE | OWNER_DECISION_REQUIRED>
 
@@ -49,3 +54,4 @@ Event markers follow
 
 Nothing outside the stated project scope was <written, pushed, merged, deployed,
 published, enabled, or otherwise changed>.
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->

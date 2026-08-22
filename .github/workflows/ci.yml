@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 name: CI
 
 on:
@@ -12,6 +13,24 @@ permissions:
   contents: read
 
 jobs:
+  contribution-attribution:
+    name: Contribution attribution
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+      HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate changed files and submission envelope
+        run: >-
+          python scripts/check_contribution_tags.py
+          --base "$BASE_SHA"
+          --head "$HEAD_SHA"
+          --github-event "$GITHUB_EVENT_PATH"
+
   python:
     name: Python 3.12 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -135,3 +154,4 @@ jobs:
           python scripts/recovery_probe.py seed --database "$database"
           python scripts/recovery_probe.py resume --database "$database"
           python scripts/recovery_probe.py resume --database "$database"
+# [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]

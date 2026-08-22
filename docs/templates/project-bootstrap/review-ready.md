@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # REVIEW_READY
 
 The producer completes this handoff for a different eligible provider. The
@@ -12,6 +13,7 @@ Workflow skills are procedure overlays, not permission grants.
 - **Assignment:** <producer assignment ID>
 - **Logical producer:** <provider>
 - **Material authors:** <all providers/people that materially shaped the artifact>
+- **Contribution tags/envelope:** <matching contributor and system labels, or external envelope for a syntax-sensitive artifact>
 - **Repository:** <exact owner/name or not applicable>
 - **Base branch/ref:** <exact durable ref>
 - **Base SHA:** <exact 40-hex SHA>
@@ -69,3 +71,8 @@ change access, or infer authority from this request.
 - **Evidence/findings:** <concise result>
 - **Current CI/security evidence:** <exact status or pending>
 - **Next responsible party:** <producer, deterministic gate, Director, or owner>
+
+Contribution tags are provenance labels, not authenticated review evidence.
+The authenticated run/session, exact candidate, independent verdict, current
+CI/security evidence, and deterministic policy gates remain authoritative.
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
