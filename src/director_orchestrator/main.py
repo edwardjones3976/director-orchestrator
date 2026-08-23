@@ -31,6 +31,8 @@ from .callbacks import (
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 from .chatgpt_bridge import (
     BridgeRejected,
+    ChatGPTBridgeDeliveryAck,
+    ChatGPTBridgeDeliveryAckResponse,
     ChatGPTBridgeRequest,
     ChatGPTBridgeResponse,
     ChatGPTBridgeService,
@@ -82,7 +84,14 @@ oracle_merge_service = OracleMergeService(
 engine = OrchestrationEngine(settings, store, oracle_merge_service)
 usage_monitor = UsageMonitor(settings, store)
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
-chatgpt_bridge = ChatGPTBridgeService(settings, ChatGPTBridgeStore(settings.sqlite_path))
+chatgpt_bridge = ChatGPTBridgeService(
+    settings,
+    ChatGPTBridgeStore(
+        settings.sqlite_path,
+        gateway_secret=settings.slack_gateway_secret,
+        shared_secret=settings.shared_secret,
+    ),
+)
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 _PRIVACY_CLEANUP_RETRY_SECONDS = 2.0
 _RECOVERABLE_SCAN_SECONDS = 30.0
@@ -309,6 +318,24 @@ async def chatgpt_bridge_reply(payload: ChatGPTBridgeRequest) -> ChatGPTBridgeRe
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="ChatGPT bridge request failed") from exc
+
+
+@app.post(
+    "/v1/chatgpt-bridge/delivery-ack",
+    response_model=ChatGPTBridgeDeliveryAckResponse,
+    dependencies=[Depends(require_auth)],
+)
+def chatgpt_bridge_delivery_ack(
+    payload: ChatGPTBridgeDeliveryAck,
+) -> ChatGPTBridgeDeliveryAckResponse:
+    try:
+        return chatgpt_bridge.acknowledge_delivery(payload)
+    except BridgeRejected as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail="ChatGPT bridge delivery acknowledgement failed"
+        ) from exc
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 
 

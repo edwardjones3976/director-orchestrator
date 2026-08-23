@@ -360,7 +360,10 @@ class Settings:
             "internal_auth_configured": bool(self.shared_secret),
             "openai_configured": bool(self.openai_api_key),
             "model_configured": bool(self.chatgpt_bridge_model),
-            "owner_configured": bool(self.slack_owner_user_id),
+            "owner_configured": re.fullmatch(
+                r"U[A-Z0-9]+", self.slack_owner_user_id
+            )
+            is not None,
             "channels_allowlisted": bool(self.chatgpt_bridge_channel_ids)
             and all(
                 re.fullmatch(r"[CG][A-Z0-9]+", item) is not None
@@ -373,7 +376,9 @@ class Settings:
             "prompt_limit_valid": 1 <= self.chatgpt_bridge_max_prompt_chars <= 20_000,
             "output_limit_valid": 1 <= self.chatgpt_bridge_max_output_tokens <= 4_096,
             "rate_limit_valid": 1 <= self.chatgpt_bridge_requests_per_minute <= 60,
-            "cost_estimate_valid": 0 < self.chatgpt_bridge_estimated_cost_usd <= 10,
+            "cost_estimate_valid": 0 < self.chatgpt_bridge_estimated_cost_usd <= 10
+            and self.chatgpt_bridge_estimated_cost_usd
+            <= self.chatgpt_bridge_daily_budget_usd,
             "daily_budget_valid": 0 < self.chatgpt_bridge_daily_budget_usd <= 100,
         }
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
