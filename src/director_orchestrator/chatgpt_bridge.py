@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 from __future__ import annotations
@@ -31,11 +32,15 @@ _ANSWER_RECOVERY_TTL_SECONDS = 3_600
 _MAX_RECOVERY_ANSWER_BYTES = 48_000
 _BRIDGE_PATH = "/v1/chatgpt-bridge"
 _ACK_PATH = "/v1/chatgpt-bridge/delivery-ack"
+_AMBIGUITY_PATH = "/v1/chatgpt-bridge/delivery-ambiguous"
 
 BridgeState = Literal[
     "OWNER_DECISION_REQUIRED",
     "DISPATCHING",
     "ANSWER_READY",
+    "DELIVERY_PENDING_ACK",
+    "DELIVERY_AMBIGUOUS",
+    "DELIVERY_RECOVERY_PENDING",
     "DELIVERED",
     "FAILED",
 ]
@@ -52,7 +57,7 @@ class ChatGPTBridgeGatewayProof(BaseModel):
 class ChatGPTBridgeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["request", "approve"] = "request"
+    action: Literal["request", "approve", "recover"] = "request"
     source_event_id: str = Field(min_length=1, max_length=255)
     channel_id: str = Field(pattern=r"^[CG][A-Z0-9]+$", max_length=32)
     thread_ts: str = Field(pattern=r"^\d{10,}\.?\d*$", max_length=32)
@@ -99,6 +104,28 @@ class ChatGPTBridgeDeliveryAckResponse(BaseModel):
     cached: bool = False
 
 
+class ChatGPTBridgeDeliveryAmbiguity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["delivery_ambiguous"] = "delivery_ambiguous"
+    source_event_id: str = Field(min_length=1, max_length=255)
+    request_reference: str = Field(pattern=r"^CBR-[A-F0-9]{24}$")
+    channel_id: str = Field(pattern=r"^[CG][A-Z0-9]+$", max_length=32)
+    thread_ts: str = Field(pattern=r"^\d{10,}\.?\d*$", max_length=32)
+    user_id: str = Field(pattern=r"^U[A-Z0-9]+$", max_length=32)
+    prompt_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    delivery_client_msg_id: str = Field(min_length=36, max_length=36)
+    gateway_proof: ChatGPTBridgeGatewayProof
+
+
+class ChatGPTBridgeDeliveryAmbiguityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_reference: str
+    state: Literal["DELIVERY_AMBIGUOUS"] = "DELIVERY_AMBIGUOUS"
+    cached: bool = False
+
+
 class BridgeRejected(RuntimeError):
     pass
 
@@ -108,7 +135,11 @@ def bridge_prompt_digest(prompt: str) -> str:
 
 
 def _proof_material(
-    payload: ChatGPTBridgeRequest | ChatGPTBridgeDeliveryAck,
+    payload: (
+        ChatGPTBridgeRequest
+        | ChatGPTBridgeDeliveryAck
+        | ChatGPTBridgeDeliveryAmbiguity
+    ),
     *,
     shared_secret: str,
     path: str,
@@ -145,6 +176,8 @@ def _proof_material(
                 "slack_message_ts": payload.slack_message_ts,
             }
         )
+    elif isinstance(payload, ChatGPTBridgeDeliveryAmbiguity):
+        canonical["delivery_client_msg_id"] = payload.delivery_client_msg_id
     return json.dumps(
         canonical,
         ensure_ascii=True,
@@ -156,7 +189,11 @@ def _proof_material(
 def _build_gateway_proof(
     gateway_secret: str,
     shared_secret: str,
-    payload: ChatGPTBridgeRequest | ChatGPTBridgeDeliveryAck,
+    payload: (
+        ChatGPTBridgeRequest
+        | ChatGPTBridgeDeliveryAck
+        | ChatGPTBridgeDeliveryAmbiguity
+    ),
     *,
     path: str,
     issued_at: int | None,
@@ -222,10 +259,32 @@ def build_chatgpt_bridge_delivery_ack_proof(
     )
 
 
+def build_chatgpt_bridge_delivery_ambiguity_proof(
+    gateway_secret: str,
+    shared_secret: str,
+    ambiguity: ChatGPTBridgeDeliveryAmbiguity,
+    *,
+    issued_at: int | None = None,
+    nonce: str | None = None,
+) -> ChatGPTBridgeGatewayProof:
+    return _build_gateway_proof(
+        gateway_secret,
+        shared_secret,
+        ambiguity,
+        path=_AMBIGUITY_PATH,
+        issued_at=issued_at,
+        nonce=nonce,
+    )
+
+
 def _verify_gateway_proof(
     gateway_secret: str,
     shared_secret: str,
-    payload: ChatGPTBridgeRequest | ChatGPTBridgeDeliveryAck,
+    payload: (
+        ChatGPTBridgeRequest
+        | ChatGPTBridgeDeliveryAck
+        | ChatGPTBridgeDeliveryAmbiguity
+    ),
     *,
     path: str,
     now: int | None,
@@ -282,6 +341,22 @@ def verify_chatgpt_bridge_delivery_ack_proof(
     )
 
 
+def verify_chatgpt_bridge_delivery_ambiguity_proof(
+    gateway_secret: str,
+    shared_secret: str,
+    ambiguity: ChatGPTBridgeDeliveryAmbiguity,
+    *,
+    now: int | None = None,
+) -> None:
+    _verify_gateway_proof(
+        gateway_secret,
+        shared_secret,
+        ambiguity,
+        path=_AMBIGUITY_PATH,
+        now=now,
+    )
+
+
 @dataclass(frozen=True)
 class _StoreResult:
     state: BridgeState
@@ -290,6 +365,7 @@ class _StoreResult:
     delivery_client_msg_id: str
     cached: bool
     dispatch: bool = False
+    deliver: bool = False
     answer: str = ""
 
 
@@ -307,6 +383,9 @@ class ChatGPTBridgeStore:
         "answer_ciphertext": "BLOB",
         "answer_expires_at": "REAL",
         "delivery_client_msg_id": "TEXT NOT NULL DEFAULT ''",
+        "delivery_attempt_source_event_id": "TEXT",
+        "delivery_attempt_digest": "TEXT",
+        "delivery_attempt_started_at": "REAL",
         "delivered_at": "TEXT",
         "delivery_slack_ts": "TEXT",
     }
@@ -382,6 +461,11 @@ class ChatGPTBridgeStore:
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_chatgpt_bridge_approval_event "
                     "ON chatgpt_bridge_requests(approval_source_event_id) "
                     "WHERE approval_source_event_id IS NOT NULL"
+                )
+                connection.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_chatgpt_bridge_delivery_attempt "
+                    "ON chatgpt_bridge_requests(delivery_attempt_source_event_id) "
+                    "WHERE delivery_attempt_source_event_id IS NOT NULL"
                 )
         finally:
             connection.close()
@@ -476,6 +560,7 @@ class ChatGPTBridgeStore:
         *,
         cached: bool,
         dispatch: bool = False,
+        deliver: bool = False,
         answer: str = "",
     ) -> _StoreResult:
         return _StoreResult(
@@ -485,6 +570,7 @@ class ChatGPTBridgeStore:
             delivery_client_msg_id=row["delivery_client_msg_id"],
             cached=cached,
             dispatch=dispatch,
+            deliver=deliver,
             answer=answer,
         )
 
@@ -492,7 +578,13 @@ class ChatGPTBridgeStore:
         self, connection: sqlite3.Connection, row: sqlite3.Row, now: float
     ) -> sqlite3.Row:
         if (
-            row["decision_state"] == "ANSWER_READY"
+            row["decision_state"]
+            in {
+                "ANSWER_READY",
+                "DELIVERY_PENDING_ACK",
+                "DELIVERY_AMBIGUOUS",
+                "DELIVERY_RECOVERY_PENDING",
+            }
             and row["answer_expires_at"] is not None
             and float(row["answer_expires_at"]) <= now
         ):
@@ -501,16 +593,80 @@ class ChatGPTBridgeStore:
                 UPDATE chatgpt_bridge_requests
                 SET status = 'failed', decision_state = 'FAILED',
                     answer_nonce = NULL, answer_ciphertext = NULL,
-                    answer_expires_at = NULL, completed_at = ?
-                WHERE request_reference = ? AND decision_state = 'ANSWER_READY'
+                    answer_expires_at = NULL, completed_at = ?,
+                    delivery_attempt_source_event_id = NULL,
+                    delivery_attempt_digest = NULL,
+                    delivery_attempt_started_at = NULL
+                WHERE request_reference = ?
+                  AND decision_state IN (
+                      'ANSWER_READY', 'DELIVERY_PENDING_ACK',
+                      'DELIVERY_AMBIGUOUS', 'DELIVERY_RECOVERY_PENDING'
+                  )
                 """,
-                (datetime.now(timezone.utc).isoformat(), row["request_reference"]),
+                (
+                    datetime.fromtimestamp(now, timezone.utc).isoformat(),
+                    row["request_reference"],
+                ),
             )
             row = connection.execute(
                 "SELECT * FROM chatgpt_bridge_requests WHERE request_reference = ?",
                 (row["request_reference"],),
             ).fetchone()
         return row
+
+    def sweep_expired_answers(
+        self,
+        *,
+        now: float | None = None,
+        pending_timeout_seconds: int = 60,
+    ) -> int:
+        """Fail closed on abandoned delivery attempts and physically wipe expired answers."""
+
+        captured_now = time.time() if now is None else now
+        pending_cutoff = captured_now - max(30, min(pending_timeout_seconds, 300))
+        completed_at = datetime.fromtimestamp(captured_now, timezone.utc).isoformat()
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    UPDATE chatgpt_bridge_requests
+                    SET decision_state = 'DELIVERY_AMBIGUOUS',
+                        delivery_attempt_source_event_id = NULL,
+                        delivery_attempt_digest = NULL,
+                        delivery_attempt_started_at = NULL
+                    WHERE decision_state IN (
+                        'DELIVERY_PENDING_ACK', 'DELIVERY_RECOVERY_PENDING'
+                    )
+                      AND delivery_attempt_started_at IS NOT NULL
+                      AND delivery_attempt_started_at <= ?
+                      AND answer_ciphertext IS NOT NULL
+                      AND answer_expires_at > ?
+                    """,
+                    (pending_cutoff, captured_now),
+                )
+                expired = connection.execute(
+                    """
+                    UPDATE chatgpt_bridge_requests
+                    SET status = 'failed', decision_state = 'FAILED',
+                        answer_nonce = NULL, answer_ciphertext = NULL,
+                        answer_expires_at = NULL, completed_at = ?,
+                        delivery_attempt_source_event_id = NULL,
+                        delivery_attempt_digest = NULL,
+                        delivery_attempt_started_at = NULL
+                    WHERE decision_state IN (
+                        'ANSWER_READY', 'DELIVERY_PENDING_ACK',
+                        'DELIVERY_AMBIGUOUS', 'DELIVERY_RECOVERY_PENDING'
+                    )
+                      AND answer_expires_at IS NOT NULL
+                      AND answer_expires_at <= ?
+                    """,
+                    (completed_at, captured_now),
+                ).rowcount
+        finally:
+            connection.close()
+        return expired
 
     def reserve_owner_decision(
         self,
@@ -660,27 +816,139 @@ class ChatGPTBridgeStore:
                     ).fetchone()
                     return self._row_result(row, cached=False, dispatch=True)
                 if state == "ANSWER_READY":
+                    # Pre-upgrade rows never receive an automatic delivery retry.
+                    # An explicit signed owner recovery event is required instead.
+                    connection.execute(
+                        """
+                        UPDATE chatgpt_bridge_requests
+                        SET decision_state = 'DELIVERY_AMBIGUOUS',
+                            delivery_attempt_source_event_id = NULL,
+                            delivery_attempt_digest = NULL,
+                            delivery_attempt_started_at = NULL
+                        WHERE request_reference = ? AND decision_state = 'ANSWER_READY'
+                        """,
+                        (request.approval_reference,),
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM chatgpt_bridge_requests WHERE request_reference = ?",
+                        (request.approval_reference,),
+                    ).fetchone()
+                return self._row_result(row, cached=True)
+        finally:
+            connection.close()
+
+    def recover_delivery(self, request: ChatGPTBridgeRequest) -> _StoreResult:
+        """Release ciphertext once after an explicit owner recovery decision."""
+
+        now = time.time()
+        recovery_digest = self._request_digest(request)
+        prompt_digest = bridge_prompt_digest(request.prompt)
+        deferred_error: BridgeRejected | None = None
+        result: _StoreResult | None = None
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                collision = connection.execute(
+                    "SELECT request_reference, delivery_attempt_digest "
+                    "FROM chatgpt_bridge_requests "
+                    "WHERE delivery_attempt_source_event_id = ?",
+                    (request.source_event_id,),
+                ).fetchone()
+                if collision is not None and (
+                    collision["request_reference"] != request.approval_reference
+                    or collision["delivery_attempt_digest"] != recovery_digest
+                ):
+                    raise BridgeRejected("source event identity conflict")
+                row = connection.execute(
+                    "SELECT * FROM chatgpt_bridge_requests WHERE request_reference = ?",
+                    (request.approval_reference,),
+                ).fetchone()
+                if row is None:
+                    raise BridgeRejected("delivery recovery reference is unknown")
+                if (
+                    row["channel_id"] != request.channel_id
+                    or row["user_id"] != request.user_id
+                    or row["thread_ts"] != request.thread_ts
+                    or not hmac.compare_digest(row["prompt_digest"], prompt_digest)
+                ):
+                    raise BridgeRejected("owner recovery does not match the pending answer")
+                row = self._expire_answer(connection, row, now)
+                state = row["decision_state"]
+                if state == "ANSWER_READY":
+                    state = "DELIVERY_AMBIGUOUS"
+                    connection.execute(
+                        "UPDATE chatgpt_bridge_requests "
+                        "SET decision_state = 'DELIVERY_AMBIGUOUS' "
+                        "WHERE request_reference = ? AND decision_state = 'ANSWER_READY'",
+                        (request.approval_reference,),
+                    )
+                if state == "DELIVERY_AMBIGUOUS":
                     try:
                         answer = self._decrypt(row)
-                    except BridgeRejected:
+                    except BridgeRejected as exc:
                         connection.execute(
                             """
                             UPDATE chatgpt_bridge_requests
                             SET status = 'failed', decision_state = 'FAILED',
                                 answer_nonce = NULL, answer_ciphertext = NULL,
-                                answer_expires_at = NULL, completed_at = ?
+                                answer_expires_at = NULL, completed_at = ?,
+                                delivery_attempt_source_event_id = NULL,
+                                delivery_attempt_digest = NULL,
+                                delivery_attempt_started_at = NULL
                             WHERE request_reference = ?
                             """,
                             (
-                                datetime.now(timezone.utc).isoformat(),
+                                datetime.fromtimestamp(now, timezone.utc).isoformat(),
                                 request.approval_reference,
                             ),
                         )
-                        raise
-                    return self._row_result(row, cached=True, answer=answer)
-                return self._row_result(row, cached=True)
+                        deferred_error = exc
+                    else:
+                        updated = connection.execute(
+                            """
+                            UPDATE chatgpt_bridge_requests
+                            SET decision_state = 'DELIVERY_RECOVERY_PENDING',
+                                delivery_attempt_source_event_id = ?,
+                                delivery_attempt_digest = ?,
+                                delivery_attempt_started_at = ?
+                            WHERE request_reference = ?
+                              AND decision_state IN (
+                                  'ANSWER_READY', 'DELIVERY_AMBIGUOUS'
+                              )
+                            """,
+                            (
+                                request.source_event_id,
+                                recovery_digest,
+                                now,
+                                request.approval_reference,
+                            ),
+                        ).rowcount
+                        if updated != 1:
+                            raise BridgeRejected("delivery recovery transition raced")
+                        row = connection.execute(
+                            "SELECT * FROM chatgpt_bridge_requests "
+                            "WHERE request_reference = ?",
+                            (request.approval_reference,),
+                        ).fetchone()
+                        result = _StoreResult(
+                            state="ANSWER_READY",
+                            request_reference=row["request_reference"],
+                            prompt_digest=row["prompt_digest"],
+                            delivery_client_msg_id=row["delivery_client_msg_id"],
+                            cached=False,
+                            deliver=True,
+                            answer=answer,
+                        )
+                else:
+                    result = self._row_result(row, cached=True)
         finally:
             connection.close()
+        if deferred_error is not None:
+            raise deferred_error
+        if result is None:
+            raise BridgeRejected("delivery recovery state is unavailable")
+        return result
 
     def complete_answer(self, request_reference: str, answer: str) -> _StoreResult:
         plaintext = answer.encode("utf-8")
@@ -706,9 +974,12 @@ class ChatGPTBridgeStore:
                 updated = connection.execute(
                     """
                     UPDATE chatgpt_bridge_requests
-                    SET status = 'completed', decision_state = 'ANSWER_READY',
+                    SET status = 'completed', decision_state = 'DELIVERY_PENDING_ACK',
                         answer_nonce = ?, answer_ciphertext = ?,
-                        answer_expires_at = ?, completed_at = ?
+                        answer_expires_at = ?, completed_at = ?,
+                        delivery_attempt_source_event_id = approval_source_event_id,
+                        delivery_attempt_digest = approval_digest,
+                        delivery_attempt_started_at = ?
                     WHERE request_reference = ? AND decision_state = 'DISPATCHING'
                     """,
                     (
@@ -716,6 +987,7 @@ class ChatGPTBridgeStore:
                         ciphertext,
                         now + self.recovery_ttl_seconds,
                         datetime.now(timezone.utc).isoformat(),
+                        now,
                         request_reference,
                     ),
                 ).rowcount
@@ -727,7 +999,15 @@ class ChatGPTBridgeStore:
                 ).fetchone()
         finally:
             connection.close()
-        return self._row_result(row, cached=False, answer=answer)
+        return _StoreResult(
+            state="ANSWER_READY",
+            request_reference=row["request_reference"],
+            prompt_digest=row["prompt_digest"],
+            delivery_client_msg_id=row["delivery_client_msg_id"],
+            cached=False,
+            deliver=True,
+            answer=answer,
+        )
 
     def fail_dispatch(self, request_reference: str) -> None:
         connection = self._connect()
@@ -744,6 +1024,56 @@ class ChatGPTBridgeStore:
                     """,
                     (datetime.now(timezone.utc).isoformat(), request_reference),
                 )
+        finally:
+            connection.close()
+
+    def mark_delivery_ambiguous(
+        self, ambiguity: ChatGPTBridgeDeliveryAmbiguity
+    ) -> bool:
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT * FROM chatgpt_bridge_requests WHERE request_reference = ?",
+                    (ambiguity.request_reference,),
+                ).fetchone()
+                if row is None:
+                    raise BridgeRejected("delivery reference is unknown")
+                if (
+                    row["channel_id"] != ambiguity.channel_id
+                    or row["user_id"] != ambiguity.user_id
+                    or row["thread_ts"] != ambiguity.thread_ts
+                    or row["prompt_digest"] != ambiguity.prompt_digest
+                    or row["delivery_client_msg_id"]
+                    != ambiguity.delivery_client_msg_id
+                    or row["delivery_attempt_source_event_id"]
+                    != ambiguity.source_event_id
+                ):
+                    raise BridgeRejected("delivery ambiguity does not match")
+                if row["decision_state"] == "DELIVERED":
+                    return False
+                if row["decision_state"] == "DELIVERY_AMBIGUOUS":
+                    return False
+                if row["decision_state"] not in {
+                    "DELIVERY_PENDING_ACK",
+                    "DELIVERY_RECOVERY_PENDING",
+                }:
+                    raise BridgeRejected("bridge answer has no active delivery attempt")
+                updated = connection.execute(
+                    """
+                    UPDATE chatgpt_bridge_requests
+                    SET decision_state = 'DELIVERY_AMBIGUOUS'
+                    WHERE request_reference = ?
+                      AND decision_state IN (
+                          'DELIVERY_PENDING_ACK', 'DELIVERY_RECOVERY_PENDING'
+                      )
+                    """,
+                    (ambiguity.request_reference,),
+                ).rowcount
+                if updated != 1:
+                    raise BridgeRejected("delivery ambiguity transition raced")
+                return True
         finally:
             connection.close()
 
@@ -764,11 +1094,15 @@ class ChatGPTBridgeStore:
                     or row["thread_ts"] != ack.thread_ts
                     or row["prompt_digest"] != ack.prompt_digest
                     or row["delivery_client_msg_id"] != ack.delivery_client_msg_id
+                    or row["delivery_attempt_source_event_id"] != ack.source_event_id
                 ):
                     raise BridgeRejected("delivery acknowledgement does not match")
                 if row["decision_state"] == "DELIVERED":
                     return False
-                if row["decision_state"] != "ANSWER_READY":
+                if row["decision_state"] not in {
+                    "DELIVERY_PENDING_ACK",
+                    "DELIVERY_RECOVERY_PENDING",
+                }:
                     raise BridgeRejected("bridge answer is not awaiting delivery")
                 updated = connection.execute(
                     """
@@ -776,7 +1110,10 @@ class ChatGPTBridgeStore:
                     SET decision_state = 'DELIVERED', delivered_at = ?,
                         delivery_slack_ts = ?, answer_nonce = NULL,
                         answer_ciphertext = NULL, answer_expires_at = NULL
-                    WHERE request_reference = ? AND decision_state = 'ANSWER_READY'
+                    WHERE request_reference = ?
+                      AND decision_state IN (
+                          'DELIVERY_PENDING_ACK', 'DELIVERY_RECOVERY_PENDING'
+                      )
                     """,
                     (
                         datetime.now(timezone.utc).isoformat(),
@@ -812,10 +1149,10 @@ class ChatGPTBridgeService:
             raise BridgeRejected("prompt length is outside the bridge limit")
         if request.action == "request" and request.approval_reference:
             raise BridgeRejected("initial bridge request cannot carry an approval reference")
-        if request.action == "approve" and not re.fullmatch(
+        if request.action in {"approve", "recover"} and not re.fullmatch(
             r"CBR-[A-F0-9]{24}", request.approval_reference
         ):
-            raise BridgeRejected("owner approval reference is malformed")
+            raise BridgeRejected("owner decision reference is malformed")
         if not all(self.settings.chatgpt_bridge_readiness().values()):
             raise BridgeRejected("ChatGPT bridge configuration is invalid")
         return prompt
@@ -825,14 +1162,23 @@ class ChatGPTBridgeService:
         request: ChatGPTBridgeRequest,
         result: _StoreResult,
     ) -> ChatGPTBridgeResponse:
-        deliver = result.state == "OWNER_DECISION_REQUIRED" or (
-            result.state == "ANSWER_READY" and bool(result.answer)
-        )
+        deliver = result.state in {
+            "OWNER_DECISION_REQUIRED",
+            "DELIVERY_AMBIGUOUS",
+        } or (result.deliver and result.state == "ANSWER_READY" and bool(result.answer))
         instruction = ""
         if result.state == "OWNER_DECISION_REQUIRED":
             instruction = (
                 "Owner decision required. Reply in this thread with `@ChatGPT APPROVE "
                 f"{result.request_reference} <repeat the original prompt exactly>`."
+            )
+        elif result.state == "DELIVERY_AMBIGUOUS":
+            instruction = (
+                "Slack delivery is ambiguous. To authorize one budget-neutral retry that "
+                "does not call the provider again, reply with `@ChatGPT RECOVER "
+                f"{result.request_reference} <repeat the original prompt exactly>`. "
+                "Slack may already have accepted the first message, so recovery can create "
+                "a duplicate."
             )
         return ChatGPTBridgeResponse(
             source_event_id=request.source_event_id,
@@ -862,11 +1208,14 @@ class ChatGPTBridgeService:
             )
             return self._response(request, result)
 
-        result = self.store.approve(
-            request,
-            estimated_cost_usd=self.settings.chatgpt_bridge_estimated_cost_usd,
-            daily_budget_usd=self.settings.chatgpt_bridge_daily_budget_usd,
-        )
+        if request.action == "recover":
+            result = self.store.recover_delivery(request)
+        else:
+            result = self.store.approve(
+                request,
+                estimated_cost_usd=self.settings.chatgpt_bridge_estimated_cost_usd,
+                daily_budget_usd=self.settings.chatgpt_bridge_daily_budget_usd,
+            )
         if not result.dispatch:
             return self._response(request, result)
 
@@ -921,5 +1270,26 @@ class ChatGPTBridgeService:
             request_reference=ack.request_reference,
             cached=not changed,
         )
+
+    def mark_delivery_ambiguous(
+        self, ambiguity: ChatGPTBridgeDeliveryAmbiguity
+    ) -> ChatGPTBridgeDeliveryAmbiguityResponse:
+        verify_chatgpt_bridge_delivery_ambiguity_proof(
+            self.settings.slack_gateway_secret,
+            self.settings.shared_secret,
+            ambiguity,
+        )
+        if not hmac.compare_digest(
+            ambiguity.user_id, self.settings.slack_owner_user_id
+        ):
+            raise BridgeRejected("owner identity mismatch")
+        if ambiguity.channel_id not in self.settings.chatgpt_bridge_channel_ids:
+            raise BridgeRejected("channel is not allowlisted")
+        changed = self.store.mark_delivery_ambiguous(ambiguity)
+        return ChatGPTBridgeDeliveryAmbiguityResponse(
+            request_reference=ambiguity.request_reference,
+            cached=not changed,
+        )
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]

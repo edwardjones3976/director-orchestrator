@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
@@ -9,7 +10,6 @@ import re
 import secrets
 import threading
 import time
-import uuid
 from datetime import datetime, timezone
 
 import httpx
@@ -25,9 +25,11 @@ from .config import Settings
 # [[Codex | GPT-5.6 | 2026-08-23 19:17 UTC | BEGIN]]
 from .chatgpt_bridge import (
     ChatGPTBridgeDeliveryAck,
+    ChatGPTBridgeDeliveryAmbiguity,
     ChatGPTBridgeGatewayProof,
     ChatGPTBridgeRequest,
     build_chatgpt_bridge_delivery_ack_proof,
+    build_chatgpt_bridge_delivery_ambiguity_proof,
     build_chatgpt_bridge_gateway_proof,
 )
 # [[Codex | GPT-5.6 | 2026-08-23 19:17 UTC | END]]
@@ -110,7 +112,11 @@ def _is_chatgpt_alias_message(event: dict) -> bool:
     if not settings.chatgpt_bridge_enabled:
         return False
     mention = f"<@{settings.chatgpt_bridge_slack_user_id}>"
-    return mention in event.get("text", "")
+    return (
+        mention in event.get("text", "")
+        and event.get("user") == settings.slack_owner_user_id
+        and event.get("channel") in settings.chatgpt_bridge_channel_ids
+    )
 
 
 def _clean_chatgpt_alias_text(text: str) -> str:
@@ -135,33 +141,20 @@ def _placeholder_bridge_proof() -> ChatGPTBridgeGatewayProof:
     )
 
 
-def _stable_bridge_client_msg_id(request_reference: str, phase: str) -> str:
-    return str(
-        uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"director-chatgpt-bridge:{request_reference}:{phase}",
-        )
-    )
+def _post_bridge_message(client, **payload) -> str | None:
+    """Attempt one Slack side effect; any exception leaves delivery ambiguous."""
 
-
-def _post_bridge_message(client, *, client_msg_id: str, **payload) -> str | None:
-    """Bounded same-identity Slack delivery; ambiguity never emits a second status."""
-
-    for _attempt in range(2):
-        try:
-            response = client.chat_postMessage(
-                **payload,
-                client_msg_id=client_msg_id,
-            )
-            if isinstance(response, dict):
-                return response.get("ts")
-            try:
-                return response.get("ts")
-            except Exception:
-                return None
-        except Exception as exc:
-            _log_boundary_failure("ChatGPT bridge Slack delivery failed", exc)
-    return None
+    try:
+        response = client.chat_postMessage(**payload)
+    except Exception as exc:
+        _log_boundary_failure("ChatGPT bridge Slack delivery was ambiguous", exc)
+        return None
+    if isinstance(response, dict):
+        return response.get("ts")
+    try:
+        return response.get("ts")
+    except Exception:
+        return None
 
 
 def _bridge_http_post(path: str, payload: dict, *, timeout: int) -> dict:
@@ -231,6 +224,29 @@ def _signed_delivery_ack(
     return unsigned.model_copy(update={"gateway_proof": proof})
 
 
+def _signed_delivery_ambiguity(
+    request: ChatGPTBridgeRequest,
+    body: dict,
+) -> ChatGPTBridgeDeliveryAmbiguity:
+    unsigned = ChatGPTBridgeDeliveryAmbiguity(
+        source_event_id=request.source_event_id,
+        request_reference=body["request_reference"],
+        channel_id=request.channel_id,
+        thread_ts=request.thread_ts,
+        user_id=request.user_id,
+        prompt_digest=body["prompt_digest"],
+        delivery_client_msg_id=body["delivery_client_msg_id"],
+        gateway_proof=_placeholder_bridge_proof(),
+    )
+    proof = build_chatgpt_bridge_delivery_ambiguity_proof(
+        settings.slack_gateway_secret,
+        settings.shared_secret,
+        unsigned,
+        nonce=secrets.token_urlsafe(32),
+    )
+    return unsigned.model_copy(update={"gateway_proof": proof})
+
+
 def _forward_chatgpt_alias(event: dict, client) -> None:
     if event.get("bot_id") or event.get("subtype") in {
         "bot_message",
@@ -248,12 +264,21 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
         cleaned,
         flags=re.IGNORECASE | re.DOTALL,
     )
+    recovery_match = re.fullmatch(
+        r"RECOVER\s+(CBR-[A-F0-9]{24})\s+(.+)",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     if approval_match:
         action = "approve"
         approval_reference = approval_match.group(1).upper()
         prompt = approval_match.group(2).strip()
+    elif recovery_match:
+        action = "recover"
+        approval_reference = recovery_match.group(1).upper()
+        prompt = recovery_match.group(2).strip()
     else:
-        if cleaned.upper().startswith("APPROVE "):
+        if cleaned.upper().startswith(("APPROVE ", "RECOVER ")):
             return
         action = "request"
         approval_reference = ""
@@ -281,10 +306,8 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
             body = _bridge_http_post("/v1/chatgpt-bridge", payload, timeout=20)
         except Exception as recovery_exc:
             _log_boundary_failure("ChatGPT bridge recovery read failed", recovery_exc)
-            reference = approval_reference or source_event_id
             _post_bridge_message(
                 client,
-                client_msg_id=_stable_bridge_client_msg_id(reference, "pending"),
                 channel=event["channel"],
                 thread_ts=thread_ts,
                 text=(
@@ -296,10 +319,8 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
             return
     except Exception as exc:
         _log_boundary_failure("ChatGPT alias bridge request failed", exc)
-        reference = approval_reference or source_event_id
         _post_bridge_message(
             client,
-            client_msg_id=_stable_bridge_client_msg_id(reference, "failed"),
             channel=event["channel"],
             thread_ts=thread_ts,
             text=(
@@ -318,7 +339,6 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
             raise ValueError("bridge owner-decision response was incomplete")
         _post_bridge_message(
             client,
-            client_msg_id=_stable_bridge_client_msg_id(reference, "decision"),
             channel=event["channel"],
             thread_ts=thread_ts,
             text=(
@@ -327,11 +347,23 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
             ),
         )
         return
-    if state == "DISPATCHING":
-        reference = body.get("request_reference") or approval_reference or "UNRESOLVED"
+    if state == "DELIVERY_AMBIGUOUS" and body.get("deliver"):
+        instruction = body.get("approval_instruction")
+        if not isinstance(instruction, str) or not instruction:
+            raise ValueError("bridge recovery instruction was incomplete")
         _post_bridge_message(
             client,
-            client_msg_id=_stable_bridge_client_msg_id(reference, "pending"),
+            channel=event["channel"],
+            thread_ts=thread_ts,
+            text=(
+                "*Aesop Director — ChatGPT bridge — DELIVERY_AMBIGUOUS*\n"
+                f"{_escape_slack_text(instruction)}"
+            ),
+        )
+        return
+    if state == "DISPATCHING":
+        _post_bridge_message(
+            client,
             channel=event["channel"],
             thread_ts=thread_ts,
             text=(
@@ -343,17 +375,29 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
     if state != "ANSWER_READY" or not body.get("deliver"):
         return
     answer = body.get("answer")
-    client_msg_id = body.get("delivery_client_msg_id")
-    if not isinstance(answer, str) or not answer.strip() or not isinstance(client_msg_id, str):
+    delivery_attempt_id = body.get("delivery_client_msg_id")
+    if not isinstance(answer, str) or not answer.strip() or not isinstance(
+        delivery_attempt_id, str
+    ):
         raise ValueError("bridge answer response was incomplete")
     slack_message_ts = _post_bridge_message(
         client,
-        client_msg_id=client_msg_id,
         channel=event["channel"],
         thread_ts=thread_ts,
         text=f"*Aesop Director — ChatGPT bridge*\n{_escape_slack_text(answer)}",
     )
     if not slack_message_ts:
+        try:
+            ambiguity = _signed_delivery_ambiguity(request, body)
+            _bridge_http_post(
+                "/v1/chatgpt-bridge/delivery-ambiguous",
+                ambiguity.model_dump(mode="json"),
+                timeout=20,
+            )
+        except Exception as exc:
+            _log_boundary_failure(
+                "ChatGPT bridge delivery ambiguity recording failed", exc
+            )
         return
     try:
         ack = _signed_delivery_ack(request, body, slack_message_ts)
@@ -591,3 +635,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]

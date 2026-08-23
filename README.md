@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
@@ -80,7 +81,10 @@ owner use the visible `@ChatGPT` identity inside an allowlisted project channel,
 enable Aesop Director's bounded alias bridge. Aesop—not the OpenAI-managed bot—posts
 the threaded answer with an honest bridge label only after a second signed owner
 approval. Undelivered answers remain recoverable as bounded ciphertext until Slack
-delivery is acknowledged. The bridge has no work-order,
+delivery is acknowledged. After an ambiguous Slack post, only an explicit owner
+`RECOVER` command may make one budget-neutral delivery attempt; Slack may already
+have accepted the first post, so recovery can duplicate it. The bridge never retries
+that external side effect automatically. The bridge has no work-order,
 tool, repository, delegation, merge, deployment, or purchasing authority. See
 [the ChatGPT Slack alias bridge runbook](docs/chatgpt-slack-alias-bridge.md).
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:31 UTC | END]]**
@@ -184,3 +188,4 @@ The gated incremental migration is documented in [docs/langgraph-transition-plan
 Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and preserve the current Slack/API surface, provider adapters, deterministic approval policy, single-writer rule, and rollback path. No LangGraph runtime transition begins merely because the documentation/schema authority is merged.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]] -->

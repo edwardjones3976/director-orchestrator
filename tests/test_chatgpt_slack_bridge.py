@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 08:12 UTC | BEGIN]]
 from __future__ import annotations
@@ -21,11 +22,13 @@ from fastapi.testclient import TestClient
 from director_orchestrator.chatgpt_bridge import (
     BridgeRejected,
     ChatGPTBridgeDeliveryAck,
+    ChatGPTBridgeDeliveryAmbiguity,
     ChatGPTBridgeGatewayProof,
     ChatGPTBridgeRequest,
     ChatGPTBridgeService,
     ChatGPTBridgeStore,
     build_chatgpt_bridge_delivery_ack_proof,
+    build_chatgpt_bridge_delivery_ambiguity_proof,
     build_chatgpt_bridge_gateway_proof,
 )
 from director_orchestrator.config import Settings
@@ -146,6 +149,26 @@ def _approval(
     )
 
 
+def _recovery(
+    settings: Settings,
+    request_reference: str,
+    *,
+    event_ts: str = "1787450004.123456",
+    prompt: str = PROMPT,
+    thread_ts: str = "1787450000.123456",
+    issued_at: int | None = None,
+) -> ChatGPTBridgeRequest:
+    return _signed_request(
+        settings,
+        action="recover",
+        event_ts=event_ts,
+        thread_ts=thread_ts,
+        prompt=prompt,
+        approval_reference=request_reference,
+        issued_at=issued_at,
+    )
+
+
 def _signed_ack(
     settings: Settings,
     approval: ChatGPTBridgeRequest,
@@ -174,6 +197,35 @@ def _signed_ack(
         unsigned,
         issued_at=int(time.time()),
         nonce="A" * 32,
+    )
+    return unsigned.model_copy(update={"gateway_proof": proof})
+
+
+def _signed_ambiguity(
+    settings: Settings,
+    approval: ChatGPTBridgeRequest,
+    response,
+) -> ChatGPTBridgeDeliveryAmbiguity:
+    unsigned = ChatGPTBridgeDeliveryAmbiguity(
+        source_event_id=approval.source_event_id,
+        request_reference=response.request_reference,
+        channel_id=approval.channel_id,
+        thread_ts=approval.thread_ts,
+        user_id=approval.user_id,
+        prompt_digest=response.prompt_digest,
+        delivery_client_msg_id=response.delivery_client_msg_id,
+        gateway_proof=ChatGPTBridgeGatewayProof(
+            issued_at=1,
+            nonce="N" * 32,
+            signature="0" * 64,
+        ),
+    )
+    proof = build_chatgpt_bridge_delivery_ambiguity_proof(
+        settings.slack_gateway_secret,
+        settings.shared_secret,
+        unsigned,
+        issued_at=int(time.time()),
+        nonce="B" * 32,
     )
     return unsigned.model_copy(update={"gateway_proof": proof})
 
@@ -208,7 +260,7 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(row, ("pending", "OWNER_DECISION_REQUIRED", 0.0))
             self.assertNotIn(PROMPT.encode(), Path(database).read_bytes())
 
-    async def test_matching_approval_dispatches_once_and_duplicate_recovers_ciphertext(self):
+    async def test_matching_approval_dispatches_once_and_duplicates_cannot_redeliver(self):
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "director.sqlite3")
             settings = _settings(database)
@@ -234,9 +286,13 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(first.state, "ANSWER_READY")
             self.assertEqual(first.answer, "Encrypted answer")
             self.assertFalse(first.cached)
-            self.assertEqual(same_event.answer, "Encrypted answer")
+            self.assertEqual(same_event.state, "DELIVERY_PENDING_ACK")
+            self.assertEqual(same_event.answer, "")
+            self.assertFalse(same_event.deliver)
             self.assertTrue(same_event.cached)
-            self.assertEqual(new_event.answer, "Encrypted answer")
+            self.assertEqual(new_event.state, "DELIVERY_PENDING_ACK")
+            self.assertEqual(new_event.answer, "")
+            self.assertFalse(new_event.deliver)
             self.assertEqual(len(RecordingAsyncClient.calls), 1)
             self.assertEqual(first.delivery_client_msg_id, same_event.delivery_client_msg_id)
             with closing(sqlite3.connect(database)) as connection:
@@ -250,7 +306,7 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
                         "PRAGMA table_info(chatgpt_bridge_requests)"
                     ).fetchall()
                 }
-            self.assertEqual(row[2], "ANSWER_READY")
+            self.assertEqual(row[2], "DELIVERY_PENDING_ACK")
             self.assertTrue(row[0])
             self.assertTrue(row[1])
             self.assertNotIn("prompt", columns)
@@ -316,8 +372,9 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(sum(item.deliver for item in results), 1)
             recovered = await service.reply(approvals[1])
-            self.assertEqual(recovered.state, "ANSWER_READY")
+            self.assertEqual(recovered.state, "DELIVERY_PENDING_ACK")
             self.assertTrue(recovered.cached)
+            self.assertFalse(recovered.deliver)
             self.assertEqual(len(RecordingAsyncClient.calls), 1)
 
     async def test_ack_wipes_ciphertext_and_delivered_replay_is_noop(self):
@@ -350,6 +407,140 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
                     "answer_expires_at FROM chatgpt_bridge_requests"
                 ).fetchone()
             self.assertEqual(row, ("DELIVERED", None, None, None))
+
+    async def test_ambiguous_delivery_requires_explicit_owner_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            settings = _settings(database)
+            store = _store(database, settings)
+            service = ChatGPTBridgeService(settings, store)
+            pending = await service.reply(_signed_request(settings))
+            approval = _approval(settings, pending.request_reference)
+            RecordingAsyncClient.responses = [{"output_text": "recoverable answer"}]
+            with patch(
+                "director_orchestrator.chatgpt_bridge.httpx.AsyncClient",
+                RecordingAsyncClient,
+            ):
+                answer = await service.reply(approval)
+
+            ambiguity = _signed_ambiguity(settings, approval, answer)
+            first_mark = service.mark_delivery_ambiguous(ambiguity)
+            replay_mark = service.mark_delivery_ambiguous(ambiguity)
+            duplicate_approval = await service.reply(approval)
+            recovery = _recovery(settings, pending.request_reference)
+            recovered = await service.reply(recovery)
+            duplicate_recovery = await service.reply(recovery)
+
+            self.assertFalse(first_mark.cached)
+            self.assertTrue(replay_mark.cached)
+            self.assertEqual(duplicate_approval.state, "DELIVERY_AMBIGUOUS")
+            self.assertNotIn(
+                "exactly-once", duplicate_approval.approval_instruction.lower()
+            )
+            self.assertIn("may already have accepted", duplicate_approval.approval_instruction)
+            self.assertEqual(recovered.state, "ANSWER_READY")
+            self.assertEqual(recovered.answer, "recoverable answer")
+            self.assertTrue(recovered.deliver)
+            self.assertEqual(duplicate_recovery.state, "DELIVERY_RECOVERY_PENDING")
+            self.assertFalse(duplicate_recovery.deliver)
+            self.assertEqual(len(RecordingAsyncClient.calls), 1)
+
+    async def test_decrypt_failure_wipe_commits_before_error_is_raised(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            settings = _settings(database)
+            store = _store(database, settings)
+            service = ChatGPTBridgeService(settings, store)
+            pending = await service.reply(_signed_request(settings))
+            approval = _approval(settings, pending.request_reference)
+            RecordingAsyncClient.responses = [{"output_text": "sensitive answer"}]
+            with patch(
+                "director_orchestrator.chatgpt_bridge.httpx.AsyncClient",
+                RecordingAsyncClient,
+            ):
+                answer = await service.reply(approval)
+            service.mark_delivery_ambiguous(_signed_ambiguity(settings, approval, answer))
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute(
+                    "UPDATE chatgpt_bridge_requests SET answer_ciphertext = ? "
+                    "WHERE request_reference = ?",
+                    (b"corrupted ciphertext", pending.request_reference),
+                )
+
+            with self.assertRaisesRegex(BridgeRejected, "recovery failed"):
+                await service.reply(_recovery(settings, pending.request_reference))
+
+            with closing(sqlite3.connect(database)) as connection:
+                row = connection.execute(
+                    "SELECT status, decision_state, answer_nonce, answer_ciphertext, "
+                    "answer_expires_at FROM chatgpt_bridge_requests"
+                ).fetchone()
+            self.assertEqual(row, ("failed", "FAILED", None, None, None))
+
+    async def test_expiry_sweeper_wipes_ciphertext_without_another_approval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            settings = _settings(database)
+            store = _store(database, settings)
+            service = ChatGPTBridgeService(settings, store)
+            pending = await service.reply(_signed_request(settings))
+            approval = _approval(settings, pending.request_reference)
+            RecordingAsyncClient.responses = [{"output_text": "expiring answer"}]
+            with patch(
+                "director_orchestrator.chatgpt_bridge.httpx.AsyncClient",
+                RecordingAsyncClient,
+            ):
+                await service.reply(approval)
+            with closing(sqlite3.connect(database)) as connection:
+                expires_at = connection.execute(
+                    "SELECT answer_expires_at FROM chatgpt_bridge_requests"
+                ).fetchone()[0]
+
+            self.assertEqual(store.sweep_expired_answers(now=expires_at + 1), 1)
+
+            with closing(sqlite3.connect(database)) as connection:
+                row = connection.execute(
+                    "SELECT status, decision_state, answer_nonce, answer_ciphertext, "
+                    "answer_expires_at FROM chatgpt_bridge_requests"
+                ).fetchone()
+            self.assertEqual(row, ("failed", "FAILED", None, None, None))
+
+    async def test_pending_delivery_sweeper_requires_explicit_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            settings = _settings(database)
+            store = _store(database, settings)
+            service = ChatGPTBridgeService(settings, store)
+            pending = await service.reply(_signed_request(settings))
+            approval = _approval(settings, pending.request_reference)
+            RecordingAsyncClient.responses = [{"output_text": "unacknowledged answer"}]
+            with patch(
+                "director_orchestrator.chatgpt_bridge.httpx.AsyncClient",
+                RecordingAsyncClient,
+            ):
+                await service.reply(approval)
+            with closing(sqlite3.connect(database)) as connection:
+                started_at = connection.execute(
+                    "SELECT delivery_attempt_started_at FROM chatgpt_bridge_requests"
+                ).fetchone()[0]
+
+            self.assertEqual(
+                store.sweep_expired_answers(
+                    now=started_at + 61,
+                    pending_timeout_seconds=60,
+                ),
+                0,
+            )
+
+            with closing(sqlite3.connect(database)) as connection:
+                row = connection.execute(
+                    "SELECT decision_state, answer_ciphertext, "
+                    "delivery_attempt_source_event_id "
+                    "FROM chatgpt_bridge_requests"
+                ).fetchone()
+            self.assertEqual(row[0], "DELIVERY_AMBIGUOUS")
+            self.assertIsNotNone(row[1])
+            self.assertIsNone(row[2])
 
     async def test_provider_failure_is_terminal_and_never_redispatched(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -411,6 +602,8 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(row, ("failed", "FAILED", "", None))
             self.assertIn("approval_source_event_id", columns)
             self.assertIn("answer_ciphertext", columns)
+            self.assertIn("delivery_attempt_source_event_id", columns)
+            self.assertIn("delivery_attempt_started_at", columns)
 
     def test_daily_boundary_readiness_and_boolean_health_contracts(self):
         class ControlledDateTime:
@@ -562,7 +755,9 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
                 {item["prompt"] for item in payloads},
                 {"<@UAESOP123>  summarize <@UALICE123>'s note"},
             )
-            self.assertEqual(len({item["client_msg_id"] for item in client.messages}), 1)
+            self.assertTrue(
+                all("client_msg_id" not in item for item in client.messages)
+            )
         finally:
             sys.modules.pop(module_name, None)
 
@@ -589,16 +784,54 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
             }
             client = _SlackClient(fail_posts=2, accept_before_failure=True)
             with patch.object(
-                slack_bot.httpx, "post", return_value=_SlackResponse(answer_body)
+                slack_bot.httpx,
+                "post",
+                side_effect=[
+                    _SlackResponse(answer_body),
+                    _SlackResponse(
+                        {
+                            "request_reference": answer_body["request_reference"],
+                            "state": "DELIVERY_AMBIGUOUS",
+                            "cached": False,
+                        }
+                    ),
+                ],
             ) as post:
                 slack_bot.message_handler(event, client)
-            self.assertEqual(post.call_count, 1)
-            self.assertEqual(len(client.messages), 2)
-            self.assertEqual(
-                {item["client_msg_id"] for item in client.messages},
-                {answer_body["delivery_client_msg_id"]},
+            self.assertEqual(post.call_count, 2)
+            self.assertTrue(
+                post.call_args_list[1].args[0].endswith("/delivery-ambiguous")
             )
+            self.assertEqual(len(client.messages), 1)
+            self.assertNotIn("client_msg_id", client.messages[0])
             self.assertTrue(all("BLOCKED" not in item["text"] for item in client.messages))
+        finally:
+            sys.modules.pop(module_name, None)
+
+    def test_alias_interception_requires_owner_and_allowlisted_channel(self):
+        module_name, slack_bot = self._module()
+        try:
+            client = _SlackClient()
+            non_owner = {
+                "channel": "C123",
+                "user": "UOTHER123",
+                "text": "<@U0B9KFJPST1> hello",
+                "ts": "1787450400.123456",
+            }
+            wrong_channel = {
+                "channel": "C999",
+                "user": "UOWNER123",
+                "text": "<@U0B9KFJPST1> DIRECTOR status",
+                "ts": "1787450401.123456",
+            }
+            with (
+                patch.object(slack_bot, "_forward") as forward,
+                patch.object(slack_bot.httpx, "post") as post,
+            ):
+                slack_bot.mention_handler(non_owner, client)
+                slack_bot.message_handler(wrong_channel, client)
+            self.assertEqual(forward.call_count, 2)
+            self.assertFalse(post.called)
         finally:
             sys.modules.pop(module_name, None)
 
@@ -670,7 +903,47 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
             sys.modules.pop(module_name, None)
 
 
+class ChatGPTBridgeLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_and_periodic_sweeps_are_wired(self):
+        import director_orchestrator.config as config_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            settings = _settings(database)
+            module_name = "director_orchestrator.main"
+            sys.modules.pop(module_name, None)
+            with patch.object(config_module, "Settings", return_value=settings):
+                main = importlib.import_module(module_name)
+            service = ChatGPTBridgeService(settings, _store(database, settings))
+            try:
+                with patch.object(main, "chatgpt_bridge", service), patch.object(
+                    service.store, "sweep_expired_answers"
+                ) as sweep:
+                    async with main.lifespan(main.app):
+                        self.assertEqual(sweep.call_count, 1)
+
+                    sleep_calls = 0
+
+                    async def one_periodic_cycle(_: float) -> None:
+                        nonlocal sleep_calls
+                        sleep_calls += 1
+                        if sleep_calls > 1:
+                            raise asyncio.CancelledError
+
+                    with patch.object(main.asyncio, "sleep", new=one_periodic_cycle):
+                        with self.assertRaises(asyncio.CancelledError):
+                            await main._chatgpt_bridge_expiry_loop()
+                    self.assertEqual(sweep.call_count, 2)
+            finally:
+                sys.modules.pop(module_name, None)
+
+
 class ChatGPTBridgeRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        RecordingAsyncClient.calls = []
+        RecordingAsyncClient.responses = []
+        RecordingAsyncClient.delay_seconds = 0
+
     def test_route_auth_owner_decision_bad_proof_and_provider_failure(self):
         import director_orchestrator.config as config_module
 
@@ -806,6 +1079,75 @@ class ChatGPTBridgeRouteTests(unittest.TestCase):
                     self.assertEqual(accepted_ack.status_code, 200)
                     self.assertFalse(accepted_ack.json()["cached"])
                     self.assertTrue(replayed_ack.json()["cached"])
+
+                    initial_3 = _signed_request(
+                        settings,
+                        event_ts="1787450100.123456",
+                        thread_ts="1787450100.123456",
+                    )
+                    pending_3 = client.post(
+                        "/v1/chatgpt-bridge",
+                        headers={"Authorization": f"Bearer {settings.shared_secret}"},
+                        json=initial_3.model_dump(mode="json"),
+                    )
+                    approval_3 = _approval(
+                        settings,
+                        pending_3.json()["request_reference"],
+                        event_ts="1787450101.123456",
+                        thread_ts="1787450100.123456",
+                    )
+                    RecordingAsyncClient.responses = [
+                        {"output_text": "ambiguous route answer"}
+                    ]
+                    with patch(
+                        "director_orchestrator.chatgpt_bridge.httpx.AsyncClient",
+                        RecordingAsyncClient,
+                    ):
+                        answer_3 = client.post(
+                            "/v1/chatgpt-bridge",
+                            headers={
+                                "Authorization": f"Bearer {settings.shared_secret}"
+                            },
+                            json=approval_3.model_dump(mode="json"),
+                        )
+                    ambiguity = _signed_ambiguity(
+                        settings,
+                        approval_3,
+                        type("Response", (), answer_3.json())(),
+                    )
+                    self.assertEqual(
+                        client.post(
+                            "/v1/chatgpt-bridge/delivery-ambiguous",
+                            json=ambiguity.model_dump(mode="json"),
+                        ).status_code,
+                        401,
+                    )
+                    tampered_ambiguity = ambiguity.model_copy(
+                        update={"thread_ts": "1787450199.123456"}
+                    )
+                    self.assertEqual(
+                        client.post(
+                            "/v1/chatgpt-bridge/delivery-ambiguous",
+                            headers={
+                                "Authorization": f"Bearer {settings.shared_secret}"
+                            },
+                            json=tampered_ambiguity.model_dump(mode="json"),
+                        ).status_code,
+                        403,
+                    )
+                    accepted_ambiguity = client.post(
+                        "/v1/chatgpt-bridge/delivery-ambiguous",
+                        headers={"Authorization": f"Bearer {settings.shared_secret}"},
+                        json=ambiguity.model_dump(mode="json"),
+                    )
+                    replayed_ambiguity = client.post(
+                        "/v1/chatgpt-bridge/delivery-ambiguous",
+                        headers={"Authorization": f"Bearer {settings.shared_secret}"},
+                        json=ambiguity.model_dump(mode="json"),
+                    )
+                    self.assertEqual(accepted_ambiguity.status_code, 200)
+                    self.assertFalse(accepted_ambiguity.json()["cached"])
+                    self.assertTrue(replayed_ambiguity.json()["cached"])
             finally:
                 sys.modules.pop(module_name, None)
 
@@ -814,3 +1156,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-23 08:12 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]

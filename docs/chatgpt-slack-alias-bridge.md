@@ -1,3 +1,4 @@
+**[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:12 UTC | BEGIN]]**
 
 # ChatGPT Slack alias bridge
@@ -17,8 +18,9 @@ It does not impersonate the OpenAI-managed Slack identity.
 
 - Exact owner ID and exact channel allowlist are checked by both the Slack gateway
   and the authenticated orchestrator service. The shared bearer is defense in
-  depth: a distinct `SLACK_GATEWAY_SECRET` HMAC binds every request and delivery
-  acknowledgement to its Slack message identity, action, prompt digest, and age.
+  depth: a distinct `SLACK_GATEWAY_SECRET` HMAC binds every request, delivery
+  acknowledgement, and ambiguity record to its Slack message identity, action,
+  prompt digest, and age.
 - The bridge uses OpenAI Responses without tools and with response storage disabled.
 - It cannot create Director work orders, write repositories, delegate providers,
   approve, review, merge, deploy, purchase, or perform other external actions.
@@ -32,8 +34,10 @@ It does not impersonate the OpenAI-managed Slack identity.
   dispatch the provider twice.
 - Raw prompts are never persisted. An undelivered completed answer is retained only
   as size-bounded AES-GCM ciphertext with request-bound associated data. A signed
-  delivery acknowledgement clears that ciphertext. Rotating either the gateway or
-  internal bearer secret invalidates pending encrypted recovery material.
+  delivery acknowledgement clears that ciphertext. Startup and bounded periodic
+  cleanup physically wipe ciphertext after its one-hour recovery TTL. Rotating
+  either the gateway or internal bearer secret invalidates pending encrypted
+  recovery material.
 
 ## Configuration
 
@@ -69,19 +73,35 @@ not call OpenAI. Reply in that thread using the exact form it supplies:
 @ChatGPT APPROVE CBR-<opaque-reference> Reply with exactly: BRIDGE_OK
 ```
 
-Only that matching approval may call OpenAI. The answer uses a deterministic Slack
-`client_msg_id`; ambiguous Slack delivery is retried at most once with the same
-identity. Until delivery is acknowledged, repeating the exact approval may recover
-the encrypted answer without another provider call. A delivered replay is a no-op.
+Only that matching approval may call OpenAI. Aesop attempts the Slack answer post
+once. Slack does not provide an exactly-once guarantee for a timed-out
+`chat.postMessage`, so the bridge never performs an automatic second post after an
+exception. It records the delivery as ambiguous and keeps only the encrypted answer.
+The owner may then authorize a budget-neutral recovery in the same thread:
+
+```text
+@ChatGPT RECOVER CBR-<opaque-reference> Reply with exactly: BRIDGE_OK
+```
+
+Recovery repeats the original prompt for digest binding, does not call OpenAI again,
+and attempts one new Slack post. Because Slack may have accepted the unacknowledged
+first post, this explicit recovery can create a duplicate. Repeating `APPROVE` does
+not release the answer, duplicate recovery events do not post again, and a delivered
+replay is a no-op.
 
 ## Failure behavior
 
-Non-owner, non-allowlisted, bot-authored, edited, and deleted events are ignored.
+Non-owner and non-allowlisted alias mentions are not intercepted by the bridge and
+continue through the ordinary Director routing rules. Bot-authored, edited, and
+deleted events are ignored.
 Invalid configuration, rate or daily-budget exhaustion, provider failure, a stale
 or invalid gateway proof, a mismatched approval, and an event-identity conflict
 fail closed. An ambiguous orchestrator transport result gets one same-identity
 recovery request and then an honest `PENDING` status. An ambiguous answer post never
-causes a contradictory `BLOCKED` post; encrypted recovery remains available until
-acknowledged or its bounded recovery window expires.
+causes a contradictory `BLOCKED` post or an automatic Slack retry; encrypted recovery
+remains available until acknowledged or its bounded recovery window expires. A
+startup and 60-second periodic sweep moves abandoned acknowledgement waits to the
+explicit recovery state and physically wipes expired ciphertext.
 
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:12 UTC | END]]**
+**[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]**
