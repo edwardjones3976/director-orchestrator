@@ -1,3 +1,5 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
@@ -12,6 +14,8 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
 - An OpenAI Director planner/reviewer using Structured Outputs.
 - A primary OpenAI–Claude–Cursor team, with Claude Pro 20x as the coding/general workhorse and Gemini/Perplexity retained as optional specialists.
+- Standing project roles with flexible capacity targets: OpenAI Director, Claude Chief Programmer, Cursor Project Secretary, Gemini/Antigravity Specialist and Backup Programmer, and Perplexity.ai Research Programmers.
+- Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
 - A local n8n deployment and an importable intake workflow.
 - A reusable Slack app manifest and a Claude routine prompt.
@@ -19,6 +23,7 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 
 Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`,
 `docs/slack-collaboration-bus.md`, `docs/project-bootstrap-protocol.md`,
+`docs/contribution-attribution-policy.md`,
 `docs/cloud-hosting-later.md`, `docs/project-uppercut-reiteration.md`, and
 `docs/edge-oracle-operations.md`.
 
@@ -177,3 +182,5 @@ docker compose --env-file .env.example config --quiet
 The gated incremental migration is documented in [docs/langgraph-transition-plan.md](docs/langgraph-transition-plan.md). The owner-accepted provider-neutral documentation/schema authority is in [docs/model-interoperability-contract.md](docs/model-interoperability-contract.md), with versioned work/result schemas and checked examples under [docs/schemas](docs/schemas/).
 
 Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and preserve the current Slack/API surface, provider adapters, deterministic approval policy, single-writer rule, and rollback path. No LangGraph runtime transition begins merely because the documentation/schema authority is merged.
+<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]] -->

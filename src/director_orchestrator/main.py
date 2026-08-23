@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
@@ -592,3 +593,4 @@ def complete_run(
         raise HTTPException(status_code=409, detail="Task changed during run completion")
     background.add_task(engine.run, task_id)
     return stored
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]

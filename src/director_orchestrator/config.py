@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 from __future__ import annotations
 
@@ -561,3 +562,4 @@ class Settings:
                 "strengths": ["current web research", "source gathering", "fact verification"],
             },
         }
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]

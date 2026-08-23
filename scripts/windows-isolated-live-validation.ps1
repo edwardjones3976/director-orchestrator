@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -648,3 +649,4 @@ finally {
         }
     }
 }
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]

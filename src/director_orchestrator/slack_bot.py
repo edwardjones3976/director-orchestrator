@@ -1,3 +1,6 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
 import hmac
@@ -28,6 +31,7 @@ from .chatgpt_bridge import (
     build_chatgpt_bridge_gateway_proof,
 )
 # [[Codex | GPT-5.6 | 2026-08-23 19:17 UTC | END]]
+from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .models import OwnerApproval, TaskRecord, TaskStatus
 
 
@@ -66,6 +70,17 @@ def _log_boundary_failure(operation: str, exc: Exception) -> None:
     """
 
     log.warning("%s (%s)", operation, type(exc).__name__)
+
+
+def _tag(text: str, *, at: datetime | None = None) -> str:
+    return wrap_human_submission(
+        text,
+        "Aesop Director",
+        DIRECTOR_SYSTEM_LABEL,
+        at=at,
+        slack_markup=True,
+        neutralize_embedded_tags=True,
+    )
 
 
 def _claim_event(event_id: str) -> bool:
@@ -420,10 +435,10 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
         if isinstance(body, list) and body:
             body = body[0]
         task_id = body.get("task_id") or body.get("data", {}).get("task_id") or "queued"
-        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=f"*{task_id} — QUEUED*\nThe Director accepted this work order in dry-run or live mode according to the configured safety switch.")
+        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=_tag(f"*{task_id} — QUEUED*\nThe Director accepted this work order in dry-run or live mode according to the configured safety switch."))
     except Exception as exc:
         _log_boundary_failure("Failed to forward Director event", exc)
-        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=f"*DIRECTOR — BLOCKED*\nThe local orchestrator could not accept this request: `{type(exc).__name__}`.")
+        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=_tag(f"*DIRECTOR — BLOCKED*\nThe local orchestrator could not accept this request: `{type(exc).__name__}`."))
 
 
 @app.event("app_mention")
@@ -450,7 +465,7 @@ def message_handler(event, client):
 def command_handler(ack, command, client, respond):
     ack()
     if command.get("channel_id") != settings.slack_channel_id or command.get("user_id") != settings.slack_owner_user_id:
-        respond("Aesop Director only accepts owner commands in the configured private channel.", response_type="ephemeral")
+        respond(_tag("Aesop Director only accepts owner commands in the configured private channel."), response_type="ephemeral")
         return
     text = command.get("text", "").strip()
     approval = re.match(r"(?is)^approve\s+(DIR-[A-F0-9]+)(?:\s+(.+))?$", text)
@@ -489,22 +504,22 @@ def command_handler(ack, command, client, respond):
                 timeout=20,
             )
             response.raise_for_status()
-            respond(f"*{task_id} — RESUMING*\nYour approval or clarification was recorded.", response_type="ephemeral")
+            respond(_tag(f"*{task_id} — RESUMING*\nYour approval or clarification was recorded."), response_type="ephemeral")
         except Exception as exc:
             _log_boundary_failure("Failed to approve Director task", exc)
-            respond(f"*{task_id} — BLOCKED*\nApproval was not recorded: `{type(exc).__name__}`.", response_type="ephemeral")
+            respond(_tag(f"*{task_id} — BLOCKED*\nApproval was not recorded: `{type(exc).__name__}`."), response_type="ephemeral")
         return
 
     if not text:
         respond(
-            "Usage: `/director Project: … Outcome: … Constraints: …` or `/director approve DIR-… <optional clarification>`.",
+            _tag("Usage: `/director Project: … Outcome: … Constraints: …` or `/director approve DIR-… <optional clarification>`."),
             response_type="ephemeral",
         )
         return
 
     parent = client.chat_postMessage(
         channel=command["channel_id"],
-        text=f"*DIRECTOR work order*\n{text}",
+        text=_tag(f"*DIRECTOR work order*\n{text}"),
     )
     event = {
         "client_msg_id": command.get("trigger_id"),
@@ -555,7 +570,7 @@ def approval_button_handler(ack, body, client):
         client.chat_postMessage(
             channel=channel_id,
             thread_ts=message.get("thread_ts") or message.get("ts"),
-            text=f"*{task_id} — RESUMING*\nOwner approval was recorded from Slack.",
+            text=_tag(f"*{task_id} — RESUMING*\nOwner approval was recorded from Slack."),
         )
     except Exception as exc:
         _log_boundary_failure("Failed to approve Director task from button", exc)
@@ -563,7 +578,7 @@ def approval_button_handler(ack, body, client):
         client.chat_postMessage(
             channel=channel_id,
             thread_ts=message.get("thread_ts") or message.get("ts"),
-            text=f"*{task_id} — BLOCKED*\nApproval was not recorded: `{type(exc).__name__}`.",
+            text=_tag(f"*{task_id} — BLOCKED*\nApproval was not recorded: `{type(exc).__name__}`."),
         )
 
 
@@ -573,3 +588,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]

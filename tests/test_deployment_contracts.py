@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
@@ -96,3 +97,4 @@ class DeploymentContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]

@@ -1,3 +1,5 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
@@ -6,11 +8,13 @@ import json
 import re
 import time
 from collections import defaultdict
+from datetime import datetime
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 
 from .config import Settings
+from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .director import OpenAIDirector
 from .approvals import (
     EffectAlreadyClaimed,
@@ -68,6 +72,15 @@ _POST_SUBMIT_AMBIGUITY_ERRORS = (
     TypeError,
 )
 
+_STANDING_PROVIDER_ROLES = {
+    ProviderName.OPENAI: "Director",
+    ProviderName.CLAUDE: "Chief Programmer",
+    ProviderName.CURSOR: "Project Secretary",
+    ProviderName.GEMINI: "Specialist and Backup Programmer",
+    ProviderName.PERPLEXITY: "Research Programmers",
+    ProviderName.OWNER: "Owner",
+}
+
 
 class ProviderUnavailableError(ProviderError):
     def __init__(self, run: ProviderRun):
@@ -90,10 +103,22 @@ class SlackNotifier:
         thread_ts: str | None = None,
         root_message: bool = False,
         client_msg_id: str | None = None,
+        contributor: str = "Aesop Director",
+        system_label: str = DIRECTOR_SYSTEM_LABEL,
+        contribution_at: datetime | None = None,
     ) -> str | None:
         if not self.settings.slack_bot_token:
             return None
-        body = {"channel": record.intake.channel_id, "text": message}
+        tagged_message = wrap_human_submission(
+            message,
+            contributor,
+            system_label,
+            at=contribution_at or record.updated_at,
+            slack_markup=True,
+            max_length=3_900,
+            neutralize_embedded_tags=True,
+        )
+        body = {"channel": record.intake.channel_id, "text": tagged_message}
         if not root_message:
             body["thread_ts"] = thread_ts or record.intake.thread_ts
         if client_msg_id:
@@ -122,10 +147,19 @@ class SlackNotifier:
                         "text": {"type": "plain_text", "text": exact_query},
                     }
                 ]
+            approval_summary = wrap_human_submission(
+                approval_summary,
+                contributor,
+                system_label,
+                at=contribution_at or record.updated_at,
+                slack_markup=True,
+                max_length=2_900,
+                neutralize_embedded_tags=True,
+            )
             body["blocks"] = [
                 {
                     "type": "section",
-                    "text": {"type": "mrkdwn", "text": approval_summary[:2_900]},
+                    "text": {"type": "mrkdwn", "text": approval_summary},
                 },
                 *query_block,
                 {
@@ -397,12 +431,21 @@ class OrchestrationEngine:
                 "normalized_outcome": record.plan.normalized_outcome if record.plan else None,
                 "slack_thread": record.intake.thread_ts,
             },
+            "provider_identity": {
+                "provider": assignment.agent.value,
+                "standing_role": _STANDING_PROVIDER_ROLES[assignment.agent],
+            },
             "current_assignment": {
                 "sequence": assignment.sequence,
                 "depends_on": list(assignment.depends_on),
                 "requires_approval": assignment.requires_approval,
                 "owner_approval_recorded": assignment_is_approved(record, assignment),
             },
+            "contribution_attribution": (
+                "Wrap free-form human-visible output in matching UTC contribution BEGIN/END "
+                "tags. Do not put tags inside JSON, callbacks, review artifacts, exact queries, "
+                "or other structured payloads; the Director tags their human-visible relay."
+            ),
             "dependency_outcomes": [
                 bounded(outcome)
                 for outcome in prior_outcomes
@@ -664,7 +707,7 @@ class OrchestrationEngine:
             return True
         assignments = {item.sequence: item for item in record.plan.assignments}
         roles = ", ".join(
-            f"{item.agent.value}=assignment-{item.sequence}"
+            f"{item.agent.value} ({_STANDING_PROVIDER_ROLES[item.agent]})=assignment-{item.sequence}"
             for item in sorted(assignments.values(), key=lambda candidate: candidate.sequence)
         )
         debate_limits = (
@@ -676,7 +719,7 @@ class OrchestrationEngine:
         message = (
             f"*[Director] {record.task_id} — COLLABORATION START*\n"
             f"Objective: {self._slack_safe_text(record.plan.normalized_outcome, limit=1_000)}\n"
-            f"Roles: {roles}; OpenAI=delegation/acceptance"
+            f"Roles: {roles}; OpenAI (Director)=delegation/acceptance"
             + ("/synthesis" if debate else "")
             + "; Perplexity=evidence only\n"
             f"Limits: {record.plan.max_hops} hops; {record.plan.max_revisions} revisions; "
@@ -840,6 +883,12 @@ class OrchestrationEngine:
                 message[:3_900],
                 thread_ts=record.collaboration_thread_ts,
                 client_msg_id=self._slack_client_id(correlation_id),
+                contributor=(
+                    f"{existing.provider.value} "
+                    f"({_STANDING_PROVIDER_ROLES[existing.provider]})"
+                ),
+                system_label=f"{existing.provider.value}-provider-run/{run_digest}",
+                contribution_at=existing.recorded_at,
             )
             self.store.save(record)
             if not delivered:
@@ -1954,3 +2003,5 @@ class OrchestrationEngine:
         }:
             raise ProviderError(f"{current.provider.value} ended with status {current.status}")
         return current
+# [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]
