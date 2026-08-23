@@ -1,4 +1,4 @@
-"""Default-off and isolation contracts for the LangGraph proof lanes."""
+"""Default-on and isolation contracts for the LangGraph proof lanes."""
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from director_orchestrator.config import Settings, langgraph_resume_claim_path
 
@@ -29,17 +30,54 @@ class LangGraphConfigurationTests(unittest.TestCase):
             langgraph_checkpoint_namespace="",
         )
 
-    def test_proof_lanes_default_off_and_blank_configuration_is_safe(self):
-        settings = self.base_settings()
+    def test_proof_lanes_default_on_with_isolated_configuration(self):
+        with patch.dict(
+            os.environ,
+            {
+                "APP_ENV": "profile-a",
+                "SQLITE_PATH": "data/profile-a.sqlite3",
+            },
+            clear=True,
+        ):
+            settings = replace(Settings(), sqlite_path="data/profile-a.sqlite3")
 
         settings.validate_langgraph_configuration()
         readiness = settings.langgraph_shadow_readiness()
 
-        self.assertFalse(readiness["shadow_enabled"])
-        self.assertFalse(readiness["approval_resume_enabled"])
+        self.assertTrue(readiness["shadow_enabled"])
+        self.assertTrue(readiness["approval_resume_enabled"])
         self.assertTrue(readiness["configuration_valid"])
         self.assertFalse(readiness["runtime_active"])
         self.assertTrue(readiness["legacy_sole_writer"])
+        self.assertEqual(
+            settings.langgraph_checkpoint_path,
+            "data/profile-a.langgraph-shadow.sqlite3",
+        )
+        self.assertEqual(
+            settings.langgraph_checkpoint_namespace,
+            "director-profile-a-shadow-v1",
+        )
+
+    def test_default_on_fallbacks_are_unique_per_existing_profile(self):
+        observed: set[tuple[str, str]] = set()
+        for profile in ("local", "project-uppercut", "edge-oracle"):
+            with self.subTest(profile=profile), patch.dict(
+                os.environ,
+                {
+                    "APP_ENV": profile,
+                    "SQLITE_PATH": f"data/{profile}.sqlite3",
+                },
+                clear=True,
+            ):
+                settings = replace(Settings(), sqlite_path=f"data/{profile}.sqlite3")
+                settings.validate_langgraph_configuration()
+                observed.add(
+                    (
+                        settings.langgraph_checkpoint_path,
+                        settings.langgraph_checkpoint_namespace,
+                    )
+                )
+        self.assertEqual(len(observed), 3)
 
     def test_enabled_lane_requires_checkpoint_path(self):
         settings = replace(self.base_settings(), langgraph_shadow_enabled=True)
@@ -173,7 +211,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
         self.assertFalse(readiness["runtime_active"])
         self.assertTrue(readiness["legacy_sole_writer"])
 
-    def test_every_example_profile_is_default_off_and_uses_unique_state(self):
+    def test_every_example_profile_is_default_on_and_uses_unique_state(self):
         profiles = {
             "local": ROOT / ".env.example",
             "uppercut": ROOT / ".env.uppercut.example",
@@ -189,8 +227,8 @@ class LangGraphConfigurationTests(unittest.TestCase):
                 if line and not line.startswith("#") and "=" in line
             )
             with self.subTest(profile=name):
-                self.assertEqual(values["LANGGRAPH_SHADOW_ENABLED"], "false")
-                self.assertEqual(values["LANGGRAPH_APPROVAL_RESUME_ENABLED"], "false")
+                self.assertEqual(values["LANGGRAPH_SHADOW_ENABLED"], "true")
+                self.assertEqual(values["LANGGRAPH_APPROVAL_RESUME_ENABLED"], "true")
                 self.assertNotEqual(
                     values["LANGGRAPH_CHECKPOINT_PATH"], values["SQLITE_PATH"]
                 )

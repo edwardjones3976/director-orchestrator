@@ -4,14 +4,14 @@
 
 ## Authority boundary
 
-The LangGraph additions are default-off proof lanes. The legacy Director engine remains the sole workflow authority, provider dispatcher, and GitHub/Slack writer. Neither feature flag activates a graph from the API process, and LangGraph cannot approve, resume, dispatch, merge, deploy, or write externally.
+The LangGraph additions are default-on proof lanes. The legacy Director engine remains the sole workflow authority, provider dispatcher, and GitHub/Slack writer. Neither feature flag activates a graph from the API process, and LangGraph cannot approve, resume, dispatch, merge, deploy, or write externally.
 
 The proof has two bounded purposes:
 
 - `LANGGRAPH_SHADOW_ENABLED` permits isolated shadow-state experiments that compare graph transitions with legacy decisions.
 - `LANGGRAPH_APPROVAL_RESUME_ENABLED` permits isolated approval pause/resume experiments while existing deterministic policy continues to decide whether an approval is authentic, current, assignment-scoped, and sufficient.
 
-Both flags default to `false`. There is no provider dispatch integration, state migration, production cutover, or provider subgraph in this phase.
+Both flags default to `true`, with an isolated checkpoint database derived from `SQLITE_PATH` and a namespace derived from `APP_ENV` when a profile omits explicit values. Operators can still set either flag to `false` as an immediate rollback. There is no provider dispatch integration, state migration, production cutover, or provider subgraph in this phase.
 
 ## Required isolation
 
@@ -48,7 +48,7 @@ An enabled/configured flag is not evidence that LangGraph owns execution. In thi
 1. Keep paid execution, Slack intake, and external writes closed for the proof.
 2. Copy the appropriate example profile to its ignored local environment file.
 3. Confirm the profile's LangGraph checkpoint path and namespace are unique.
-4. Enable only the proof lane named by the accepted work order.
+4. Confirm the required proof lane remains enabled; disable any lane not needed by the accepted work order.
 5. Restart the isolated API and confirm the `langgraph` health booleans while `runtime_active` remains false and `legacy_sole_writer` remains true.
 6. Run offline fixtures or the separately approved proof tooling. Do not route live intake or provider callbacks into the graph.
 7. Preserve comparison and recovery evidence outside canonical task state.
