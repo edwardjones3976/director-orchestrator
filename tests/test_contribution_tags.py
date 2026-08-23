@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | BEGIN]]
@@ -861,6 +862,64 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
+    def test_base_tag_lookup_separates_no_matches_from_a_real_git_failure(self):
+        checker = self._checker("check_contribution_tags_base_lookup")
+        begin = f"# {self.BEGIN}"
+        end = f"# {self.END}"
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                    cwd=repo,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                ).stdout.decode("utf-8")
+
+            git("init", "--quiet", "-b", "main")
+            (repo / "untagged.py").write_text("print('ok')\n", encoding="utf-8")
+            git("add", "untagged.py")
+            git("commit", "--quiet", "-m", "seed")
+            untagged_base = git("rev-parse", "HEAD").strip()
+
+            (repo / "tagged.py").write_text(
+                f"{begin}\nprint('ok')\n{end}\n", encoding="utf-8"
+            )
+            git("add", "tagged.py")
+            git("commit", "--quiet", "-m", "add a tagged file")
+            tagged_base = git("rev-parse", "HEAD").strip()
+
+            cwd = Path.cwd()
+            try:
+                os.chdir(repo)
+                # Exit status 1 is "no matching line", not a failure.
+                self.assertEqual(checker._base_tag_pairs(untagged_base), set())
+                self.assertEqual(
+                    checker._base_tag_pairs(tagged_base),
+                    {("Codex", "GPT-5.6", "2026-08-21", "23:05")},
+                )
+                # Any other status must surface instead of silently disabling
+                # the inherited-pair check.
+                with self.assertRaises(checker.BaseTagLookupError) as raised:
+                    checker._base_tag_pairs("0" * 39 + "1")
+                self.assertIn("git grep failed with status", str(raised.exception))
+                with patch(
+                    "sys.argv",
+                    [
+                        "check_contribution_tags.py",
+                        "--base",
+                        "0" * 39 + "1",
+                        "--head",
+                        tagged_base,
+                    ],
+                ):
+                    self.assertEqual(checker.main(), 1)
+            finally:
+                os.chdir(cwd)
+
     def test_low_similarity_move_cannot_inherit_base_tree_contribution_tags(self):
         """Git reports an edited move below the similarity threshold as D + A.
 
@@ -961,3 +1020,4 @@ if __name__ == "__main__":
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]

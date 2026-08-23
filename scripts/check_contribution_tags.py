@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | BEGIN]]
@@ -150,6 +151,10 @@ _BASE_TAG_GREP = (
 )
 
 
+class BaseTagLookupError(RuntimeError):
+    """The base tree's contribution tags could not be read."""
+
+
 def _base_tag_pairs(base: str) -> set[tuple[str, str, str, str]]:
     """Return the matching BEGIN/END identities already present in the base tree.
 
@@ -158,13 +163,28 @@ def _base_tag_pairs(base: str) -> set[tuple[str, str, str, str]]:
     add, and the destination's inherited tags then look like additions. Comparing
     against the identities the base tree already carries rejects that reuse
     without depending on the heuristic.
+
+    Only exit status 1 means "no matching line". Every other failure, such as an
+    unresolvable base revision, is raised: silently returning an empty set would
+    disable the reuse check exactly when the range cannot be trusted.
     """
 
+    command = ["git", "grep", "--no-color", "-h", "-I", "-E", _BASE_TAG_GREP, base]
     try:
-        matches = str(_git("grep", "--no-color", "-h", "-I", "-E", _BASE_TAG_GREP, base))
-    except subprocess.CalledProcessError:
-        # "git grep" exits non-zero when nothing matches.
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as error:
+        raise BaseTagLookupError(
+            f"could not run git grep against base {base}: {error}"
+        ) from error
+    if result.returncode == 1:
         return set()
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip().replace("\n", "; ")
+        raise BaseTagLookupError(
+            f"git grep failed with status {result.returncode} against base {base}"
+            f"{': ' + detail if detail else ''}"
+        )
+    matches = result.stdout.decode("utf-8", errors="replace")
     tags = [tag for line in matches.splitlines() if (tag := parse_contribution_tag(line))]
     begins = {
         (tag.contributor, tag.system, tag.date, tag.time)
@@ -312,7 +332,13 @@ def main() -> int:
     args = parser.parse_args()
 
     base = _effective_base(args.base, args.head)
-    base_pairs = _base_tag_pairs(base)
+    try:
+        base_pairs = _base_tag_pairs(base)
+    except BaseTagLookupError as error:
+        # Fail closed: without the base identities the inherited-pair check
+        # cannot run, and the reason must stay visible.
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
     errors: list[str] = []
     envelope_only: list[str] = []
     forbidden: list[str] = []
@@ -373,3 +399,4 @@ if __name__ == "__main__":
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]
