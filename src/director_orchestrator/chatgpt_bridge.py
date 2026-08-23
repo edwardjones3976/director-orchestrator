@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
@@ -123,11 +124,22 @@ class ChatGPTBridgeDeliveryAmbiguityResponse(BaseModel):
 
     request_reference: str
     state: Literal["DELIVERY_AMBIGUOUS"] = "DELIVERY_AMBIGUOUS"
+    approval_instruction: str
     cached: bool = False
 
 
 class BridgeRejected(RuntimeError):
     pass
+
+
+def _delivery_recovery_instruction(request_reference: str) -> str:
+    return (
+        "Slack delivery is ambiguous. To authorize one budget-neutral retry that "
+        "does not call the provider again, reply with `@ChatGPT RECOVER "
+        f"{request_reference} <repeat the original prompt exactly>`. "
+        "Slack may already have accepted the first message, so recovery can create "
+        "a duplicate. Each retry requires a new Slack message."
+    )
 
 
 def bridge_prompt_digest(prompt: str) -> str:
@@ -467,6 +479,37 @@ class ChatGPTBridgeStore:
                     "ON chatgpt_bridge_requests(delivery_attempt_source_event_id) "
                     "WHERE delivery_attempt_source_event_id IS NOT NULL"
                 )
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS chatgpt_bridge_consumed_recovery_events (
+                        source_event_id TEXT PRIMARY KEY,
+                        request_reference TEXT NOT NULL,
+                        recovery_digest TEXT NOT NULL,
+                        consumed_at REAL NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_chatgpt_bridge_consumed_recovery_ref "
+                    "ON chatgpt_bridge_consumed_recovery_events(request_reference)"
+                )
+                # Preserve in-flight recovery authority when upgrading from the
+                # pre-ledger schema. Initial approval delivery uses the same
+                # source as approval_source_event_id and is intentionally excluded.
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO chatgpt_bridge_consumed_recovery_events(
+                        source_event_id, request_reference, recovery_digest, consumed_at
+                    )
+                    SELECT delivery_attempt_source_event_id, request_reference,
+                           delivery_attempt_digest,
+                           COALESCE(delivery_attempt_started_at, created_at)
+                    FROM chatgpt_bridge_requests
+                    WHERE delivery_attempt_source_event_id IS NOT NULL
+                      AND delivery_attempt_digest IS NOT NULL
+                      AND delivery_attempt_source_event_id <> approval_source_event_id
+                    """
+                )
         finally:
             connection.close()
 
@@ -698,6 +741,13 @@ class ChatGPTBridgeStore:
                 ).fetchone()
                 if collision is not None:
                     raise BridgeRejected("source event identity conflict")
+                consumed = connection.execute(
+                    "SELECT 1 FROM chatgpt_bridge_consumed_recovery_events "
+                    "WHERE source_event_id = ?",
+                    (request.source_event_id,),
+                ).fetchone()
+                if consumed is not None:
+                    raise BridgeRejected("source event identity conflict")
                 recent = connection.execute(
                     "SELECT COUNT(*) FROM chatgpt_bridge_requests "
                     "WHERE user_id = ? AND created_at >= ?",
@@ -764,6 +814,13 @@ class ChatGPTBridgeStore:
                     (request.source_event_id,),
                 ).fetchone()
                 if request_collision is not None:
+                    raise BridgeRejected("source event identity conflict")
+                recovery_collision = connection.execute(
+                    "SELECT 1 FROM chatgpt_bridge_consumed_recovery_events "
+                    "WHERE source_event_id = ?",
+                    (request.source_event_id,),
+                ).fetchone()
+                if recovery_collision is not None:
                     raise BridgeRejected("source event identity conflict")
                 row = connection.execute(
                     "SELECT * FROM chatgpt_bridge_requests WHERE request_reference = ?",
@@ -849,6 +906,36 @@ class ChatGPTBridgeStore:
         try:
             with connection:
                 connection.execute("BEGIN IMMEDIATE")
+                consumed = connection.execute(
+                    "SELECT request_reference, recovery_digest "
+                    "FROM chatgpt_bridge_consumed_recovery_events "
+                    "WHERE source_event_id = ?",
+                    (request.source_event_id,),
+                ).fetchone()
+                if consumed is not None:
+                    if (
+                        consumed["request_reference"] != request.approval_reference
+                        or consumed["recovery_digest"] != recovery_digest
+                    ):
+                        raise BridgeRejected("source event identity conflict")
+                    row = connection.execute(
+                        "SELECT * FROM chatgpt_bridge_requests "
+                        "WHERE request_reference = ?",
+                        (request.approval_reference,),
+                    ).fetchone()
+                    if row is None:
+                        raise BridgeRejected("delivery recovery reference is unknown")
+                    if (
+                        row["channel_id"] != request.channel_id
+                        or row["user_id"] != request.user_id
+                        or row["thread_ts"] != request.thread_ts
+                        or not hmac.compare_digest(row["prompt_digest"], prompt_digest)
+                    ):
+                        raise BridgeRejected(
+                            "owner recovery does not match the pending answer"
+                        )
+                    row = self._expire_answer(connection, row, now)
+                    return self._row_result(row, cached=True)
                 collision = connection.execute(
                     "SELECT request_reference, delivery_attempt_digest "
                     "FROM chatgpt_bridge_requests "
@@ -884,6 +971,20 @@ class ChatGPTBridgeStore:
                         (request.approval_reference,),
                     )
                 if state == "DELIVERY_AMBIGUOUS":
+                    connection.execute(
+                        """
+                        INSERT INTO chatgpt_bridge_consumed_recovery_events(
+                            source_event_id, request_reference,
+                            recovery_digest, consumed_at
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            request.source_event_id,
+                            request.approval_reference,
+                            recovery_digest,
+                            now,
+                        ),
+                    )
                     try:
                         answer = self._decrypt(row)
                     except BridgeRejected as exc:
@@ -1173,13 +1274,7 @@ class ChatGPTBridgeService:
                 f"{result.request_reference} <repeat the original prompt exactly>`."
             )
         elif result.state == "DELIVERY_AMBIGUOUS":
-            instruction = (
-                "Slack delivery is ambiguous. To authorize one budget-neutral retry that "
-                "does not call the provider again, reply with `@ChatGPT RECOVER "
-                f"{result.request_reference} <repeat the original prompt exactly>`. "
-                "Slack may already have accepted the first message, so recovery can create "
-                "a duplicate."
-            )
+            instruction = _delivery_recovery_instruction(result.request_reference)
         return ChatGPTBridgeResponse(
             source_event_id=request.source_event_id,
             state=result.state,
@@ -1288,8 +1383,12 @@ class ChatGPTBridgeService:
         changed = self.store.mark_delivery_ambiguous(ambiguity)
         return ChatGPTBridgeDeliveryAmbiguityResponse(
             request_reference=ambiguity.request_reference,
+            approval_instruction=_delivery_recovery_instruction(
+                ambiguity.request_reference
+            ),
             cached=not changed,
         )
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]

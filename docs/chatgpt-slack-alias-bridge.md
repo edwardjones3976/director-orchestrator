@@ -1,3 +1,4 @@
+**[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:12 UTC | BEGIN]]**
 
@@ -86,8 +87,10 @@ The owner may then authorize a budget-neutral recovery in the same thread:
 Recovery repeats the original prompt for digest binding, does not call OpenAI again,
 and attempts one new Slack post. Because Slack may have accepted the unacknowledged
 first post, this explicit recovery can create a duplicate. Repeating `APPROVE` does
-not release the answer, duplicate recovery events do not post again, and a delivered
-replay is a no-op.
+not release the answer, duplicate recovery events do not release the answer again,
+and a delivered replay is a no-op. Every recovery Slack event is durably consumed: if its post is
+ambiguous, another attempt requires a newly signed `RECOVER` message with a new Slack
+timestamp. Redelivery of the already-consumed event never releases the answer again.
 
 ## Failure behavior
 
@@ -97,11 +100,20 @@ deleted events are ignored.
 Invalid configuration, rate or daily-budget exhaustion, provider failure, a stale
 or invalid gateway proof, a mismatched approval, and an event-identity conflict
 fail closed. An ambiguous orchestrator transport result gets one same-identity
-recovery request and then an honest `PENDING` status. An ambiguous answer post never
+recovery request. If that retry observes a completed answer awaiting delivery, the
+gateway records ambiguity and posts the signed `RECOVER` instruction instead of
+silently dropping the result. An unresolved dispatch gets an honest `PENDING` status.
+An ambiguous answer post never
 causes a contradictory `BLOCKED` post or an automatic Slack retry; encrypted recovery
 remains available until acknowledged or its bounded recovery window expires. A
 startup and 60-second periodic sweep moves abandoned acknowledgement waits to the
 explicit recovery state and physically wipes expired ciphertext.
 
+Slack may deliver one message through both the `app_mention` and generic `message`
+handlers. The gateway claims the canonical channel-plus-message-timestamp identity
+only after the owner/channel/alias checks, so that duplicate ingress produces one
+backend request and one Slack response without suppressing unrelated messages.
+
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:12 UTC | END]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]**
+**[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]**

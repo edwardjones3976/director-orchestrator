@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | BEGIN]]
@@ -289,6 +290,8 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
     source_event_id = _canonical_slack_source_event_id(event)
     if not source_event_id or not thread_ts:
         return
+    if not _claim_event(f"chatgpt-bridge:{source_event_id}"):
+        return
     request = _signed_bridge_request(
         event,
         source_event_id=source_event_id,
@@ -351,6 +354,43 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
         instruction = body.get("approval_instruction")
         if not isinstance(instruction, str) or not instruction:
             raise ValueError("bridge recovery instruction was incomplete")
+        _post_bridge_message(
+            client,
+            channel=event["channel"],
+            thread_ts=thread_ts,
+            text=(
+                "*Aesop Director — ChatGPT bridge — DELIVERY_AMBIGUOUS*\n"
+                f"{_escape_slack_text(instruction)}"
+            ),
+        )
+        return
+    if state == "DELIVERY_PENDING_ACK":
+        try:
+            ambiguity = _signed_delivery_ambiguity(request, body)
+            ambiguity_body = _bridge_http_post(
+                "/v1/chatgpt-bridge/delivery-ambiguous",
+                ambiguity.model_dump(mode="json"),
+                timeout=20,
+            )
+            instruction = ambiguity_body.get("approval_instruction")
+            if not isinstance(instruction, str) or not instruction:
+                raise ValueError("bridge recovery instruction was incomplete")
+        except Exception as exc:
+            _log_boundary_failure(
+                "ChatGPT bridge pending delivery reconciliation failed", exc
+            )
+            _post_bridge_message(
+                client,
+                channel=event["channel"],
+                thread_ts=thread_ts,
+                text=(
+                    "*Aesop Director — ChatGPT bridge — PENDING*\n"
+                    "The provider was not called again, but delivery recovery could not "
+                    "be armed. Wait for bounded cleanup before sending a new RECOVER "
+                    "message."
+                ),
+            )
+            return
         _post_bridge_message(
             client,
             channel=event["channel"],
@@ -636,3 +676,4 @@ if __name__ == "__main__":
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]

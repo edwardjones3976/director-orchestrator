@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
@@ -84,7 +85,9 @@ approval. Undelivered answers remain recoverable as bounded ciphertext until Sla
 delivery is acknowledged. After an ambiguous Slack post, only an explicit owner
 `RECOVER` command may make one budget-neutral delivery attempt; Slack may already
 have accepted the first post, so recovery can duplicate it. The bridge never retries
-that external side effect automatically. The bridge has no work-order,
+that external side effect automatically, and each newly authorized retry requires a
+new signed Slack event; replaying a consumed recovery event cannot release the answer
+again. The bridge has no work-order,
 tool, repository, delegation, merge, deployment, or purchasing authority. See
 [the ChatGPT Slack alias bridge runbook](docs/chatgpt-slack-alias-bridge.md).
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:31 UTC | END]]**
@@ -189,3 +192,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]] -->

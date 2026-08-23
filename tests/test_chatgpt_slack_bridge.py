@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 08:12 UTC | BEGIN]]
@@ -428,8 +429,25 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
             replay_mark = service.mark_delivery_ambiguous(ambiguity)
             duplicate_approval = await service.reply(approval)
             recovery = _recovery(settings, pending.request_reference)
-            recovered = await service.reply(recovery)
+            recovery_results = await asyncio.gather(
+                service.reply(recovery),
+                service.reply(recovery),
+            )
+            released = [item for item in recovery_results if item.answer]
+            self.assertEqual(len(released), 1)
+            recovered = released[0]
+            in_flight_replay = next(
+                item for item in recovery_results if not item.answer
+            )
+            recovery_ambiguity = _signed_ambiguity(settings, recovery, recovered)
+            service.mark_delivery_ambiguous(recovery_ambiguity)
             duplicate_recovery = await service.reply(recovery)
+            new_recovery = _recovery(
+                settings,
+                pending.request_reference,
+                event_ts="1787450005.123456",
+            )
+            recovered_again = await service.reply(new_recovery)
 
             self.assertFalse(first_mark.cached)
             self.assertTrue(replay_mark.cached)
@@ -441,8 +459,16 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(recovered.state, "ANSWER_READY")
             self.assertEqual(recovered.answer, "recoverable answer")
             self.assertTrue(recovered.deliver)
-            self.assertEqual(duplicate_recovery.state, "DELIVERY_RECOVERY_PENDING")
-            self.assertFalse(duplicate_recovery.deliver)
+            self.assertEqual(
+                in_flight_replay.state, "DELIVERY_RECOVERY_PENDING"
+            )
+            self.assertFalse(in_flight_replay.deliver)
+            self.assertEqual(duplicate_recovery.state, "DELIVERY_AMBIGUOUS")
+            self.assertEqual(duplicate_recovery.answer, "")
+            self.assertTrue(duplicate_recovery.deliver)
+            self.assertEqual(recovered_again.state, "ANSWER_READY")
+            self.assertEqual(recovered_again.answer, "recoverable answer")
+            self.assertTrue(recovered_again.deliver)
             self.assertEqual(len(RecordingAsyncClient.calls), 1)
 
     async def test_decrypt_failure_wipe_commits_before_error_is_raised(self):
@@ -542,6 +568,56 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(row[1])
             self.assertIsNone(row[2])
 
+    async def test_sweeper_preserves_consumed_recovery_event_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            settings = _settings(database)
+            store = _store(database, settings)
+            service = ChatGPTBridgeService(settings, store)
+            pending = await service.reply(_signed_request(settings))
+            approval = _approval(settings, pending.request_reference)
+            RecordingAsyncClient.responses = [{"output_text": "one provider answer"}]
+            with patch(
+                "director_orchestrator.chatgpt_bridge.httpx.AsyncClient",
+                RecordingAsyncClient,
+            ):
+                answer = await service.reply(approval)
+            service.mark_delivery_ambiguous(_signed_ambiguity(settings, approval, answer))
+            recovery = _recovery(settings, pending.request_reference)
+            recovered = await service.reply(recovery)
+            with closing(sqlite3.connect(database)) as connection:
+                started_at = connection.execute(
+                    "SELECT delivery_attempt_started_at FROM chatgpt_bridge_requests"
+                ).fetchone()[0]
+
+            store.sweep_expired_answers(
+                now=started_at + 61,
+                pending_timeout_seconds=60,
+            )
+            replay = await service.reply(recovery)
+            new_recovery = _recovery(
+                settings,
+                pending.request_reference,
+                event_ts="1787450006.123456",
+            )
+            recovered_again = await service.reply(new_recovery)
+
+            self.assertEqual(replay.state, "DELIVERY_AMBIGUOUS")
+            self.assertEqual(replay.answer, "")
+            self.assertEqual(recovered_again.state, "ANSWER_READY")
+            self.assertEqual(recovered_again.answer, recovered.answer)
+            self.assertEqual(len(RecordingAsyncClient.calls), 1)
+            with closing(sqlite3.connect(database)) as connection:
+                consumed = connection.execute(
+                    "SELECT source_event_id FROM "
+                    "chatgpt_bridge_consumed_recovery_events "
+                    "ORDER BY consumed_at"
+                ).fetchall()
+            self.assertEqual(
+                {row[0] for row in consumed},
+                {recovery.source_event_id, new_recovery.source_event_id},
+            )
+
     async def test_provider_failure_is_terminal_and_never_redispatched(self):
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "director.sqlite3")
@@ -599,11 +675,18 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
                         "PRAGMA table_info(chatgpt_bridge_requests)"
                     ).fetchall()
                 }
+                tables = {
+                    item[0]
+                    for item in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
             self.assertEqual(row, ("failed", "FAILED", "", None))
             self.assertIn("approval_source_event_id", columns)
             self.assertIn("answer_ciphertext", columns)
             self.assertIn("delivery_attempt_source_event_id", columns)
             self.assertIn("delivery_attempt_started_at", columns)
+            self.assertIn("chatgpt_bridge_consumed_recovery_events", tables)
 
     def test_daily_boundary_readiness_and_boolean_health_contracts(self):
         class ControlledDateTime:
@@ -745,7 +828,7 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
                     client,
                 )
                 slack_bot.message_handler(event, client)
-            self.assertEqual(post.call_count, 2)
+            self.assertEqual(post.call_count, 1)
             payloads = [call.kwargs["json"] for call in post.call_args_list]
             self.assertEqual(
                 {item["source_event_id"] for item in payloads},
@@ -758,6 +841,7 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
             self.assertTrue(
                 all("client_msg_id" not in item for item in client.messages)
             )
+            self.assertEqual(len(client.messages), 1)
         finally:
             sys.modules.pop(module_name, None)
 
@@ -835,7 +919,7 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
         finally:
             sys.modules.pop(module_name, None)
 
-    def test_successful_answer_post_acks_and_transport_timeout_has_one_recovery(self):
+    def test_successful_answer_post_acks_and_lost_response_arms_recovery(self):
         module_name, slack_bot = self._module()
         try:
             event = {
@@ -876,9 +960,14 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
             self.assertTrue(post.call_args_list[1].args[0].endswith("/delivery-ack"))
             self.assertIn("gateway_proof", post.call_args_list[1].kwargs["json"])
 
+            lost_event = {
+                **event,
+                "ts": "1787450310.123456",
+            }
             pending_body = {
                 **answer_body,
-                "state": "DISPATCHING",
+                "source_event_id": "C123:1787450310.123456",
+                "state": "DELIVERY_PENDING_ACK",
                 "answer": "",
                 "deliver": False,
             }
@@ -889,15 +978,41 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
                 side_effect=[
                     httpx.TimeoutException("first transport timeout"),
                     _SlackResponse(pending_body),
+                    _SlackResponse(
+                        {
+                            "request_reference": pending_body["request_reference"],
+                            "state": "DELIVERY_AMBIGUOUS",
+                            "approval_instruction": (
+                                "Slack delivery is ambiguous. Reply with "
+                                "`@ChatGPT RECOVER CBR-BBBBBBBBBBBBBBBBBBBBBBBB "
+                                "<repeat the original prompt exactly>`. Recovery may "
+                                "duplicate a message Slack already accepted."
+                            ),
+                            "cached": False,
+                        }
+                    ),
                 ],
             ) as recovery_post:
-                slack_bot.message_handler(event, client)
-            self.assertEqual(recovery_post.call_count, 2)
+                slack_bot.message_handler(lost_event, client)
+            self.assertEqual(recovery_post.call_count, 3)
             self.assertEqual(
                 recovery_post.call_args_list[0].kwargs["json"],
                 recovery_post.call_args_list[1].kwargs["json"],
             )
-            self.assertIn("PENDING", client.messages[-1]["text"])
+            self.assertTrue(
+                recovery_post.call_args_list[2].args[0].endswith(
+                    "/delivery-ambiguous"
+                )
+            )
+            ambiguity_payload = recovery_post.call_args_list[2].kwargs["json"]
+            self.assertEqual(
+                ambiguity_payload["source_event_id"],
+                "C123:1787450310.123456",
+            )
+            self.assertIn("gateway_proof", ambiguity_payload)
+            self.assertIn("DELIVERY_AMBIGUOUS", client.messages[-1]["text"])
+            self.assertIn("RECOVER", client.messages[-1]["text"])
+            self.assertIn("duplicate", client.messages[-1]["text"])
             self.assertNotIn("BLOCKED", client.messages[-1]["text"])
         finally:
             sys.modules.pop(module_name, None)
@@ -1157,3 +1272,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-23 08:12 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]
