@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
@@ -236,6 +237,35 @@ def parse_contribution_tag(line: str) -> ContributionTag | None:
     )
 
 
+def iter_contribution_tags(text: str) -> list[ContributionTag]:
+    """Return every contribution tag in ``text``, in order.
+
+    ``parse_contribution_tag`` reports only the first tag it finds, which is all
+    the boundary checks need when they look at one specific line. A scan over
+    arbitrary content must see all of them: a single line can carry both halves
+    of a pair, and a real tag can sit behind a tag-shaped decoy the parser
+    rejects. As in ``neutralize_contribution_tags``, a rejected candidate
+    resumes the scan just inside its own opening bracket, so the tag it hides is
+    still reported.
+
+    This is the only tag recognizer callers should use when scanning content
+    they did not shape themselves. Restating the grammar as a second pattern —
+    a shell glob, a POSIX expression for ``git grep`` — drifts from
+    ``TAG_PATTERN`` and silently narrows whatever check depends on it.
+    """
+
+    tags: list[ContributionTag] = []
+    position = 0
+    while (match := TAG_PATTERN.search(text, position)) is not None:
+        tag = parse_contribution_tag(match.group(0))
+        if tag is None:
+            position = match.start() + 2
+            continue
+        tags.append(tag)
+        position = match.end()
+    return tags
+
+
 def contribution_tag_policy(path: str) -> TagPolicy:
     """Classify whether inline tags are safe for a repository artifact."""
 
@@ -372,3 +402,4 @@ def validate_inline_contribution_tags(
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]

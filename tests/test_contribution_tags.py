@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
@@ -25,6 +26,7 @@ from director_orchestrator.contribution_tags import (
     DIRECTOR_SYSTEM_LABEL,
     TAG_PATTERN,
     contribution_tag_policy,
+    iter_contribution_tags,
     neutralize_contribution_tags,
     parse_contribution_tag,
     render_contribution_tag,
@@ -1009,6 +1011,169 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
+    def test_scanning_reports_every_tag_including_one_behind_a_decoy(self):
+        """The base-tree scan must not stop at the first tag on a line.
+
+        ``parse_contribution_tag`` reports one tag, which is all a boundary
+        check needs. A pair sitting on a single line, or a real tag preceded by
+        a tag-shaped decoy the parser rejects, needs the full scan.
+        """
+
+        self.assertEqual(
+            iter_contribution_tags(f"{self.BEGIN} {self.END}"),
+            [
+                parse_contribution_tag(self.BEGIN),
+                parse_contribution_tag(self.END),
+            ],
+        )
+        decoyed = f"[[Codex | GPT-5.6 | 2026-13-90 | 99:99 UTC | BEGIN]] {self.BEGIN}"
+        self.assertEqual(
+            iter_contribution_tags(decoyed), [parse_contribution_tag(self.BEGIN)]
+        )
+        self.assertEqual(iter_contribution_tags("wiki [[Some Page]] only"), [])
+
+    def test_a_pair_sharing_one_base_line_is_still_seen_as_reuse(self):
+        checker = self._checker("check_contribution_tags_single_line_pair")
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                    cwd=repo,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                ).stdout.decode("utf-8")
+
+            git("init", "--quiet", "-b", "main")
+            # Both halves on one line: the retired per-line parse saw only the
+            # BEGIN, so the identity never joined begins & ends.
+            (repo / "notes.txt").write_text(
+                f"recorded {self.BEGIN} {self.END}\n", encoding="utf-8"
+            )
+            git("add", "notes.txt")
+            git("commit", "--quiet", "-m", "seed")
+            base = git("rev-parse", "HEAD").strip()
+
+            cwd = Path.cwd()
+            try:
+                os.chdir(repo)
+                self.assertEqual(
+                    checker._base_tag_pairs(base),
+                    {("Codex", "GPT-5.6", "2026-08-21", "23:05")},
+                )
+            finally:
+                os.chdir(cwd)
+
+    def test_padded_maximum_length_base_tags_are_visible_to_the_reuse_check(self):
+        """A base grep with a grammar of its own missed padded maximum labels.
+
+        ``TAG_PATTERN`` accepts an 80-character label and then the whitespace it
+        also allows before the delimiter. The retired POSIX expression bounded
+        that whole span at 80 characters, so these identities never reached
+        ``_base_tag_pairs`` and the inherited-pair check failed open for exactly
+        them. Git reports the move below as an unrelated delete and add, which
+        leaves the base-tree comparison as the only defense.
+        """
+
+        checker = self._checker("check_contribution_tags_padded_labels")
+        contributor = "C" * 80
+        system = "s" * 80
+        identity = (contributor, system, "2026-08-21", "23:05")
+        padded_begin = f"[[{contributor}   |   {system}   | 2026-08-21 | 23:05 UTC | BEGIN]]"
+        padded_end = f"[[{contributor}   |   {system}   | 2026-08-21 | 23:05 UTC | END]]"
+
+        # The fixture must be a tag the repository genuinely accepts, not a
+        # curiosity: maximum-length labels, padding stripped off the identity.
+        for rendered, boundary in ((padded_begin, "BEGIN"), (padded_end, "END")):
+            tag = parse_contribution_tag(rendered)
+            self.assertIsNotNone(tag)
+            self.assertEqual(
+                (tag.contributor, tag.system, tag.date, tag.time), identity
+            )
+            self.assertEqual(tag.boundary, boundary)
+            self.assertEqual(len(tag.contributor), 80)
+            self.assertEqual(len(tag.system), 80)
+            # The span before the delimiter exceeds the retired 80-character bound.
+            self.assertGreater(len(rendered.split("|")[0]) - 2, 80)
+
+        begin = f"# {padded_begin}"
+        end = f"# {padded_end}"
+        fresh_begin = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]"
+        fresh_end = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]"
+        original = "\n".join(f"value_{index} = {index}" for index in range(40))
+        rewritten = "\n".join(
+            f"renamed_symbol_{index} = compute({index}, mode='wholly different')"
+            for index in range(40)
+        )
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                    cwd=repo,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                ).stdout.decode("utf-8")
+
+            git("init", "--quiet", "-b", "main")
+            (repo / "source.py").write_text(
+                f"{begin}\n{original}\n{end}\n", encoding="utf-8"
+            )
+            git("add", "source.py")
+            git("commit", "--quiet", "-m", "seed")
+            base = git("rev-parse", "HEAD").strip()
+
+            git("rm", "--quiet", "source.py")
+            (repo / "moved.py").write_text(
+                f"{begin}\n{rewritten}\n{end}\n", encoding="utf-8"
+            )
+            git("add", "moved.py")
+            git("commit", "--quiet", "-m", "move and rewrite below the rename threshold")
+            moved_head = git("rev-parse", "HEAD").strip()
+
+            cwd = Path.cwd()
+            try:
+                os.chdir(repo)
+                # The identity is in the base tree, and the scan now finds it.
+                self.assertEqual(checker._base_tag_pairs(base), {identity})
+                # Git does not pair these paths, so nothing else would catch it.
+                self.assertEqual(
+                    sorted(checker.changed_paths(base, moved_head)),
+                    [("A", None, "moved.py"), ("D", None, "source.py")],
+                )
+                with patch(
+                    "sys.argv",
+                    ["check_contribution_tags.py", "--base", base, "--head", moved_head],
+                ):
+                    self.assertEqual(checker.main(), 1)
+            finally:
+                os.chdir(cwd)
+
+            # Recording a fresh outer pair on the destination is still accepted.
+            (repo / "moved.py").write_text(
+                f"{fresh_begin}\n{begin}\n{rewritten}\n{end}\n{fresh_end}\n",
+                encoding="utf-8",
+            )
+            git("add", "moved.py")
+            git("commit", "--quiet", "-m", "record the move")
+            tagged_head = git("rev-parse", "HEAD").strip()
+
+            try:
+                os.chdir(repo)
+                with patch(
+                    "sys.argv",
+                    ["check_contribution_tags.py", "--base", base, "--head", tagged_head],
+                ):
+                    self.assertEqual(checker.main(), 0)
+            finally:
+                os.chdir(cwd)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1021,3 +1186,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]

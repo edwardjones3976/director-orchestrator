@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
@@ -16,6 +17,7 @@ from pathlib import Path
 from director_orchestrator.contribution_tags import (
     TAG_PATTERN,
     contribution_tag_policy,
+    iter_contribution_tags,
     parse_contribution_tag,
     validate_inline_contribution_tags,
 )
@@ -140,15 +142,15 @@ def changed_paths(base: str, head: str) -> list[tuple[str, str | None, str]]:
     return changes
 
 
-# A POSIX ERE mirroring TAG_PATTERN closely enough for "git grep" to surface
-# every candidate line. It is deliberately wider than the Python grammar; each
-# matched line is parsed again below, so only real tags reach the result.
-_BASE_TAG_GREP = (
-    r"\[\[[^|]{1,80}\|[^|]{1,80}\|"
-    r"[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*\|"
-    r"[[:space:]]*[0-9]{2}:[0-9]{2} UTC[[:space:]]*\|"
-    r"[[:space:]]*(BEGIN|END)\]\]"
-)
+# The base-tree lookup carries no tag grammar of its own. It used to mirror
+# TAG_PATTERN as a POSIX ERE, and the copy drifted: it bounded each of the first
+# two fields at 80 characters before the delimiter, while TAG_PATTERN accepts an
+# 80-character label *plus* the whitespace padding it also allows. A maximum
+# length padded tag therefore never reached the parser, so its identity stayed
+# invisible to the inherited-pair check and stale reuse of exactly those
+# identities passed. Grep instead for the one literal every tag must contain and
+# let iter_contribution_tags decide what is a tag. A fixed string cannot drift.
+_BASE_TAG_MARKER = "[["
 
 
 class BaseTagLookupError(RuntimeError):
@@ -164,12 +166,17 @@ def _base_tag_pairs(base: str) -> set[tuple[str, str, str, str]]:
     against the identities the base tree already carries rejects that reuse
     without depending on the heuristic.
 
+    The grep is deliberately broad — a fixed-string search for the opening
+    bracket pair — and every surfaced line is parsed with the one recognizer the
+    rest of the repository uses. Narrowing the search with a second expression
+    is what let padded maximum-length identities through before.
+
     Only exit status 1 means "no matching line". Every other failure, such as an
     unresolvable base revision, is raised: silently returning an empty set would
     disable the reuse check exactly when the range cannot be trusted.
     """
 
-    command = ["git", "grep", "--no-color", "-h", "-I", "-E", _BASE_TAG_GREP, base]
+    command = ["git", "grep", "--no-color", "-h", "-I", "-F", _BASE_TAG_MARKER, base]
     try:
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as error:
@@ -185,7 +192,10 @@ def _base_tag_pairs(base: str) -> set[tuple[str, str, str, str]]:
             f"{': ' + detail if detail else ''}"
         )
     matches = result.stdout.decode("utf-8", errors="replace")
-    tags = [tag for line in matches.splitlines() if (tag := parse_contribution_tag(line))]
+    # Scan line by line: TAG_PATTERN tolerates whitespace around its delimiters,
+    # and whitespace includes newlines, so scanning the joined blob could stitch
+    # a tag out of two unrelated files' lines.
+    tags = [tag for line in matches.splitlines() for tag in iter_contribution_tags(line)]
     begins = {
         (tag.contributor, tag.system, tag.date, tag.time)
         for tag in tags
@@ -400,3 +410,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]
