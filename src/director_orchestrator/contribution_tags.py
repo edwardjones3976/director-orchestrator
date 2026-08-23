@@ -1,3 +1,6 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
@@ -127,6 +130,33 @@ class ContributionTag:
     boundary: Boundary
 
 
+def neutralize_contribution_tags(text: str) -> str:
+    """Defuse embedded contribution tags without touching unrelated text.
+
+    Only a sequence this module would accept as a contribution tag is broken
+    apart. Ordinary double-bracket content, and tag-shaped text the parser
+    rejects such as an impossible date or a blank identity, keeps its exact
+    characters. The neutralized form cannot match the grammar again: the
+    boundary keyword no longer abuts a closing ``]]``.
+
+    A rejected candidate resumes the scan just inside its own opening bracket,
+    so a real tag hidden behind a decoy prefix is still defused.
+    """
+
+    parts: list[str] = []
+    position = 0
+    while (match := TAG_PATTERN.search(text, position)) is not None:
+        if parse_contribution_tag(match.group(0)) is None:
+            parts.append(text[position : match.start() + 2])
+            position = match.start() + 2
+            continue
+        parts.append(text[position : match.start()])
+        parts.append(f"[ {match.group(0)[1:-1]} ]")
+        position = match.end()
+    parts.append(text[position:])
+    return "".join(parts)
+
+
 def _safe_label(value: str, field: str) -> str:
     normalized = value.strip()
     if not normalized or len(normalized) > 80:
@@ -172,7 +202,7 @@ def wrap_human_submission(
 
     body = text.strip()
     if neutralize_embedded_tags:
-        body = body.replace("[[", "[ [").replace("]]", "] ]")
+        body = neutralize_contribution_tags(body)
     begin = render_contribution_tag(contributor, system, "BEGIN", at=at)
     end = render_contribution_tag(contributor, system, "END", at=at)
     if slack_markup:
@@ -207,6 +237,35 @@ def parse_contribution_tag(line: str) -> ContributionTag | None:
     )
 
 
+def iter_contribution_tags(text: str) -> list[ContributionTag]:
+    """Return every contribution tag in ``text``, in order.
+
+    ``parse_contribution_tag`` reports only the first tag it finds, which is all
+    the boundary checks need when they look at one specific line. A scan over
+    arbitrary content must see all of them: a single line can carry both halves
+    of a pair, and a real tag can sit behind a tag-shaped decoy the parser
+    rejects. As in ``neutralize_contribution_tags``, a rejected candidate
+    resumes the scan just inside its own opening bracket, so the tag it hides is
+    still reported.
+
+    This is the only tag recognizer callers should use when scanning content
+    they did not shape themselves. Restating the grammar as a second pattern —
+    a shell glob, a POSIX expression for ``git grep`` — drifts from
+    ``TAG_PATTERN`` and silently narrows whatever check depends on it.
+    """
+
+    tags: list[ContributionTag] = []
+    position = 0
+    while (match := TAG_PATTERN.search(text, position)) is not None:
+        tag = parse_contribution_tag(match.group(0))
+        if tag is None:
+            position = match.start() + 2
+            continue
+        tags.append(tag)
+        position = match.end()
+    return tags
+
+
 def contribution_tag_policy(path: str) -> TagPolicy:
     """Classify whether inline tags are safe for a repository artifact."""
 
@@ -226,8 +285,16 @@ def validate_inline_contribution_tags(
     text: str,
     *,
     added_lines: list[str] | None = None,
+    base_pairs: set[tuple[str, str, str, str]] | None = None,
 ) -> list[str]:
-    """Validate outer contribution boundaries and the current change record."""
+    """Validate outer contribution boundaries and the current change record.
+
+    ``base_pairs`` carries the matching BEGIN/END identities already present in
+    the base tree. Supplying it rejects a file whose outer pair was inherited
+    rather than recorded by this change, which Git's rename and copy detection
+    cannot catch on its own once a move falls below the similarity threshold and
+    is reported as an unrelated delete and add.
+    """
 
     policy = contribution_tag_policy(path)
     tags = [tag for line in text.splitlines() if (tag := parse_contribution_tag(line))]
@@ -291,6 +358,23 @@ def validate_inline_contribution_tags(
         ) != (end.contributor, end.system, end.date, end.time):
             errors.append(f"{path}: outer BEGIN and END contribution tags do not match")
 
+    outer_pair: tuple[str, str, str, str] | None = None
+    if (
+        begin is not None
+        and end is not None
+        and begin.boundary == "BEGIN"
+        and end.boundary == "END"
+    ):
+        candidate = (begin.contributor, begin.system, begin.date, begin.time)
+        if candidate == (end.contributor, end.system, end.date, end.time):
+            outer_pair = candidate
+
+    if base_pairs is not None and outer_pair is not None and outer_pair in base_pairs:
+        errors.append(
+            f"{path}: the outer BEGIN/END contribution pair already exists at the base "
+            "commit; this change must record a fresh pair"
+        )
+
     if added_lines is not None:
         added = [tag for line in added_lines if (tag := parse_contribution_tag(line))]
         added_begins = {
@@ -308,18 +392,14 @@ def validate_inline_contribution_tags(
             errors.append(
                 f"{path}: this change must add one matching BEGIN/END contribution pair"
             )
-        elif begin is not None and end is not None:
-            outer = (begin.contributor, begin.system, begin.date, begin.time)
-            if (
-                begin.boundary == "BEGIN"
-                and end.boundary == "END"
-                and outer == (end.contributor, end.system, end.date, end.time)
-                and outer not in added_pairs
-            ):
-                errors.append(
-                    f"{path}: the current outer BEGIN/END pair must be the matching pair added by this change"
-                )
+        elif outer_pair is not None and outer_pair not in added_pairs:
+            errors.append(
+                f"{path}: the current outer BEGIN/END pair must be the matching pair added by this change"
+            )
     return errors
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]
