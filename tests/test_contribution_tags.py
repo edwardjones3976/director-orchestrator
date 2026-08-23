@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:08 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | BEGIN]]
@@ -20,7 +21,9 @@ from unittest.mock import patch
 from director_orchestrator.config import Settings
 from director_orchestrator.contribution_tags import (
     DIRECTOR_SYSTEM_LABEL,
+    TAG_PATTERN,
     contribution_tag_policy,
+    neutralize_contribution_tags,
     parse_contribution_tag,
     render_contribution_tag,
     validate_inline_contribution_tags,
@@ -598,6 +601,257 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             self.assertTrue(checker._validate_github_event(event))
 
 
+class ContributionAttributionFollowupTests(unittest.TestCase):
+    """Delayed review findings on PR #52, tracked by issue #62."""
+
+    BEGIN = "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]]"
+    END = "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]]"
+
+    @staticmethod
+    def _checker(name: str):
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            name, root / "scripts" / "check_contribution_tags.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_neutralization_defuses_only_grammar_matching_tags(self):
+        body = "\n".join(
+            [
+                f"real {self.BEGIN}",
+                "wiki [[Some Page]] stays",
+                "code matrix[[0]][[1]] stays",
+                "partial [[Codex | GPT-5.6 | BEGIN]] stays",
+                "unterminated [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN stays",
+                "malformed [[Codex | GPT-5.6 | 2026-13-90 | 99:99 UTC | END]]",
+                "blank identity [[   | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]]",
+                f"nested [[outer {self.BEGIN} outer]]",
+                f"adjacent {self.BEGIN}{self.END}",
+            ]
+        )
+        wrapped = wrap_human_submission(
+            body,
+            "Aesop Director",
+            DIRECTOR_SYSTEM_LABEL,
+            at=STAMP,
+            neutralize_embedded_tags=True,
+        )
+        inner = wrapped.splitlines()[2:-2]
+
+        for preserved in (
+            "wiki [[Some Page]] stays",
+            "code matrix[[0]][[1]] stays",
+            "partial [[Codex | GPT-5.6 | BEGIN]] stays",
+            "unterminated [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN stays",
+        ):
+            self.assertIn(preserved, wrapped)
+        # Every sequence that matches the tag grammar is defused, including the
+        # malformed, blank-identity, nested, and adjacent forms. One pass is
+        # enough: a defused tag can never match the grammar again.
+        body_text = "\n".join(inner)
+        self.assertIsNone(TAG_PATTERN.search(body_text))
+        self.assertEqual(neutralize_contribution_tags(body_text), body_text)
+        self.assertIn("[ [Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN] ]", wrapped)
+        for line in inner:
+            self.assertIsNone(parse_contribution_tag(line))
+        # Only the two boundaries the Director itself rendered remain parseable.
+        self.assertEqual(
+            [
+                tag.boundary
+                for line in wrapped.splitlines()
+                if (tag := parse_contribution_tag(line))
+            ],
+            ["BEGIN", "END"],
+        )
+
+    def test_trailer_stripping_requires_a_supported_block_after_the_end_tag(self):
+        checker = self._checker("check_contribution_tags_trailers")
+        envelope = f"{self.BEGIN}\n\nImplement the fix\n\n{self.END}"
+        supported = (
+            "Co-authored-by: Edward L Jones IV <owner@example.com>\n"
+            "Claude-Session: https://claude.ai/code/session_0123456789\n"
+            "Signed-off-by: Codex <codex@example.com>"
+        )
+
+        for label, message in (
+            ("blank separator", f"{envelope}\n\n{supported}"),
+            ("whitespace-only separator", f"{envelope}\n   \n{supported}"),
+            ("no separator", f"{envelope}\n{supported}"),
+            ("trailing blank line", f"{envelope}\n\n{supported}\n\n"),
+            # The delayed trailing-whitespace regression: a whitespace-only line
+            # after the trailer block used to stop the scan, leaving the trailers
+            # visible and failing an otherwise valid submission.
+            ("trailing whitespace-only line", f"{envelope}\n\n{supported}\n   \n"),
+        ):
+            with self.subTest(label):
+                self.assertEqual(
+                    checker._without_trailing_git_trailers(message), envelope
+                )
+                self.assertEqual(
+                    checker._validate_submission_envelope(
+                        checker._without_trailing_git_trailers(message),
+                        require_outer=True,
+                        require_markdown_boundary=False,
+                    ),
+                    [],
+                )
+
+        for label, tail in (
+            ("arbitrary prose trailer", "Note: extra visible content"),
+            ("unsupported key", "Fixes: #62"),
+            ("mixed supported and arbitrary", f"{supported}\nNote: extra"),
+            ("resumed block after a blank line", f"{supported}\n\nNote: extra"),
+            ("plain content", "still visible"),
+        ):
+            with self.subTest(label):
+                message = f"{envelope}\n\n{tail}"
+                self.assertEqual(
+                    checker._without_trailing_git_trailers(message), message
+                )
+                self.assertTrue(
+                    checker._validate_submission_envelope(
+                        checker._without_trailing_git_trailers(message),
+                        require_outer=True,
+                        require_markdown_boundary=False,
+                    )
+                )
+
+        # Trailer-shaped lines inside the envelope are body text, not trailers.
+        inside = f"{self.BEGIN}\n\nNote: kept\n\n{self.END}\n\nSigned-off-by: Codex <c@example.com>"
+        self.assertEqual(
+            checker._without_trailing_git_trailers(inside),
+            f"{self.BEGIN}\n\nNote: kept\n\n{self.END}",
+        )
+        # Without an END tag nothing is treated as a trailer block.
+        headless = "Subject line\n\nCo-authored-by: Edward L Jones IV <owner@example.com>"
+        self.assertEqual(checker._without_trailing_git_trailers(headless), headless)
+
+    def test_submission_outer_identities_must_match(self):
+        checker = self._checker("check_contribution_tags_identity")
+        other_begin = "[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]"
+        other_end = "[[Gemini | Antigravity | 2026-08-22 | 15:10 UTC | END]]"
+        errors = checker._validate_submission_envelope(
+            f"{other_begin}\n\n{self.BEGIN}\ninner submission\n{self.END}\n\n{other_end}",
+            require_outer=True,
+            require_markdown_boundary=False,
+        )
+        self.assertEqual(
+            errors, ["submission outer BEGIN and END contribution tags do not match"]
+        )
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                f"{self.BEGIN}\n\nsubmission\n\n{self.END}",
+                require_outer=True,
+                require_markdown_boundary=False,
+            ),
+            [],
+        )
+        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
+        bold_end = "**[[Cursor | Agent | 2026-08-22 | 15:10 UTC | END]]**"
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                f"{bold_begin}\n\n**{self.BEGIN}**\nbody\n**{self.END}**\n\n{bold_end}",
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            ["submission outer BEGIN and END contribution tags do not match"],
+        )
+
+    def test_pure_rename_and_copy_cannot_reuse_existing_contribution_tags(self):
+        checker = self._checker("check_contribution_tags_rename")
+        begin = f"# {self.BEGIN}"
+        end = f"# {self.END}"
+        fresh_begin = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:30 UTC | BEGIN]]"
+        fresh_end = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:30 UTC | END]]"
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                    cwd=repo,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                ).stdout.decode("utf-8")
+
+            git("init", "--quiet", "-b", "main")
+            (repo / "source.py").write_text(
+                f"{begin}\nprint('ok')\n{end}\n", encoding="utf-8"
+            )
+            git("add", "source.py")
+            git("commit", "--quiet", "-m", "seed")
+            base = git("rev-parse", "HEAD").strip()
+
+            git("mv", "source.py", "renamed.py")
+            git("commit", "--quiet", "-m", "pure rename")
+            renamed_head = git("rev-parse", "HEAD").strip()
+
+            cwd = Path.cwd()
+            try:
+                os.chdir(repo)
+                self.assertEqual(
+                    checker.changed_paths(base, renamed_head),
+                    [("R100", "source.py", "renamed.py")],
+                )
+                # The old path is diffed against the new one, so pre-existing
+                # tags are not reported as additions by a pure rename.
+                self.assertEqual(
+                    checker._added_lines(base, renamed_head, "renamed.py", "source.py"),
+                    [],
+                )
+                with patch(
+                    "sys.argv",
+                    ["check_contribution_tags.py", "--base", base, "--head", renamed_head],
+                ):
+                    self.assertEqual(checker.main(), 1)
+            finally:
+                os.chdir(cwd)
+
+            # A rename that also records a fresh outer pair is accepted.
+            (repo / "renamed.py").write_text(
+                f"{fresh_begin}\n{begin}\nprint('ok')\n{end}\n{fresh_end}\n",
+                encoding="utf-8",
+            )
+            git("add", "renamed.py")
+            git("commit", "--quiet", "-m", "rename with attribution")
+            tagged_head = git("rev-parse", "HEAD").strip()
+
+            git("reset", "--quiet", "--hard", base)
+            (repo / "copy.py").write_text(
+                f"{begin}\nprint('ok')\n{end}\n", encoding="utf-8"
+            )
+            git("add", "copy.py")
+            git("commit", "--quiet", "-m", "pure copy")
+            copied_head = git("rev-parse", "HEAD").strip()
+
+            try:
+                os.chdir(repo)
+                with patch(
+                    "sys.argv",
+                    ["check_contribution_tags.py", "--base", base, "--head", tagged_head],
+                ):
+                    self.assertEqual(checker.main(), 0)
+                self.assertEqual(
+                    checker.changed_paths(base, copied_head),
+                    [("C100", "source.py", "copy.py")],
+                )
+                self.assertEqual(
+                    checker._added_lines(base, copied_head, "copy.py", "source.py"), []
+                )
+                with patch(
+                    "sys.argv",
+                    ["check_contribution_tags.py", "--base", base, "--head", copied_head],
+                ):
+                    self.assertEqual(checker.main(), 1)
+            finally:
+                os.chdir(cwd)
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
@@ -606,3 +860,4 @@ if __name__ == "__main__":
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:08 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]

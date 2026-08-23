@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
@@ -127,6 +128,18 @@ class ContributionTag:
     boundary: Boundary
 
 
+def neutralize_contribution_tags(text: str) -> str:
+    """Defuse embedded contribution tags without touching unrelated text.
+
+    Only sequences matching the repository tag grammar are broken apart, so
+    ordinary double-bracket content such as a wiki link or a code sample keeps
+    its exact characters. The neutralized form cannot match the grammar again:
+    the boundary keyword no longer abuts a closing ``]]``.
+    """
+
+    return TAG_PATTERN.sub(lambda match: f"[ {match.group(0)[1:-1]} ]", text)
+
+
 def _safe_label(value: str, field: str) -> str:
     normalized = value.strip()
     if not normalized or len(normalized) > 80:
@@ -172,7 +185,7 @@ def wrap_human_submission(
 
     body = text.strip()
     if neutralize_embedded_tags:
-        body = body.replace("[[", "[ [").replace("]]", "] ]")
+        body = neutralize_contribution_tags(body)
     begin = render_contribution_tag(contributor, system, "BEGIN", at=at)
     end = render_contribution_tag(contributor, system, "END", at=at)
     if slack_markup:
@@ -323,3 +336,4 @@ def validate_inline_contribution_tags(
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
