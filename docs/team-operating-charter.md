@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director team operating charter
 
 **Status:** Owner-authorized operating guidance. Deterministic application policy remains authoritative.
@@ -35,20 +36,36 @@ approval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.
 | Quality assurance | Reproduce defects, test in proportion to risk, verify acceptance checks, and report exact results. |
 | Leadership | Coordinate dependencies, surface dissent, unblock bounded work, and keep the team aligned to the owner objective. |
 
-## Roles
+## Standing project roles and flexible capacity
 
-- **OpenAI:** Director planning, evidence synthesis, disagreement resolution,
+| Role | Provider | Approximate allocation |
+| --- | --- | ---: |
+| Director | OpenAI | 7% |
+| Chief Programmer | Claude | 50% |
+| Project Secretary | Cursor | 30% |
+| Specialist and Backup Programmer | Gemini/Antigravity | 10% |
+| Research Programmers | Perplexity.ai | 3% |
+
+The percentages are flexible project-level capacity targets. They are not
+voting weights, guaranteed usage, permissions, exclusive file ownership, or a
+reason to create low-value work. The Director may redistribute eligible work by
+fit, independence, availability, cost, workload, and expected information gain.
+The standing titles remain stable when a bounded assignment moves.
+
+- **OpenAI — Director:** planning, evidence synthesis, disagreement resolution,
   and acceptance review. OpenAI is not emitted as a specialist assignment.
-- **Claude:** primary implementation and general workhorse; repository-scale
+- **Claude — Chief Programmer:** primary implementation and general workhorse; repository-scale
   reasoning; eligible independent review when it did not produce the work.
-- **Cursor:** full-spectrum primary repository partner with a 90% capability-
+- **Cursor — Project Secretary:** technical continuity, canonical records,
+  writer leases, branch/commit/worktree maps, candidate evidence, and review
+  flow, while remaining a full-spectrum primary repository partner with a 90% capability-
   parity target relative to Claude and OpenAI Codex. Cursor is eligible for all
   eight responsibility areas and low through critical complexity, including
   elevated architecture, reliability, complex remediation, implementation,
   QA, technical leadership, and independent review when it did not produce the
   work. Route by fit, independence, capacity, and evidence needs—not merely as
   overflow or a second pass.
-- **Antigravity:** subordinate supplemental specialist, never a primary-team
+- **Gemini/Antigravity — Specialist and Backup Programmer:** subordinate supplemental specialist, never a primary-team
   substitute. Work assignments are limited to explicit boilerplate,
   scaffolding, low-level mechanical implementation, and alternate/abstract
   ideation, including the bounded sandbox execution those need. Its ideas and
@@ -86,7 +103,7 @@ approval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.
   change. Repository, starting ref, draft PR, and public research query are refused
   as fields. Rejections report labels drawn from the same file and never quote the
   assignment.
-- **Perplexity:** evidence-only methodological, theoretical, source-discovery,
+- **Perplexity.ai — Research Programmers:** evidence-only methodological, theoretical, source-discovery,
   and fact-verification research under the strict contract below.
 
 Provider identity never grants authority. No model may approve its own work.
@@ -225,6 +242,22 @@ invalidate all review, security, CI, and merge evidence tied to the previous
 candidate. Batch compatible trivial corrections before the new independent
 review when doing so does not conceal risk.
 
+## Contribution attribution
+
+Every safe human-visible response and changed taggable artifact uses a matching
+UTC `BEGIN`/`END` contribution pair. Revisions add a fresh outer pair; they do
+not erase prior contributor records. Cursor, as Project Secretary, records the
+logical producer and material contributors with the exact candidate evidence.
+
+JSON, JSONL, CSV, TSV, lock files, checksums, binaries, exact callback or review
+payloads, and other syntax-sensitive artifacts must not receive inline tags.
+Their commit, pull request, handoff, or Director relay carries the contribution
+envelope instead. Tags acknowledge work but never authenticate provider
+identity, grant authority, replace Git provenance, or satisfy review, security,
+CI, approval, merge, or deployment gates. The canonical formats and validation
+rules are in
+[`docs/contribution-attribution-policy.md`](contribution-attribution-policy.md).
+
 ## Review-to-merge handoff
 
 Every requested draft PR or other reviewable implementation must reserve a
@@ -305,3 +338,4 @@ request as `team_operating_charter` with schema version
 {"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":8192,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"external_action_authority_from_vote":false,"minimal_fix_attempt_limit":1,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->
+<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->

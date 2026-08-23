@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project workstream plan
 
 Do not place secrets, credentials, tokens, or raw private source in this plan.
@@ -40,6 +41,7 @@ Repeat for each workstream.
 - **Target outcome:** <one bounded result>
 - **Scope:** <repositories, paths, queries, systems, or analysis-only>
 - **Provider:** <provider>
+- **Contributor/system identity:** <full provider or tool name and model/system label>
 - **Workflow skill:** <stable discovered catalog name or none>
 - **Authority granted:** <exactly scoped actions>
 - **Authority denied:** <writes, credentials, review, merge, deployment, etc.>
@@ -123,3 +125,9 @@ serious-safety signal. Any changed candidate invalidates prior review evidence.
 - <security/CI/exact-SHA gate>
 - <merge/deployment/publication/access gate>
 - <serious-safety stop>
+
+Contribution tags record the author of the plan or artifact. They do not prove
+the provider identity or satisfy any gate above. Preserve prior valid tags and
+add a new outer pair when this plan is revised; for syntax-sensitive artifacts,
+use the commit, pull-request, or `REVIEW_READY` envelope instead.
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->

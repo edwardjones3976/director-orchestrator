@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Modular project bootstrap protocol
 
 **Status:** Owner-authorized operating protocol. This document helps shape a
@@ -217,6 +218,17 @@ worktree, and branch. Never launch a provider from `System32` or a generic
 directory. Keep repository context, credentials, provider outputs, budgets, and
 Slack threads separated by project.
 
+Enclose human-readable project messages and safely taggable project artifacts
+in the canonical contribution boundaries defined by
+[`contribution-attribution-policy.md`](contribution-attribution-policy.md).
+Preserve prior valid boundaries when revising an artifact. Do not insert tags
+into structured protocol payloads, JSON, CSV, lock/checksum files, generated
+artifacts, or any format whose behavior they could change; carry attribution in
+the surrounding Slack, commit, pull-request, or handoff envelope instead. A tag
+records authorship only and never grants authority or replaces correlation IDs,
+run IDs, exact SHAs/digests, authenticated callbacks, review, CI, or security
+evidence.
+
 Use one event vocabulary across the protocol, intake template, workstream plan,
 and state report:
 
@@ -368,3 +380,4 @@ This protocol is successful when a new project feels native to its own work
 while retaining the team's strongest habits: bounded initiative, useful
 provider collaboration, independent verification, clear evidence, and
 project-specific control.
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
