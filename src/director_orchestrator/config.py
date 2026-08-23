@@ -1,8 +1,12 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 from __future__ import annotations
 
 import hmac
 import os
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+import re
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 from dataclasses import dataclass, field
 
 
@@ -179,6 +183,33 @@ class Settings:
     slack_owner_user_id: str = os.getenv("SLACK_OWNER_USER_ID", "")
     slack_gateway_secret: str = os.getenv("SLACK_GATEWAY_SECRET", "")
     n8n_webhook_url: str = os.getenv("N8N_DIRECTOR_WEBHOOK_URL", "")
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+    chatgpt_bridge_enabled: bool = _bool("CHATGPT_BRIDGE_ENABLED", False)
+    chatgpt_bridge_slack_user_id: str = os.getenv(
+        "CHATGPT_BRIDGE_SLACK_USER_ID", "U0B9KFJPST1"
+    ).strip()
+    chatgpt_bridge_channel_ids: tuple[str, ...] = _csv_exact(
+        "CHATGPT_BRIDGE_CHANNEL_IDS", ""
+    ) or _csv_exact("SLACK_DIRECTOR_CHANNEL_ID", "")
+    chatgpt_bridge_model: str = os.getenv(
+        "OPENAI_CHATGPT_BRIDGE_MODEL", os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
+    ).strip()
+    chatgpt_bridge_max_prompt_chars: int = _int(
+        "CHATGPT_BRIDGE_MAX_PROMPT_CHARS", 4000
+    )
+    chatgpt_bridge_max_output_tokens: int = _int(
+        "CHATGPT_BRIDGE_MAX_OUTPUT_TOKENS", 600
+    )
+    chatgpt_bridge_requests_per_minute: int = _int(
+        "CHATGPT_BRIDGE_REQUESTS_PER_MINUTE", 4
+    )
+    chatgpt_bridge_estimated_cost_usd: float = _float(
+        "CHATGPT_BRIDGE_ESTIMATED_COST_USD", 0.10
+    )
+    chatgpt_bridge_daily_budget_usd: float = _float(
+        "CHATGPT_BRIDGE_DAILY_BUDGET_USD", 2.00
+    )
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
@@ -320,6 +351,38 @@ class Settings:
             "gemini": readiness["gemini"],
             "perplexity": readiness["perplexity"],
         }
+
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+    def chatgpt_bridge_readiness(self) -> dict[str, bool]:
+        return {
+            "enabled": self.chatgpt_bridge_enabled,
+            "paid_execution_enabled": self.allow_paid_runs,
+            "slack_transport_configured": self.readiness()["slack"],
+            "internal_auth_configured": bool(self.shared_secret),
+            "openai_configured": bool(self.openai_api_key),
+            "model_configured": bool(self.chatgpt_bridge_model),
+            "owner_configured": re.fullmatch(
+                r"U[A-Z0-9]+", self.slack_owner_user_id
+            )
+            is not None,
+            "channels_allowlisted": bool(self.chatgpt_bridge_channel_ids)
+            and all(
+                re.fullmatch(r"[CG][A-Z0-9]+", item) is not None
+                for item in self.chatgpt_bridge_channel_ids
+            ),
+            "alias_user_configured": re.fullmatch(
+                r"U[A-Z0-9]+", self.chatgpt_bridge_slack_user_id
+            )
+            is not None,
+            "prompt_limit_valid": 1 <= self.chatgpt_bridge_max_prompt_chars <= 20_000,
+            "output_limit_valid": 1 <= self.chatgpt_bridge_max_output_tokens <= 4_096,
+            "rate_limit_valid": 1 <= self.chatgpt_bridge_requests_per_minute <= 60,
+            "cost_estimate_valid": 0 < self.chatgpt_bridge_estimated_cost_usd <= 10
+            and self.chatgpt_bridge_estimated_cost_usd
+            <= self.chatgpt_bridge_daily_budget_usd,
+            "daily_budget_valid": 0 < self.chatgpt_bridge_daily_budget_usd <= 100,
+        }
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 
     def execution_profile_readiness(self) -> dict[str, bool]:
         return {
@@ -499,3 +562,4 @@ class Settings:
                 "strengths": ["current web research", "source gathering", "fact verification"],
             },
         }
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]

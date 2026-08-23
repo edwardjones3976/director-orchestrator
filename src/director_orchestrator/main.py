@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
@@ -28,6 +30,19 @@ from .callbacks import (
     apply_manual_run_completion,
     bearer_matches,
 )
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+from .chatgpt_bridge import (
+    BridgeRejected,
+    ChatGPTBridgeDeliveryAck,
+    ChatGPTBridgeDeliveryAckResponse,
+    ChatGPTBridgeDeliveryAmbiguity,
+    ChatGPTBridgeDeliveryAmbiguityResponse,
+    ChatGPTBridgeRequest,
+    ChatGPTBridgeResponse,
+    ChatGPTBridgeService,
+    ChatGPTBridgeStore,
+)
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 from .config import Settings
 from .engine import OrchestrationEngine
 from .models import (
@@ -72,8 +87,19 @@ oracle_merge_service = OracleMergeService(
 )
 engine = OrchestrationEngine(settings, store, oracle_merge_service)
 usage_monitor = UsageMonitor(settings, store)
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+chatgpt_bridge = ChatGPTBridgeService(
+    settings,
+    ChatGPTBridgeStore(
+        settings.sqlite_path,
+        gateway_secret=settings.slack_gateway_secret,
+        shared_secret=settings.shared_secret,
+    ),
+)
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 _PRIVACY_CLEANUP_RETRY_SECONDS = 2.0
 _RECOVERABLE_SCAN_SECONDS = 30.0
+_CHATGPT_BRIDGE_EXPIRY_SCAN_SECONDS = 60.0
 
 
 async def _resume_privacy_cleanup_waits_once() -> None:
@@ -187,8 +213,20 @@ async def _recoverable_task_loop() -> None:
         await _recoverable_tasks_once()
 
 
+async def _chatgpt_bridge_expiry_loop() -> None:
+    while True:
+        await asyncio.sleep(_CHATGPT_BRIDGE_EXPIRY_SCAN_SECONDS)
+        try:
+            chatgpt_bridge.store.sweep_expired_answers()
+        except Exception:
+            # The next bounded scan retries local cleanup without exposing data.
+            continue
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Startup fails closed if stale encrypted recovery material cannot be swept.
+    chatgpt_bridge.store.sweep_expired_answers()
     initial_resumes = store.claim_privacy_cleanup_resumes()
     resumed_ids = {resume.task_id for resume in initial_resumes}
     initial_task_ids = {
@@ -205,11 +243,15 @@ async def lifespan(_: FastAPI):
     monitor_task = asyncio.create_task(usage_monitor.run_forever())
     privacy_recovery_task = asyncio.create_task(_privacy_cleanup_recovery_loop())
     recoverable_task = asyncio.create_task(_recoverable_task_loop())
+    chatgpt_bridge_expiry_task = asyncio.create_task(
+        _chatgpt_bridge_expiry_loop()
+    )
     tasks = [
         *recovery_tasks,
         monitor_task,
         privacy_recovery_task,
         recoverable_task,
+        chatgpt_bridge_expiry_task,
     ]
     try:
         yield
@@ -244,6 +286,9 @@ def health() -> dict:
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": settings.readiness(),
+        # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+        "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
+        # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
         "execution_profile": settings.execution_profile_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
         "langgraph": settings.langgraph_shadow_readiness(),
@@ -279,6 +324,58 @@ async def run_usage_checks(background: BackgroundTasks) -> JSONResponse:
         # Explicit cooldown response: never advertise an accepted cycle with zero records.
         return JSONResponse(status_code=200, content=payload)
     return JSONResponse(status_code=409, content=payload)
+
+
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+@app.post(
+    "/v1/chatgpt-bridge",
+    response_model=ChatGPTBridgeResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def chatgpt_bridge_reply(payload: ChatGPTBridgeRequest) -> ChatGPTBridgeResponse:
+    try:
+        return await chatgpt_bridge.reply(payload)
+    except BridgeRejected as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="ChatGPT bridge request failed") from exc
+
+
+@app.post(
+    "/v1/chatgpt-bridge/delivery-ack",
+    response_model=ChatGPTBridgeDeliveryAckResponse,
+    dependencies=[Depends(require_auth)],
+)
+def chatgpt_bridge_delivery_ack(
+    payload: ChatGPTBridgeDeliveryAck,
+) -> ChatGPTBridgeDeliveryAckResponse:
+    try:
+        return chatgpt_bridge.acknowledge_delivery(payload)
+    except BridgeRejected as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail="ChatGPT bridge delivery acknowledgement failed"
+        ) from exc
+
+
+@app.post(
+    "/v1/chatgpt-bridge/delivery-ambiguous",
+    response_model=ChatGPTBridgeDeliveryAmbiguityResponse,
+    dependencies=[Depends(require_auth)],
+)
+def chatgpt_bridge_delivery_ambiguous(
+    payload: ChatGPTBridgeDeliveryAmbiguity,
+) -> ChatGPTBridgeDeliveryAmbiguityResponse:
+    try:
+        return chatgpt_bridge.mark_delivery_ambiguous(payload)
+    except BridgeRejected as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail="ChatGPT bridge delivery ambiguity failed"
+        ) from exc
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 
 
 @app.post("/v1/intake", response_model=TaskRecord, status_code=202, dependencies=[Depends(require_auth)])
@@ -534,3 +631,5 @@ def complete_run(
         raise HTTPException(status_code=409, detail="Task changed during run completion")
     background.add_task(engine.run, task_id)
     return stored
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]

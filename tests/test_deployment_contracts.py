@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
@@ -35,6 +36,44 @@ class DeploymentContractTests(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("FROM python:3.12-slim@sha256:", dockerfile)
 
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+    def test_slack_bridge_keeps_provider_key_in_orchestrator_only(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        slackbot_section = compose.split("  slackbot:\n", 1)[1].split(
+            "\n  n8n-db:", 1
+        )[0]
+
+        self.assertIn("CHATGPT_BRIDGE_ENABLED", slackbot_section)
+        self.assertIn("CHATGPT_BRIDGE_CHANNEL_IDS", slackbot_section)
+        self.assertNotIn("OPENAI_API_KEY", slackbot_section)
+
+    def test_isolated_launcher_clears_every_slack_bridge_interpolation(self):
+        launcher = (
+            ROOT / "scripts" / "windows-isolated-live-validation.ps1"
+        ).read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        slackbot_section = compose.split("  slackbot:\n", 1)[1].split(
+            "\n  n8n-db:", 1
+        )[0]
+        names = {
+            line.split(":", 1)[0].strip()
+            for line in slackbot_section.splitlines()
+            if "CHATGPT_BRIDGE_" in line and ":" in line
+        }
+
+        self.assertEqual(
+            names,
+            {
+                "CHATGPT_BRIDGE_ENABLED",
+                "CHATGPT_BRIDGE_SLACK_USER_ID",
+                "CHATGPT_BRIDGE_CHANNEL_IDS",
+                "CHATGPT_BRIDGE_MAX_PROMPT_CHARS",
+            },
+        )
+        for name in names:
+            self.assertIn(f'"{name}"', launcher)
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
+
     def test_pull_requests_have_cross_platform_ci(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         recovery = (ROOT / ".github" / "workflows" / "recovery-soak.yml").read_text(
@@ -58,3 +97,4 @@ class DeploymentContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
