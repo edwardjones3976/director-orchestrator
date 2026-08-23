@@ -1,9 +1,11 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +20,21 @@ from director_orchestrator.contribution_tags import (
 
 ZERO_SHA = "0" * 40
 GITLINK_MODE = "160000"
+_GIT_TRAILER_LINE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*:\s+\S")
+
+
+def _without_trailing_git_trailers(text: str) -> str:
+    """Ignore Git trailer blocks appended after a commit envelope."""
+
+    lines = text.splitlines()
+    index = len(lines)
+    while index > 0 and _GIT_TRAILER_LINE.match(lines[index - 1].strip()):
+        index -= 1
+    if index < len(lines):
+        while index > 0 and not lines[index - 1].strip():
+            index -= 1
+        lines = lines[:index]
+    return "\n".join(lines)
 
 
 def _git(*args: str, binary: bool = False) -> str | bytes:
@@ -153,7 +170,9 @@ def _validate_github_event(path: Path) -> list[str]:
     head_commit = payload.get("head_commit")
     message = head_commit.get("message", "") if isinstance(head_commit, dict) else ""
     return _validate_submission_envelope(
-        message, require_outer=True, require_markdown_boundary=False
+        _without_trailing_git_trailers(message),
+        require_outer=True,
+        require_markdown_boundary=False,
     )
 
 
@@ -223,3 +242,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | END]]

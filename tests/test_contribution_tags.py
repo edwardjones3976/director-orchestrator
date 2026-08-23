@@ -1,3 +1,4 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:08 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
@@ -586,6 +587,12 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             )
             self.assertEqual(checker._validate_github_event(event), [])
             payload = json.loads(event.read_text(encoding="utf-8"))
+            payload["head_commit"]["message"] = (
+                payload["head_commit"]["message"]
+                + "\n\nCo-authored-by: Edward L Jones IV <owner@example.com>\n"
+            )
+            event.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(checker._validate_github_event(event), [])
             payload["head_commit"]["message"] = "subject\n" + payload["head_commit"]["message"]
             event.write_text(json.dumps(payload), encoding="utf-8")
             self.assertTrue(checker._validate_github_event(event))
@@ -598,3 +605,4 @@ if __name__ == "__main__":
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:08 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | END]]
