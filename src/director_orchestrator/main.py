@@ -28,6 +28,15 @@ from .callbacks import (
     apply_manual_run_completion,
     bearer_matches,
 )
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+from .chatgpt_bridge import (
+    BridgeRejected,
+    ChatGPTBridgeRequest,
+    ChatGPTBridgeResponse,
+    ChatGPTBridgeService,
+    ChatGPTBridgeStore,
+)
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 from .config import Settings
 from .engine import OrchestrationEngine
 from .models import (
@@ -72,6 +81,9 @@ oracle_merge_service = OracleMergeService(
 )
 engine = OrchestrationEngine(settings, store, oracle_merge_service)
 usage_monitor = UsageMonitor(settings, store)
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+chatgpt_bridge = ChatGPTBridgeService(settings, ChatGPTBridgeStore(settings.sqlite_path))
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 _PRIVACY_CLEANUP_RETRY_SECONDS = 2.0
 _RECOVERABLE_SCAN_SECONDS = 30.0
 
@@ -244,6 +256,9 @@ def health() -> dict:
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": settings.readiness(),
+        # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+        "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
+        # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
         "execution_profile": settings.execution_profile_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
         "langgraph": settings.langgraph_shadow_readiness(),
@@ -279,6 +294,22 @@ async def run_usage_checks(background: BackgroundTasks) -> JSONResponse:
         # Explicit cooldown response: never advertise an accepted cycle with zero records.
         return JSONResponse(status_code=200, content=payload)
     return JSONResponse(status_code=409, content=payload)
+
+
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+@app.post(
+    "/v1/chatgpt-bridge",
+    response_model=ChatGPTBridgeResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def chatgpt_bridge_reply(payload: ChatGPTBridgeRequest) -> ChatGPTBridgeResponse:
+    try:
+        return await chatgpt_bridge.reply(payload)
+    except BridgeRejected as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="ChatGPT bridge request failed") from exc
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 
 
 @app.post("/v1/intake", response_model=TaskRecord, status_code=202, dependencies=[Depends(require_auth)])

@@ -73,6 +73,76 @@ def _clean_text(text: str) -> str:
     return re.sub(r"<@[A-Z0-9]+>", "", text).strip()
 
 
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+def _escape_slack_text(text: str) -> str:
+    """Render untrusted provider output without activating Slack control syntax."""
+
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _is_chatgpt_alias_message(event: dict) -> bool:
+    if not settings.chatgpt_bridge_enabled:
+        return False
+    mention = f"<@{settings.chatgpt_bridge_slack_user_id}>"
+    return mention in event.get("text", "")
+
+
+def _forward_chatgpt_alias(event: dict, client) -> None:
+    if event.get("bot_id") or event.get("subtype") in {
+        "bot_message",
+        "message_changed",
+        "message_deleted",
+    }:
+        return
+    if event.get("channel") not in settings.chatgpt_bridge_channel_ids:
+        return
+    if event.get("user") != settings.slack_owner_user_id:
+        return
+    prompt = _clean_text(event.get("text", ""))
+    if not prompt or len(prompt) > settings.chatgpt_bridge_max_prompt_chars:
+        return
+    thread_ts = event.get("thread_ts") or event.get("ts")
+    source_event_id = event.get("client_msg_id") or event.get("event_ts") or event.get("ts")
+    if not source_event_id or not thread_ts or not _claim_event(source_event_id):
+        return
+    try:
+        response = httpx.post(
+            f"{settings.orchestrator_base_url}/v1/chatgpt-bridge",
+            headers={"Authorization": f"Bearer {settings.shared_secret}"},
+            json={
+                "source_event_id": source_event_id,
+                "channel_id": event["channel"],
+                "thread_ts": thread_ts,
+                "user_id": event["user"],
+                "prompt": prompt,
+            },
+            timeout=100,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("deliver", True):
+            return
+        answer = body.get("answer")
+        if not isinstance(answer, str) or not answer.strip():
+            raise ValueError("bridge response omitted its answer")
+        client.chat_postMessage(
+            channel=event["channel"],
+            thread_ts=thread_ts,
+            text=f"*Aesop Director — ChatGPT bridge*\n{_escape_slack_text(answer)}",
+        )
+    except Exception as exc:
+        _log_boundary_failure("ChatGPT alias bridge failed", exc)
+        client.chat_postMessage(
+            channel=event["channel"],
+            thread_ts=thread_ts,
+            text=(
+                "*Aesop Director — ChatGPT bridge — BLOCKED*\n"
+                f"The bounded conversation bridge could not answer: `{type(exc).__name__}`."
+            ),
+        )
+# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
+
+
 def _signed_owner_payload(
     task_id: str,
     record: TaskRecord,
@@ -149,11 +219,21 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
 
 @app.event("app_mention")
 def mention_handler(event, client):
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+    if _is_chatgpt_alias_message(event):
+        _forward_chatgpt_alias(event, client)
+        return
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
     _forward(event, client, require_prefix=False)
 
 
 @app.event("message")
 def message_handler(event, client):
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+    if _is_chatgpt_alias_message(event):
+        _forward_chatgpt_alias(event, client)
+        return
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
     _forward(event, client, require_prefix=True)
 
 

@@ -69,6 +69,15 @@ For always-on operation, enable Docker Desktop's start-on-sign-in option, disabl
 
 Never paste tokens into Slack, chat, source control, screenshots, or issue bodies.
 
+**[[Codex | GPT-5.6 | 2026-08-23 | 08:31 UTC | BEGIN]]**
+The official ChatGPT Slack app remains a dedicated App/DM experience. To let the
+owner use the visible `@ChatGPT` identity inside an allowlisted project channel,
+enable Aesop Director's bounded alias bridge. Aesop—not the OpenAI-managed bot—posts
+the threaded answer with an honest bridge label. The bridge has no work-order,
+tool, repository, delegation, merge, deployment, or purchasing authority. See
+[the ChatGPT Slack alias bridge runbook](docs/chatgpt-slack-alias-bridge.md).
+**[[Codex | GPT-5.6 | 2026-08-23 | 08:31 UTC | END]]**
+
 ## Safe smoke test
 
 Keep `ALLOW_PAID_RUNS=false`, then post:

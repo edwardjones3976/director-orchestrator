@@ -35,6 +35,18 @@ class DeploymentContractTests(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("FROM python:3.12-slim@sha256:", dockerfile)
 
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
+    def test_slack_bridge_keeps_provider_key_in_orchestrator_only(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        slackbot_section = compose.split("  slackbot:\n", 1)[1].split(
+            "\n  n8n-db:", 1
+        )[0]
+
+        self.assertIn("CHATGPT_BRIDGE_ENABLED", slackbot_section)
+        self.assertIn("CHATGPT_BRIDGE_CHANNEL_IDS", slackbot_section)
+        self.assertNotIn("OPENAI_API_KEY", slackbot_section)
+    # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
+
     def test_pull_requests_have_cross_platform_ci(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         recovery = (ROOT / ".github" / "workflows" / "recovery-soak.yml").read_text(
