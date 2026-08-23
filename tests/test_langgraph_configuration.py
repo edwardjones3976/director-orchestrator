@@ -2,6 +2,7 @@
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-08-23 07:40 UTC | CHANGE]]
 
 from __future__ import annotations
 
@@ -47,7 +48,8 @@ class LangGraphConfigurationTests(unittest.TestCase):
         self.assertTrue(readiness["shadow_enabled"])
         self.assertTrue(readiness["approval_resume_enabled"])
         self.assertTrue(readiness["configuration_valid"])
-        self.assertFalse(readiness["runtime_active"])
+        self.assertTrue(settings.langgraph_runtime_active)
+        self.assertTrue(readiness["runtime_active"])
         self.assertTrue(readiness["legacy_sole_writer"])
         self.assertEqual(
             settings.langgraph_checkpoint_path,
@@ -77,6 +79,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
                         settings.langgraph_checkpoint_namespace,
                     )
                 )
+                self.assertTrue(settings.langgraph_shadow_readiness()["runtime_active"])
         self.assertEqual(len(observed), 3)
 
     def test_enabled_lane_requires_checkpoint_path(self):
@@ -194,7 +197,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "claim database"):
                 settings.validate_langgraph_configuration()
 
-    def test_isolated_enabled_configuration_is_valid_but_not_runtime_active(self):
+    def test_isolated_enabled_configuration_is_valid_and_runtime_active(self):
         settings = replace(
             self.base_settings(),
             langgraph_shadow_enabled=True,
@@ -208,8 +211,45 @@ class LangGraphConfigurationTests(unittest.TestCase):
 
         self.assertTrue(readiness["configuration_valid"])
         self.assertTrue(readiness["checkpoint_path_isolated"])
+        self.assertTrue(readiness["runtime_active"])
+        self.assertTrue(readiness["legacy_sole_writer"])
+
+    def test_runtime_active_can_be_disabled_without_turning_lanes_off(self):
+        with patch.dict(
+            os.environ,
+            {
+                "APP_ENV": "profile-a",
+                "SQLITE_PATH": "data/profile-a.sqlite3",
+                "LANGGRAPH_RUNTIME_ACTIVE": "false",
+            },
+            clear=True,
+        ):
+            settings = replace(Settings(), sqlite_path="data/profile-a.sqlite3")
+
+        settings.validate_langgraph_configuration()
+        readiness = settings.langgraph_shadow_readiness()
+
+        self.assertFalse(settings.langgraph_runtime_active)
+        self.assertTrue(readiness["shadow_enabled"])
+        self.assertTrue(readiness["configuration_valid"])
         self.assertFalse(readiness["runtime_active"])
         self.assertTrue(readiness["legacy_sole_writer"])
+
+    def test_disabled_lanes_are_not_runtime_active(self):
+        settings = self.base_settings()
+        settings.validate_langgraph_configuration()
+        readiness = settings.langgraph_shadow_readiness()
+
+        self.assertTrue(settings.langgraph_runtime_active)
+        self.assertTrue(readiness["configuration_valid"])
+        self.assertFalse(readiness["runtime_active"])
+        self.assertTrue(readiness["legacy_sole_writer"])
+
+    def test_runtime_active_requested_with_invalid_isolation_fails_closed(self):
+        settings = replace(self.base_settings(), langgraph_shadow_enabled=True)
+
+        with self.assertRaisesRegex(ValueError, "LANGGRAPH_RUNTIME_ACTIVE"):
+            settings.validate_langgraph_configuration()
 
     def test_every_example_profile_is_default_on_and_uses_unique_state(self):
         profiles = {
@@ -229,6 +269,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
             with self.subTest(profile=name):
                 self.assertEqual(values["LANGGRAPH_SHADOW_ENABLED"], "true")
                 self.assertEqual(values["LANGGRAPH_APPROVAL_RESUME_ENABLED"], "true")
+                self.assertEqual(values["LANGGRAPH_RUNTIME_ACTIVE"], "true")
                 self.assertNotEqual(
                     values["LANGGRAPH_CHECKPOINT_PATH"], values["SQLITE_PATH"]
                 )
