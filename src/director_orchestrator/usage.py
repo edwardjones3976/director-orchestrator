@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +11,7 @@ from typing import Any
 import httpx
 
 from .config import Settings
+from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .models import (
     ProviderName,
     ProviderRun,
@@ -398,12 +400,20 @@ class UsageMonitor:
             "Authorization": f"Bearer {self.settings.slack_bot_token}",
             "Content-Type": "application/json; charset=utf-8",
         }
+        tagged_summary = wrap_human_submission(
+            "\n".join(lines),
+            "Aesop Director",
+            DIRECTOR_SYSTEM_LABEL,
+            at=max(record.checked_at for record in records),
+            slack_markup=True,
+            neutralize_embedded_tags=True,
+        )
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 response = await client.post(
                     "https://slack.com/api/chat.postMessage",
                     headers=headers,
-                    json={"channel": self.settings.slack_channel_id, "text": "\n".join(lines)},
+                    json={"channel": self.settings.slack_channel_id, "text": tagged_summary},
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -585,3 +595,4 @@ class UsageMonitor:
             },
             "latest": latest,
         }
+# [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]

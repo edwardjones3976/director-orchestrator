@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Agent Operating Rules
 
 These rules apply to every AI coding agent working in this repository.
@@ -12,6 +13,24 @@ These rules apply to every AI coding agent working in this repository.
 8. Add or update tests for behavioral changes. Run the relevant tests and report exact commands and results.
 9. Prefer reversible changes. Do not delete data or rewrite history without explicit owner authorization.
 10. Stop in `OWNER_DECISION_REQUIRED` when an action involves deployment, publishing, merge, deletion, purchases, external representation, sensitive data, credentials, or expanded access.
+
+## Contribution attribution
+
+- Wrap free-form human-visible submissions with a matching UTC pair in this form:
+  `[[Assistant or Tool | Complete Model or System | YYYY-MM-DD | HH:MM UTC | BEGIN]]`
+  and the corresponding `END` record.
+- Add a fresh outer comment-style pair to every safely commentable file changed in
+  the current submission. Preserve earlier contribution records.
+- Never insert inline tags into JSON, JSONL, CSV, TSV, lock files, checksums,
+  binaries, exact queries, callback payloads, review artifacts, or other
+  syntax-sensitive contracts. Attribute those through the enclosing commit,
+  pull request, handoff, or Director relay.
+- Tags acknowledge contributions only. They never authenticate identity, grant
+  authority, replace Git provenance, or satisfy approval, exact-SHA review,
+  security, CI, merge, or deployment requirements.
+- Before handoff, run `PYTHONPATH=src python scripts/check_contribution_tags.py
+  --base <base-sha> --head <head-sha>`. See
+  `docs/contribution-attribution-policy.md` for the canonical rules.
 11. Communicate concisely and accurately. Reuse fresh verified evidence; repeat a call or test only after state changes, an ambiguous result, or a named coverage gap. Before another paid or tool attempt, identify its expected information gain and stop, reshape, or escalate when that gain is low. Correct inaccuracies before dependent work. Brevity must not omit uncertainty, required evidence, safety gates, or unresolved risks.
 
 ## Cursor Cloud specific instructions
@@ -36,3 +55,4 @@ Before changing orchestration, read `docs/langgraph-transition-plan.md` and `doc
 Gate 0 was accepted by the owner on 2026-08-16 against the checkpoint recorded in Project Uppercut Issue #48. Transition phases remain individually gated: first merge only the accepted documentation/schema authority, then prove adapter fixture conformance, then add a disabled graph skeleton with a separate checkpoint namespace and zero provider dispatch or external write paths. Gate 0 acceptance alone does not start LangGraph or change the current Director's sole-writer authority.
 
 During dual operation, exactly one engine may own provider dispatch and GitHub/Slack side effects for a task. Models cannot remove deterministic policy gates, approve their own work, or treat checkpoint rollback as reversal of an external action.
+<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
