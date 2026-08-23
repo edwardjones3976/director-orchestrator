@@ -1,3 +1,4 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -96,6 +97,7 @@ class SlackNotifier:
             system_label,
             at=contribution_at or record.updated_at,
             slack_markup=True,
+            max_length=3_900,
             neutralize_embedded_tags=True,
         )
         body = {"channel": record.intake.channel_id, "text": tagged_message}
@@ -1311,3 +1313,4 @@ class OrchestrationEngine:
             raise ProviderError(f"{current.provider.value} ended with status {current.status}")
         return current
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]

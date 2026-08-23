@@ -1,3 +1,4 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
@@ -193,11 +194,13 @@ def parse_contribution_tag(line: str) -> ContributionTag | None:
         datetime.strptime(
             f"{match.group('date')} {match.group('time')}", "%Y-%m-%d %H:%M"
         )
+        contributor = _safe_label(match.group("contributor"), "contributor")
+        system = _safe_label(match.group("system"), "system")
     except ValueError:
         return None
     return ContributionTag(
-        contributor=match.group("contributor").strip(),
-        system=match.group("system").strip(),
+        contributor=contributor,
+        system=system,
         date=match.group("date"),
         time=match.group("time"),
         boundary=match.group("boundary"),  # type: ignore[arg-type]
@@ -300,10 +303,23 @@ def validate_inline_contribution_tags(
             for tag in added
             if tag.boundary == "END"
         }
-        if not (added_begins & added_ends):
+        added_pairs = added_begins & added_ends
+        if not added_pairs:
             errors.append(
                 f"{path}: this change must add one matching BEGIN/END contribution pair"
             )
+        elif begin is not None and end is not None:
+            outer = (begin.contributor, begin.system, begin.date, begin.time)
+            if (
+                begin.boundary == "BEGIN"
+                and end.boundary == "END"
+                and outer == (end.contributor, end.system, end.date, end.time)
+                and outer not in added_pairs
+            ):
+                errors.append(
+                    f"{path}: the current outer BEGIN/END pair must be the matching pair added by this change"
+                )
     return errors
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]

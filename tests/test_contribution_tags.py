@@ -1,3 +1,4 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
@@ -89,6 +90,16 @@ class ContributionTagContractTests(unittest.TestCase):
                 "[[Codex | GPT-5.6 | 2026-13-90 | 99:99 UTC | END]]"
             )
         )
+        self.assertIsNone(
+            parse_contribution_tag(
+                "[[     | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]]"
+            )
+        )
+        self.assertIsNone(
+            parse_contribution_tag(
+                "[[Codex |      | 2026-08-21 | 23:05 UTC | END]]"
+            )
+        )
 
     def test_format_policy_forbids_structured_and_lock_file_tags(self):
         self.assertEqual(contribution_tag_policy("payload.json"), "forbidden")
@@ -115,6 +126,24 @@ class ContributionTagContractTests(unittest.TestCase):
                     "src/example.py", text, added_lines=["print('ok')"]
                 )
             )
+        )
+        inner_begin = "# [[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]"
+        inner_end = "# [[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]"
+        nested = f"{begin}\n{inner_begin}\nprint('ok')\n{inner_end}\n{end}\n"
+        self.assertTrue(
+            any(
+                "outer BEGIN/END pair" in error
+                for error in validate_inline_contribution_tags(
+                    "src/example.py", nested, added_lines=[inner_begin, inner_end]
+                )
+            )
+        )
+        revised = f"{inner_begin}\n{begin}\nprint('ok')\n{end}\n{inner_end}\n"
+        self.assertEqual(
+            validate_inline_contribution_tags(
+                "src/example.py", revised, added_lines=[inner_begin, inner_end]
+            ),
+            [],
         )
 
     def test_required_file_headers_may_precede_the_begin_tag(self):
@@ -250,6 +279,57 @@ class SlackContributionEnvelopeTests(unittest.IsolatedAsyncioTestCase):
             "Exact outbound Perplexity query (approved byte-for-byte):\n" + query,
         )
         self.assertNotIn("Claude (Chief Programmer)", body["blocks"][1]["text"]["text"])
+
+    async def test_notifier_keeps_wrapped_collaboration_text_within_slack_budget(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"ok": True, "ts": "1.3"}
+
+        class RecordingClient:
+            body = None
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, *, headers, json):
+                RecordingClient.body = json
+                return FakeResponse()
+
+        record = TaskRecord(
+            task_id="DIR-TAGS-LONG",
+            status=TaskStatus.RUNNING,
+            intake=SlackIntake(
+                source_event_id="evt-tags-long",
+                channel_id="C1",
+                thread_ts="1.1",
+                user_id="U1",
+                text="DIRECTOR Project: demo Outcome: verify long slack tags",
+            ),
+            updated_at=STAMP,
+        )
+        notifier = SlackNotifier(replace(Settings(), slack_bot_token="test-slack"))
+        with patch("director_orchestrator.engine.httpx.AsyncClient", RecordingClient):
+            await notifier.post(
+                record,
+                "x" * 3_900,
+                contributor="claude (Chief Programmer)",
+                system_label="claude-provider-run/0123456789abcdef",
+                contribution_at=STAMP,
+            )
+
+        body = RecordingClient.body
+        self.assertLessEqual(len(body["text"]), 3_900)
+        self.assertIn("| BEGIN]]*", body["text"])
+        self.assertTrue(body["text"].endswith("| END]]*"))
 
 
 class ProviderRoleHandoffTests(unittest.TestCase):
@@ -483,3 +563,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]
