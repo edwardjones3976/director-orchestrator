@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
@@ -138,6 +139,46 @@ def changed_paths(base: str, head: str) -> list[tuple[str, str | None, str]]:
     return changes
 
 
+# A POSIX ERE mirroring TAG_PATTERN closely enough for "git grep" to surface
+# every candidate line. It is deliberately wider than the Python grammar; each
+# matched line is parsed again below, so only real tags reach the result.
+_BASE_TAG_GREP = (
+    r"\[\[[^|]{1,80}\|[^|]{1,80}\|"
+    r"[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*\|"
+    r"[[:space:]]*[0-9]{2}:[0-9]{2} UTC[[:space:]]*\|"
+    r"[[:space:]]*(BEGIN|END)\]\]"
+)
+
+
+def _base_tag_pairs(base: str) -> set[tuple[str, str, str, str]]:
+    """Return the matching BEGIN/END identities already present in the base tree.
+
+    Git's rename and copy detection is a similarity heuristic: a logical move or
+    copy that is edited past the threshold is reported as an unrelated delete and
+    add, and the destination's inherited tags then look like additions. Comparing
+    against the identities the base tree already carries rejects that reuse
+    without depending on the heuristic.
+    """
+
+    try:
+        matches = str(_git("grep", "--no-color", "-h", "-I", "-E", _BASE_TAG_GREP, base))
+    except subprocess.CalledProcessError:
+        # "git grep" exits non-zero when nothing matches.
+        return set()
+    tags = [tag for line in matches.splitlines() if (tag := parse_contribution_tag(line))]
+    begins = {
+        (tag.contributor, tag.system, tag.date, tag.time)
+        for tag in tags
+        if tag.boundary == "BEGIN"
+    }
+    ends = {
+        (tag.contributor, tag.system, tag.date, tag.time)
+        for tag in tags
+        if tag.boundary == "END"
+    }
+    return begins & ends
+
+
 def _content_at(head: str, path: str) -> bytes:
     value = _git("show", f"{head}:{path}", binary=True)
     assert isinstance(value, bytes)
@@ -271,6 +312,7 @@ def main() -> int:
     args = parser.parse_args()
 
     base = _effective_base(args.base, args.head)
+    base_pairs = _base_tag_pairs(base)
     errors: list[str] = []
     envelope_only: list[str] = []
     forbidden: list[str] = []
@@ -301,6 +343,7 @@ def main() -> int:
                     path,
                     text,
                     added_lines=_added_lines(base, args.head, path, old_path),
+                    base_pairs=base_pairs,
                 )
             )
         elif policy == "forbidden":
@@ -329,3 +372,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]

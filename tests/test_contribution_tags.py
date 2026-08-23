@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:08 UTC | BEGIN]]
@@ -618,7 +619,7 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
-    def test_neutralization_defuses_only_grammar_matching_tags(self):
+    def test_neutralization_defuses_only_semantically_valid_tags(self):
         body = "\n".join(
             [
                 f"real {self.BEGIN}",
@@ -646,17 +647,26 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             "code matrix[[0]][[1]] stays",
             "partial [[Codex | GPT-5.6 | BEGIN]] stays",
             "unterminated [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN stays",
+            # Tag-shaped text the parser rejects is not a contribution tag, so
+            # it keeps its exact bytes even though the grammar regex matches it.
+            "malformed [[Codex | GPT-5.6 | 2026-13-90 | 99:99 UTC | END]]",
+            "blank identity [[   | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]]",
         ):
             self.assertIn(preserved, wrapped)
-        # Every sequence that matches the tag grammar is defused, including the
-        # malformed, blank-identity, nested, and adjacent forms. One pass is
-        # enough: a defused tag can never match the grammar again.
+        # Every sequence the parser would accept is defused, including the ones
+        # hidden behind a decoy prefix and the adjacent pair. One pass is enough:
+        # a defused tag can never be parsed again.
         body_text = "\n".join(inner)
-        self.assertIsNone(TAG_PATTERN.search(body_text))
         self.assertEqual(neutralize_contribution_tags(body_text), body_text)
         self.assertIn("[ [Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN] ]", wrapped)
+        self.assertNotIn(self.BEGIN, body_text)
+        self.assertNotIn(self.END, body_text)
         for line in inner:
             self.assertIsNone(parse_contribution_tag(line))
+        # A real tag reached through an invalid outer candidate is still defused.
+        decoy = f"[[decoy [[ | 2026-13-90 | 99:99 UTC | BEGIN]] {self.BEGIN}"
+        self.assertIsNotNone(TAG_PATTERN.search(decoy))
+        self.assertIsNone(parse_contribution_tag(neutralize_contribution_tags(decoy)))
         # Only the two boundaries the Director itself rendered remain parseable.
         self.assertEqual(
             [
@@ -851,6 +861,95 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
+    def test_low_similarity_move_cannot_inherit_base_tree_contribution_tags(self):
+        """Git reports an edited move below the similarity threshold as D + A.
+
+        The destination then presents its inherited outer tags as additions, so
+        the range check must reject a pair the base tree already carries.
+        """
+
+        checker = self._checker("check_contribution_tags_low_similarity")
+        begin = f"# {self.BEGIN}"
+        end = f"# {self.END}"
+        fresh_begin = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:30 UTC | BEGIN]]"
+        fresh_end = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:30 UTC | END]]"
+        original = "\n".join(f"value_{index} = {index}" for index in range(40))
+        rewritten = "\n".join(
+            f"renamed_symbol_{index} = compute({index}, mode='wholly different')"
+            for index in range(40)
+        )
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                    cwd=repo,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                ).stdout.decode("utf-8")
+
+            git("init", "--quiet", "-b", "main")
+            (repo / "source.py").write_text(
+                f"{begin}\n{original}\n{end}\n", encoding="utf-8"
+            )
+            git("add", "source.py")
+            git("commit", "--quiet", "-m", "seed")
+            base = git("rev-parse", "HEAD").strip()
+
+            git("rm", "--quiet", "source.py")
+            (repo / "moved.py").write_text(
+                f"{begin}\n{rewritten}\n{end}\n", encoding="utf-8"
+            )
+            git("add", "moved.py")
+            git("commit", "--quiet", "-m", "move and rewrite below the rename threshold")
+            moved_head = git("rev-parse", "HEAD").strip()
+
+            cwd = Path.cwd()
+            try:
+                os.chdir(repo)
+                # Git does not pair these paths, so the inherited tags look new.
+                self.assertEqual(
+                    sorted(checker.changed_paths(base, moved_head)),
+                    [("A", None, "moved.py"), ("D", None, "source.py")],
+                )
+                self.assertIn(
+                    "# " + self.BEGIN,
+                    checker._added_lines(base, moved_head, "moved.py"),
+                )
+                self.assertEqual(
+                    checker._base_tag_pairs(base),
+                    {("Codex", "GPT-5.6", "2026-08-21", "23:05")},
+                )
+                with patch(
+                    "sys.argv",
+                    ["check_contribution_tags.py", "--base", base, "--head", moved_head],
+                ):
+                    self.assertEqual(checker.main(), 1)
+            finally:
+                os.chdir(cwd)
+
+            # Recording a fresh outer pair on the destination is accepted.
+            (repo / "moved.py").write_text(
+                f"{fresh_begin}\n{begin}\n{rewritten}\n{end}\n{fresh_end}\n",
+                encoding="utf-8",
+            )
+            git("add", "moved.py")
+            git("commit", "--quiet", "-m", "record the move")
+            tagged_head = git("rev-parse", "HEAD").strip()
+
+            try:
+                os.chdir(repo)
+                with patch(
+                    "sys.argv",
+                    ["check_contribution_tags.py", "--base", base, "--head", tagged_head],
+                ):
+                    self.assertEqual(checker.main(), 0)
+            finally:
+                os.chdir(cwd)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -861,3 +960,4 @@ if __name__ == "__main__":
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:08 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:25 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
