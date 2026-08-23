@@ -95,6 +95,11 @@ class Settings:
     langgraph_approval_resume_enabled: bool = field(
         default_factory=lambda: _bool("LANGGRAPH_APPROVAL_RESUME_ENABLED", True)
     )
+    # [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-08-23 07:40 UTC | BEGIN]]
+    langgraph_runtime_active: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_RUNTIME_ACTIVE", True)
+    )
+    # [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-08-23 07:40 UTC | END]]
     langgraph_checkpoint_path: str = field(
         default_factory=lambda: os.getenv(
             "LANGGRAPH_CHECKPOINT_PATH", _default_langgraph_checkpoint_path()
@@ -183,9 +188,6 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
     openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "medium")
-    # Explicit accounting estimates for Director calls. Defaults preserve the
-    # existing deployment budget while allowing operators to reserve a
-    # conservative amount for every planning/review call.
     openai_plan_estimated_cost_usd: float = _float(
         "OPENAI_PLAN_ESTIMATED_COST_USD", 0.0
     )
@@ -353,20 +355,29 @@ class Settings:
         feature_enabled = (
             self.langgraph_shadow_enabled or self.langgraph_approval_resume_enabled
         )
+        configuration_valid = not feature_enabled or (
+            checkpoint_configured
+            and checkpoint_isolated
+            and claim_isolated
+            and namespace_configured
+        )
+        # [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-08-23 07:40 UTC | BEGIN]]
+        # runtime_active defaults on with the proof lanes. It means the isolated
+        # proof runtime is configured, not that LangGraph owns writes.
+        runtime_active = bool(
+            self.langgraph_runtime_active
+            and feature_enabled
+            and configuration_valid
+        )
+        # [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-08-23 07:40 UTC | END]]
         return {
             "shadow_enabled": self.langgraph_shadow_enabled,
             "approval_resume_enabled": self.langgraph_approval_resume_enabled,
             "checkpoint_path_configured": checkpoint_configured,
             "checkpoint_path_isolated": checkpoint_isolated,
             "checkpoint_namespace_configured": namespace_configured,
-            "configuration_valid": not feature_enabled
-            or (
-                checkpoint_configured
-                and checkpoint_isolated
-                and claim_isolated
-                and namespace_configured
-            ),
-            "runtime_active": False,
+            "configuration_valid": configuration_valid,
+            "runtime_active": runtime_active,
             "legacy_sole_writer": True,
         }
 
@@ -394,6 +405,10 @@ class Settings:
             )
         if not readiness["checkpoint_namespace_configured"]:
             problems.append("LANGGRAPH_CHECKPOINT_NAMESPACE must be configured")
+        if self.langgraph_runtime_active:
+            problems.append(
+                "LANGGRAPH_RUNTIME_ACTIVE requires an isolated enabled proof lane"
+            )
         raise ValueError("Invalid enabled LangGraph configuration: " + "; ".join(problems))
     # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 
