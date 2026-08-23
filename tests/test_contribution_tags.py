@@ -1,3 +1,4 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:08 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
@@ -244,6 +245,7 @@ class SlackContributionEnvelopeTests(unittest.IsolatedAsyncioTestCase):
                 RecordingClient.body = json
                 return FakeResponse()
 
+        query = "public evidence only"
         record = TaskRecord(
             task_id="DIR-TAGS",
             status=TaskStatus.OWNER_DECISION_REQUIRED,
@@ -254,9 +256,28 @@ class SlackContributionEnvelopeTests(unittest.IsolatedAsyncioTestCase):
                 user_id="U1",
                 text="DIRECTOR Project: demo Outcome: verify tags",
             ),
+            plan=DirectorPlan(
+                project="demo",
+                normalized_outcome="verify tags",
+                risk_level=RiskLevel.LOW,
+                approval_required=False,
+                approval_reasons=[],
+                max_hops=1,
+                max_revisions=0,
+                assignments=[
+                    Assignment(
+                        sequence=1,
+                        agent=ProviderName.PERPLEXITY,
+                        task="Collect public evidence",
+                        acceptance=["Return cited public evidence"],
+                        public_research_query=query,
+                        requires_approval=True,
+                    )
+                ],
+                final_acceptance=["Evidence is cited"],
+            ),
             updated_at=STAMP,
         )
-        query = "public evidence only"
         notifier = SlackNotifier(replace(Settings(), slack_bot_token="test-slack"))
         with patch("director_orchestrator.engine.httpx.AsyncClient", RecordingClient):
             await notifier.post(
@@ -327,6 +348,7 @@ class SlackContributionEnvelopeTests(unittest.IsolatedAsyncioTestCase):
                 contribution_at=STAMP,
             )
 
+        body = RecordingClient.body
         emitted = body["text"]
         self.assertLessEqual(len(emitted), 3_900)
         self.assertTrue(emitted.startswith("*[["))
@@ -575,3 +597,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:08 UTC | END]]
