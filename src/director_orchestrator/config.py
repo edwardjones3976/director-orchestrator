@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hmac
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -60,6 +60,18 @@ def _paths_are_isolated(left: str, right: str) -> bool:
 
 def langgraph_resume_claim_path(checkpoint_path: str) -> str:
     return checkpoint_path.strip() + ".resume-claims.sqlite3"
+
+
+def _default_langgraph_checkpoint_path() -> str:
+    legacy_path = os.getenv("SQLITE_PATH", "/data/director.sqlite3").strip()
+    base, extension = os.path.splitext(legacy_path)
+    return f"{base}.langgraph-shadow{extension or '.sqlite3'}"
+
+
+def _default_langgraph_checkpoint_namespace() -> str:
+    profile = os.getenv("APP_ENV", "local").strip().lower() or "local"
+    safe_profile = "-".join(part for part in profile.replace("_", "-").split("-") if part)
+    return f"director-{safe_profile}-shadow-v1"
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 
 
@@ -77,16 +89,22 @@ class Settings:
     provider_timeout_seconds: int = _int("PROVIDER_TIMEOUT_SECONDS", 3600)
     sqlite_path: str = os.getenv("SQLITE_PATH", "/data/director.sqlite3")
     # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
-    langgraph_shadow_enabled: bool = _bool("LANGGRAPH_SHADOW_ENABLED", False)
-    langgraph_approval_resume_enabled: bool = _bool(
-        "LANGGRAPH_APPROVAL_RESUME_ENABLED", False
+    langgraph_shadow_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_SHADOW_ENABLED", True)
     )
-    langgraph_checkpoint_path: str = os.getenv(
-        "LANGGRAPH_CHECKPOINT_PATH", ""
-    ).strip()
-    langgraph_checkpoint_namespace: str = os.getenv(
-        "LANGGRAPH_CHECKPOINT_NAMESPACE", ""
-    ).strip()
+    langgraph_approval_resume_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_APPROVAL_RESUME_ENABLED", True)
+    )
+    langgraph_checkpoint_path: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_CHECKPOINT_PATH", _default_langgraph_checkpoint_path()
+        ).strip()
+    )
+    langgraph_checkpoint_namespace: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_CHECKPOINT_NAMESPACE", _default_langgraph_checkpoint_namespace()
+        ).strip()
+    )
     # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
     project_allowlist: tuple[str, ...] = _csv("PROJECT_ALLOWLIST", "")
     repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
