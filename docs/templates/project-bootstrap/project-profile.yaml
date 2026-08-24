@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]]
 # Canonical project profile template (director-project-profile/v1).
 # Do not place secrets, credentials, tokens, or raw private source here.
@@ -82,8 +83,13 @@ modules:
     purpose: "<current reason>"
 
 team:
+  # Project-local provider roles, boundaries, and the eight responsibility areas:
+  # docs/templates/project-bootstrap/provider-roles-contract.yaml
+  provider_roles_contract: "provider-roles-contract.yaml"
   director:
     provider: "openai"
+    # The three OpenAI functions stay distinct; see the roles contract
+    # `providers.openai.functions`. Never collapse them into one role.
     responsibilities: ["framing", "routing", "synthesis", "acceptance"]
   lanes:
     - id: "<lane-id>"
@@ -170,3 +176,4 @@ next:
   responsible_party: "<provider, Director, or owner>"
   expected_evidence: "<what this action should add>"
 # [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]

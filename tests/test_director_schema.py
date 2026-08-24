@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
@@ -546,10 +547,174 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(material.authorizes_external_action)
 
 
+class ProjectProviderRolesContractTests(unittest.TestCase):
+    """Drift tests for the project-local provider roles contract template."""
+
+    BOOTSTRAP = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "templates"
+        / "project-bootstrap"
+    )
+
+    def contract(self) -> str:
+        return (self.BOOTSTRAP / "provider-roles-contract.yaml").read_text(
+            encoding="utf-8"
+        )
+
+    def test_contract_mirrors_the_charter_responsibility_areas(self):
+        contract = self.contract()
+        areas = team_operating_charter()["responsibility_areas"]
+
+        self.assertEqual(len(areas), 8)
+        for area in areas:
+            with self.subTest(area=area["name"]):
+                self.assertIn(f'- name: "{area["name"]}"', contract)
+                self.assertIn(f'expectation: "{area["expectation"]}"', contract)
+
+    def test_contract_encodes_the_cursor_boundary(self):
+        contract = self.contract()
+        cursor = team_operating_charter()["role_profiles"]["cursor"]
+
+        self.assertEqual(len(cursor["eligible_responsibilities"]), 8)
+        for area in cursor["eligible_responsibilities"]:
+            with self.subTest(area=area):
+                self.assertIn(f'      - "{area}"', contract)
+        self.assertIn(
+            f'capability_parity_target: {cursor["capability_parity_target"]}', contract
+        )
+        for peer in cursor["comparison_peers"]:
+            self.assertIn(peer, contract)
+        self.assertIn('may_handle_critical_work: true', contract)
+        self.assertIn('"critical"', contract)
+        for denial in (
+            "a benchmark, score, ranking, or measured performance claim",
+            "permission, access, or credential expansion",
+            "sole acceptance authority",
+            "authority to review or approve its own work",
+            "merge, deployment, or publication authority",
+            "safety authority",
+        ):
+            with self.subTest(denial=denial):
+                self.assertIn(f'- "{denial}"', contract)
+        for rule in cursor["non_substitution_rules"]:
+            with self.subTest(rule=rule):
+                self.assertIn(f'- "{rule}"', contract)
+
+    def test_contract_encodes_the_antigravity_boundary(self):
+        contract = self.contract()
+
+        self.assertIn('lane: "sandbox_prototype_behavioral_verification_only"', contract)
+        for permitted in (
+            "repository_owned_fixed_strings",
+            "closed_enum_values",
+            "bounded_integers",
+        ):
+            with self.subTest(permitted=permitted):
+                self.assertIn(f'- "{permitted}"', contract)
+        for prose in (
+            "model_authored_prose",
+            "owner_authored_prose",
+            "caller_authored_prose",
+        ):
+            with self.subTest(prose=prose):
+                self.assertIn(f'- "{prose}"', contract)
+        for prohibited in (
+            "secrets, credentials, or tokens",
+            "private repository context",
+            "Slack posting or other external posts",
+            "merge",
+            "deployment",
+            "operational authority",
+        ):
+            with self.subTest(prohibited=prohibited):
+                self.assertIn(f'- "{prohibited}"', contract)
+        self.assertIn("seatable: false", contract)
+
+    def test_contract_encodes_the_perplexity_boundary(self):
+        contract = self.contract()
+        charter = team_operating_charter()["perplexity_contract"]
+
+        self.assertIn(f'role: "{charter["role"]}"', contract)
+        for excluded in (
+            "programming",
+            "committee voting",
+            "repository review",
+            "repository writes",
+            "approval, acceptance, or merge verdicts",
+            "operational decisions",
+        ):
+            with self.subTest(excluded=excluded):
+                self.assertIn(f'- "{excluded}"', contract)
+        for field in (
+            "query",
+            "result_url",
+            "page_title",
+            "publication_date",
+            "retrieval_date",
+            "supporting_excerpt_or_extracted_content",
+            "source_type",
+            "confidence",
+            "contradictions",
+            "unavailable_evidence",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(f'- "{field}"', contract)
+        self.assertIn(f'review_requirement: "{charter["review_requirement"]}"', contract)
+
+    def test_contract_keeps_the_three_openai_functions_distinct(self):
+        contract = self.contract()
+
+        for function_id in (
+            "director_coordination_and_routing",
+            "planning_and_decomposition",
+            "evidence_synthesis_and_independent_acceptance_review",
+        ):
+            with self.subTest(function_id=function_id):
+                self.assertIn(f'- id: "{function_id}"', contract)
+        self.assertIn("function_separation_rule:", contract)
+        self.assertIn("never collapsed into a single role", contract)
+        for boundary in (
+            "producer_exclusion:",
+            "material_tie_escalation:",
+            "deterministic_gates:",
+        ):
+            with self.subTest(boundary=boundary):
+                self.assertIn(boundary, contract)
+
+    def test_contract_grants_no_authority_and_changes_no_runtime_surface(self):
+        contract = self.contract()
+
+        self.assertIn('authority_granted: "none"', contract)
+        for unchanged in (
+            "committee voting weights or the immutable denominator",
+            "runtime permissions or allowlists",
+            "provider credentials",
+            "deployments or service state",
+            "Slack behaviour",
+            "deterministic policy in src/director_orchestrator/policy.py",
+        ):
+            with self.subTest(unchanged=unchanged):
+                self.assertIn(f'- "{unchanged}"', contract)
+
+    def test_bootstrap_surfaces_reference_the_roles_contract(self):
+        for surface in (
+            "project-profile.yaml",
+            "workstream-plan.md",
+            "intake.md",
+            "project-state-report.md",
+        ):
+            with self.subTest(surface=surface):
+                self.assertIn(
+                    "provider-roles-contract.yaml",
+                    (self.BOOTSTRAP / surface).read_text(encoding="utf-8"),
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
 
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
-
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project bootstrap template kit
 
@@ -11,6 +12,7 @@ kit.
 | --- | --- |
 | [`intake.md`](intake.md) | Paste into the new project's Slack thread or conversation to shape the project from a source thread. |
 | [`project-profile.yaml`](project-profile.yaml) | Record the living project identity, surfaces, modules, team, controls, and unknowns. |
+| [`provider-roles-contract.yaml`](provider-roles-contract.yaml) | Record the project-local eight responsibility areas and the Cursor, Antigravity, Perplexity, and OpenAI boundaries. |
 | [`workstream-plan.md`](workstream-plan.md) | Split the current phase into bounded, non-conflicting assignments and select provider workflow skills. |
 | [`review-ready.md`](review-ready.md) | Prompt a different eligible provider to review an exact candidate and carry it toward the configured merge gate. |
 | [`project-state-report.md`](project-state-report.md) | Report a bootstrap, reshaped plan, milestone, pause, or completion without implying unperformed actions. |
@@ -33,6 +35,9 @@ kit.
 7. Treat skill selection as procedure, not permission. The project profile,
    provider contract, and deterministic gates remain authoritative. Canonical
    provider roles: [`docs/team-operating-charter.md`](../../team-operating-charter.md).
+   Copy [`provider-roles-contract.yaml`](provider-roles-contract.yaml) alongside the
+   profile whenever the project staffs more than one provider; it mirrors the charter
+   and grants no authority of its own.
 8. Use the event vocabulary from
    [`project-bootstrap-protocol.md`](../../project-bootstrap-protocol.md):
    `PROJECT_BOOTSTRAP` (intake record), `BOOTSTRAP`, `PLAN`, `WORKING`,
@@ -50,3 +55,4 @@ Do not place secrets, credentials, tokens, raw private source, or unnecessary
 source-thread content in any template. Name Slack destinations only from the
 project profile or runtime configuration—never hardcode workspace channel names.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->

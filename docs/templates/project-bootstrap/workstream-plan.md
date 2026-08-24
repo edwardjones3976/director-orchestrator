@@ -1,10 +1,15 @@
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project workstream plan
 
 Do not place secrets, credentials, tokens, or raw private source in this plan.
 Workflow skills are procedure overlays, not permission grants. Canonical provider
 roles, debate rules, and committee weights:
-[`docs/team-operating-charter.md`](../../team-operating-charter.md).
+[`docs/team-operating-charter.md`](../../team-operating-charter.md). Project-local
+responsibility areas and provider boundaries:
+[`provider-roles-contract.yaml`](provider-roles-contract.yaml). Assign each
+workstream from one of its eight responsibility areas and respect the Cursor,
+Antigravity, Perplexity, and OpenAI boundaries recorded there.
 
 ## Phase frame
 
@@ -131,3 +136,4 @@ the provider identity or satisfy any gate above. Preserve prior valid tags and
 add a new outer pair when this plan is revised; for syntax-sensitive artifacts,
 use the commit, pull-request, or `REVIEW_READY` envelope instead.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->

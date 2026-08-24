@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 # PROJECT_BOOTSTRAP
 
 Copy this block into the new project's designated Slack thread or continuity
@@ -65,7 +66,11 @@ Mark each `enabled`, `optional`, `disabled`, or `unknown`.
 ## Initial team hypothesis
 
 Canonical provider roles, debate rules, and committee weights:
-[`docs/team-operating-charter.md`](../../team-operating-charter.md).
+[`docs/team-operating-charter.md`](../../team-operating-charter.md). Record the
+project-local eight responsibility areas and the Cursor, Antigravity,
+Perplexity, and OpenAI boundaries in
+[`provider-roles-contract.yaml`](provider-roles-contract.yaml); keep OpenAI's
+coordination, planning, and acceptance-review functions distinct.
 
 | Lane | Provider/capability | Shared workflow skill | Why it may fit |
 | --- | --- | --- | --- |
@@ -100,3 +105,4 @@ Create a provisional project profile and select the smallest useful module set.
 Proceed analysis-only where authority or execution surfaces remain unknown.
 Ask the owner one focused question only when the unresolved choice materially
 changes authority, scope, cost, privacy, repository target, or risk.
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
