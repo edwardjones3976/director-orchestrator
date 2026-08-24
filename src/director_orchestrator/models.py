@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +16,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from .interactions import ProviderInteractionEvent
 
 
 def canonical_opaque_identifier_digest(value: str) -> str:
@@ -314,6 +318,13 @@ class CollaborationTurn(BaseModel):
     vote_option: str | None = Field(default=None, max_length=255)
     abstain: bool = False
     slack_message_ts: str | None = Field(default=None, max_length=64)
+    interaction_id: str | None = Field(default=None, min_length=1, max_length=255)
+    verified_interaction_event_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    provider_result_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -321,6 +332,7 @@ class ProviderRun(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     provider: ProviderName
+    interaction_id: str | None = Field(default=None, min_length=1, max_length=255)
     assignment_sequence: int | None = Field(default=None, ge=1, le=20)
     run_id: str
     status: str
@@ -380,6 +392,22 @@ class AssignmentOutcome(BaseModel):
     run_id: str = Field(min_length=1, max_length=255)
     result: str = Field(min_length=1, max_length=50_000)
     review_summary: str = Field(min_length=1, max_length=10_000)
+    interaction_id: str | None = Field(default=None, min_length=1, max_length=255)
+    verified_interaction_event_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    provider_result_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    director_review_interaction_id: str | None = Field(
+        default=None, min_length=1, max_length=255
+    )
+    verified_director_review_event_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    director_review_result_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
     evidence: list[str] = Field(default_factory=list, max_length=30)
     unresolved_question: str | None = Field(default=None, max_length=2_000)
 
@@ -574,6 +602,9 @@ class TaskRecord(BaseModel):
     task_effect_ledger: list[TaskEffectEvidence] = Field(
         default_factory=list, max_length=200
     )
+    provider_interaction_ledger: list[ProviderInteractionEvent] = Field(
+        default_factory=list, max_length=500
+    )
     cumulative_estimated_cost_usd: float = Field(default=0, ge=0, le=100_000)
     cumulative_effect_hops: int = Field(default=0, ge=0, le=10_000)
     review_handoff_digests: dict[int, str] = Field(default_factory=dict)
@@ -589,6 +620,9 @@ class TaskRecord(BaseModel):
     collaboration_fallback_reason: str | None = Field(default=None, max_length=1_000)
     debate_tally: dict[str, Any] | None = None
     debate_synthesis: DebateSynthesis | None = None
+    plan_interaction_id: str | None = Field(default=None, max_length=255)
+    review_interaction_id: str | None = Field(default=None, max_length=255)
+    debate_synthesis_interaction_id: str | None = Field(default=None, max_length=255)
     review: ReviewDecision | None = None
     oracle_recovery: OracleRecoveryState | None = None
     next_assignment_index: int = Field(default=0, ge=0, le=20)
@@ -765,3 +799,5 @@ class ManualRunCompletion(BaseModel):
 
     owner_user_id: str = Field(min_length=1, max_length=64)
     result: str = Field(min_length=1, max_length=50_000)
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]

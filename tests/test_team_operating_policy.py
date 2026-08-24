@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:20 UTC | BEGIN]]
 from __future__ import annotations
 
 import hashlib
@@ -20,6 +21,16 @@ from director_orchestrator.engine import (
     OrchestrationEngine,
     ProviderUnavailableError,
     SlackNotifier,
+)
+from director_orchestrator.interactions import (
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    ProviderTransport,
+    TransportEvidenceSource,
+    append_interaction_event,
+    build_transport_evidence,
+    start_interaction,
+    transition_interaction,
 )
 from director_orchestrator.providers import PostSubmitAmbiguityError, ProviderError
 from director_orchestrator.models import (
@@ -67,6 +78,95 @@ def review_candidate_payload(*, producer: str = "cursor", material_authors=None)
     encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     payload["artifact_digest"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
     return payload
+
+
+def bind_verified_interaction(
+    record: TaskRecord,
+    run: ProviderRun,
+    *,
+    label: str,
+) -> None:
+    """Attach one backend-built VERIFIED transport chain to an exact test result."""
+
+    interaction_id = (
+        f"{record.task_id}:{run.assignment_sequence}:{run.provider.value}:{label}"
+    )
+    transport = {
+        ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
+        ProviderName.CLAUDE: ProviderTransport.CLAUDE_CALLBACK,
+    }[run.provider]
+    idempotency_key = f"{interaction_id}:idempotency"
+
+    def evidence(
+        state: ProviderInteractionState,
+        *,
+        authenticated: bool,
+    ):
+        return build_transport_evidence(
+            transport=transport,
+            source=(
+                TransportEvidenceSource.AUTHENTICATED_PROVIDER
+                if authenticated
+                else TransportEvidenceSource.BACKEND_OBSERVATION
+            ),
+            idempotency_key=idempotency_key,
+            request="bounded review fixture",
+            response=("authenticated response" if authenticated else None),
+            provider_run_id=(run.run_id if authenticated else None),
+            native_status=run.status,
+            http_status=(200 if authenticated else None),
+            result=(
+                run.result
+                if state
+                in {
+                    ProviderInteractionState.RESPONDED,
+                    ProviderInteractionState.COMPLETED,
+                    ProviderInteractionState.VERIFIED,
+                }
+                else None
+            ),
+        )
+
+    events = list(record.provider_interaction_ledger)
+    drafted = start_interaction(
+        task_id=record.task_id,
+        interaction_id=interaction_id,
+        plan_generation=record.plan_generation,
+        assignment_sequence=run.assignment_sequence,
+        provider=run.provider,
+        phase=ProviderInteractionPhase.DISPATCH,
+        attempt=1,
+        transport_evidence=evidence(
+            ProviderInteractionState.DRAFTED, authenticated=False
+        ),
+    )
+    events = append_interaction_event(events, drafted)
+    for state in (
+        ProviderInteractionState.ATTEMPTED,
+        ProviderInteractionState.DISPATCHED,
+        ProviderInteractionState.ACKNOWLEDGED,
+        ProviderInteractionState.RESPONDED,
+        ProviderInteractionState.COMPLETED,
+        ProviderInteractionState.VERIFIED,
+    ):
+        event = transition_interaction(
+            events,
+            interaction_id=interaction_id,
+            next_state=state,
+            transport_evidence=evidence(
+                state,
+                authenticated=state
+                in {
+                    ProviderInteractionState.ACKNOWLEDGED,
+                    ProviderInteractionState.RESPONDED,
+                    ProviderInteractionState.COMPLETED,
+                    ProviderInteractionState.VERIFIED,
+                },
+            ),
+        )
+        events = append_interaction_event(events, event)
+    record.provider_interaction_ledger = events
+    run.interaction_id = interaction_id
 
 
 class ReviewHandoffTests(unittest.TestCase):
@@ -141,6 +241,7 @@ class ReviewHandoffTests(unittest.TestCase):
                 sort_keys=True,
             ),
         )
+        bind_verified_interaction(record, run, label="producer")
         return record, producer, run
 
     def test_exact_candidate_binds_the_prebudgeted_different_provider(self):
@@ -232,6 +333,7 @@ class ReviewHandoffTests(unittest.TestCase):
             evidence_source="provider_authenticated",
             result=json.dumps(payload),
         )
+        bind_verified_interaction(record, review_run, label="review-original")
         record.provider_runs.append(review_run)
         authenticated = authenticate_provider_review_artifact(record, review_run, "secret")
         self.assertIsNotNone(authenticated)
@@ -247,6 +349,9 @@ class ReviewHandoffTests(unittest.TestCase):
             with self.subTest(field=field):
                 tampered = {**payload, field: changed}
                 review_run.result = json.dumps(tampered)
+                bind_verified_interaction(
+                    record, review_run, label=f"review-tampered-{field}"
+                )
                 record.provider_runs[-1] = review_run
                 with self.assertRaisesRegex(ValueError, "stored handoff"):
                     authenticate_provider_review_artifact(record, review_run, "secret")
@@ -256,8 +361,17 @@ class ReviewHandoffTests(unittest.TestCase):
         payload = json.loads(run.result or "{}")
         payload["head_sha"] = "c" * 40
         run.result = json.dumps(payload)
+        bind_verified_interaction(record, run, label="tampered-candidate")
 
         with self.assertRaisesRegex(ValidationError, "digest"):
+            self.bind(record, producer, run)
+
+    def test_mutable_evidence_source_alone_cannot_authenticate_review(self):
+        record, producer, run = self.record()
+        record.provider_interaction_ledger = []
+        run.interaction_id = "forged-mutable-label-only"
+
+        with self.assertRaisesRegex(ValueError, "COMMUNICATION_EVIDENCE_FAILURE"):
             self.bind(record, producer, run)
 
     def test_owner_recovery_result_cannot_become_provider_review_authority(self):
@@ -288,15 +402,17 @@ class ReviewHandoffTests(unittest.TestCase):
         encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
         payload["artifact_digest"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         run.result = json.dumps(payload)
+        bind_verified_interaction(record, run, label="wrong-implementation-actor")
 
         with self.assertRaisesRegex(ValueError, "not bound to the logical producer"):
             self.bind(record, producer, run)
 
+        actor_record, actor_producer, actor_run = self.record()
         with self.assertRaisesRegex(ValueError, "no configured trusted GitHub actor"):
             bind_review_handoff(
-                record,
-                producer,
-                ProviderRun.model_validate({**run.model_dump(), "result": json.dumps(review_candidate_payload())}),
+                actor_record,
+                actor_producer,
+                actor_run,
                 trusted_provider_actors={},
             )
 
@@ -387,6 +503,7 @@ class ReviewHandoffTests(unittest.TestCase):
             evidence_source="provider_authenticated",
             result=json.dumps(payload),
         )
+        bind_verified_interaction(record, run, label="transitive-producer")
 
         with self.assertRaisesRegex(ValueError, "review provider is listed as a material author"):
             self.bind(record, producer, run)
@@ -927,3 +1044,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
             with self.subTest(index=index):
                 errors = execution_policy_errors(plan, settings)
                 self.assertTrue(any(reason in error for error in errors), errors)
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:20 UTC | END]]

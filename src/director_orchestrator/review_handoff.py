@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
 import hashlib
@@ -10,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .models import Assignment, ProviderName, ProviderRun, TaskRecord
 from .approvals import assignment_is_approved
 from .policy import canonical_repository
+from .interactions import CommunicationEvidenceFailure, require_verified_result
 
 
 class ReviewCandidateArtifact(BaseModel):
@@ -169,6 +171,20 @@ def bind_review_handoff(
     if implementation_actor in reviewer_actors:
         raise ValueError("implementation actor is also controlled by the review provider")
 
+    # Preserve the established deterministic-policy error order above, then
+    # require immutable provider communication evidence before any valid
+    # candidate can become a review assignment.
+    if not run.interaction_id:
+        raise ValueError("review candidate lacks immutable interaction evidence")
+    try:
+        require_verified_result(
+            record.provider_interaction_ledger,
+            interaction_id=run.interaction_id,
+            result=run.result or "",
+        )
+    except CommunicationEvidenceFailure as exc:
+        raise ValueError(str(exc)) from exc
+
     handoff = {
         "schema_version": "director-review-handoff/v1",
         "trust_boundary": (
@@ -220,3 +236,4 @@ def bind_review_handoff(
         }
     )
     return reviewer.sequence, bound
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]

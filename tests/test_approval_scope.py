@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | BEGIN]]
 from __future__ import annotations
 
 import tempfile
@@ -100,6 +101,19 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
         )
         store.create(record)
         engine = OrchestrationEngine(settings, store)
+        persisted = store.get(record.task_id)
+        plan_interaction_id = engine._begin_director_interaction(
+            persisted,
+            phase="plan",
+            effect_key="a" * 64,
+        )
+        engine._complete_director_interaction(
+            persisted,
+            interaction_id=plan_interaction_id,
+            result=persisted.plan,
+        )
+        persisted.plan_interaction_id = plan_interaction_id
+        store.save(persisted)
         adapter = RecordingAdapter()
         engine.providers[ProviderName.CURSOR] = adapter
         engine.director = AcceptingDirector()
@@ -161,3 +175,4 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | END]]

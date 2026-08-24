@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:40 UTC | BEGIN]]
 from __future__ import annotations
 
 import tempfile
@@ -20,6 +22,19 @@ from director_orchestrator.callbacks import (
     apply_manual_run_completion,
     bearer_matches,
 )
+from director_orchestrator.interactions import (
+    CommunicationEvidenceFailure,
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    ProviderTransport,
+    TransportEvidenceSource,
+    append_interaction_event,
+    build_transport_evidence,
+    project_interaction,
+    require_verified_result,
+    start_interaction,
+    transition_interaction,
+)
 from director_orchestrator.models import (
     ClaudeCallback,
     ManualRunCompletion,
@@ -34,7 +49,76 @@ from director_orchestrator.store import TaskStore
 
 
 class ClaudeCallbackTests(unittest.TestCase):
+    @staticmethod
+    def _interaction_ledger(
+        provider: ProviderName,
+        run_id: str,
+        interaction_id: str,
+        *,
+        task_id: str = "DIR-CALLBACK",
+        assignment_sequence: int = 1,
+    ) -> list:
+        drafted = start_interaction(
+            task_id=task_id,
+            interaction_id=interaction_id,
+            plan_generation=0,
+            assignment_sequence=assignment_sequence,
+            provider=provider,
+            phase=ProviderInteractionPhase.DISPATCH,
+            attempt=1,
+            transport_evidence=build_transport_evidence(
+                transport=ProviderTransport.DIRECTOR_BACKEND,
+                source=TransportEvidenceSource.BACKEND_OBSERVATION,
+                idempotency_key=f"{interaction_id}:drafted",
+            ),
+        )
+        events = [drafted]
+        for state, source, transport in (
+            (
+                ProviderInteractionState.ATTEMPTED,
+                TransportEvidenceSource.BACKEND_OBSERVATION,
+                ProviderTransport.DIRECTOR_BACKEND,
+            ),
+            (
+                ProviderInteractionState.DISPATCHED,
+                TransportEvidenceSource.BACKEND_OBSERVATION,
+                ProviderTransport.DIRECTOR_BACKEND,
+            ),
+            (
+                ProviderInteractionState.ACKNOWLEDGED,
+                TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+                (
+                    ProviderTransport.CLAUDE_ROUTINE
+                    if provider == ProviderName.CLAUDE
+                    else ProviderTransport.CURSOR_AGENTS_API
+                ),
+            ),
+        ):
+            event = transition_interaction(
+                events,
+                interaction_id=interaction_id,
+                next_state=state,
+                transport_evidence=build_transport_evidence(
+                    transport=transport,
+                    source=source,
+                    idempotency_key=f"{interaction_id}:{state.value.lower()}",
+                    provider_run_id=(
+                        run_id
+                        if source == TransportEvidenceSource.AUTHENTICATED_PROVIDER
+                        else None
+                    ),
+                    native_status=(
+                        "WAITING_CALLBACK"
+                        if provider == ProviderName.CLAUDE
+                        else "CREATING"
+                    ),
+                ),
+            )
+            events = append_interaction_event(events, event)
+        return events
+
     def _record(self) -> TaskRecord:
+        interaction_id = "interaction-claude-session-1"
         return TaskRecord(
             task_id="DIR-CALLBACK",
             status=TaskStatus.OWNER_DECISION_REQUIRED,
@@ -48,11 +132,17 @@ class ClaudeCallbackTests(unittest.TestCase):
             provider_runs=[
                 ProviderRun(
                     provider=ProviderName.CLAUDE,
+                    interaction_id=interaction_id,
                     assignment_sequence=1,
                     run_id="claude-session-1",
                     status="WAITING_CALLBACK",
                 )
             ],
+            provider_interaction_ledger=self._interaction_ledger(
+                ProviderName.CLAUDE,
+                "claude-session-1",
+                interaction_id,
+            ),
         )
 
     def test_callback_uses_a_dedicated_constant_time_bearer_check(self):
@@ -74,11 +164,63 @@ class ClaudeCallbackTests(unittest.TestCase):
         self.assertEqual(
             record.provider_runs[0].evidence_source, "provider_authenticated"
         )
+        verified = require_verified_result(
+            record.provider_interaction_ledger,
+            interaction_id=record.provider_runs[0].interaction_id,
+            result=callback.result,
+        )
+        self.assertEqual(verified.state, ProviderInteractionState.VERIFIED)
         self.assertFalse(apply_claude_callback(record, callback))
 
         conflicting = callback.model_copy(update={"result": "Different result"})
         with self.assertRaises(CallbackConflict):
             apply_claude_callback(record, conflicting)
+
+    def test_callback_rejects_duplicate_pending_run_id_without_mutation(self):
+        record = self._record()
+        duplicate_interaction_id = "interaction-claude-session-duplicate"
+        record.provider_runs.append(
+            ProviderRun(
+                provider=ProviderName.CLAUDE,
+                interaction_id=duplicate_interaction_id,
+                assignment_sequence=2,
+                run_id="claude-session-1",
+                status="WAITING_CALLBACK",
+            )
+        )
+        record.provider_interaction_ledger.extend(
+            self._interaction_ledger(
+                ProviderName.CLAUDE,
+                "claude-session-1",
+                duplicate_interaction_id,
+                assignment_sequence=2,
+            )
+        )
+        runs_before = [run.model_dump(mode="json") for run in record.provider_runs]
+        ledger_before = [
+            event.model_dump(mode="json")
+            for event in record.provider_interaction_ledger
+        ]
+
+        callback = ClaudeCallback(
+            run_id="claude-session-1",
+            status="completed",
+            result="Ambiguous callback evidence must not be accepted.",
+        )
+        with self.assertRaises(CallbackConflict):
+            apply_claude_callback(record, callback)
+
+        self.assertEqual(
+            [run.model_dump(mode="json") for run in record.provider_runs],
+            runs_before,
+        )
+        self.assertEqual(
+            [
+                event.model_dump(mode="json")
+                for event in record.provider_interaction_ledger
+            ],
+            ledger_before,
+        )
 
     def test_callback_rejects_a_run_from_another_task(self):
         record = self._record()
@@ -106,7 +248,17 @@ class ClaudeCallbackTests(unittest.TestCase):
         record = self._record()
         record.status = TaskStatus.FAILED
         record.provider_runs[0] = record.provider_runs[0].model_copy(
-            update={"provider": ProviderName.CURSOR, "run_id": "cursor-run", "status": "CREATING"}
+            update={
+                "provider": ProviderName.CURSOR,
+                "interaction_id": "interaction-cursor-run",
+                "run_id": "cursor-run",
+                "status": "CREATING",
+            }
+        )
+        record.provider_interaction_ledger = self._interaction_ledger(
+            ProviderName.CURSOR,
+            "cursor-run",
+            "interaction-cursor-run",
         )
 
         apply_manual_run_completion(
@@ -119,6 +271,18 @@ class ClaudeCallbackTests(unittest.TestCase):
         self.assertEqual(record.provider_runs[0].status, "FINISHED")
         self.assertEqual(record.provider_runs[0].result, "Independent review completed.")
         self.assertEqual(record.provider_runs[0].evidence_source, "owner_recovery")
+        self.assertEqual(
+            project_interaction(
+                record.provider_interaction_ledger, "interaction-cursor-run"
+            ).state,
+            ProviderInteractionState.UNKNOWN,
+        )
+        with self.assertRaises(CommunicationEvidenceFailure):
+            require_verified_result(
+                record.provider_interaction_ledger,
+                interaction_id="interaction-cursor-run",
+                result="Independent review completed.",
+            )
         with self.assertRaises(CallbackConflict):
             apply_manual_run_completion(
                 record,
@@ -139,9 +303,16 @@ class ClaudeCallbackTests(unittest.TestCase):
             manual_record.provider_runs[0] = manual_record.provider_runs[0].model_copy(
                 update={
                     "provider": ProviderName.CURSOR,
+                    "interaction_id": "interaction-cursor-manual-run",
                     "run_id": "cursor-manual-run",
                     "status": "CREATING",
                 }
+            )
+            manual_record.provider_interaction_ledger = self._interaction_ledger(
+                ProviderName.CURSOR,
+                "cursor-manual-run",
+                "interaction-cursor-manual-run",
+                task_id=manual_record.task_id,
             )
             task_store.create(manual_record)
             settings = replace(
@@ -342,3 +513,6 @@ class ClaudeCallbackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:40 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]

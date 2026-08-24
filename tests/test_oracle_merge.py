@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | BEGIN]]
 from __future__ import annotations
 
 import sqlite3
@@ -12,6 +13,16 @@ from pathlib import Path
 
 from director_orchestrator.config import Settings
 from director_orchestrator.callbacks import apply_manual_run_completion
+from director_orchestrator.interactions import (
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    ProviderTransport,
+    TransportEvidenceSource,
+    append_interaction_event,
+    build_transport_evidence,
+    start_interaction,
+    transition_interaction,
+)
 from director_orchestrator.oracle_merge import (
     OracleChangedFile,
     OracleCheckRun,
@@ -215,6 +226,76 @@ class OracleMergeGateTests(unittest.TestCase):
             sleep=self.sleeps.append,
         )
 
+    def bind_verified_interaction(
+        self, record: TaskRecord, run: ProviderRun
+    ) -> ProviderRun:
+        """Bind one test run to the same immutable evidence required in production."""
+
+        interaction_id = f"{record.task_id}:{run.assignment_sequence}:{run.run_id}:review"
+        bound_run = run.model_copy(
+            update={
+                "interaction_id": interaction_id,
+                "evidence_source": "provider_authenticated",
+            }
+        )
+        record.provider_runs = [
+            bound_run
+            if item.provider == run.provider
+            and item.run_id == run.run_id
+            and item.assignment_sequence == run.assignment_sequence
+            else item
+            for item in record.provider_runs
+        ]
+        backend_evidence = build_transport_evidence(
+            transport=ProviderTransport.DIRECTOR_BACKEND,
+            source=TransportEvidenceSource.BACKEND_OBSERVATION,
+            idempotency_key=interaction_id,
+            provider_run_id=run.run_id,
+        )
+        authenticated_evidence = build_transport_evidence(
+            transport=(
+                ProviderTransport.CLAUDE_CALLBACK
+                if run.provider == ProviderName.CLAUDE
+                else ProviderTransport.CURSOR_AGENTS_API
+            ),
+            source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+            idempotency_key=interaction_id,
+            provider_run_id=run.run_id,
+            result=run.result,
+            native_status=run.status,
+        )
+        ledger = [
+            start_interaction(
+                task_id=record.task_id,
+                interaction_id=interaction_id,
+                plan_generation=record.plan_generation,
+                assignment_sequence=run.assignment_sequence,
+                provider=run.provider.value,
+                phase=ProviderInteractionPhase.ACCEPTANCE_REVIEW,
+                attempt=1,
+                transport_evidence=backend_evidence,
+            )
+        ]
+        for state, evidence in (
+            (ProviderInteractionState.ATTEMPTED, backend_evidence),
+            (ProviderInteractionState.DISPATCHED, backend_evidence),
+            (ProviderInteractionState.ACKNOWLEDGED, authenticated_evidence),
+            (ProviderInteractionState.RESPONDED, authenticated_evidence),
+            (ProviderInteractionState.COMPLETED, authenticated_evidence),
+            (ProviderInteractionState.VERIFIED, authenticated_evidence),
+        ):
+            ledger = append_interaction_event(
+                ledger,
+                transition_interaction(
+                    ledger,
+                    interaction_id=interaction_id,
+                    next_state=state,
+                    transport_evidence=evidence,
+                ),
+            )
+        record.provider_interaction_ledger.extend(ledger)
+        return bound_run
+
     def test_live_merge_claim_is_observer_only_and_expiry_is_terminal(self):
         artifact = self.artifact()
         first_store = OracleMergeStore(self.database)
@@ -318,7 +399,7 @@ class OracleMergeGateTests(unittest.TestCase):
             if include_exact_shas
             else ["Confirm the supplied review scope."]
         )
-        return TaskRecord(
+        record = TaskRecord(
             task_id="DIR-ORACLE",
             status=TaskStatus.REVIEWING,
             intake=SlackIntake(
@@ -371,6 +452,8 @@ class OracleMergeGateTests(unittest.TestCase):
                 review_summary="OpenAI accepted the implementation evidence.",
             )],
         )
+        self.bind_verified_interaction(record, record.provider_runs[0])
+        return record
 
     def callback(self, **payload_changes) -> ClaudeCallback:
         payload = self.artifact().model_dump(mode="json", exclude={"signature"})
@@ -432,12 +515,21 @@ class OracleMergeGateTests(unittest.TestCase):
                 ],
             }
         )
+        run = self.bind_verified_interaction(record, run)
 
         artifact = authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
 
         self.assertIsNotNone(artifact)
         self.assertEqual(artifact.reviewer_provider, "cursor")
         self.assertTrue(artifact.signature_is_valid(REVIEW_SECRET))
+
+    def test_evidence_source_alone_cannot_authenticate_review_artifact(self):
+        record = self.callback_record()
+        run = record.provider_runs[0].model_copy(update={"interaction_id": None})
+        record.provider_runs = [run]
+
+        with self.assertRaisesRegex(ValueError, "immutable interaction evidence"):
+            authenticate_provider_review_artifact(record, run, REVIEW_SECRET)
 
     def test_manual_claude_handoff_is_classified_before_review_authentication(self):
         record = self.callback_record()
@@ -458,7 +550,11 @@ class OracleMergeGateTests(unittest.TestCase):
         artifact_result = record.provider_runs[0].result or ""
         record.status = TaskStatus.FAILED
         record.provider_runs[0] = record.provider_runs[0].model_copy(
-            update={"status": "WAITING_CALLBACK", "result": None}
+            update={
+                "status": "WAITING_CALLBACK",
+                "result": None,
+                "interaction_id": None,
+            }
         )
         apply_manual_run_completion(
             record,
@@ -1834,3 +1930,4 @@ class OracleMergeGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:19 UTC | CHANGE]]
@@ -16,6 +17,17 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from director_orchestrator.approvals import apply_owner_approval
 from director_orchestrator.callbacks import apply_claude_callback
 from director_orchestrator.config import langgraph_resume_claim_path
+from director_orchestrator.interactions import (
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    ProviderTransport,
+    TransportEvidenceSource,
+    append_interaction_event,
+    build_transport_evidence,
+    canonical_identifier_digest,
+    start_interaction,
+    transition_interaction,
+)
 from director_orchestrator.langgraph_resume import (
     LangGraphResumeRuntime,
     ResumeHandle,
@@ -152,15 +164,56 @@ class LangGraphResumeTests(unittest.TestCase):
 
     @staticmethod
     def add_waiting_callback(record: TaskRecord, run_id: str = "claude-run-1") -> None:
-        record.provider_runs.append(
-            ProviderRun(
-                provider=ProviderName.CLAUDE,
-                assignment_sequence=1,
-                run_id=run_id,
-                status="WAITING_CALLBACK",
-                evidence_source="provider_authenticated",
-            )
+        interaction_id = f"callback-{canonical_identifier_digest(run_id)}"
+        run = ProviderRun(
+            provider=ProviderName.CLAUDE,
+            interaction_id=interaction_id,
+            assignment_sequence=1,
+            run_id=run_id,
+            status="WAITING_CALLBACK",
         )
+        record.provider_runs.append(run)
+        backend_evidence = build_transport_evidence(
+            transport=ProviderTransport.CLAUDE_ROUTINE,
+            source=TransportEvidenceSource.BACKEND_OBSERVATION,
+            idempotency_key=interaction_id,
+            provider_run_id=run_id,
+            native_status="dispatch_prepared",
+        )
+        acknowledged_evidence = build_transport_evidence(
+            transport=ProviderTransport.CLAUDE_ROUTINE,
+            source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+            idempotency_key=interaction_id,
+            provider_run_id=run_id,
+            native_status="WAITING_CALLBACK",
+        )
+        ledger = [
+            start_interaction(
+                task_id=record.task_id,
+                interaction_id=interaction_id,
+                plan_generation=record.plan_generation,
+                assignment_sequence=1,
+                provider=ProviderName.CLAUDE.value,
+                phase=ProviderInteractionPhase.CALLBACK,
+                attempt=1,
+                transport_evidence=backend_evidence,
+            )
+        ]
+        for state, evidence in (
+            (ProviderInteractionState.ATTEMPTED, backend_evidence),
+            (ProviderInteractionState.DISPATCHED, acknowledged_evidence),
+            (ProviderInteractionState.ACKNOWLEDGED, acknowledged_evidence),
+        ):
+            ledger = append_interaction_event(
+                ledger,
+                transition_interaction(
+                    ledger,
+                    interaction_id=interaction_id,
+                    next_state=state,
+                    transport_evidence=evidence,
+                ),
+            )
+        record.provider_interaction_ledger.extend(ledger)
 
     def test_real_interrupt_persists_without_mutating_legacy_record(self) -> None:
         record = self.record()
@@ -887,3 +940,4 @@ class LangGraphResumeTests(unittest.TestCase):
 
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | END]]

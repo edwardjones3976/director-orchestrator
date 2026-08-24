@@ -1,3 +1,6 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +28,20 @@ from director_orchestrator.approvals import (
     task_effect_key,
 )
 from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.interactions import (
+    CommunicationEvidenceFailure,
+    InteractionProvider,
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    ProviderTransport,
+    TransportEvidenceSource,
+    append_interaction_event,
+    build_transport_evidence,
+    canonical_content_digest,
+    require_verified_result,
+    start_interaction,
+    transition_interaction,
+)
 from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
@@ -67,6 +84,199 @@ class NoRedispatchAdapter:
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         raise AssertionError("A terminal provider run must not be polled")
+
+
+def _provider_transport(provider: ProviderName) -> ProviderTransport:
+    return {
+        ProviderName.OPENAI: ProviderTransport.OPENAI_RESPONSES_API,
+        ProviderName.CLAUDE: ProviderTransport.CLAUDE_ROUTINE,
+        ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
+        ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
+        ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
+    }[provider]
+
+
+def _seed_verified_interaction(
+    record: TaskRecord,
+    *,
+    provider: ProviderName,
+    phase: ProviderInteractionPhase,
+    result: str,
+    assignment_sequence: int | None = None,
+    interaction_id: str | None = None,
+) -> tuple[str, str]:
+    """Install immutable simulation evidence for a deliberately pre-seeded fixture."""
+
+    interaction_id = interaction_id or (
+        f"test:{record.task_id}:{provider.value}:{phase.value}:"
+        f"{assignment_sequence or 0}:{len(record.provider_interaction_ledger)}"
+    )
+    effect_key = hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
+    drafted_evidence = build_transport_evidence(
+        transport=_provider_transport(provider),
+        source=TransportEvidenceSource.BACKEND_OBSERVATION,
+        execution_mode="simulation",
+        idempotency_key=effect_key,
+    )
+    event = start_interaction(
+        task_id=record.task_id,
+        interaction_id=interaction_id,
+        plan_generation=record.plan_generation,
+        assignment_sequence=assignment_sequence,
+        provider=InteractionProvider(provider.value),
+        phase=phase,
+        attempt=1,
+        transport_evidence=drafted_evidence,
+        effect_key=effect_key,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    event = transition_interaction(
+        record.provider_interaction_ledger,
+        interaction_id=interaction_id,
+        next_state=ProviderInteractionState.ATTEMPTED,
+        transport_evidence=drafted_evidence,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    verified_evidence = build_transport_evidence(
+        transport=_provider_transport(provider),
+        source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+        execution_mode="simulation",
+        idempotency_key=interaction_id,
+        result=result,
+        native_status="completed",
+    )
+    for state in (
+        ProviderInteractionState.DISPATCHED,
+        ProviderInteractionState.ACKNOWLEDGED,
+        ProviderInteractionState.RESPONDED,
+        ProviderInteractionState.COMPLETED,
+        ProviderInteractionState.VERIFIED,
+    ):
+        event = transition_interaction(
+            record.provider_interaction_ledger,
+            interaction_id=interaction_id,
+            next_state=state,
+            transport_evidence=verified_evidence,
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, event
+        )
+    return interaction_id, event.event_digest
+
+
+def _seed_verified_plan(record: TaskRecord) -> None:
+    if record.plan is None:
+        raise AssertionError("test fixture must install a plan before its evidence")
+    interaction_id, _ = _seed_verified_interaction(
+        record,
+        provider=ProviderName.OPENAI,
+        phase=ProviderInteractionPhase.PLAN,
+        result=record.plan.model_dump_json(),
+    )
+    record.plan_interaction_id = interaction_id
+
+
+def _seed_verified_run(record: TaskRecord, run: ProviderRun) -> None:
+    if not run.result:
+        raise AssertionError("test fixture run must contain a result")
+    interaction_id, _ = _seed_verified_interaction(
+        record,
+        provider=run.provider,
+        phase=ProviderInteractionPhase.DISPATCH,
+        assignment_sequence=run.assignment_sequence,
+        result=run.result,
+        interaction_id=f"test:{record.task_id}:run:{run.run_id}",
+    )
+    run.interaction_id = interaction_id
+
+
+def _seed_unknown_owner_run(record: TaskRecord, run: ProviderRun) -> None:
+    """Bind an owner-recovered result to UNKNOWN, never VERIFIED, evidence."""
+
+    interaction_id = f"test:{record.task_id}:owner-recovery:{run.run_id}"
+    effect_key = hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
+    drafted_evidence = build_transport_evidence(
+        transport=_provider_transport(run.provider),
+        source=TransportEvidenceSource.BACKEND_OBSERVATION,
+        execution_mode="simulation",
+        idempotency_key=effect_key,
+    )
+    event = start_interaction(
+        task_id=record.task_id,
+        interaction_id=interaction_id,
+        plan_generation=record.plan_generation,
+        assignment_sequence=run.assignment_sequence,
+        provider=InteractionProvider(run.provider.value),
+        phase=ProviderInteractionPhase.CALLBACK,
+        attempt=1,
+        transport_evidence=drafted_evidence,
+        effect_key=effect_key,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    event = transition_interaction(
+        record.provider_interaction_ledger,
+        interaction_id=interaction_id,
+        next_state=ProviderInteractionState.ATTEMPTED,
+        transport_evidence=drafted_evidence,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    owner_evidence = build_transport_evidence(
+        transport=ProviderTransport.MANUAL_OWNER,
+        source=TransportEvidenceSource.OWNER_ATTESTED,
+        execution_mode="simulation",
+        idempotency_key=interaction_id,
+        result=run.result,
+        native_status=run.status,
+        error_code="OWNER_RECOVERY_UNVERIFIED",
+        ambiguity_reason="manual recovery cannot authenticate provider completion",
+    )
+    event = transition_interaction(
+        record.provider_interaction_ledger,
+        interaction_id=interaction_id,
+        next_state=ProviderInteractionState.UNKNOWN,
+        transport_evidence=owner_evidence,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    run.interaction_id = interaction_id
+
+
+def _seed_verified_outcome(record: TaskRecord, outcome: AssignmentOutcome) -> None:
+    interaction_id, event_digest = _seed_verified_interaction(
+        record,
+        provider=outcome.provider,
+        phase=ProviderInteractionPhase.DISPATCH,
+        assignment_sequence=outcome.assignment_sequence,
+        result=outcome.result,
+        interaction_id=f"test:{record.task_id}:outcome:{outcome.run_id}",
+    )
+    outcome.interaction_id = interaction_id
+    outcome.verified_interaction_event_digest = event_digest
+    outcome.provider_result_digest = canonical_content_digest(outcome.result)
+    review_result = ReviewDecision(
+        verdict=ReviewVerdict.ACCEPT,
+        summary=outcome.review_summary,
+        evidence=outcome.evidence,
+    ).model_dump_json()
+    review_interaction_id, review_event_digest = _seed_verified_interaction(
+        record,
+        provider=ProviderName.OPENAI,
+        phase=ProviderInteractionPhase.ACCEPTANCE_REVIEW,
+        result=review_result,
+        interaction_id=f"test:{record.task_id}:outcome-review:{outcome.run_id}",
+    )
+    outcome.director_review_interaction_id = review_interaction_id
+    outcome.verified_director_review_event_digest = review_event_digest
+    outcome.director_review_result_digest = canonical_content_digest(review_result)
 
 
 class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -478,6 +688,85 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaisesRegex(ProviderError, status):
                         await engine._wait(NeverPollAdapter(), run)
 
+    async def test_poll_rejects_provider_run_correlation_drift(self):
+        class DriftingPollAdapter:
+            def __init__(self, changes: dict[str, object]):
+                self.changes = changes
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                return run.model_copy(
+                    update={
+                        "status": "completed",
+                        "result": "authenticated terminal result",
+                        **self.changes,
+                    }
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = OrchestrationEngine(
+                replace(
+                    Settings(),
+                    sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                    provider_poll_seconds=0,
+                    provider_timeout_seconds=1,
+                ),
+                TaskStore(str(Path(directory) / "tasks.sqlite3")),
+            )
+            original = ProviderRun(
+                provider=ProviderName.CURSOR,
+                assignment_sequence=3,
+                interaction_id="backend-owned-interaction",
+                run_id="cursor-run-1",
+                session_id="cursor-session-1",
+                status="RUNNING",
+            )
+            drift_cases = {
+                "run_id": {"run_id": "cursor-run-2"},
+                "provider": {"provider": ProviderName.CLAUDE},
+                "session_id": {"session_id": "cursor-session-2"},
+            }
+
+            for field, changes in drift_cases.items():
+                with self.subTest(field=field):
+                    with self.assertRaises(CommunicationEvidenceFailure):
+                        await engine._wait(DriftingPollAdapter(changes), original)
+
+    async def test_poll_restores_backend_owned_internal_bindings(self):
+        class SparsePollAdapter:
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                return ProviderRun(
+                    provider=run.provider,
+                    run_id=run.run_id,
+                    session_id=run.session_id,
+                    status="completed",
+                    result="authenticated terminal result",
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            engine = OrchestrationEngine(
+                replace(
+                    Settings(),
+                    sqlite_path=database,
+                    provider_poll_seconds=0,
+                    provider_timeout_seconds=1,
+                ),
+                TaskStore(database),
+            )
+            original = ProviderRun(
+                provider=ProviderName.CURSOR,
+                assignment_sequence=3,
+                interaction_id="backend-owned-interaction",
+                run_id="cursor-run-1",
+                session_id="cursor-session-1",
+                status="RUNNING",
+            )
+
+            polled = await engine._wait(SparsePollAdapter(), original)
+
+            self.assertEqual(polled.interaction_id, original.interaction_id)
+            self.assertEqual(polled.assignment_sequence, original.assignment_sequence)
+
     async def test_cursor_exact_sha_review_reaches_deterministic_merge_after_acceptance(self):
         base_sha = "d" * 40
         head_sha = "a" * 40
@@ -571,6 +860,9 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 next_assignment_index=1,
             )
             store = TaskStore(database)
+            _seed_verified_plan(record)
+            _seed_verified_run(record, run)
+            _seed_verified_outcome(record, record.assignment_outcomes[0])
             store.create(record)
 
             class RecordingMergeService:
@@ -666,13 +958,8 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 ],
             )
 
-    async def test_manual_handoff_stays_eligible_for_the_next_assignment(self):
-        """An owner-recovered ordinary handoff is not an exact-SHA review artifact.
-
-        It must be classified as non-review at the merge hook so the dependent
-        assignment still becomes eligible, instead of failing closed on the
-        provider-status check that only claimed review artifacts must satisfy.
-        """
+    async def test_manual_handoff_recovery_cannot_authenticate_provider_result(self):
+        """Owner recovery remains UNKNOWN and cannot unlock normal acceptance."""
 
         class DispatchingAdapter:
             def __init__(self):
@@ -775,6 +1062,8 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                         ],
                     )
                     store = TaskStore(database)
+                    _seed_verified_plan(record)
+                    _seed_unknown_owner_run(record, record.provider_runs[0])
                     store.create(record)
 
                     adapter = DispatchingAdapter()
@@ -785,14 +1074,12 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
                     await engine.run(record.task_id)
 
-                    completed = store.get(record.task_id)
-                    self.assertEqual(completed.status, TaskStatus.DONE)
-                    self.assertNotIn("failed closed", completed.message or "")
-                    self.assertEqual(
-                        [outcome.assignment_sequence for outcome in completed.assignment_outcomes],
-                        [1, 2],
-                    )
-                    self.assertEqual(adapter.dispatch_count, 1)
+                    stopped = store.get(record.task_id)
+                    self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+                    self.assertEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
+                    self.assertIn("VERIFIED", stopped.error or "")
+                    self.assertEqual(stopped.assignment_outcomes, [])
+                    self.assertEqual(adapter.dispatch_count, 0)
 
     async def test_revision_preserves_assignment_and_approval_context(self):
         class RevisingDirector:
@@ -904,6 +1191,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 approved_assignments=[1],
                 approved_assignment_digests={1: assignment_approval_digest(assignment)},
             )
+            _seed_verified_plan(record)
             store.create(record)
 
             engine = OrchestrationEngine(settings, store)
@@ -1005,6 +1293,8 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ],
             )
+            _seed_verified_plan(record)
+            _seed_verified_run(record, record.provider_runs[0])
             store.create(record)
             engine = OrchestrationEngine(settings, store)
             engine.providers[ProviderName.CURSOR] = AmbiguousRevisionAdapter()
@@ -1119,6 +1409,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["Accepted"],
                 ),
             )
+            _seed_verified_plan(record)
             store.create(record)
 
             engine = OrchestrationEngine(settings, store)
@@ -1247,6 +1538,8 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ],
             )
+            _seed_verified_plan(record)
+            _seed_verified_run(record, record.provider_runs[0])
             store.create(record)
 
             engine = OrchestrationEngine(settings, store)
@@ -1260,6 +1553,209 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(completed.status, TaskStatus.DONE)
             self.assertEqual(completed.next_assignment_index, 1)
             self.assertEqual(adapter.dispatch_count, 0)
+
+    async def test_accepted_outcome_persists_and_revalidates_exact_director_review(self):
+        for changed_review in (False, True):
+            with self.subTest(changed_review=changed_review), tempfile.TemporaryDirectory() as directory:
+                database = str(Path(directory) / "tasks.sqlite3")
+                settings = replace(
+                    Settings(),
+                    allow_paid_runs=True,
+                    openai_api_key="test-openai",
+                    cursor_api_key="test-cursor",
+                    project_allowlist=("demo",),
+                    repository_allowlist=("example/demo",),
+                    allowed_starting_refs=("main",),
+                    max_agent_hops=1,
+                    provider_poll_seconds=0,
+                    provider_timeout_seconds=1,
+                    sqlite_path=database,
+                )
+                assignment = Assignment(
+                    sequence=1,
+                    agent=ProviderName.CURSOR,
+                    task="Produce restart-safe acceptance evidence",
+                    acceptance=["Evidence exists"],
+                    repository="example/demo",
+                )
+                plan = DirectorPlan(
+                    project="demo",
+                    normalized_outcome="verify durable acceptance evidence",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[assignment],
+                    final_acceptance=["Assignment accepted"],
+                )
+                run = ProviderRun(
+                    provider=ProviderName.CURSOR,
+                    assignment_sequence=1,
+                    run_id="durable-review-run",
+                    session_id="durable-review-session",
+                    status="FINISHED",
+                    result="Exact provider evidence",
+                    evidence_source="provider_authenticated",
+                )
+                decision = ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Exact Director acceptance",
+                    evidence=["Exact provider evidence"],
+                )
+                record = TaskRecord(
+                    task_id=(
+                        "DIR-DURABLE-REVIEW-CHANGED"
+                        if changed_review
+                        else "DIR-DURABLE-REVIEW-EXACT"
+                    ),
+                    status=TaskStatus.RUNNING,
+                    intake=SlackIntake(
+                        source_event_id=(
+                            "evt-durable-review-changed"
+                            if changed_review
+                            else "evt-durable-review-exact"
+                        ),
+                        channel_id="C123",
+                        thread_ts="123.48",
+                        user_id="U123",
+                        text="DIRECTOR Project: demo Outcome: durable review evidence",
+                    ),
+                    plan=plan,
+                    provider_runs=[run],
+                    review=decision,
+                )
+                _seed_verified_plan(record)
+                _seed_verified_run(record, run)
+                review_interaction_id, review_event_digest = _seed_verified_interaction(
+                    record,
+                    provider=ProviderName.OPENAI,
+                    phase=ProviderInteractionPhase.ACCEPTANCE_REVIEW,
+                    result=decision.model_dump_json(),
+                    interaction_id=f"test:{record.task_id}:director-review",
+                )
+                record.review_interaction_id = review_interaction_id
+                store = TaskStore(database)
+                engine = OrchestrationEngine(settings, store)
+                engine._record_outcome(record, assignment, run, decision)
+                store.create(record)
+
+                restarted = store.get(record.task_id)
+                outcome = restarted.assignment_outcomes[0]
+                self.assertEqual(
+                    outcome.director_review_interaction_id, review_interaction_id
+                )
+                self.assertEqual(
+                    outcome.verified_director_review_event_digest,
+                    review_event_digest,
+                )
+                self.assertEqual(
+                    outcome.director_review_result_digest,
+                    canonical_content_digest(decision.model_dump_json()),
+                )
+                if changed_review:
+                    restarted.review = decision.model_copy(
+                        update={"summary": "Different accepted decision"}
+                    )
+                    store.save(restarted)
+
+                resumed_engine = OrchestrationEngine(settings, TaskStore(database))
+                adapter = NoRedispatchAdapter()
+                resumed_engine.providers[ProviderName.CURSOR] = adapter
+                await resumed_engine.run(record.task_id)
+
+                completed = TaskStore(database).get(record.task_id)
+                self.assertEqual(adapter.dispatch_count, 0)
+                if changed_review:
+                    self.assertEqual(
+                        completed.status, TaskStatus.OWNER_DECISION_REQUIRED
+                    )
+                    self.assertEqual(
+                        completed.message, CommunicationEvidenceFailure.code
+                    )
+                else:
+                    self.assertEqual(completed.status, TaskStatus.DONE)
+
+    def test_oversized_provider_result_cannot_create_inconsistent_outcome(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            assignment = Assignment(
+                sequence=1,
+                agent=ProviderName.CURSOR,
+                task="Produce bounded evidence",
+                acceptance=["Evidence is durably bound"],
+                repository="example/demo",
+            )
+            oversized_result = "x" * 50_001
+            run = ProviderRun(
+                provider=ProviderName.CURSOR,
+                assignment_sequence=1,
+                run_id="oversized-provider-result",
+                status="FINISHED",
+                result=oversized_result,
+                evidence_source="provider_authenticated",
+            )
+            decision = ReviewDecision(
+                verdict=ReviewVerdict.ACCEPT,
+                summary="Director accepted the reported evidence",
+                evidence=["Provider reported completion"],
+            )
+            record = TaskRecord(
+                task_id="DIR-OVERSIZED-PROVIDER-RESULT",
+                status=TaskStatus.REVIEWING,
+                intake=SlackIntake(
+                    source_event_id="evt-oversized-provider-result",
+                    channel_id="C123",
+                    thread_ts="123.49",
+                    user_id="U123",
+                    text="DIRECTOR Project: demo Outcome: bounded evidence",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="bound provider evidence",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[assignment],
+                    final_acceptance=["Assignment accepted"],
+                ),
+                provider_runs=[run],
+                review=decision,
+            )
+            _seed_verified_plan(record)
+            _seed_verified_run(record, run)
+            review_interaction_id, _ = _seed_verified_interaction(
+                record,
+                provider=ProviderName.OPENAI,
+                phase=ProviderInteractionPhase.ACCEPTANCE_REVIEW,
+                result=decision.model_dump_json(),
+                interaction_id=f"test:{record.task_id}:director-review",
+            )
+            record.review_interaction_id = review_interaction_id
+            engine = OrchestrationEngine(
+                replace(Settings(), sqlite_path=database), TaskStore(database)
+            )
+
+            try:
+                engine._record_outcome(record, assignment, run, decision)
+            except (CommunicationEvidenceFailure, ValueError):
+                self.assertEqual(record.assignment_outcomes, [])
+            else:
+                outcome = record.assignment_outcomes[0]
+                self.assertLessEqual(len(outcome.result), 50_000)
+                self.assertEqual(
+                    outcome.provider_result_digest,
+                    canonical_content_digest(outcome.result),
+                )
+                verified = require_verified_result(
+                    record.provider_interaction_ledger,
+                    interaction_id=outcome.interaction_id,
+                    result=outcome.result,
+                )
+                self.assertEqual(
+                    outcome.verified_interaction_event_digest,
+                    verified.event_digest,
+                )
 
     async def test_prior_accepted_result_is_handed_to_dependent_assignment(self):
         class RecordingAdapter:
@@ -1338,6 +1834,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     2: assignment_approval_digest(plan.assignments[1])
                 },
             )
+            _seed_verified_plan(record)
             store.create(record)
 
             engine = OrchestrationEngine(settings, store)
@@ -1378,4 +1875,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
 
