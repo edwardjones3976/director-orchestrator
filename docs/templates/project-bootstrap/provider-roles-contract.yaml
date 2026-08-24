@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
 # Canonical project-local provider roles contract (director-provider-roles/v1).
 #
@@ -73,12 +74,27 @@ providers:
 
   antigravity:
     provider: "gemini"
-    lane: "sandbox_prototype_behavioral_verification_only"
+    lane: "subordinate_supplemental_specialist"
+    never_a_primary_team_substitute: true
+    # Charter-exact bounded work categories. Nothing broader is in scope.
     allowed_work:
-      - "sandboxed prototypes"
-      - "bounded low-level mechanical scaffolding"
-      - "behavioral verification of reproducible behaviour"
-      - "alternate ideation within the closed contract"
+      - "explicit boilerplate"
+      - "scaffolding"
+      - "low-level mechanical implementation"
+      - "alternate/abstract ideation"
+      - "the bounded sandbox execution those need"
+    artifact_status: "non_authoritative_evidence"
+    cannot_perform:
+      - "exact-SHA review"
+      - "final acceptance"
+      - "deterministic merge"
+      - "defining research-contract or methodology truth"
+    # Sandbox output is never complete on its own.
+    mandatory_downstream_verification:
+      required: true
+      assignee: "claude_or_cursor"
+      rule: "Every Antigravity work assignment must feed a later Claude or Cursor assignment that independently verifies and integrates or rejects it."
+      planner_rule: "A plan that routes work to Antigravity without that later verifying assignment is incomplete."
     outbound_work_packet:
       permitted_value_kinds:
         - "repository_owned_fixed_strings"
@@ -111,13 +127,17 @@ providers:
       - "source discovery"
       - "cross-source fact verification"
       - "user-reviewed evidence gathering"
-    excluded_from:
-      - "programming"
-      - "committee voting"
-      - "repository review"
-      - "repository writes"
+    # Mirrored exactly from team_operating_charter()["perplexity_contract"]["prohibited"].
+    # A drift test fails if any canonical prohibition is omitted or reworded.
+    prohibited:
+      - "private repository context or credentials"
+      - "code or repository writes"
       - "approval, acceptance, or merge verdicts"
-      - "operational decisions"
+      - "committee votes"
+      - "Slack or other external posts"
+      - "merge, deployment, publication, or permission changes"
+    excluded_responsibility_areas:
+      - "programming"
     required_provenance_fields:
       - "query"
       - "result_url"
@@ -132,16 +152,41 @@ providers:
     review_requirement: "OpenAI or another authorized primary-team member must evaluate Perplexity evidence before it influences a plan, implementation requirement, or acceptance decision."
 
   openai:
-    # Three distinct functions. Recording them as one undifferentiated
-    # "Director" role loses the separation the gates depend on.
-    function_separation_rule: "These three functions are recorded separately in every project-local record and are never collapsed into a single role."
+    # The three canonical identities from docs/team-operating-charter.md and
+    # prompts/director-system.md. Coordination, planning, and acceptance are
+    # duties nested under these identities; they never replace or blur them,
+    # because only the identity carries the voting boundary.
+    function_separation_rule: "OpenAI keeps Moderator, Participant, and Director separate in every project-local record; they are never collapsed or renamed into duty buckets."
     functions:
-      - id: "director_coordination_and_routing"
-        duties: ["route", "coordinate", "review_handoff", "milestone_reporting"]
-      - id: "planning_and_decomposition"
-        duties: ["plan", "decompose"]
-      - id: "evidence_synthesis_and_independent_acceptance_review"
-        duties: ["synthesize", "acceptance_review"]
+      - id: "moderator"
+        votes: false
+        duties:
+          - "frame the question and bounded options neutrally"
+          - "request positions without leading language"
+          - "prevent premature cross-exposure"
+          - "run the counter-bias pass against the favored view"
+        boundary: "Moderation does not cast a vote."
+      - id: "participant"
+        votes: true
+        vote_count: 1
+        vote_weight: 2.0
+        duties:
+          - "record an independently formed initial position before specialist conclusions are exposed"
+          - "cast the single existing OpenAI advisory vote during synthesis"
+        boundary: "Participant is the one authenticated OpenAI position and vote. It receives no additional vote for planning, moderation, synthesis, or acceptance."
+      - id: "director"
+        votes: false
+        duties:
+          - "plan"
+          - "decompose"
+          - "route"
+          - "coordinate"
+          - "synthesize"
+          - "acceptance_review"
+          - "review_handoff"
+          - "milestone_reporting"
+        boundary: "Director authority does not create a vote or a participation record that did not actually occur."
+    participation_record_rule: "Record only actual provider responses. Never draft a missing position, convert silence into assent, or claim participation, rebuttal, confidence, or a vote that was not returned."
     preserved_boundaries:
       producer_exclusion: "A producer cannot review, accept, or approve its own work; the reviewer must differ from the logical producer and every material author."
       material_tie_escalation: "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision; only an ordinary tie reaches documented OpenAI evidence judgment."
@@ -167,3 +212,4 @@ project_local_bindings:
       justification: "<why this project deviates from default routing>"
       owner_authorization: "<exact stored authorization or none>"
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | END]]
