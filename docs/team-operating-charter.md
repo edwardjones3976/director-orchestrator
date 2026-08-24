@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | BEGIN]] -->
@@ -158,7 +159,7 @@ separate owner-defined controls.
 ## Shared provider workflow skills
 
 The shared provider catalog may expose `cursor-agent-workflow`,
-`antigravity-sandbox-workflow`, and `perplexity-research-workflow`. The
+`antigravity-sandbox-workflow`, `perplexity-research-workflow`, and `pplx-cli`. The
 Director selects them by stable catalog name only after the active session
 discovers them; local absolute installation paths are not project contracts.
 
@@ -170,6 +171,9 @@ discovers them; local absolute installation paths are not project contracts.
 - `perplexity-research-workflow` structures public, citation-backed research
   under the strict Perplexity contract; it receives no repository context or
   operational authority.
+- `pplx-cli` supplies terminal-based live web results and public-page snippets
+  within that same strict research-only contract. It is a research transport, not a new
+  provider role, permission, vote, review authority, or external-action lane.
 
 A skill is a workflow overlay, not new authority. Selection cannot expand
 scope, data exposure, repository or credential access, spending, provider
@@ -478,3 +482,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->

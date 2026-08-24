@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
@@ -464,6 +465,25 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("attempt_limit: 1", profile)
         self.assertIn("changed_candidate_invalidates_evidence: true", profile)
 
+    def test_pplx_cli_skill_is_installed_and_research_only_across_surfaces(self):
+        root = Path(__file__).resolve().parents[1]
+        skill = root / ".agents" / "skills" / "pplx-cli" / "SKILL.md"
+        skill_content = skill.read_text(encoding="utf-8")
+
+        self.assertIn("name: pplx-cli", skill_content)
+        self.assertIn("pplx search web", skill_content)
+        surfaces = [
+            root / "docs" / "team-operating-charter.md",
+            root / "docs" / "project-bootstrap-protocol.md",
+            root / "docs" / "templates" / "project-bootstrap" / "README.md",
+            root / "docs" / "templates" / "project-bootstrap" / "workstream-plan.md",
+            root / "prompts" / "director-system.md",
+        ]
+        for surface in surfaces:
+            content = surface.read_text(encoding="utf-8")
+            self.assertIn("`pplx-cli`", content, surface)
+            self.assertIn("research-only", content, surface)
+
     def test_provider_cannot_mutate_canonical_roles_or_supply_weights(self):
         mutable = team_operating_charter()
         mutable["committee"]["members"]["cursor"]["voting_power"] = 99
@@ -814,3 +834,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]]

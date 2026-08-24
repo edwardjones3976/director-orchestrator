@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project workstream plan
@@ -67,6 +68,8 @@ Repeat for each workstream.
   independently verifies useful output.
 - `perplexity-research-workflow`: use only for bounded public,
   citation-backed research with no repository context or operational verdict.
+- `pplx-cli`: use only as the terminal transport for bounded public web search
+  or public-page snippets inside the same Perplexity research-only boundary.
 
 Record `skill_discovered=true` only after the active session's refreshed
 catalog exposes the selector. A missing skill does not widen the task or justify
@@ -137,3 +140,4 @@ add a new outer pair when this plan is revised; for syntax-sensitive artifacts,
 use the commit, pull-request, or `REVIEW_READY` envelope instead.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
