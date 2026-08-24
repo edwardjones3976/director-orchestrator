@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:33 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
 # Provider Setup Matrix
 
@@ -121,19 +122,25 @@ requires a later Claude or Cursor assignment that directly depends on it and
 carries the runtime-bound wording to independently reproduce the artifact and
 integrate only the verified portions or reject it.
 
-Dispatch prefixes every artifact with an explicit non-authoritative notice and
-sends only the assignment's own bounded task and acceptance checks: the
-upstream handoff context is primary-team work product and is withheld. A
-revision re-issues that same bounded assignment rather than untrusted reviewer
-revision text, and fails closed when the prior sandbox `environment_id` is
-absent instead of provisioning a fresh sandbox. Preview routing selects
-Antigravity only for an explicit boilerplate, scaffolding, low-level,
+Dispatch sends no assignment task, acceptance check, owner objective, handoff,
+Slack text, repository context, or other model-, owner-, or caller-authored
+prose. The plan selects a typed `AntigravityDirective`; the runtime substitutes
+that lane's repository-owned fixed specification and builds the complete wire
+packet only from approved fixed strings, closed enum values, and bounded
+integers. A mechanical closed-vocabulary assertion rejects any other string
+before a paid call. A revision reuses the same typed lane and prior sandbox
+`environment_id`, sends no reviewer revision text, and fails closed rather than
+provisioning a fresh sandbox when that identifier is absent. Preview routing
+selects Antigravity only for an explicit boilerplate, scaffolding, low-level,
 mechanical, or alternate-ideation request; Claude remains the default.
 
-Antigravity remains eligible for one bounded debate position and one rebuttal
-at its configured advisory weight. Those are governed by the debate policy,
-carry no authority, and are the only Antigravity assignments outside the
-subordinate work lane.
+Antigravity cannot participate in debate or cast an advisory vote. The policy
+and request builder reject both `position` and `rebuttal` assignments before a
+paid call because the question, options, and peer arguments are prohibited
+prose. Its configured advisory weight remains in the immutable committee
+denominator but is never cast, exactly like an unavailable member. The optional
+`antigravity-sandbox-workflow` skill is only a procedure overlay for admitted
+subordinate work; it cannot widen this active runtime contract.
 
 ## Gemini Interactions API contract
 
@@ -218,3 +225,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart
 - Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:33 UTC | END]] -->

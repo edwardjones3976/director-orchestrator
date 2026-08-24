@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:33 UTC | BEGIN]] -->
 # Slack collaboration bus
 
 Slack is the Director's primary human-visible coordination room. Each live task gets one
@@ -13,13 +14,16 @@ review handoffs, disagreement, synthesis, owner questions, and completion.
 4. OpenAI accepts or rejects the result against the stored checks, then relays only a concise,
    structured summary. Raw provider output, credentials, secret-shaped values, and raw private
    source are excluded from the Slack relay.
-5. When a debate is planned, participants first work independently. One rebuttal round may see
-   only declared dependency outcomes. Perplexity may supply approved public evidence but cannot
-   debate, vote, write code, review a repository, or request a merge.
+5. When a debate is planned, participants first work independently. Seat only Claude and Cursor
+   for provider `position` and `rebuttal` turns. Antigravity cannot participate because no debate
+   question, option, peer argument, or other authored prose may cross its outbound contract.
+   Perplexity may supply approved public evidence but cannot debate, vote, write code, review a
+   repository, or request a merge.
 6. OpenAI synthesizes the evidence within the plan's explicit synthesis-cost estimate and records
-   dissent. Deterministic code applies the fixed
-   weights: Antigravity 1, Cursor 1.5, OpenAI 2, Claude 2.5. A producer's advisory vote counts;
-   that producer still cannot independently accept its own work.
+   dissent. Deterministic code retains the fixed weights—Antigravity 1, Cursor 1.5, OpenAI 2,
+   Claude 2.5—but casts weight only for seated participants. Antigravity's weight remains in the
+   immutable denominator and is never cast. A seated producer's advisory vote counts; that
+   producer still cannot independently accept its own work.
 7. Ordinary ties receive a documented OpenAI evidence judgment. A material tie stops with one
    focused owner question.
 8. Accepted implementation artifacts continue through the existing different-provider
@@ -47,3 +51,4 @@ Communication must be concise, accurate, and useful. The Director sends minimum 
 context, reuses fresh evidence, allows at most one rebuttal round, caps provider nonresponse at
 three persisted safe attempts, and records unavailable providers rather than creating expensive
 conversation loops.
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:33 UTC | END]] -->

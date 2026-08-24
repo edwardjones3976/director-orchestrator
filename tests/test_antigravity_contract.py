@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 23:33 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:48 UTC | BEGIN]]
 """Regressions for the Antigravity outbound boundary.
 
@@ -869,6 +870,56 @@ class UnchangedProtectionTests(unittest.TestCase):
         )
 
 
+class ProviderSetupDocumentationTests(unittest.TestCase):
+    """The operator guide must describe the active closed runtime contract."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        docs = Path(__file__).resolve().parents[1] / "docs"
+        cls.guide = (docs / "provider-setup.md").read_text(encoding="utf-8")
+        cls.slack_guide = (docs / "slack-collaboration-bus.md").read_text(
+            encoding="utf-8"
+        )
+        cls.guide_flat = " ".join(cls.guide.split())
+        cls.slack_guide_flat = " ".join(cls.slack_guide.split())
+
+    def test_provider_setup_withholds_all_authored_prose(self):
+        self.assertIn(
+            "Dispatch sends no assignment task, acceptance check, owner objective",
+            self.guide_flat,
+        )
+        self.assertIn("mechanical closed-vocabulary assertion", self.guide_flat)
+        self.assertNotIn(
+            "sends only the assignment's own bounded task and acceptance checks",
+            self.guide,
+        )
+
+    def test_provider_setup_does_not_offer_antigravity_debate(self):
+        self.assertIn(
+            "Antigravity cannot participate in debate or cast an advisory vote",
+            self.guide_flat,
+        )
+        self.assertIn(
+            "reject both `position` and `rebuttal` assignments before a paid call",
+            self.guide_flat,
+        )
+        self.assertNotIn(
+            "Antigravity remains eligible for one bounded debate position",
+            self.guide,
+        )
+
+    def test_slack_runtime_guide_excludes_antigravity_from_debate(self):
+        self.assertIn(
+            "Seat only Claude and Cursor for provider `position` and `rebuttal` turns",
+            self.slack_guide_flat,
+        )
+        self.assertIn(
+            "Antigravity's weight remains in the immutable denominator and is never cast",
+            self.slack_guide_flat,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:48 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 23:33 UTC | END]]
