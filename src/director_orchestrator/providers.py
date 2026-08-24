@@ -1,4 +1,4 @@
-# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 23:10 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
@@ -871,4 +871,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
         ProviderName.GEMINI: GeminiAdapter(settings),
         ProviderName.PERPLEXITY: PerplexityAdapter(settings),
     }
-# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 23:10 UTC | END]]

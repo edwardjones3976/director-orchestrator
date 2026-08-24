@@ -1,4 +1,4 @@
-# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 23:10 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
@@ -1139,4 +1139,4 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 23:10 UTC | END]]
