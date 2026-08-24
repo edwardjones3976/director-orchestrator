@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project bootstrap template kit
@@ -35,9 +36,12 @@ kit.
 7. Treat skill selection as procedure, not permission. The project profile,
    provider contract, and deterministic gates remain authoritative. Canonical
    provider roles: [`docs/team-operating-charter.md`](../../team-operating-charter.md).
-   Copy [`provider-roles-contract.yaml`](provider-roles-contract.yaml) alongside the
-   profile whenever the project staffs more than one provider; it mirrors the charter
-   and grants no authority of its own.
+   Copy [`provider-roles-contract.yaml`](provider-roles-contract.yaml) whenever you
+   use [`project-profile.yaml`](project-profile.yaml), including single-provider
+   projects. The profile always sets `team.provider_roles_contract`, so omitting the
+   companion file leaves that reference dangling. It mirrors the charter and grants
+   no authority of its own; a one-provider project simply records that provider's
+   boundaries and leaves the rest unstaffed.
 8. Use the event vocabulary from
    [`project-bootstrap-protocol.md`](../../project-bootstrap-protocol.md):
    `PROJECT_BOOTSTRAP` (intake record), `BOOTSTRAP`, `PLAN`, `WORKING`,
@@ -56,3 +60,4 @@ source-thread content in any template. Name Slack destinations only from the
 project profile or runtime configuration—never hardcode workspace channel names.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]] -->

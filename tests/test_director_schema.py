@@ -1,3 +1,4 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
@@ -25,6 +26,10 @@ from director_orchestrator.models import (
     SlackIntake,
     TaskRecord,
     TaskStatus,
+)
+from director_orchestrator.antigravity import (
+    DENIED_AUTHORITIES,
+    WITHHELD_CONTEXT,
 )
 from director_orchestrator.team_charter import (
     AdvisoryVote,
@@ -630,17 +635,30 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         ):
             with self.subTest(prose=prose):
                 self.assertIn(f'- "{prose}"', contract)
-        for prohibited in (
-            "secrets, credentials, or tokens",
-            "private repository context",
-            "Slack posting or other external posts",
-            "merge",
-            "deployment",
-            "operational authority",
-        ):
-            with self.subTest(prohibited=prohibited):
-                self.assertIn(f'- "{prohibited}"', contract)
         self.assertIn("seatable: false", contract)
+
+    def test_contract_mirrors_the_runtime_antigravity_denied_authorities(self):
+        contract = self.contract()
+
+        # Exact equality with the runtime constant, not a paraphrase: a broad
+        # phrase like "operational authority" does not preserve the typed
+        # boundary the runtime actually sends.
+        block = contract.split("denied_authorities:", 1)[1].split("withheld_context:", 1)[0]
+        mirrored = tuple(
+            line.strip()[3:-1]
+            for line in block.splitlines()
+            if line.strip().startswith('- "')
+        )
+        self.assertEqual(mirrored, DENIED_AUTHORITIES)
+        self.assertEqual(len(mirrored), 11)
+
+        tail = contract.split("withheld_context:", 1)[1].split("\n    debate:", 1)[0]
+        withheld = tuple(
+            line.strip()[3:-1]
+            for line in tail.splitlines()
+            if line.strip().startswith('- "')
+        )
+        self.assertEqual(withheld, WITHHELD_CONTEXT)
 
     def test_contract_requires_downstream_verification_of_antigravity_work(self):
         contract = self.contract()
@@ -745,6 +763,34 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
             with self.subTest(unchanged=unchanged):
                 self.assertIn(f'- "{unchanged}"', contract)
 
+    def test_intake_names_the_canonical_openai_functions(self):
+        intake = (self.BOOTSTRAP / "intake.md").read_text(encoding="utf-8")
+
+        for name in ("Moderator", "Participant", "Director"):
+            with self.subTest(name=name):
+                self.assertIn(name, intake)
+        self.assertIn("Only Participant votes", intake)
+        self.assertIn("Moderator and Director never vote", intake)
+        # The duty-bucket phrasing must not reappear as a function partition.
+        self.assertNotIn(
+            "coordination, planning, and acceptance-review functions distinct", intake
+        )
+        self.assertIn(
+            "acceptance review are Director duties, not separate functions", intake
+        )
+
+    def test_readme_requires_the_contract_whenever_the_profile_is_used(self):
+        readme = (self.BOOTSTRAP / "README.md").read_text(encoding="utf-8")
+        profile = (self.BOOTSTRAP / "project-profile.yaml").read_text(encoding="utf-8")
+
+        # The profile sets the reference unconditionally, so the kit must not
+        # let a single-provider project skip the companion file.
+        self.assertIn('provider_roles_contract: "provider-roles-contract.yaml"', profile)
+        self.assertNotIn("whenever the project staffs more than one provider", readme)
+        self.assertIn("whenever you", readme)
+        self.assertIn("including single-provider", readme)
+        self.assertIn("leaves that reference dangling", readme)
+
     def test_bootstrap_surfaces_reference_the_roles_contract(self):
         for surface in (
             "project-profile.yaml",
@@ -767,3 +813,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
