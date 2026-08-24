@@ -1,0 +1,176 @@
+{
+  "schema_version": "director-gate-ledger/v1",
+  "document_type": "director-gate-ledger",
+  "digest_profile": "rfc8785-sha256-domain-separated/v1",
+  "ledger_series_id": "gate-series-DIR-COMPLETION-EXAMPLE-1",
+  "ledger_id": "gate-ledger-DIR-COMPLETION-EXAMPLE-1-r2",
+  "ledger_revision": 2,
+  "predecessor_ledger_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ledger_state": "HEAD_BOUND",
+  "task_id": "DIR-COMPLETION-EXAMPLE",
+  "assignment_id": "DIR-COMPLETION-EXAMPLE-1",
+  "work_packet_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "authority_snapshot_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "repository": "edwardjones3976/director-orchestrator",
+  "starting_ref": "main",
+  "starting_sha": "21c4c70ad4bb1135e82d7b69df9866a1634f3546",
+  "expected_head_sha": "2222222222222222222222222222222222222222",
+  "candidate_result_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "logical_producer": {
+    "provider_id": "claude",
+    "system_label": "Claude Code"
+  },
+  "material_authors": [
+    {
+      "identity_kind": "PROVIDER",
+      "provider_id": "claude",
+      "authenticated_principal": "director-provider-claude",
+      "evidence_source": "DIRECTOR_PROVIDER_RUN",
+      "run_reference": "provider-run-example-1"
+    }
+  ],
+  "path_scope": [
+    "docs/director-completion-gates.md",
+    "docs/schemas",
+    "tests/test_completion_gate_contracts.py"
+  ],
+  "execution_profile": "ISOLATED_PROOF_LANE",
+  "runner_registry_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "issued_by": {
+    "role": "DIRECTOR",
+    "authenticated_principal": "director-orchestrator",
+    "issuance_record_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "issued_at": "2026-08-24T05:14:00Z"
+  },
+  "director_gate_set_digest": "sha256:72064034c656b6419b85b8490e1c3aad04b57e6e312ad3ed1b0fd79748b155ed",
+  "producer_gate_set_digest": "sha256:be894b1c09f0ed835cc5eed1cd933265508041c128abe77cffcada5c6b4151e9",
+  "director_gates": [
+    {
+      "gate_id": "director.contract-tests",
+      "order": 1,
+      "gate_type": "RUNNABLE",
+      "observable_outcome": "The completion-gate contract tests pass at the exact candidate SHA.",
+      "requiredness": "REQUIRED",
+      "risk_classification": "HIGH",
+      "gate_author": {
+        "role": "DIRECTOR",
+        "provider_id": "openai",
+        "authenticated_proposal_digest": null
+      },
+      "dependencies": [],
+      "abandonment_policy": {
+        "permitted": true,
+        "allowed_reason_codes": [
+          "TOOL_UNAVAILABLE",
+          "ENVIRONMENT_UNAVAILABLE",
+          "TIMEOUT_EXHAUSTED"
+        ],
+        "required_gate_effects": [
+          "BLOCKS_ACCEPTANCE",
+          "OWNER_DECISION_REQUIRED",
+          "RESHAPE_REQUIRED"
+        ]
+      },
+      "gate_definition_digest": "sha256:e636f89caccefbd646fb311c9fafa8c8a98b8cd2c14d1c0d1612aceb3f1726da",
+      "runner_id": "python_unittest",
+      "runner_definition_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "parameter_profile_id": "completion-gate-contract-tests",
+      "parameter_profile_digest": "sha256:1212121212121212121212121212121212121212121212121212121212121212",
+      "working_directory": ".",
+      "expected_exit_code": 0,
+      "expected_output": {
+        "matcher": "CONTAINS",
+        "value": "OK",
+        "case_sensitive": true
+      },
+      "timeout_seconds": 300,
+      "output_limit_bytes": 1048576,
+      "script_binding": null
+    },
+    {
+      "gate_id": "director.independent-review",
+      "order": 2,
+      "gate_type": "MANUAL",
+      "observable_outcome": "An eligible non-author independently reviews the exact candidate SHA.",
+      "requiredness": "REQUIRED",
+      "risk_classification": "HIGH",
+      "gate_author": {
+        "role": "DIRECTOR",
+        "provider_id": "openai",
+        "authenticated_proposal_digest": null
+      },
+      "dependencies": [
+        {
+          "gate_id": "director.contract-tests",
+          "required_status": "PASS"
+        }
+      ],
+      "abandonment_policy": {
+        "permitted": true,
+        "allowed_reason_codes": [
+          "PROVIDER_UNAVAILABLE",
+          "OWNER_STOP",
+          "SCOPE_RESHAPED"
+        ],
+        "required_gate_effects": [
+          "BLOCKS_ACCEPTANCE",
+          "OWNER_DECISION_REQUIRED"
+        ]
+      },
+      "gate_definition_digest": "sha256:3bbcd62d59f78586042de0443464d7eeb75d4b8d69d097198ef9edd836c2fd09",
+      "evidence_requirements": [
+        "The reviewer identifies the exact candidate SHA.",
+        "The reviewer is absent from every material-author record.",
+        "The reviewer reports ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP."
+      ],
+      "eligible_evaluator_roles": [
+        "INDEPENDENT_PROVIDER_REVIEWER"
+      ],
+      "independence_required": true
+    },
+    {
+      "gate_id": "director.trusted-ci",
+      "order": 3,
+      "gate_type": "EXTERNAL_CI",
+      "observable_outcome": "The required trusted GitHub check succeeds at the exact candidate SHA.",
+      "requiredness": "REQUIRED",
+      "risk_classification": "HIGH",
+      "gate_author": {
+        "role": "DIRECTOR",
+        "provider_id": "openai",
+        "authenticated_proposal_digest": null
+      },
+      "dependencies": [
+        {
+          "gate_id": "director.contract-tests",
+          "required_status": "PASS"
+        }
+      ],
+      "abandonment_policy": {
+        "permitted": true,
+        "allowed_reason_codes": [
+          "TOOL_UNAVAILABLE",
+          "ENVIRONMENT_UNAVAILABLE",
+          "TIMEOUT_EXHAUSTED"
+        ],
+        "required_gate_effects": [
+          "BLOCKS_ACCEPTANCE",
+          "OWNER_DECISION_REQUIRED"
+        ]
+      },
+      "gate_definition_digest": "sha256:c95d9f3d0f9469d7899ef41036352368f30e69364d4d7d5aa846477e52a4dafc",
+      "ci_binding": {
+        "provider": "GITHUB",
+        "repository": "edwardjones3976/director-orchestrator",
+        "workflow_path": ".github/workflows/ci.yml",
+        "workflow_blob_sha": "3333333333333333333333333333333333333333",
+        "workflow_definition_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "required_check_name": "Python 3.12 (ubuntu-latest)",
+        "trusted_app_id": 15368,
+        "trusted_app_slug": "github-actions"
+      }
+    }
+  ],
+  "producer_added_gates": [],
+  "ledger_digest": "sha256:fcd2e76eb4df0fa10c116bf1f69cfa869e361fffbc2bf55fcb9a4416a0e30a1c"
+}
