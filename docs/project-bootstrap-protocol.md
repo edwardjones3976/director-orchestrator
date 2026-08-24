@@ -1,3 +1,5 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Modular project bootstrap protocol
 
@@ -179,6 +181,11 @@ Director may select the matching workflow as a project-local execution overlay:
 | `cursor-agent-workflow` | Cursor | implementation, debugging, QA, and independent exact-SHA review | Verify the named repository, worktree, and branch; Cursor cannot review work it materially authored. |
 | `antigravity-sandbox-workflow` | Gemini/Antigravity | disposable prototypes and bounded behavioral verification | The sandbox output is non-authoritative; the current Antigravity outbound contract and primary-provider verification still apply. |
 | `perplexity-research-workflow` | Perplexity | bounded public research with citations and provenance | Send only the approved public query; no repository context, programming, voting, review verdict, or external-write authority. |
+| `pplx-cli` | Perplexity | terminal-based live web search and query-relevant public-page snippets | Use only within the Perplexity research-only lane; pass no repository context, credentials, private material, programming work, vote, review verdict, or external-write authority. |
+
+On Windows hosts, run the Linux-only `pplx-cli` through the named project WSL
+workspace. Browser availability is continuity only and does not replace CLI
+authentication, the public-query boundary, or persisted research evidence.
 
 Use the catalog name in the assignment rather than a machine-specific absolute
 path. Skill discovery is required before selection; installation or a reported
@@ -381,3 +388,5 @@ while retaining the team's strongest habits: bounded initiative, useful
 provider collaboration, independent verification, clear evidence, and
 project-specific control.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
@@ -33,6 +34,8 @@ kit.
    - `cursor-agent-workflow`
    - `antigravity-sandbox-workflow`
    - `perplexity-research-workflow`
+   - `pplx-cli`
+     remains a Perplexity research-only terminal transport.
 7. Treat skill selection as procedure, not permission. The project profile,
    provider contract, and deterministic gates remain authoritative. Canonical
    provider roles: [`docs/team-operating-charter.md`](../../team-operating-charter.md).
@@ -61,3 +64,4 @@ project profile or runtime configuration—never hardcode workspace channel name
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
