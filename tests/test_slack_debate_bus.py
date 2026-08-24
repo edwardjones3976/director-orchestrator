@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:58 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
@@ -12,6 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from director_orchestrator.approvals import StaleApproval
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.interactions import (
@@ -52,7 +55,11 @@ from director_orchestrator.models import (
     TieRubricApplication,
     TieRubricCriterion,
 )
-from director_orchestrator.policy import enforce_plan, execution_policy_errors
+from director_orchestrator.policy import (
+    enforce_plan,
+    estimated_plan_cost_usd,
+    execution_policy_errors,
+)
 from director_orchestrator.store import TaskStore
 from director_orchestrator.team_charter import AdvisoryVoteTally
 
@@ -314,6 +321,119 @@ class DebatePolicyTests(unittest.TestCase):
         self.assertIn("estimated cost exceeds task budget", guarded.approval_reasons)
         self.assertTrue(guarded.approval_required)
 
+    def test_trusted_debate_cost_floor_is_installed_before_budget_admission(self):
+        plan = debate_plan()
+        plan.debate = plan.debate.model_copy(
+            update={"estimated_synthesis_cost_usd": 0.35}
+        )
+        guarded = enforce_plan(
+            plan,
+            "choose a direction",
+            replace(
+                self.settings,
+                max_task_budget_usd=0.74,
+                openai_debate_turn_estimated_cost_usd=0.20,
+            ),
+        )
+
+        self.assertEqual(guarded.debate.estimated_counter_bias_cost_usd, 0.20)
+        self.assertEqual(guarded.debate.estimated_synthesis_cost_usd, 0.35)
+        self.assertEqual(guarded.debate.estimated_tie_judgment_cost_usd, 0.20)
+        self.assertAlmostEqual(estimated_plan_cost_usd(guarded), 0.75)
+        self.assertIn("estimated cost exceeds task budget", guarded.approval_reasons)
+
+    def test_runtime_reservation_applies_floor_to_legacy_zero_estimates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                self.settings,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                max_task_budget_usd=1.0,
+                openai_debate_turn_estimated_cost_usd=0.20,
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(
+                TaskRecord(
+                    task_id="DIR-DEBATE-COST-FLOOR",
+                    status=TaskStatus.REVIEWING,
+                    intake=SlackIntake(
+                        source_event_id="evt-debate-cost-floor",
+                        channel_id="C-ORACLE",
+                        thread_ts="owner-thread",
+                        user_id="U-OWNER",
+                        text="DIRECTOR Project: demo Outcome: debate safely",
+                    ),
+                    plan=debate_plan(),
+                    plan_generation=1,
+                )
+            )
+            engine = OrchestrationEngine(settings, store)
+            current = store.get("DIR-DEBATE-COST-FLOOR")
+
+            reserved = engine._reserve_director_effect(
+                current,
+                phase="debate_counter_bias",
+                identity={"phase": "counter-bias"},
+                estimated_cost_usd=0,
+            )
+            self.assertIsNotNone(reserved)
+            current, _ = reserved
+            reserved = engine._reserve_director_effect(
+                current,
+                phase="debate_synthesis",
+                identity={"phase": "synthesis"},
+                estimated_cost_usd=0.35,
+            )
+            self.assertIsNotNone(reserved)
+            current, _ = reserved
+
+            debate_intents = [
+                effect
+                for effect in current.task_effect_ledger
+                if effect.kind == "director_intent"
+            ]
+            self.assertEqual(
+                [effect.estimated_cost_usd for effect in debate_intents],
+                [0.20, 0.35],
+            )
+            self.assertAlmostEqual(current.cumulative_estimated_cost_usd, 0.55)
+
+    def test_runtime_floor_cannot_reserve_beyond_task_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                self.settings,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                max_task_budget_usd=0.19,
+                openai_debate_turn_estimated_cost_usd=0.20,
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(
+                TaskRecord(
+                    task_id="DIR-DEBATE-COST-FLOOR-BLOCKED",
+                    status=TaskStatus.REVIEWING,
+                    intake=SlackIntake(
+                        source_event_id="evt-debate-cost-floor-blocked",
+                        channel_id="C-ORACLE",
+                        thread_ts="owner-thread",
+                        user_id="U-OWNER",
+                        text="DIRECTOR Project: demo Outcome: debate safely",
+                    ),
+                    plan=debate_plan(),
+                    plan_generation=1,
+                )
+            )
+            engine = OrchestrationEngine(settings, store)
+
+            with self.assertRaisesRegex(StaleApproval, "Cumulative task budget"):
+                engine._reserve_director_effect(
+                    store.get("DIR-DEBATE-COST-FLOOR-BLOCKED"),
+                    phase="debate_tie_judgment",
+                    identity={"phase": "tie-judgment"},
+                    estimated_cost_usd=0,
+                )
+            stored = store.get("DIR-DEBATE-COST-FLOOR-BLOCKED")
+            self.assertEqual(stored.task_effect_ledger, [])
+            self.assertEqual(stored.cumulative_estimated_cost_usd, 0)
+
     def test_neutral_alternative_and_preliminary_option_must_be_configured(self):
         plan = debate_plan()
         plan.debate = plan.debate.model_copy(update={"alternative_option": None})
@@ -526,7 +646,7 @@ class DebateDirector:
 
 
 class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_new_plan_budget_reserves_counter_bias_and_synthesis_costs(self):
+    async def test_new_plan_budget_reserves_all_debate_control_costs(self):
         class PlanningDirector:
             async def plan(self, record):
                 plan = debate_plan()
@@ -573,7 +693,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             blocked = store.get(task.task_id)
             self.assertEqual(blocked.status, TaskStatus.BLOCKED)
             self.assertIn("Cumulative task budget blocks", blocked.message)
-            self.assertIn("new plan $0.50", blocked.message)
+            self.assertIn("new plan $0.55", blocked.message)
             self.assertAlmostEqual(blocked.cumulative_estimated_cost_usd, 0.10)
 
     def test_slack_relay_redacts_credentials_and_raw_source_without_unrelated_content_scanning(self):
@@ -1744,3 +1864,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:58 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
 # Provider Setup Matrix
 
 The cross-provider responsibility, debate, advisory-voting, and strict
@@ -35,6 +36,16 @@ Practical operating patterns:
 2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
 3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate boilerplate, scaffolding, low-level mechanical implementation, or alternate ideas. Both return non-authoritative evidence, and a primary model independently verifies and integrates or rejects it.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
+
+## Trusted OpenAI debate-turn accounting
+
+Set `OPENAI_DEBATE_TURN_ESTIMATED_COST_USD` to one finite positive estimate for
+each paid OpenAI counter-bias, synthesis, and ordinary-tie-judgment turn. The
+default is `$0.05`. Provider-generated plan estimates are untrusted for budget
+purposes: the Director persists and reserves the greater of the provider estimate
+and this operator setting. A missing or zero plan estimate therefore cannot make a
+paid debate turn free, while a higher conservative estimate is preserved. A
+non-positive or non-finite configured value prevents the service from starting.
 
 | Role | Supported bridge in this package | Required values | Completion path |
 | --- | --- | --- | --- |
@@ -206,3 +217,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Perplexity Search API: https://docs.perplexity.ai/api-reference/search-post
 - Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart
 - Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]] -->

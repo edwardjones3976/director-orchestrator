@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
@@ -83,6 +84,7 @@ from .policy import (
     estimated_plan_cost_usd,
     execution_policy_errors,
     preview_plan,
+    trusted_openai_debate_phase_cost_usd,
 )
 from .providers import (
     PostSubmitAmbiguityError,
@@ -1021,6 +1023,15 @@ class OrchestrationEngine:
         estimated_cost_usd: float,
     ) -> tuple[TaskRecord, str] | None:
         """Atomically reserve one paid OpenAI call before network I/O."""
+
+        if phase in {
+            "debate_counter_bias",
+            "debate_synthesis",
+            "debate_tie_judgment",
+        }:
+            estimated_cost_usd = trusted_openai_debate_phase_cost_usd(
+                estimated_cost_usd, self.settings
+            )
 
         expected_version = record._store_version
         if expected_version is None:
@@ -3726,3 +3737,4 @@ class OrchestrationEngine:
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]

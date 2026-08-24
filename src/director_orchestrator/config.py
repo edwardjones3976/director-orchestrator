@@ -1,8 +1,10 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 from __future__ import annotations
 
 import hmac
+import math
 import os
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 import re
@@ -23,6 +25,13 @@ def _int(name: str, default: int) -> int:
 
 def _float(name: str, default: float) -> float:
     return float(os.getenv(name, str(default)))
+
+
+def _positive_float(name: str, default: float) -> float:
+    value = _float(name, default)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and greater than zero")
+    return value
 
 
 def _csv(name: str, default: str) -> tuple[str, ...]:
@@ -222,6 +231,9 @@ class Settings:
     )
     openai_review_estimated_cost_usd: float = _float(
         "OPENAI_REVIEW_ESTIMATED_COST_USD", 0.0
+    )
+    openai_debate_turn_estimated_cost_usd: float = _positive_float(
+        "OPENAI_DEBATE_TURN_ESTIMATED_COST_USD", 0.05
     )
 
     cursor_api_key: str = os.getenv("CURSOR_API_KEY", "")
@@ -563,3 +575,4 @@ class Settings:
             },
         }
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]

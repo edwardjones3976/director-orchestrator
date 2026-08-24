@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
@@ -423,10 +424,38 @@ def estimated_plan_cost_usd(plan: DirectorPlan) -> float:
     return estimated_cost
 
 
+def trusted_openai_debate_phase_cost_usd(
+    model_estimate_usd: float, settings: Settings
+) -> float:
+    """Apply the trusted operator floor without reducing a conservative estimate."""
+
+    return max(model_estimate_usd, settings.openai_debate_turn_estimated_cost_usd)
+
+
 def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> DirectorPlan:
     safe = deepcopy(plan)
     safe.max_hops = min(safe.max_hops, settings.max_agent_hops)
     safe.max_revisions = min(safe.max_revisions, settings.max_revisions)
+    if safe.debate is not None:
+        safe.debate = safe.debate.model_copy(
+            update={
+                "estimated_counter_bias_cost_usd": (
+                    trusted_openai_debate_phase_cost_usd(
+                        safe.debate.estimated_counter_bias_cost_usd, settings
+                    )
+                ),
+                "estimated_synthesis_cost_usd": (
+                    trusted_openai_debate_phase_cost_usd(
+                        safe.debate.estimated_synthesis_cost_usd, settings
+                    )
+                ),
+                "estimated_tie_judgment_cost_usd": (
+                    trusted_openai_debate_phase_cost_usd(
+                        safe.debate.estimated_tie_judgment_cost_usd, settings
+                    )
+                ),
+            }
+        )
 
     reasons = set(safe.approval_reasons)
     reasons.update(deterministic_approval_reasons(source_text))
@@ -547,3 +576,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
