@@ -1,12 +1,25 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:07 UTC | BEGIN]]
 from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.interactions import (
+    InteractionProvider,
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    ProviderTransport,
+    TransportEvidenceSource,
+    append_interaction_event,
+    build_transport_evidence,
+    start_interaction,
+    transition_interaction,
+)
 from director_orchestrator.models import (
     Assignment,
     DirectorPlan,
@@ -23,6 +36,77 @@ from director_orchestrator.store import TaskStore
 
 
 TASK_ID = "DIR-RECOVERY-PROBE"
+
+
+def seed_verified_interaction(
+    record: TaskRecord,
+    *,
+    provider: ProviderName,
+    phase: ProviderInteractionPhase,
+    result: str,
+    interaction_id: str,
+    assignment_sequence: int | None = None,
+) -> None:
+    """Install backend-owned VERIFIED evidence for a pre-seeded probe result."""
+
+    transports = {
+        ProviderName.OPENAI: ProviderTransport.OPENAI_RESPONSES_API,
+        ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
+    }
+    effect_key = hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
+    attempted_evidence = build_transport_evidence(
+        transport=transports[provider],
+        source=TransportEvidenceSource.BACKEND_OBSERVATION,
+        execution_mode="simulation",
+        idempotency_key=effect_key,
+    )
+    event = start_interaction(
+        task_id=record.task_id,
+        interaction_id=interaction_id,
+        plan_generation=record.plan_generation,
+        assignment_sequence=assignment_sequence,
+        provider=InteractionProvider(provider.value),
+        phase=phase,
+        attempt=1,
+        transport_evidence=attempted_evidence,
+        effect_key=effect_key,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    event = transition_interaction(
+        record.provider_interaction_ledger,
+        interaction_id=interaction_id,
+        next_state=ProviderInteractionState.ATTEMPTED,
+        transport_evidence=attempted_evidence,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    verified_evidence = build_transport_evidence(
+        transport=transports[provider],
+        source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+        execution_mode="simulation",
+        idempotency_key=interaction_id,
+        result=result,
+        native_status="completed",
+    )
+    for state in (
+        ProviderInteractionState.DISPATCHED,
+        ProviderInteractionState.ACKNOWLEDGED,
+        ProviderInteractionState.RESPONDED,
+        ProviderInteractionState.COMPLETED,
+        ProviderInteractionState.VERIFIED,
+    ):
+        event = transition_interaction(
+            record.provider_interaction_ledger,
+            interaction_id=interaction_id,
+            next_state=state,
+            transport_evidence=verified_evidence,
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, event
+        )
 
 
 class AcceptingDirector:
@@ -103,6 +187,32 @@ def seed(database: Path) -> None:
             )
         ],
     )
+    if record.plan is None:
+        raise AssertionError("Probe plan was not installed")
+    plan_interaction_id = "recovery-probe:plan"
+    seed_verified_interaction(
+        record,
+        provider=ProviderName.OPENAI,
+        phase=ProviderInteractionPhase.PLAN,
+        result=record.plan.model_dump_json(),
+        interaction_id=plan_interaction_id,
+    )
+    record.plan_interaction_id = plan_interaction_id
+
+    run = record.provider_runs[0]
+    if not run.result:
+        raise AssertionError("Probe provider result was not installed")
+    run_interaction_id = "recovery-probe:cursor:run-recovery-probe"
+    seed_verified_interaction(
+        record,
+        provider=run.provider,
+        phase=ProviderInteractionPhase.DISPATCH,
+        assignment_sequence=run.assignment_sequence,
+        result=run.result,
+        interaction_id=run_interaction_id,
+    )
+    run.interaction_id = run_interaction_id
+
     _, created = store.create(record)
     if not created:
         raise AssertionError("Probe database was not empty")
@@ -146,3 +256,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:07 UTC | END]]
