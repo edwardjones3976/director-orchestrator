@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
@@ -7,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import re
 import time
@@ -57,6 +59,7 @@ from .interactions import (
     append_interaction_event,
     build_transport_evidence,
     canonical_content_digest,
+    canonical_identifier_digest,
     project_interaction,
     require_verified_result,
     start_interaction,
@@ -519,11 +522,43 @@ class OrchestrationEngine:
                 ProviderInteractionState.VERIFIED,
                 source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
             )
-        return require_verified_result(
+        verified = require_verified_result(
             record.provider_interaction_ledger,
             interaction_id=run.interaction_id or "",
             result=run.result,
         )
+        evidence = verified.transport_evidence
+        if (
+            verified.task_id != record.task_id
+            or verified.provider.value != run.provider.value
+            or verified.assignment_sequence != run.assignment_sequence
+            or evidence.source != TransportEvidenceSource.AUTHENTICATED_PROVIDER
+        ):
+            raise CommunicationEvidenceFailure(
+                "verified provider result correlation does not match the persisted run"
+            )
+        expected_run_id_digest = canonical_identifier_digest(run.run_id)
+        if evidence.provider_run_id_digest is None or not hmac.compare_digest(
+            evidence.provider_run_id_digest, expected_run_id_digest
+        ):
+            raise CommunicationEvidenceFailure(
+                "persisted provider run_id is not bound to the VERIFIED transport event"
+            )
+        expected_session_id_digest = (
+            canonical_identifier_digest(run.session_id) if run.session_id else None
+        )
+        if expected_session_id_digest is None:
+            if evidence.provider_session_id_digest is not None:
+                raise CommunicationEvidenceFailure(
+                    "persisted provider session_id is missing from a session-bound VERIFIED event"
+                )
+        elif evidence.provider_session_id_digest is None or not hmac.compare_digest(
+            evidence.provider_session_id_digest, expected_session_id_digest
+        ):
+            raise CommunicationEvidenceFailure(
+                "persisted provider session_id is not bound to the VERIFIED transport event"
+            )
+        return verified
 
     async def run(self, task_id: str) -> None:
         async with self._task_locks[task_id]:
@@ -2755,3 +2790,4 @@ class OrchestrationEngine:
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]

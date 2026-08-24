@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | BEGIN]]
@@ -104,6 +105,8 @@ def _seed_verified_interaction(
     result: str,
     assignment_sequence: int | None = None,
     interaction_id: str | None = None,
+    run_id: str | None = None,
+    session_id: str | None = None,
 ) -> tuple[str, str]:
     """Install immutable simulation evidence for a deliberately pre-seeded fixture."""
 
@@ -146,6 +149,8 @@ def _seed_verified_interaction(
         source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
         execution_mode="simulation",
         idempotency_key=interaction_id,
+        provider_run_id=run_id,
+        provider_session_id=session_id,
         result=result,
         native_status="completed",
     )
@@ -190,6 +195,8 @@ def _seed_verified_run(record: TaskRecord, run: ProviderRun) -> None:
         assignment_sequence=run.assignment_sequence,
         result=run.result,
         interaction_id=f"test:{record.task_id}:run:{run.run_id}",
+        run_id=run.run_id,
+        session_id=run.session_id,
     )
     run.interaction_id = interaction_id
 
@@ -1878,4 +1885,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
 

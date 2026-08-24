@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
@@ -63,11 +64,27 @@ def apply_claude_callback(record: TaskRecord, callback: ClaudeCallback) -> bool:
         native_status=callback.status,
         result=callback.result,
     )
-    for state in (
-        ProviderInteractionState.RESPONDED,
-        ProviderInteractionState.COMPLETED,
-        ProviderInteractionState.VERIFIED,
-    ):
+    states = (
+        (
+            ProviderInteractionState.RESPONDED,
+            ProviderInteractionState.COMPLETED,
+            ProviderInteractionState.VERIFIED,
+        )
+        if callback.status == "completed"
+        else (ProviderInteractionState.FAILED,)
+    )
+    if callback.status != "completed":
+        evidence = build_transport_evidence(
+            transport=ProviderTransport.CLAUDE_CALLBACK,
+            source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+            idempotency_key=run.interaction_id,
+            provider_run_id=run.run_id,
+            provider_session_id=run.session_id,
+            native_status=callback.status,
+            result=callback.result,
+            error_code=f"PROVIDER_{callback.status.upper()}",
+        )
+    for state in states:
         event = transition_interaction(
             record.provider_interaction_ledger,
             interaction_id=run.interaction_id,
@@ -77,7 +94,11 @@ def apply_claude_callback(record: TaskRecord, callback: ClaudeCallback) -> bool:
         record.provider_interaction_ledger = append_interaction_event(
             record.provider_interaction_ledger, event
         )
-    record.status = TaskStatus.REVIEWING
+    if callback.status == "completed":
+        record.status = TaskStatus.REVIEWING
+    else:
+        record.status = TaskStatus.FAILED
+        record.error = f"ProviderError: claude ended with status {callback.status}"
     return True
 
 
@@ -123,3 +144,4 @@ def apply_manual_run_completion(
     record.message = "Owner supplied exact-run manual completion evidence"
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
