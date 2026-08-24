@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 22:28 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
@@ -482,8 +483,12 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         ]
         for surface in surfaces:
             content = surface.read_text(encoding="utf-8")
-            self.assertIn("`pplx-cli`", content, surface)
-            self.assertIn("research-only", content, surface)
+            matching_blocks = [
+                block
+                for block in content.split("\n\n")
+                if "`pplx-cli`" in block and "research-only" in block
+            ]
+            self.assertTrue(matching_blocks, surface)
         protocol = (root / "docs" / "project-bootstrap-protocol.md").read_text(
             encoding="utf-8"
         )
@@ -842,3 +847,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 22:28 UTC | END]]
