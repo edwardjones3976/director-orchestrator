@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 12:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
@@ -12,6 +13,8 @@ from .interactions import (
     TransportEvidenceSource,
     append_interaction_event,
     build_transport_evidence,
+    canonical_identifier_digest,
+    project_interaction,
     transition_interaction,
 )
 
@@ -114,34 +117,76 @@ def apply_manual_run_completion(
     ]
     if not matching:
         raise CallbackConflict("Provider run does not match this task")
-    run = matching[-1]
+    if len(matching) != 1:
+        raise CallbackConflict("Provider run ID is ambiguous across task assignments")
+    run = matching[0]
     if run.result:
         raise CallbackConflict("Provider run already has a result")
+
+    next_ledger = record.provider_interaction_ledger
+    if run.interaction_id:
+        projection = project_interaction(
+            record.provider_interaction_ledger, run.interaction_id
+        )
+        if (
+            projection.task_id != record.task_id
+            or projection.provider.value != run.provider.value
+            or projection.assignment_sequence != run.assignment_sequence
+        ):
+            raise CallbackConflict(
+                "Provider interaction does not match the exact task run"
+            )
+        bound_run_digests = {
+            event.transport_evidence.provider_run_id_digest
+            for event in record.provider_interaction_ledger
+            if event.interaction_id == run.interaction_id
+            and event.transport_evidence.provider_run_id_digest is not None
+        }
+        expected_run_digest = canonical_identifier_digest(run.run_id)
+        if bound_run_digests and (
+            len(bound_run_digests) != 1
+            or not hmac.compare_digest(
+                next(iter(bound_run_digests)), expected_run_digest
+            )
+        ):
+            raise CallbackConflict(
+                "Provider interaction is bound to a different provider run"
+            )
+
+        # FAILED and UNAVAILABLE are immutable historical observations. Owner
+        # recovery authorizes the task projection to resume; it does not rewrite
+        # that provider history or pretend the transport became authenticated.
+        if projection.state not in {
+            ProviderInteractionState.FAILED,
+            ProviderInteractionState.UNAVAILABLE,
+        }:
+            evidence = build_transport_evidence(
+                transport=ProviderTransport.MANUAL_OWNER,
+                source=TransportEvidenceSource.OWNER_ATTESTED,
+                idempotency_key=run.interaction_id,
+                provider_run_id=run.run_id,
+                native_status="OWNER_RECOVERY",
+                result=completion.result,
+                ambiguity_reason="provider transport completion was not authenticated",
+            )
+            event = transition_interaction(
+                record.provider_interaction_ledger,
+                interaction_id=run.interaction_id,
+                next_state=ProviderInteractionState.UNKNOWN,
+                transport_evidence=evidence,
+            )
+            next_ledger = append_interaction_event(
+                record.provider_interaction_ledger, event
+            )
+
     run.status = "FINISHED"
     run.result = completion.result
     run.evidence_source = "owner_recovery"
-    if run.interaction_id:
-        evidence = build_transport_evidence(
-            transport=ProviderTransport.MANUAL_OWNER,
-            source=TransportEvidenceSource.OWNER_ATTESTED,
-            idempotency_key=run.interaction_id,
-            provider_run_id=run.run_id,
-            native_status="OWNER_RECOVERY",
-            result=completion.result,
-            ambiguity_reason="provider transport completion was not authenticated",
-        )
-        event = transition_interaction(
-            record.provider_interaction_ledger,
-            interaction_id=run.interaction_id,
-            next_state=ProviderInteractionState.UNKNOWN,
-            transport_evidence=evidence,
-        )
-        record.provider_interaction_ledger = append_interaction_event(
-            record.provider_interaction_ledger, event
-        )
+    record.provider_interaction_ledger = next_ledger
     record.status = TaskStatus.QUEUED
     record.error = None
     record.message = "Owner supplied exact-run manual completion evidence"
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 12:22 UTC | END]]

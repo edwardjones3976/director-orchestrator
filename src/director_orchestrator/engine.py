@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 12:12 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
@@ -1337,6 +1338,10 @@ class OrchestrationEngine:
             record.error = str(exc)[:2_000]
             record.message = CommunicationEvidenceFailure.code
             self.store.save(record)
+            await self._status_post(
+                record,
+                f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.error}",
+            )
             return False
         debate = record.plan.debate if record.plan else None
         contribution = decision.debate_contribution
@@ -2791,3 +2796,4 @@ class OrchestrationEngine:
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 12:12 UTC | END]]
