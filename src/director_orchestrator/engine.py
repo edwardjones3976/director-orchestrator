@@ -1,3 +1,4 @@
+# [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
@@ -2523,7 +2524,10 @@ class OrchestrationEngine:
             )
         )
         tally = tally_advisory_votes(
-            votes, material_risk=debate_tie_is_material(record.plan)
+            votes,
+            material_risk=debate_tie_is_material(
+                record.plan, source_text=record.intake.text
+            ),
         )
         record.debate_tally = tally.model_dump(mode="json")
         tie_judgment = None
@@ -4074,3 +4078,4 @@ class OrchestrationEngine:
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | END]]
+# [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:58 UTC | BEGIN]]
@@ -65,6 +66,8 @@ from director_orchestrator.models import (
     TieRubricCriterion,
 )
 from director_orchestrator.policy import (
+    debate_tie_is_material,
+    debate_tie_materiality_reasons,
     enforce_plan,
     estimated_plan_cost_usd,
     execution_policy_errors,
@@ -567,6 +570,126 @@ class DebatePolicyTests(unittest.TestCase):
         )
         self.assertNotIn(
             "counter_bias_analysis", legacy_synthesis.model_dump(mode="json")
+        )
+
+
+class DebateTieMaterialityTests(unittest.TestCase):
+    def test_ordinary_low_signal_tie_remains_non_material(self):
+        plan = debate_plan()
+
+        self.assertFalse(debate_tie_is_material(plan))
+        self.assertEqual(debate_tie_materiality_reasons(plan), [])
+
+    def test_model_may_escalate_an_otherwise_ordinary_tie(self):
+        risk_flag = debate_plan(material_risk=True)
+        declared = debate_plan()
+        declared.debate = declared.debate.model_copy(
+            update={"material_dimensions": [MaterialDecisionDimension.PRIVACY]}
+        )
+
+        self.assertTrue(debate_tie_is_material(risk_flag))
+        self.assertIn("model escalated material_risk", debate_tie_materiality_reasons(risk_flag))
+        self.assertTrue(debate_tie_is_material(declared))
+        self.assertIn(
+            "model declared material decision dimensions",
+            debate_tie_materiality_reasons(declared),
+        )
+
+    def test_false_empty_model_flags_cannot_deescalate_trusted_signals(self):
+        cases = {
+            "high_risk": debate_plan().model_copy(update={"risk_level": RiskLevel.HIGH}),
+            "approval_required": debate_plan().model_copy(
+                update={"approval_required": True}
+            ),
+            "approval_reasons": debate_plan().model_copy(
+                update={"approval_reasons": ["sensitive data"]}
+            ),
+            "assignment_approval": debate_plan().model_copy(
+                update={
+                    "assignments": [
+                        debate_plan().assignments[0].model_copy(
+                            update={"requires_approval": True}
+                        ),
+                        *debate_plan().assignments[1:],
+                    ]
+                }
+            ),
+            "draft_pr": debate_plan().model_copy(
+                update={
+                    "assignments": [
+                        debate_plan().assignments[0].model_copy(
+                            update={"allow_draft_pr": True}
+                        ),
+                        *debate_plan().assignments[1:],
+                    ]
+                }
+            ),
+        }
+        for name, plan in cases.items():
+            with self.subTest(name=name):
+                self.assertFalse(plan.debate.material_risk)
+                self.assertEqual(plan.debate.material_dimensions, [])
+                self.assertTrue(debate_tie_is_material(plan))
+
+    def test_omitted_malformed_or_contradictory_model_materiality_fails_closed(self):
+        omitted = debate_plan()
+        omitted.debate = omitted.debate.model_copy(update={"material_dimensions": None})
+        malformed = debate_plan()
+        malformed.debate = malformed.debate.model_construct(
+            **{
+                **malformed.debate.model_dump(),
+                "material_dimensions": ["not-a-dimension"],
+            }
+        )
+        contradictory = debate_plan().model_copy(update={"risk_level": RiskLevel.CRITICAL})
+        contradictory.debate = contradictory.debate.model_copy(
+            update={
+                "material_risk": False,
+                "material_dimensions": [],
+            }
+        )
+
+        self.assertTrue(debate_tie_is_material(omitted))
+        self.assertIn(
+            "debate material dimensions were omitted",
+            debate_tie_materiality_reasons(omitted),
+        )
+        self.assertTrue(debate_tie_is_material(malformed))
+        self.assertIn(
+            "debate material dimensions are malformed",
+            debate_tie_materiality_reasons(malformed),
+        )
+        self.assertTrue(debate_tie_is_material(contradictory))
+        self.assertIn("critical-risk plan", debate_tie_materiality_reasons(contradictory))
+
+    def test_model_false_cannot_hide_safety_privacy_or_repository_scope(self):
+        deploy = debate_plan()
+        deploy.debate = deploy.debate.model_copy(
+            update={"question": "Should the team deploy option A or option B to production?"}
+        )
+        privacy = debate_plan()
+        two_repos = debate_plan()
+        two_repos.assignments[0] = two_repos.assignments[0].model_copy(
+            update={"repository": "example/alpha"}
+        )
+        two_repos.assignments[1] = two_repos.assignments[1].model_copy(
+            update={"repository": "example/beta"}
+        )
+
+        self.assertTrue(debate_tie_is_material(deploy))
+        self.assertTrue(
+            any("production" in reason for reason in debate_tie_materiality_reasons(deploy))
+        )
+        self.assertTrue(
+            debate_tie_is_material(
+                privacy,
+                source_text="DIRECTOR Project: demo Outcome: choose how to store medical records",
+            )
+        )
+        self.assertTrue(debate_tie_is_material(two_repos))
+        self.assertIn(
+            "assignments span multiple repositories",
+            debate_tie_materiality_reasons(two_repos),
         )
 
 
@@ -2634,3 +2757,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:58 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | END]]
+# [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
