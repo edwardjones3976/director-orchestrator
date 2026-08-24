@@ -1,3 +1,7 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | BEGIN]]
@@ -38,6 +42,7 @@ from .approvals import (
     record_oracle_recovery,
     record_provider_effect_observation,
     record_task_effect_observation,
+    reset_for_owner_clarification,
     reserve_provider_effect,
     reserve_task_effect,
     task_effect_key,
@@ -92,7 +97,11 @@ from .providers import (
     ProviderRun,
     provider_registry,
 )
-from .review_handoff import bind_review_handoff, transitive_dependency_sequences
+from .review_handoff import (
+    bind_review_handoff,
+    reconstruct_review_handoff,
+    transitive_dependency_sequences,
+)
 from .store import PrivacyCleanupPending, StaleTaskWrite, TaskStore
 from .team_charter import AdvisoryVote, tally_advisory_votes
 
@@ -104,6 +113,11 @@ _POST_SUBMIT_AMBIGUITY_ERRORS = (
     LookupError,
     TypeError,
 )
+
+_DRY_RUN_PREVIEW_MESSAGE = (
+    "Dry-run plan created. Live provider execution remains disabled."
+)
+_OPENAI_KEY_BLOCK_MESSAGE = "OPENAI_API_KEY is not configured"
 
 _STANDING_PROVIDER_ROLES = {
     ProviderName.OPENAI: "Director",
@@ -256,12 +270,22 @@ class OrchestrationEngine:
         return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
     def _begin_director_interaction(
-        self, record: TaskRecord, *, phase: str, effect_key: str
+        self,
+        record: TaskRecord,
+        *,
+        phase: str,
+        effect_key: str,
+        plan_generation: int | None = None,
     ) -> str:
+        interaction_generation = (
+            record.plan_generation
+            if plan_generation is None
+            else plan_generation
+        )
         interaction_id = str(
             uuid5(
                 NAMESPACE_URL,
-                f"{record.task_id}:{record.plan_generation}:openai:{phase}:{effect_key}",
+                f"{record.task_id}:{interaction_generation}:openai:{phase}:{effect_key}",
             )
         )
         if any(
@@ -277,7 +301,7 @@ class OrchestrationEngine:
         drafted = start_interaction(
             task_id=record.task_id,
             interaction_id=interaction_id,
-            plan_generation=record.plan_generation,
+            plan_generation=interaction_generation,
             assignment_sequence=None,
             provider=ProviderName.OPENAI.value,
             phase=ProviderInteractionPhase(phase),
@@ -589,17 +613,48 @@ class OrchestrationEngine:
                 record.plan = preview_plan(record.intake.text, self.settings)
                 record.plan_generation += 1
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
-                record.message = "Dry-run plan created. Live provider execution remains disabled."
+                record.message = _DRY_RUN_PREVIEW_MESSAGE
                 self.store.save(record)
                 await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\nDry-run plan created; no paid provider was called. Suggested first specialist: `{record.plan.assignments[0].agent.value}`. Enable live execution only after credentials and spend limits are verified.")
                 return
 
             if not self.settings.openai_api_key:
-                self.store.set_status(task_id, TaskStatus.BLOCKED, message="OPENAI_API_KEY is not configured")
+                self.store.set_status(
+                    task_id,
+                    TaskStatus.BLOCKED,
+                    message=_OPENAI_KEY_BLOCK_MESSAGE,
+                )
                 await self._status_post(record, f"*{task_id} — BLOCKED*\nThe Director API credential is not configured.")
                 return
 
+            is_unbound_no_work_preview = (
+                record.plan is not None
+                and record.plan_interaction_id is None
+                and record.message
+                in {_DRY_RUN_PREVIEW_MESSAGE, _OPENAI_KEY_BLOCK_MESSAGE}
+                and not record.provider_runs
+                and not record.assignment_outcomes
+                and all(
+                    effect.kind in {"slack_intent", "slack_observation"}
+                    for effect in record.task_effect_ledger
+                )
+                and not any(
+                    event.plan_generation == record.plan_generation
+                    for event in record.provider_interaction_ledger
+                )
+            )
+            if is_unbound_no_work_preview:
+                # An unbound preview is display-only. Recognize only its bounded
+                # lifecycle markers (including the missing-key stop), then require
+                # complete absence of paid/director/provider effect or interaction
+                # evidence before creating one fresh authenticated PLAN.
+                reset_for_owner_clarification(record)
+                record.status = TaskStatus.QUEUED
+                record.message = "Dry-run preview discarded; creating a fresh authenticated live plan."
+                self.store.save(record)
+
             if record.plan is None:
+                target_plan_generation = record.plan_generation + 1
                 reservation = self._reserve_director_effect(
                     record,
                     phase="plan",
@@ -607,7 +662,7 @@ class OrchestrationEngine:
                         "intake": hashlib.sha256(
                             record.intake.model_dump_json().encode("utf-8")
                         ).hexdigest(),
-                        "target_generation": record.plan_generation + 1,
+                        "target_generation": target_plan_generation,
                     },
                     estimated_cost_usd=self.settings.openai_plan_estimated_cost_usd,
                 )
@@ -615,7 +670,10 @@ class OrchestrationEngine:
                     return
                 record, effect_key = reservation
                 plan_interaction_id = self._begin_director_interaction(
-                    record, phase="plan", effect_key=effect_key
+                    record,
+                    phase="plan",
+                    effect_key=effect_key,
+                    plan_generation=target_plan_generation,
                 )
                 self.store.save(record)
                 try:
@@ -634,9 +692,11 @@ class OrchestrationEngine:
                     )
                     self.store.save(record)
                     raise
-                self._complete_director_interaction(
+                verified_plan_event = self._complete_director_interaction(
                     record, interaction_id=plan_interaction_id, result=plan
                 )
+                record.plan = enforce_plan(plan, record.intake.text, self.settings)
+                record.plan_generation = target_plan_generation
                 record.plan_interaction_id = plan_interaction_id
                 record_task_effect_observation(
                     record,
@@ -645,11 +705,30 @@ class OrchestrationEngine:
                     observation_kind="director_observation",
                     phase="plan",
                     outcome="completed",
-                    run_id=self._result_digest(plan),
+                    run_id=self._plan_materialization_binding(
+                        record,
+                        verified_event_digest=verified_plan_event.event_digest,
+                        verified_result_digest=(
+                            verified_plan_event.transport_evidence.result_digest or ""
+                        ),
+                        effect_key=effect_key,
+                    ),
                 )
-                record.plan = enforce_plan(plan, record.intake.text, self.settings)
-                record.plan_generation += 1
                 plan_installed = True
+            try:
+                self._require_verified_plan_materialization(record)
+            except CommunicationEvidenceFailure as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(
+                    record,
+                    f"*{task_id} — OWNER DECISION REQUIRED*\n"
+                    "The current plan has no exact authenticated execution authority. "
+                    "Create a fresh live plan before provider work can begin.",
+                )
+                return
             policy_errors = execution_policy_errors(record.plan, self.settings)
             if policy_errors:
                 record.status = TaskStatus.BLOCKED
@@ -688,7 +767,16 @@ class OrchestrationEngine:
 
             while record.next_assignment_index < len(record.plan.assignments):
                 assignments = sorted(record.plan.assignments, key=lambda item: item.sequence)
-                assignment = assignments[record.next_assignment_index]
+                planned_assignment = assignments[record.next_assignment_index]
+                try:
+                    assignment = self._effective_assignment(record, planned_assignment)
+                except CommunicationEvidenceFailure as exc:
+                    self._stop_for_unverified_plan(record, exc)
+                    await self._status_post(
+                        record,
+                        f"*{task_id} — OWNER DECISION REQUIRED*\n{record.error}",
+                    )
+                    return
                 if assignment.agent == ProviderName.OWNER:
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
                     record.message = assignment.task
@@ -1005,6 +1093,18 @@ class OrchestrationEngine:
         return str(uuid5(NAMESPACE_URL, ":".join(str(part) for part in parts)))
 
     @staticmethod
+    def _generation_correlation_id(
+        record: TaskRecord, *parts: object
+    ) -> str:
+        return ":".join(
+            (
+                record.task_id,
+                f"generation-{record.plan_generation}",
+                *(str(part) for part in parts),
+            )
+        )
+
+    @staticmethod
     def _result_digest(value: object) -> str:
         if hasattr(value, "model_dump_json"):
             encoded = value.model_dump_json().encode("utf-8")
@@ -1013,6 +1113,152 @@ class OrchestrationEngine:
                 value, ensure_ascii=True, separators=(",", ":"), sort_keys=True
             ).encode("utf-8")
         return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _canonical_plan_digest(record: TaskRecord) -> str:
+        if record.plan is None:
+            raise CommunicationEvidenceFailure(
+                "live execution requires a materialized Director plan"
+            )
+        encoded = json.dumps(
+            record.plan.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _plan_materialization_binding(
+        cls,
+        record: TaskRecord,
+        *,
+        verified_event_digest: str,
+        verified_result_digest: str,
+        effect_key: str,
+    ) -> str:
+        """Bind one normalized installed plan to exact authenticated PLAN evidence."""
+
+        if not record.plan_interaction_id:
+            raise CommunicationEvidenceFailure(
+                "live plan lacks its Director interaction binding"
+            )
+        return json.dumps(
+            {
+                "binding_version": "director-plan-materialization-v1",
+                "task_id": record.task_id,
+                "plan_generation": record.plan_generation,
+                "plan_interaction_id": record.plan_interaction_id,
+                "verified_event_digest": verified_event_digest,
+                "verified_result_digest": verified_result_digest,
+                "effect_key": effect_key,
+                "materialized_plan_digest": cls._canonical_plan_digest(record),
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def _require_verified_plan_materialization(self, record: TaskRecord):
+        """Return exact PLAN evidence only when it authorizes the current plan."""
+
+        if record.plan is None:
+            raise CommunicationEvidenceFailure(
+                "live execution requires a materialized Director plan"
+            )
+        if not record.plan_interaction_id:
+            raise CommunicationEvidenceFailure(
+                "live plan lacks its Director interaction binding"
+            )
+        projection = project_interaction(
+            record.provider_interaction_ledger, record.plan_interaction_id
+        )
+        plan_event = next(
+            (
+                item
+                for item in record.provider_interaction_ledger
+                if item.interaction_id == record.plan_interaction_id
+                and item.event_digest == projection.latest_event_digest
+            ),
+            None,
+        )
+        if (
+            projection.task_id != record.task_id
+            or projection.provider.value != ProviderName.OPENAI.value
+            or projection.assignment_sequence is not None
+            or projection.state != ProviderInteractionState.VERIFIED
+            or projection.verified_result_digest is None
+            or plan_event is None
+            or plan_event.phase != ProviderInteractionPhase.PLAN
+            or plan_event.plan_generation != record.plan_generation
+            or plan_event.transport_evidence.source
+            != TransportEvidenceSource.AUTHENTICATED_PROVIDER
+        ):
+            raise CommunicationEvidenceFailure(
+                "live plan is not bound to the exact VERIFIED OpenAI plan generation"
+            )
+
+        if plan_event.effect_key is None:
+            raise CommunicationEvidenceFailure(
+                "live plan lacks verified Director effect and materialization accounting"
+            )
+
+        binding = self._plan_materialization_binding(
+            record,
+            verified_event_digest=plan_event.event_digest,
+            verified_result_digest=projection.verified_result_digest,
+            effect_key=plan_event.effect_key,
+        )
+        expected_binding_digest = canonical_identifier_digest(binding)
+        observations = [
+            effect
+            for effect in record.task_effect_ledger
+            if effect.effect_key == plan_event.effect_key
+            and effect.kind == "director_observation"
+            and effect.phase == "plan"
+            and effect.outcome == "completed"
+            and effect.provider == ProviderName.OPENAI
+            and effect.plan_generation == record.plan_generation
+            and effect.run_id_digest is not None
+            and hmac.compare_digest(
+                effect.run_id_digest, expected_binding_digest
+            )
+        ]
+        allowed_intent_generations = {record.plan_generation}
+        if record.plan_generation > 0:
+            allowed_intent_generations.add(record.plan_generation - 1)
+        matching_intent = any(
+            effect.effect_key == plan_event.effect_key
+            and effect.kind == "director_intent"
+            and effect.phase == "plan"
+            and effect.outcome == "reserved"
+            and effect.provider == ProviderName.OPENAI
+            and effect.plan_generation in allowed_intent_generations
+            for effect in record.task_effect_ledger
+        )
+        if len(observations) != 1 or not matching_intent:
+            raise CommunicationEvidenceFailure(
+                "materialized plan changed from its exact VERIFIED OpenAI plan binding"
+            )
+        return projection, plan_event
+
+    def _stop_for_unverified_plan(
+        self, record: TaskRecord, exc: CommunicationEvidenceFailure
+    ) -> None:
+        """Persist one fail-closed stop when current plan authority no longer verifies."""
+
+        record.status = TaskStatus.OWNER_DECISION_REQUIRED
+        record.message = CommunicationEvidenceFailure.code
+        record.error = str(exc)[:2_000]
+        self.store.save(record)
+
+    def _verified_plan_or_stop(self, record: TaskRecord) -> bool:
+        try:
+            self._require_verified_plan_materialization(record)
+        except CommunicationEvidenceFailure as exc:
+            self._stop_for_unverified_plan(record, exc)
+            return False
+        return True
 
     def _reserve_director_effect(
         self,
@@ -1056,6 +1302,8 @@ class OrchestrationEngine:
             )
 
         def reserve(current: TaskRecord) -> None:
+            if phase != "plan":
+                self._require_verified_plan_materialization(current)
             if current.plan_generation != record.plan_generation or (
                 phase == "plan" and current.plan is not None
             ):
@@ -1086,6 +1334,10 @@ class OrchestrationEngine:
             stored = self.store.mutate_if_version(
                 record.task_id, expected_version, reserve
             )
+        except CommunicationEvidenceFailure as exc:
+            current = self.store.get(record.task_id) or record
+            self._stop_for_unverified_plan(current, exc)
+            return None
         except EffectAlreadyClaimed:
             return None
         if stored is None:
@@ -1136,14 +1388,24 @@ class OrchestrationEngine:
             return True, None
         kwargs.setdefault(
             "client_msg_id",
-            self._slack_client_id(record.task_id, "slack", message),
+            self._slack_client_id(
+                record.task_id,
+                f"generation-{record.plan_generation}",
+                "slack",
+                message,
+            ),
         )
         event_id = str(kwargs["client_msg_id"])
         root_message = bool(kwargs.get("root_message"))
         slack_effect_key: str | None = None
         if self.settings.slack_bot_token:
             slack_effect_key = task_effect_key(
-                record, phase="slack_delivery", identity={"client_msg_id": event_id}
+                record,
+                phase="slack_delivery",
+                identity={
+                    "client_msg_id": event_id,
+                    "plan_generation": record.plan_generation,
+                },
             )
             reserve_task_effect(
                 record,
@@ -1245,40 +1507,10 @@ class OrchestrationEngine:
     ) -> list[CollaborationTurn]:
         """Persist real plan-time Moderator and Participant records before peers run."""
 
+        projection, plan_event = self._require_verified_plan_materialization(record)
         debate = record.plan.debate if record.plan else None
         if debate is None:
             return []
-        if not record.plan_interaction_id:
-            raise CommunicationEvidenceFailure(
-                "debate preamble lacks its OpenAI plan interaction binding"
-            )
-        projection = project_interaction(
-            record.provider_interaction_ledger, record.plan_interaction_id
-        )
-        plan_event = next(
-            (
-                item
-                for item in record.provider_interaction_ledger
-                if item.interaction_id == record.plan_interaction_id
-                and item.event_digest == projection.latest_event_digest
-            ),
-            None,
-        )
-        if (
-            projection.task_id != record.task_id
-            or projection.provider.value != ProviderName.OPENAI.value
-            or projection.assignment_sequence is not None
-            or projection.state != ProviderInteractionState.VERIFIED
-            or projection.verified_result_digest is None
-            or plan_event is None
-            or plan_event.phase != ProviderInteractionPhase.PLAN
-            or plan_event.plan_generation != record.plan_generation
-            or plan_event.transport_evidence.source
-            != TransportEvidenceSource.AUTHENTICATED_PROVIDER
-        ):
-            raise CommunicationEvidenceFailure(
-                "debate preamble is not bound to the exact VERIFIED OpenAI plan"
-            )
 
         initial = debate.openai_initial_position
         if (
@@ -1305,7 +1537,9 @@ class OrchestrationEngine:
                 provider=ProviderName.OPENAI,
                 phase="moderator",
                 debate_role=DebateActorRole.OPENAI_MODERATOR,
-                correlation_id=f"{record.task_id}:debate-moderator",
+                correlation_id=self._generation_correlation_id(
+                    record, "debate-moderator"
+                ),
                 run_id=record.plan_interaction_id,
                 position=debate.neutral_framing,
                 evidence=[
@@ -1326,7 +1560,9 @@ class OrchestrationEngine:
                 provider=ProviderName.OPENAI,
                 phase="position",
                 debate_role=DebateActorRole.OPENAI_PARTICIPANT,
-                correlation_id=f"{record.task_id}:openai-initial-position",
+                correlation_id=self._generation_correlation_id(
+                    record, "openai-initial-position"
+                ),
                 run_id=record.plan_interaction_id,
                 position=initial.position,
                 rationale=initial.rationale,
@@ -1477,7 +1713,9 @@ class OrchestrationEngine:
             record,
             message[:3_900],
             root_message=True,
-            client_msg_id=self._slack_client_id(record.task_id, "collaboration-root"),
+            client_msg_id=self._slack_client_id(
+                self._generation_correlation_id(record, "collaboration-root")
+            ),
         )
         if not delivered:
             return False
@@ -1495,7 +1733,9 @@ class OrchestrationEngine:
     ) -> bool:
         if not await self._ensure_collaboration_thread(record):
             return False
-        correlation_id = f"{record.task_id}:{assignment.sequence}:delegation"
+        correlation_id = self._generation_correlation_id(
+            record, assignment.sequence, "delegation"
+        )
         existing = next(
             (
                 turn
@@ -1516,7 +1756,9 @@ class OrchestrationEngine:
                 provider=ProviderName.OPENAI,
                 phase="delegation",
                 correlation_id=correlation_id,
-                run_id=f"director-delegation-{assignment.sequence}",
+                run_id=(
+                    f"director-delegation-{record.plan_generation}-{assignment.sequence}"
+                ),
                 position=(
                     f"Delegated bounded {assignment.discussion_phase.value} work to "
                     f"{assignment.agent.value}; {len(assignment.acceptance)} acceptance checks; "
@@ -1649,7 +1891,9 @@ class OrchestrationEngine:
         if not await self._ensure_collaboration_thread(record):
             return False
         run_digest = hashlib.sha256(run.run_id.encode("utf-8")).hexdigest()[:16]
-        correlation_id = f"{record.task_id}:{assignment.sequence}:{run_digest}"
+        correlation_id = self._generation_correlation_id(
+            record, assignment.sequence, run_digest
+        )
         existing = next(
             (
                 turn
@@ -1899,7 +2143,9 @@ class OrchestrationEngine:
             provider=ProviderName.OPENAI,
             phase="counter_bias",
             debate_role=DebateActorRole.OPENAI_MODERATOR,
-            correlation_id=f"{record.task_id}:debate-counter-bias",
+            correlation_id=self._generation_correlation_id(
+                record, "debate-counter-bias"
+            ),
             run_id=record.debate_counter_bias_interaction_id,
             position=self._slack_safe_text(counter_bias.strongest_counterargument),
             evidence=[
@@ -2284,6 +2530,9 @@ class OrchestrationEngine:
         verified_tie_judgment = None
         if tally.resolution == "openai_director_judgment":
             if record.debate_tie_judgment is None:
+                # The reservation below is a CAS reload. Persist the exact tally
+                # first so the reloaded task cannot silently drop the vote result.
+                self.store.save(record)
                 tie_identity = {
                     "winning_options": tally.winning_options,
                     "rubric": debate.tie_judgment_rubric.model_dump(mode="json"),
@@ -2433,7 +2682,9 @@ class OrchestrationEngine:
                 provider=ProviderName.OPENAI,
                 phase="rebuttal",
                 debate_role=DebateActorRole.OPENAI_PARTICIPANT,
-                correlation_id=f"{record.task_id}:openai-final-vote",
+                correlation_id=self._generation_correlation_id(
+                    record, "openai-final-vote"
+                ),
                 run_id=record.debate_synthesis_interaction_id,
                 position=vote_position,
                 evidence=[self._slack_safe_text(synthesis.rationale, limit=1_000)],
@@ -2453,7 +2704,9 @@ class OrchestrationEngine:
                 provider=ProviderName.OPENAI,
                 phase="synthesis",
                 debate_role=DebateActorRole.OPENAI_DIRECTOR,
-                correlation_id=f"{record.task_id}:debate-synthesis",
+                correlation_id=self._generation_correlation_id(
+                    record, "debate-synthesis"
+                ),
                 run_id=record.debate_synthesis_interaction_id,
                 position=self._slack_safe_text(synthesis.decision),
                 evidence=[
@@ -2475,7 +2728,9 @@ class OrchestrationEngine:
                     provider=ProviderName.OPENAI,
                     phase="tie_judgment",
                     debate_role=DebateActorRole.OPENAI_DIRECTOR,
-                    correlation_id=f"{record.task_id}:debate-tie-judgment",
+                    correlation_id=self._generation_correlation_id(
+                        record, "debate-tie-judgment"
+                    ),
                     run_id=record.debate_tie_judgment_interaction_id,
                     position=self._slack_safe_text(tie_judgment.rationale),
                     evidence=[
@@ -2593,7 +2848,7 @@ class OrchestrationEngine:
     async def _publish_collaboration_completion(self, record: TaskRecord) -> bool:
         if not await self._ensure_collaboration_thread(record):
             return False
-        correlation_id = f"{record.task_id}:completion"
+        correlation_id = self._generation_correlation_id(record, "completion")
         existing = next(
             (
                 turn
@@ -2709,7 +2964,12 @@ class OrchestrationEngine:
 
         def reserve(current: TaskRecord) -> None:
             nonlocal reserved_key
+            self._require_verified_plan_materialization(current)
             current_assignment = pending_assignment(current)
+            if current_assignment is not None:
+                current_assignment = self._effective_assignment(
+                    current, current_assignment
+                )
             if (
                 current.plan_generation != record.plan_generation
                 or current_assignment is None
@@ -2747,6 +3007,10 @@ class OrchestrationEngine:
             stored = self.store.mutate_if_version(
                 record.task_id, expected_version, reserve
             )
+        except CommunicationEvidenceFailure as exc:
+            current = self.store.get(record.task_id) or record
+            self._stop_for_unverified_plan(current, exc)
+            return None
         except EffectAlreadyClaimed:
             return None
         if stored is None:
@@ -2756,16 +3020,36 @@ class OrchestrationEngine:
         return stored, reserved_key
 
     async def _process_exact_sha_review(
-        self, record: TaskRecord, run: ProviderRun
+        self,
+        record: TaskRecord,
+        run: ProviderRun,
+        assignment: Assignment | None = None,
     ) -> bool | None:
         service = self.oracle_merge_service
         if service is None or not service.policy.enabled or service.policy.kill_switch:
             return None
         try:
+            self._require_verified_plan_materialization(record)
+            planned = [
+                item
+                for item in (record.plan.assignments if record.plan else [])
+                if item.sequence == run.assignment_sequence
+            ]
+            if len(planned) != 1:
+                raise ValueError("review run has no exact planned assignment")
+            reconstructed = self._effective_assignment(record, planned[0])
+            if assignment is not None and assignment_approval_digest(
+                assignment
+            ) != assignment_approval_digest(reconstructed):
+                raise ValueError("review assignment changed before exact-SHA merge")
+            assignment = reconstructed
             artifact = authenticate_provider_review_artifact(
-                record, run, service.policy.review_secret
+                record,
+                run,
+                service.policy.review_secret,
+                review_assignment=assignment,
             )
-        except (ValueError, TypeError) as exc:
+        except (CommunicationEvidenceFailure, ValueError, TypeError) as exc:
             record_oracle_recovery(
                 record,
                 run,
@@ -2800,7 +3084,7 @@ class OrchestrationEngine:
             effect_key=oracle_effect_key,
             kind="oracle_merge_intent",
             phase="oracle_merge",
-            assignment=pending_assignment(record),
+            assignment=assignment,
             replay_safe=True,
         )
         prior_merge = next(
@@ -2984,17 +3268,37 @@ class OrchestrationEngine:
         if bound is None:
             return True
         sequence, review_assignment = bound
-        record.plan.assignments = sorted(
-            [
-                review_assignment if item.sequence == sequence else item
-                for item in record.plan.assignments
-            ],
-            key=lambda item: item.sequence,
-        )
         handoff = json.loads(review_assignment.task)
-        record.review_handoff_digests[sequence] = handoff["artifact_digest"]
+        artifact_digest = handoff["artifact_digest"]
+        existing = record.review_handoff_digests.get(sequence)
+        if existing is not None and not hmac.compare_digest(existing, artifact_digest):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "Review handoff failed closed: exact candidate changed after binding"
+            )
+            self.store.save(record)
+            await self._status_post(record, record.message)
+            return False
+        record.review_handoff_digests[sequence] = artifact_digest
         self.store.save(record)
         return True
+
+    def _effective_assignment(
+        self, record: TaskRecord, planned_assignment: Assignment
+    ) -> Assignment:
+        """Return a derived exact-review overlay without changing the plan."""
+
+        try:
+            return reconstruct_review_handoff(
+                record,
+                planned_assignment,
+                trusted_provider_actors=self.settings.oracle_provider_actor_map(),
+            )
+        except (TypeError, ValueError) as exc:
+            raise CommunicationEvidenceFailure(
+                "review handoff cannot be reconstructed from authenticated evidence: "
+                + str(exc)
+            ) from exc
 
     @staticmethod
     def _recorded_no_response_attempts(
@@ -3064,6 +3368,10 @@ class OrchestrationEngine:
         return True
 
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
+        # This record may have been reloaded after a prior assignment. Rebind the
+        # exact current plan before any Slack, provider, or review-side effect.
+        if not self._verified_plan_or_stop(record):
+            return False
         completed_sequences = {
             outcome.assignment_sequence for outcome in record.assignment_outcomes
         }
@@ -3288,11 +3596,17 @@ class OrchestrationEngine:
             )
             record.provider_runs.append(run)
             self.store.save(record)
+            if not self._verified_plan_or_stop(record):
+                return False
             await self._status_post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
 
+        if not self._verified_plan_or_stop(record):
+            return False
         try:
             run = await self._wait(adapter, run, record, assignment)
         except ProviderUnavailableError as exc:
+            if not self._verified_plan_or_stop(record):
+                return False
             run = exc.run
             run_index = next(
                 index
@@ -3302,6 +3616,8 @@ class OrchestrationEngine:
             record.provider_runs[run_index] = run
             await self._defer_unavailable(record, assignment, run)
             return True
+        if not self._verified_plan_or_stop(record):
+            return False
         run_index = next(index for index in range(len(record.provider_runs) - 1, -1, -1) if record.provider_runs[index].run_id == run.run_id)
         record.provider_runs[run_index] = run
         if not run.result:
@@ -3333,7 +3649,9 @@ class OrchestrationEngine:
                 return False
             if not await self._bind_review_candidate(record, assignment, run):
                 return False
-            merge_result = await self._process_exact_sha_review(record, run)
+            merge_result = await self._process_exact_sha_review(
+                record, run, assignment
+            )
             if merge_result is not True:
                 if merge_result is None:
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -3386,6 +3704,8 @@ class OrchestrationEngine:
             )
             self.store.save(record)
             raise
+        if not self._verified_plan_or_stop(record):
+            return False
         self._complete_director_interaction(
             record, interaction_id=review_interaction_id, result=decision
         )
@@ -3404,7 +3724,9 @@ class OrchestrationEngine:
         if decision.verdict == ReviewVerdict.ACCEPT:
             if not await self._bind_review_candidate(record, assignment, run):
                 return False
-            merge_result = await self._process_exact_sha_review(record, run)
+            merge_result = await self._process_exact_sha_review(
+                record, run, assignment
+            )
             if merge_result is False:
                 return False
             self._record_outcome(record, assignment, run, decision)
@@ -3505,6 +3827,8 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 raise
+            if not self._verified_plan_or_stop(record):
+                return False
             record.revision_count += 1
             revised.assignment_sequence = assignment.sequence
             revised.interaction_id = revision_interaction_id
@@ -3523,10 +3847,14 @@ class OrchestrationEngine:
             try:
                 revised = await self._wait(adapter, revised, record, assignment)
             except ProviderUnavailableError as exc:
+                if not self._verified_plan_or_stop(record):
+                    return False
                 revised = exc.run
                 record.provider_runs[-1] = revised
                 await self._defer_unavailable(record, assignment, revised)
                 return True
+            if not self._verified_plan_or_stop(record):
+                return False
             record.provider_runs[-1] = revised
             self.store.save(record)
             if not revised.result:
@@ -3584,6 +3912,8 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 raise
+            if not self._verified_plan_or_stop(record):
+                return False
             self._complete_director_interaction(
                 record,
                 interaction_id=final_review_interaction_id,
@@ -3603,7 +3933,9 @@ class OrchestrationEngine:
             if final_decision.verdict == ReviewVerdict.ACCEPT:
                 if not await self._bind_review_candidate(record, assignment, revised):
                     return False
-                merge_result = await self._process_exact_sha_review(record, revised)
+                merge_result = await self._process_exact_sha_review(
+                    record, revised, assignment
+                )
                 if merge_result is False:
                     return False
                 self._record_outcome(record, assignment, revised, final_decision)
@@ -3738,3 +4070,7 @@ class OrchestrationEngine:
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | END]]

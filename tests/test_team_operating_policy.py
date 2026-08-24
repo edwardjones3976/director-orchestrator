@@ -1,3 +1,7 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:04 UTC | BEGIN]]
@@ -19,6 +23,10 @@ from director_orchestrator.config import Settings
 from director_orchestrator.approvals import (
     assignment_approval_digest,
     parse_approval_button_value,
+    record_provider_effect_observation,
+    record_task_effect_observation,
+    reserve_provider_effect,
+    reserve_task_effect,
 )
 from director_orchestrator.engine import (
     OrchestrationEngine,
@@ -26,6 +34,7 @@ from director_orchestrator.engine import (
     SlackNotifier,
 )
 from director_orchestrator.interactions import (
+    CommunicationEvidenceFailure,
     ProviderInteractionPhase,
     ProviderInteractionState,
     ProviderTransport,
@@ -50,10 +59,11 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.policy import execution_policy_errors
+from director_orchestrator.policy import enforce_plan, execution_policy_errors
 from director_orchestrator.oracle_merge import authenticate_provider_review_artifact
 from director_orchestrator.review_handoff import (
     bind_review_handoff,
+    reconstruct_review_handoff,
     transitive_dependency_sequences,
 )
 from director_orchestrator.store import TaskStore
@@ -93,6 +103,7 @@ def bind_verified_interaction(
     run: ProviderRun,
     *,
     label: str,
+    account_effect: bool = False,
 ) -> None:
     """Attach one backend-built VERIFIED transport chain to an exact test result."""
 
@@ -104,6 +115,20 @@ def bind_verified_interaction(
         ProviderName.CLAUDE: ProviderTransport.CLAUDE_CALLBACK,
     }[run.provider]
     idempotency_key = f"{interaction_id}:idempotency"
+    effect_key = None
+    assignment = None
+    if account_effect:
+        assignment = next(
+            item
+            for item in record.plan.assignments
+            if item.sequence == run.assignment_sequence
+        )
+        effect_key = reserve_provider_effect(
+            record,
+            assignment,
+            phase="dispatch",
+            max_task_budget_usd=1_000,
+        )
 
     def evidence(
         state: ProviderInteractionState,
@@ -147,6 +172,7 @@ def bind_verified_interaction(
         transport_evidence=evidence(
             ProviderInteractionState.DRAFTED, authenticated=False
         ),
+        effect_key=effect_key,
     )
     events = append_interaction_event(events, drafted)
     for state in (
@@ -175,6 +201,332 @@ def bind_verified_interaction(
         events = append_interaction_event(events, event)
     record.provider_interaction_ledger = events
     run.interaction_id = interaction_id
+    if effect_key is not None and assignment is not None:
+        record_provider_effect_observation(
+            record,
+            assignment,
+            effect_key=effect_key,
+            phase="dispatch",
+            outcome="submitted",
+            run_id=run.run_id,
+        )
+
+
+def accepted_provider_outcome(
+    record: TaskRecord, run: ProviderRun
+) -> AssignmentOutcome:
+    verified = next(
+        item
+        for item in reversed(record.provider_interaction_ledger)
+        if item.interaction_id == run.interaction_id
+        and item.state == ProviderInteractionState.VERIFIED
+    )
+    return AssignmentOutcome(
+        assignment_sequence=run.assignment_sequence or 1,
+        provider=run.provider,
+        run_id=run.run_id,
+        result=run.result or "candidate",
+        review_summary="accepted",
+        interaction_id=run.interaction_id,
+        verified_interaction_event_digest=verified.event_digest,
+        provider_result_digest=hashlib.sha256(
+            (run.result or "").encode("utf-8")
+        ).hexdigest(),
+    )
+
+
+def bind_authenticated_director_acceptance_review(
+    record: TaskRecord,
+    outcome: AssignmentOutcome,
+) -> None:
+    """Attach exact authenticated OpenAI acceptance evidence to one outcome."""
+
+    interaction_id = (
+        f"{record.task_id}:director-acceptance:{outcome.assignment_sequence}"
+    )
+    effect_key = hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
+    review_result = "ACCEPT: exact producer outcome satisfies the bounded checks"
+    reserve_task_effect(
+        record,
+        effect_key=effect_key,
+        kind="director_intent",
+        phase="acceptance_review",
+        provider=ProviderName.OPENAI,
+        estimated_cost_usd=0.1,
+        hop_units=1,
+        max_task_budget_usd=1_000,
+    )
+    backend_evidence = build_transport_evidence(
+        transport=ProviderTransport.OPENAI_RESPONSES_API,
+        source=TransportEvidenceSource.BACKEND_OBSERVATION,
+        idempotency_key=effect_key,
+    )
+    authenticated_evidence = build_transport_evidence(
+        transport=ProviderTransport.OPENAI_RESPONSES_API,
+        source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+        idempotency_key=effect_key,
+        result=review_result,
+        native_status="completed",
+    )
+    drafted = start_interaction(
+        task_id=record.task_id,
+        interaction_id=interaction_id,
+        plan_generation=record.plan_generation,
+        assignment_sequence=None,
+        provider=ProviderName.OPENAI,
+        phase=ProviderInteractionPhase.ACCEPTANCE_REVIEW,
+        attempt=1,
+        transport_evidence=backend_evidence,
+        effect_key=effect_key,
+    )
+    events = append_interaction_event(record.provider_interaction_ledger, drafted)
+    attempted = transition_interaction(
+        events,
+        interaction_id=interaction_id,
+        next_state=ProviderInteractionState.ATTEMPTED,
+        transport_evidence=backend_evidence,
+    )
+    events = append_interaction_event(events, attempted)
+    for state in (
+        ProviderInteractionState.DISPATCHED,
+        ProviderInteractionState.ACKNOWLEDGED,
+        ProviderInteractionState.RESPONDED,
+        ProviderInteractionState.COMPLETED,
+        ProviderInteractionState.VERIFIED,
+    ):
+        event = transition_interaction(
+            events,
+            interaction_id=interaction_id,
+            next_state=state,
+            transport_evidence=authenticated_evidence,
+        )
+        events = append_interaction_event(events, event)
+    record.provider_interaction_ledger = events
+    outcome.director_review_interaction_id = interaction_id
+    outcome.verified_director_review_event_digest = event.event_digest
+    outcome.director_review_result_digest = (
+        event.transport_evidence.result_digest
+    )
+    record_task_effect_observation(
+        record,
+        effect_key=effect_key,
+        intent_kind="director_intent",
+        observation_kind="director_observation",
+        phase="acceptance_review",
+        outcome="completed",
+        run_id=f"sha256:{outcome.director_review_result_digest}",
+    )
+
+
+def seed_authenticated_normalized_plan(
+    store: TaskStore,
+    engine: OrchestrationEngine,
+    record: TaskRecord,
+) -> None:
+    """Persist a fixture through the same authenticated PLAN path as production."""
+
+    raw_plan = record.plan
+    if raw_plan is None:
+        raise AssertionError("live test fixture must provide a raw Director plan")
+    record.plan = None
+    store.create(record)
+    persisted = store.get(record.task_id)
+    if persisted is None:
+        raise AssertionError("live test fixture was not persisted")
+
+    target_generation = persisted.plan_generation + 1
+    reservation = engine._reserve_director_effect(
+        persisted,
+        phase="plan",
+        identity={
+            "intake": hashlib.sha256(
+                persisted.intake.model_dump_json().encode("utf-8")
+            ).hexdigest(),
+            "target_generation": target_generation,
+        },
+        estimated_cost_usd=engine.settings.openai_plan_estimated_cost_usd,
+    )
+    if reservation is None:
+        raise AssertionError("live test fixture could not reserve Director planning")
+    persisted, effect_key = reservation
+    interaction_id = engine._begin_director_interaction(
+        persisted,
+        phase="plan",
+        effect_key=effect_key,
+        plan_generation=target_generation,
+    )
+    verified_plan_event = engine._complete_director_interaction(
+        persisted,
+        interaction_id=interaction_id,
+        result=raw_plan,
+    )
+    persisted.plan = enforce_plan(
+        raw_plan,
+        persisted.intake.text,
+        engine.settings,
+    )
+    persisted.plan_generation = target_generation
+    persisted.plan_interaction_id = interaction_id
+    record_task_effect_observation(
+        persisted,
+        effect_key=effect_key,
+        intent_kind="director_intent",
+        observation_kind="director_observation",
+        phase="plan",
+        outcome="completed",
+        run_id=engine._plan_materialization_binding(
+            persisted,
+            verified_event_digest=verified_plan_event.event_digest,
+            verified_result_digest=(
+                verified_plan_event.transport_evidence.result_digest or ""
+            ),
+            effect_key=effect_key,
+        ),
+    )
+    store.save(persisted)
+
+
+def bind_legacy_unaccounted_plan(
+    engine: OrchestrationEngine,
+    record: TaskRecord,
+) -> None:
+    """Bind exact authenticated PLAN evidence without production effect accounting."""
+
+    if record.plan is None:
+        raise AssertionError("legacy test fixture must provide a Director plan")
+    interaction_id = f"{record.task_id}:legacy-plan"
+    backend_evidence = build_transport_evidence(
+        transport=ProviderTransport.OPENAI_RESPONSES_API,
+        source=TransportEvidenceSource.BACKEND_OBSERVATION,
+        idempotency_key=interaction_id,
+    )
+    drafted = start_interaction(
+        task_id=record.task_id,
+        interaction_id=interaction_id,
+        plan_generation=record.plan_generation,
+        assignment_sequence=None,
+        provider=ProviderName.OPENAI,
+        phase=ProviderInteractionPhase.PLAN,
+        attempt=1,
+        transport_evidence=backend_evidence,
+    )
+    attempted = transition_interaction(
+        [drafted],
+        interaction_id=interaction_id,
+        next_state=ProviderInteractionState.ATTEMPTED,
+        transport_evidence=backend_evidence,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        append_interaction_event([], drafted), attempted
+    )
+    engine._complete_director_interaction(
+        record,
+        interaction_id=interaction_id,
+        result=record.plan,
+    )
+    record.plan_interaction_id = interaction_id
+
+
+class PlanMaterializationAccountingTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _task(task_id: str) -> TaskRecord:
+        return TaskRecord(
+            task_id=task_id,
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id=f"evt-{task_id}",
+                channel_id="C1",
+                thread_ts="1.0",
+                user_id="U1",
+                text="DIRECTOR Project: demo Outcome: bounded work",
+            ),
+            plan=DirectorPlan(
+                project="demo",
+                normalized_outcome="Bounded work",
+                risk_level=RiskLevel.LOW,
+                approval_required=False,
+                max_hops=1,
+                max_revisions=0,
+                assignments=[
+                    Assignment(
+                        sequence=1,
+                        agent=ProviderName.CLAUDE,
+                        task="Perform bounded work",
+                        acceptance=["Return evidence"],
+                    )
+                ],
+                final_acceptance=["Evidence accepted"],
+            ),
+        )
+
+    async def test_exact_verified_plan_without_effect_accounting_cannot_dispatch(self):
+        class RecordingAdapter:
+            name = ProviderName.CLAUDE
+
+            def __init__(self):
+                self.dispatch_calls = 0
+
+            async def dispatch(self, assignment, context):
+                self.dispatch_calls += 1
+                raise AssertionError("unaccounted legacy plan reached provider dispatch")
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            store = TaskStore(settings.sqlite_path)
+            task = self._task("DIR-UNACCOUNTED-PLAN")
+            engine = OrchestrationEngine(settings, store)
+            adapter = RecordingAdapter()
+            engine.providers = {ProviderName.CLAUDE: adapter}
+            bind_legacy_unaccounted_plan(engine, task)
+            store.create(task)
+
+            await engine.run(task.task_id)
+
+            completed = store.get(task.task_id)
+            self.assertEqual(adapter.dispatch_calls, 0)
+            self.assertEqual(completed.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(completed.message, CommunicationEvidenceFailure.code)
+            self.assertIn(
+                "effect and materialization accounting",
+                completed.error or "",
+            )
+
+    async def test_fully_accounted_authenticated_plan_remains_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            store = TaskStore(settings.sqlite_path)
+            engine = OrchestrationEngine(settings, store)
+            seed_authenticated_normalized_plan(
+                store,
+                engine,
+                self._task("DIR-ACCOUNTED-PLAN"),
+            )
+
+            persisted = store.get("DIR-ACCOUNTED-PLAN")
+            projection, event = engine._require_verified_plan_materialization(
+                persisted
+            )
+
+            self.assertEqual(projection.state, ProviderInteractionState.VERIFIED)
+            self.assertIsNotNone(event.effect_key)
 
 
 class DirectorOperatingDirectiveTests(unittest.TestCase):
@@ -448,7 +800,12 @@ class ReviewHandoffTests(unittest.TestCase):
                 sort_keys=True,
             ),
         )
-        bind_verified_interaction(record, run, label="producer")
+        bind_verified_interaction(
+            record,
+            run,
+            label="producer",
+            account_effect=True,
+        )
         return record, producer, run
 
     def test_exact_candidate_binds_the_prebudgeted_different_provider(self):
@@ -464,6 +821,85 @@ class ReviewHandoffTests(unittest.TestCase):
         self.assertEqual(handoff["head_sha"], "b" * 40)
         self.assertEqual(reviewer.estimated_cost_usd, 0.25)
         self.assertFalse(reviewer.allow_draft_pr)
+
+    def test_exact_candidate_reconstructs_without_mutating_authenticated_plan(self):
+        record, producer, run = self.record()
+        original_plan = record.plan.model_dump_json()
+        sequence, expected = self.bind(record, producer, run) or (None, None)
+        self.assertEqual(sequence, 2)
+        handoff = json.loads(expected.task)
+        record.review_handoff_digests[2] = handoff["artifact_digest"]
+        outcome = accepted_provider_outcome(record, run)
+        bind_authenticated_director_acceptance_review(record, outcome)
+        record.assignment_outcomes.append(outcome)
+        record.provider_runs.append(run)
+
+        restarted = TaskRecord.model_validate_json(record.model_dump_json())
+        planned = next(
+            item for item in restarted.plan.assignments if item.sequence == 2
+        )
+        reconstructed = reconstruct_review_handoff(
+            restarted,
+            planned,
+            trusted_provider_actors=self.ACTORS,
+        )
+
+        self.assertEqual(reconstructed, expected)
+        self.assertEqual(record.plan.model_dump_json(), original_plan)
+        self.assertEqual(restarted.plan.model_dump_json(), original_plan)
+
+    def test_reconstruction_rejects_changed_candidate_marker(self):
+        record, producer, run = self.record()
+        sequence, expected = self.bind(record, producer, run) or (None, None)
+        self.assertEqual(sequence, 2)
+        record.review_handoff_digests[2] = "f" * 64
+        outcome = accepted_provider_outcome(record, run)
+        bind_authenticated_director_acceptance_review(record, outcome)
+        record.assignment_outcomes.append(outcome)
+        record.provider_runs.append(run)
+        planned = next(item for item in record.plan.assignments if item.sequence == 2)
+
+        with self.assertRaisesRegex(ValueError, "digest is missing or changed"):
+            reconstruct_review_handoff(
+                record,
+                planned,
+                trusted_provider_actors=self.ACTORS,
+            )
+
+    def test_reconstruction_requires_exact_accepted_verified_event(self):
+        record, producer, run = self.record()
+        sequence, expected = self.bind(record, producer, run) or (None, None)
+        self.assertEqual(sequence, 2)
+        handoff = json.loads(expected.task)
+        record.review_handoff_digests[2] = handoff["artifact_digest"]
+        record.assignment_outcomes.append(accepted_provider_outcome(record, run))
+        record.provider_runs.append(run)
+        planned = next(item for item in record.plan.assignments if item.sequence == 2)
+
+        tampered = record.model_copy(deep=True)
+        tampered.assignment_outcomes[0].verified_interaction_event_digest = "f" * 64
+        with self.assertRaisesRegex(ValueError, "changed from VERIFIED evidence"):
+            reconstruct_review_handoff(
+                tampered,
+                planned,
+                trusted_provider_actors=self.ACTORS,
+            )
+
+        missing_interaction = record.model_copy(deep=True)
+        missing_interaction.provider_interaction_ledger = []
+        with self.assertRaisesRegex(ValueError, "COMMUNICATION_EVIDENCE_FAILURE"):
+            reconstruct_review_handoff(
+                missing_interaction,
+                planned,
+                trusted_provider_actors=self.ACTORS,
+            )
+
+    def test_prebudgeted_reviewer_cannot_require_second_approval(self):
+        record, producer, run = self.record()
+        record.plan.assignments[1].requires_approval = True
+
+        with self.assertRaisesRegex(ValueError, "second owner approval"):
+            self.bind(record, producer, run)
 
     def test_material_author_cannot_receive_the_review_handoff(self):
         record, producer, run = self.record(material_authors=["cursor", "claude"])
@@ -509,7 +945,7 @@ class ReviewHandoffTests(unittest.TestCase):
         sequence, reviewer = self.bind(record, producer, run) or (None, None)
         self.assertEqual(sequence, 2)
         handoff = json.loads(reviewer.task)
-        record.plan.assignments = [producer, reviewer]
+        original_plan = record.plan.model_dump_json()
         record.review_handoff_digests[2] = handoff["artifact_digest"]
         payload = {
             "artifact_type": "edge_oracle_exact_sha_review/v1",
@@ -542,13 +978,24 @@ class ReviewHandoffTests(unittest.TestCase):
         )
         bind_verified_interaction(record, review_run, label="review-original")
         record.provider_runs.append(review_run)
-        authenticated = authenticate_provider_review_artifact(record, review_run, "secret")
+        authenticated = authenticate_provider_review_artifact(
+            record,
+            review_run,
+            "secret",
+            review_assignment=reviewer,
+        )
         self.assertIsNotNone(authenticated)
+        self.assertEqual(record.plan.model_dump_json(), original_plan)
 
         review_run.evidence_source = "owner_recovery"
         record.provider_runs[-1] = review_run
         with self.assertRaisesRegex(ValueError, "authenticated provider evidence"):
-            authenticate_provider_review_artifact(record, review_run, "secret")
+            authenticate_provider_review_artifact(
+                record,
+                review_run,
+                "secret",
+                review_assignment=reviewer,
+            )
         review_run.evidence_source = "provider_authenticated"
         record.provider_runs[-1] = review_run
 
@@ -561,7 +1008,12 @@ class ReviewHandoffTests(unittest.TestCase):
                 )
                 record.provider_runs[-1] = review_run
                 with self.assertRaisesRegex(ValueError, "stored handoff"):
-                    authenticate_provider_review_artifact(record, review_run, "secret")
+                    authenticate_provider_review_artifact(
+                        record,
+                        review_run,
+                        "secret",
+                        review_assignment=reviewer,
+                    )
 
     def test_tampering_with_candidate_metadata_invalidates_its_digest(self):
         record, producer, run = self.record()
@@ -572,6 +1024,59 @@ class ReviewHandoffTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValidationError, "digest"):
             self.bind(record, producer, run)
+
+    def test_review_overlay_cannot_change_planned_authority_or_budget(self):
+        record, producer, run = self.record()
+        record.assignment_outcomes.append(accepted_provider_outcome(record, run))
+        sequence, reviewer = self.bind(record, producer, run) or (None, None)
+        self.assertEqual(sequence, 2)
+        handoff = json.loads(reviewer.task)
+        record.review_handoff_digests[2] = handoff["artifact_digest"]
+        payload = {
+            "artifact_type": "edge_oracle_exact_sha_review/v1",
+            "artifact_id": handoff["required_review_artifact_id"],
+            "assignment_id": handoff["assignment_id"],
+            "project": "demo",
+            "repository": handoff["repository"],
+            "pull_number": handoff["pull_number"],
+            "base_ref": handoff["base_ref"],
+            "base_sha": handoff["base_sha"],
+            "head_ref": handoff["head_ref"],
+            "head_sha": handoff["head_sha"],
+            "implementation_provider": handoff["logical_producer"],
+            "implementation_actor": handoff["implementation_actor"],
+            "reviewer_provider": handoff["reviewer_provider"],
+            "review_run_id": "claude-review-authority",
+            "verdict": "ACCEPT",
+            "summary": "Accepted exact candidate.",
+            "evidence": ["Reviewed the bound candidate."],
+            "acceptance_checks": ["test"],
+            "rollback_instructions": "Revert the merge commit and restore the prior main ref.",
+        }
+        review_run = ProviderRun(
+            provider=ProviderName.CLAUDE,
+            assignment_sequence=2,
+            run_id="claude-review-authority",
+            status="completed",
+            evidence_source="provider_authenticated",
+            result=json.dumps(payload),
+        )
+        bind_verified_interaction(record, review_run, label="review-authority")
+        record.provider_runs.extend([run, review_run])
+
+        for changed in (
+            reviewer.model_copy(update={"estimated_cost_usd": 99}),
+            reviewer.model_copy(update={"depends_on": []}),
+            reviewer.model_copy(update={"requires_approval": True}),
+        ):
+            with self.subTest(changed=changed):
+                with self.assertRaisesRegex(ValueError, "authority or budget"):
+                    authenticate_provider_review_artifact(
+                        record,
+                        review_run,
+                        "secret",
+                        review_assignment=changed,
+                    )
 
     def test_mutable_evidence_source_alone_cannot_authenticate_review(self):
         record, producer, run = self.record()
@@ -898,10 +1403,10 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["Report completed and deferred lanes"],
                 ),
             )
-            store.create(task)
             claude = NonresponsiveAdapter()
             cursor = CompletingAdapter()
             engine = OrchestrationEngine(settings, store)
+            seed_authenticated_normalized_plan(store, engine, task)
             engine.providers = {
                 ProviderName.CLAUDE: claude,
                 ProviderName.CURSOR: cursor,
@@ -999,9 +1504,9 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                         final_acceptance=["Evidence accepted"],
                     ),
                 )
-                store.create(task)
                 adapter = AmbiguousAdapter(error)
                 engine = OrchestrationEngine(settings, store)
+                seed_authenticated_normalized_plan(store, engine, task)
                 engine.providers = {ProviderName.CLAUDE: adapter}
 
                 await engine.run(task.task_id)
@@ -1070,8 +1575,8 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["Evidence accepted"],
                 ),
             )
-            store.create(task)
             engine = OrchestrationEngine(settings, store)
+            seed_authenticated_normalized_plan(store, engine, task)
             engine.providers = {ProviderName.CLAUDE: PredispatchAdapter()}
 
             await engine.run(task.task_id)
@@ -1255,3 +1760,7 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:04 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:50 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | END]]

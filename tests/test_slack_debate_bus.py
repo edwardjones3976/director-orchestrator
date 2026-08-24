@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
@@ -7,6 +9,7 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:44 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -14,7 +17,13 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from director_orchestrator.approvals import StaleApproval
+from director_orchestrator.approvals import (
+    StaleApproval,
+    record_task_effect_observation,
+    reserve_task_effect,
+    reset_for_owner_clarification,
+    task_effect_key,
+)
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.interactions import (
@@ -80,6 +89,7 @@ def seed_verified_interaction(
     phase: ProviderInteractionPhase,
     result: object,
     assignment_sequence: int | None = None,
+    effect_key: str | None = None,
 ):
     """Seed the same digest-bound VERIFIED lifecycle expected from live transports."""
 
@@ -109,6 +119,7 @@ def seed_verified_interaction(
             phase=phase,
             attempt=1,
             transport_evidence=drafted_evidence,
+            effect_key=effect_key,
         )
         attempted = transition_interaction(
             [drafted],
@@ -158,15 +169,59 @@ def seed_verified_interaction(
 
 
 def seed_verified_plan(record: TaskRecord) -> None:
-    interaction_id = f"{record.task_id}:openai-plan"
-    seed_verified_interaction(
+    if record.plan is None:
+        raise AssertionError("a plan is required before seeding its authority")
+    if record.plan_generation == 0:
+        record.plan_generation = 1
+    target_generation = record.plan_generation
+    record.plan_generation = target_generation - 1
+    effect_key = task_effect_key(
+        record,
+        phase="plan",
+        identity={
+            "intake": hashlib.sha256(
+                record.intake.model_dump_json().encode("utf-8")
+            ).hexdigest(),
+            "target_generation": target_generation,
+        },
+    )
+    reserve_task_effect(
+        record,
+        effect_key=effect_key,
+        kind="director_intent",
+        phase="plan",
+        provider=ProviderName.OPENAI,
+    )
+    record.plan_generation = target_generation
+    interaction_id = (
+        f"{record.task_id}:generation-{record.plan_generation}:openai-plan"
+    )
+    verified_plan_event = seed_verified_interaction(
         record,
         interaction_id=interaction_id,
         provider=ProviderName.OPENAI,
         phase=ProviderInteractionPhase.PLAN,
         result=record.plan,
+        effect_key=effect_key,
     )
     record.plan_interaction_id = interaction_id
+    binding = OrchestrationEngine._plan_materialization_binding(
+        record,
+        verified_event_digest=verified_plan_event.event_digest,
+        verified_result_digest=(
+            verified_plan_event.transport_evidence.result_digest or ""
+        ),
+        effect_key=effect_key,
+    )
+    record_task_effect_observation(
+        record,
+        effect_key=effect_key,
+        intent_kind="director_intent",
+        observation_kind="director_observation",
+        phase="plan",
+        outcome="completed",
+        run_id=binding,
+    )
 
 
 def bind_reviewed_contribution(record: TaskRecord, turn: CollaborationTurn) -> None:
@@ -351,8 +406,7 @@ class DebatePolicyTests(unittest.TestCase):
                 openai_debate_turn_estimated_cost_usd=0.20,
             )
             store = TaskStore(settings.sqlite_path)
-            store.create(
-                TaskRecord(
+            task = TaskRecord(
                     task_id="DIR-DEBATE-COST-FLOOR",
                     status=TaskStatus.REVIEWING,
                     intake=SlackIntake(
@@ -365,7 +419,8 @@ class DebatePolicyTests(unittest.TestCase):
                     plan=debate_plan(),
                     plan_generation=1,
                 )
-            )
+            seed_verified_plan(task)
+            store.create(task)
             engine = OrchestrationEngine(settings, store)
             current = store.get("DIR-DEBATE-COST-FLOOR")
 
@@ -390,6 +445,7 @@ class DebatePolicyTests(unittest.TestCase):
                 effect
                 for effect in current.task_effect_ledger
                 if effect.kind == "director_intent"
+                and effect.phase in {"debate_counter_bias", "debate_synthesis"}
             ]
             self.assertEqual(
                 [effect.estimated_cost_usd for effect in debate_intents],
@@ -406,8 +462,7 @@ class DebatePolicyTests(unittest.TestCase):
                 openai_debate_turn_estimated_cost_usd=0.20,
             )
             store = TaskStore(settings.sqlite_path)
-            store.create(
-                TaskRecord(
+            task = TaskRecord(
                     task_id="DIR-DEBATE-COST-FLOOR-BLOCKED",
                     status=TaskStatus.REVIEWING,
                     intake=SlackIntake(
@@ -420,7 +475,8 @@ class DebatePolicyTests(unittest.TestCase):
                     plan=debate_plan(),
                     plan_generation=1,
                 )
-            )
+            seed_verified_plan(task)
+            store.create(task)
             engine = OrchestrationEngine(settings, store)
 
             with self.assertRaisesRegex(StaleApproval, "Cumulative task budget"):
@@ -431,7 +487,12 @@ class DebatePolicyTests(unittest.TestCase):
                     estimated_cost_usd=0,
                 )
             stored = store.get("DIR-DEBATE-COST-FLOOR-BLOCKED")
-            self.assertEqual(stored.task_effect_ledger, [])
+            self.assertFalse(
+                any(
+                    effect.phase == "debate_tie_judgment"
+                    for effect in stored.task_effect_ledger
+                )
+            )
             self.assertEqual(stored.cumulative_estimated_cost_usd, 0)
 
     def test_neutral_alternative_and_preliminary_option_must_be_configured(self):
@@ -646,6 +707,477 @@ class DebateDirector:
 
 
 class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generated_debate_plan_binds_target_generation_before_dispatch(self):
+        class PlanningDebateDirector(DebateDirector):
+            def __init__(self):
+                super().__init__()
+                self.plan_calls = 0
+
+            async def plan(self, record):
+                self.plan_calls += 1
+                return debate_plan()
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                cursor_api_key="test-cursor",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                max_agent_hops=4,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-GENERATED-DEBATE-BINDING",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-generated-debate-binding",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: choose a direction",
+                ),
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            claude = CompletingAdapter(ProviderName.CLAUDE)
+            cursor = CompletingAdapter(ProviderName.CURSOR)
+            director = PlanningDebateDirector()
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {
+                ProviderName.CLAUDE: claude,
+                ProviderName.CURSOR: cursor,
+            }
+            engine.director = director
+            engine.notifier = RecordingNotifier()
+
+            await engine.run(task.task_id)
+
+            completed = store.get(task.task_id)
+            self.assertEqual(completed.status, TaskStatus.DONE, completed.error)
+            self.assertEqual(completed.plan_generation, 1)
+            self.assertEqual(director.plan_calls, 1)
+            self.assertEqual(claude.calls, 2)
+            self.assertEqual(cursor.calls, 2)
+            plan_projection = project_interaction(
+                completed.provider_interaction_ledger,
+                completed.plan_interaction_id,
+            )
+            plan_event = next(
+                event
+                for event in completed.provider_interaction_ledger
+                if event.event_digest == plan_projection.latest_event_digest
+            )
+            self.assertEqual(plan_event.plan_generation, completed.plan_generation)
+            self.assertEqual(
+                [
+                    (effect.kind, effect.plan_generation)
+                    for effect in completed.task_effect_ledger
+                    if effect.phase == "plan"
+                ],
+                [("director_intent", 0), ("director_observation", 1)],
+            )
+
+    async def test_generated_plan_mutation_fails_before_provider_dispatch(self):
+        class PlanningDebateDirector(DebateDirector):
+            async def plan(self, record):
+                return debate_plan()
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                cursor_api_key="test-cursor",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                max_agent_hops=4,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-MUTATED-DEBATE-BINDING",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-mutated-debate-binding",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: choose a direction",
+                ),
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            claude = CompletingAdapter(ProviderName.CLAUDE)
+            cursor = CompletingAdapter(ProviderName.CURSOR)
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {
+                ProviderName.CLAUDE: claude,
+                ProviderName.CURSOR: cursor,
+            }
+            engine.director = PlanningDebateDirector()
+            engine.notifier = RecordingNotifier()
+            publish_delegation = engine._publish_delegation
+
+            async def mutate_before_delegation(record, assignment):
+                record.plan.debate = record.plan.debate.model_copy(
+                    update={"neutral_framing": "mutated after PLAN verification"}
+                )
+                return await publish_delegation(record, assignment)
+
+            engine._publish_delegation = mutate_before_delegation
+
+            await engine.run(task.task_id)
+
+            stopped = store.get(task.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
+            self.assertIn("materialized plan changed", stopped.error)
+            self.assertEqual(claude.calls, 0)
+            self.assertEqual(cursor.calls, 0)
+            self.assertEqual(stopped.assignment_outcomes, [])
+
+    async def test_non_debate_plan_mutation_fails_before_slack_or_provider_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-MUTATED-WORK-BEFORE-SLACK",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-mutated-work-before-slack",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: build one bounded feature",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Build one bounded feature",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.CLAUDE,
+                            task="Implement the authenticated task",
+                            acceptance=["Focused evidence passes"],
+                        )
+                    ],
+                    final_acceptance=["Late mutation is rejected"],
+                ),
+            )
+            seed_verified_plan(task)
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            adapter = CompletingAdapter(ProviderName.CLAUDE)
+            notifier = RecordingNotifier()
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {ProviderName.CLAUDE: adapter}
+            engine.notifier = notifier
+            publish_delegation = engine._publish_delegation
+
+            async def mutate_before_delegation(record, assignment):
+                record.plan.assignments[0] = record.plan.assignments[0].model_copy(
+                    update={"task": "Mutated after authenticated plan admission"}
+                )
+                return await publish_delegation(record, assignment)
+
+            engine._publish_delegation = mutate_before_delegation
+
+            await engine.run(task.task_id)
+
+            stopped = store.get(task.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
+            self.assertIn("materialized plan changed", stopped.error)
+            self.assertEqual(adapter.calls, 0)
+            self.assertFalse(
+                any("DELEGATION" in post["message"] for post in notifier.posts)
+            )
+
+    async def test_cas_reload_revalidates_plan_before_provider_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-CAS-PLAN-REBIND",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-cas-plan-rebind",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: verify CAS authority",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Verify CAS authority",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.CLAUDE,
+                            task="Execute only the authenticated assignment",
+                            acceptance=["Provider dispatch remains bound"],
+                        )
+                    ],
+                    final_acceptance=["CAS reload rejects changed authority"],
+                ),
+            )
+            seed_verified_plan(task)
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            adapter = CompletingAdapter(ProviderName.CLAUDE)
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {ProviderName.CLAUDE: adapter}
+            engine.notifier = RecordingNotifier()
+            mutate_if_version = store.mutate_if_version
+            injected = False
+
+            def mutate_current_before_reservation(task_id, expected_version, mutator, **kwargs):
+                nonlocal injected
+
+                if injected:
+                    return mutate_if_version(
+                        task_id, expected_version, mutator, **kwargs
+                    )
+                injected = True
+
+                def mutate_after_reload(current):
+                    current.plan.assignments[0] = current.plan.assignments[0].model_copy(
+                        update={"task": "Changed inside the provider reservation CAS"}
+                    )
+                    mutator(current)
+
+                return mutate_if_version(
+                    task_id, expected_version, mutate_after_reload, **kwargs
+                )
+
+            store.mutate_if_version = mutate_current_before_reservation
+
+            await engine.run(task.task_id)
+
+            stopped = store.get(task.task_id)
+            self.assertTrue(injected)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
+            self.assertIn("materialized plan changed", stopped.error)
+            self.assertEqual(adapter.calls, 0)
+            self.assertFalse(
+                any(effect.kind == "provider_intent" for effect in stopped.task_effect_ledger)
+            )
+
+    async def test_reloaded_second_assignment_revalidates_plan_materialization(self):
+        class AcceptingDirector:
+            async def review(self, record, result):
+                return ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="First assignment accepted.",
+                    evidence=["exact provider evidence"],
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-RELOAD-SECOND-ASSIGNMENT",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-reload-second-assignment",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: run two bounded assignments",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Run two bounded assignments",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=2,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.CLAUDE,
+                            task="Complete stage one",
+                            acceptance=["Stage one accepted"],
+                        ),
+                        Assignment(
+                            sequence=2,
+                            agent=ProviderName.CLAUDE,
+                            task="Complete authenticated stage two",
+                            acceptance=["Stage two accepted"],
+                            depends_on=[1],
+                        ),
+                    ],
+                    final_acceptance=["Each reloaded assignment remains bound"],
+                ),
+            )
+            seed_verified_plan(task)
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            adapter = CompletingAdapter(ProviderName.CLAUDE)
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {ProviderName.CLAUDE: adapter}
+            engine.director = AcceptingDirector()
+            engine.notifier = RecordingNotifier()
+            execute_assignment = engine._execute_assignment
+
+            async def mutate_reloaded_second_assignment(record, assignment):
+                if assignment.sequence == 2:
+                    record.plan.assignments[1] = record.plan.assignments[1].model_copy(
+                        update={"task": "Changed after the first assignment reload"}
+                    )
+                return await execute_assignment(record, assignment)
+
+            engine._execute_assignment = mutate_reloaded_second_assignment
+
+            await engine.run(task.task_id)
+
+            stopped = store.get(task.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
+            self.assertIn("materialized plan changed", stopped.error)
+            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(
+                [outcome.assignment_sequence for outcome in stopped.assignment_outcomes],
+                [1],
+            )
+
+    async def test_review_reservation_revalidates_plan_after_provider_result(self):
+        class CountingDirector:
+            def __init__(self):
+                self.review_calls = 0
+
+            async def review(self, record, result):
+                self.review_calls += 1
+                return ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Result accepted.",
+                    evidence=["exact provider evidence"],
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-REVIEW-PLAN-REBIND",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-review-plan-rebind",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: review a bounded result",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Review a bounded result",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.CLAUDE,
+                            task="Return one bounded result",
+                            acceptance=["Review remains plan-bound"],
+                        )
+                    ],
+                    final_acceptance=["Review cannot use changed plan authority"],
+                ),
+            )
+            seed_verified_plan(task)
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            adapter = CompletingAdapter(ProviderName.CLAUDE)
+            director = CountingDirector()
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {ProviderName.CLAUDE: adapter}
+            engine.director = director
+            engine.notifier = RecordingNotifier()
+            reserve_director_effect = engine._reserve_director_effect
+            injected = False
+
+            def mutate_before_review_reservation(record, **kwargs):
+                nonlocal injected
+
+                if kwargs["phase"] == "acceptance_review" and not injected:
+                    injected = True
+                    record.plan.normalized_outcome = (
+                        "Changed after provider result but before Director review"
+                    )
+                    store.save(record)
+                return reserve_director_effect(record, **kwargs)
+
+            engine._reserve_director_effect = mutate_before_review_reservation
+
+            await engine.run(task.task_id)
+
+            stopped = store.get(task.task_id)
+            self.assertTrue(injected)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
+            self.assertIn("materialized plan changed", stopped.error)
+            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(director.review_calls, 0)
+            self.assertFalse(
+                any(
+                    effect.phase == "acceptance_review"
+                    for effect in stopped.task_effect_ledger
+                )
+            )
+
     async def test_new_plan_budget_reserves_all_debate_control_costs(self):
         class PlanningDirector:
             async def plan(self, record):
@@ -903,8 +1435,179 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
             self.assertEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
             self.assertIn("live plan lacks its Director interaction binding", stopped.error)
-            self.assertEqual(adapter.calls, 1)
-            self.assertEqual(len(stopped.assignment_outcomes), 1)
+            self.assertEqual(adapter.calls, 0)
+            self.assertEqual(len(stopped.assignment_outcomes), 0)
+
+    async def test_dry_run_preview_recovers_after_missing_key_then_authenticates_live_replan(self):
+        class FreshPlanningDirector:
+            def __init__(self):
+                self.plan_calls = 0
+
+            async def plan(self, record):
+                self.plan_calls += 1
+                return DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Build one bounded feature after owner confirmation",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    owner_question="Confirm the newly authenticated live plan.",
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.CLAUDE,
+                            task="Build only after the new plan is confirmed",
+                            acceptance=["Authenticated plan is preserved"],
+                        )
+                    ],
+                    final_acceptance=["Preview authority was not reused"],
+                )
+
+            async def review(self, record, result):
+                raise AssertionError("owner-question replan must stop before review")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            dry_settings = replace(
+                Settings(),
+                allow_paid_runs=False,
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=database,
+            )
+            task = TaskRecord(
+                task_id="DIR-DRY-RUN-CANNOT-GO-LIVE",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-dry-run-cannot-go-live",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="DIRECTOR Project: demo Outcome: build one bounded feature",
+                ),
+            )
+            store = TaskStore(database)
+            store.create(task)
+            dry_engine = OrchestrationEngine(dry_settings, store)
+            dry_engine.notifier = RecordingNotifier()
+            await dry_engine.run(task.task_id)
+            preview = store.get(task.task_id)
+            self.assertIsNotNone(preview.plan)
+            self.assertIsNone(preview.plan_interaction_id)
+
+            missing_key_engine = OrchestrationEngine(
+                replace(
+                    dry_settings,
+                    allow_paid_runs=True,
+                    openai_api_key="",
+                ),
+                store,
+            )
+            missing_key_engine.notifier = RecordingNotifier()
+            await missing_key_engine.run(task.task_id)
+            blocked = store.get(task.task_id)
+            self.assertEqual(blocked.status, TaskStatus.BLOCKED)
+            self.assertEqual(blocked.message, "OPENAI_API_KEY is not configured")
+            self.assertEqual(blocked.plan_generation, preview.plan_generation)
+            self.assertIsNone(blocked.plan_interaction_id)
+
+            live_settings = replace(
+                dry_settings,
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+            )
+            adapter = CompletingAdapter(ProviderName.CLAUDE)
+            director = FreshPlanningDirector()
+            live_engine = OrchestrationEngine(live_settings, store)
+            live_engine.providers = {ProviderName.CLAUDE: adapter}
+            live_engine.director = director
+            live_engine.notifier = RecordingNotifier()
+
+            await live_engine.run(task.task_id)
+
+            stopped = store.get(task.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.message, "Confirm the newly authenticated live plan.")
+            self.assertIsNone(stopped.error)
+            self.assertEqual(director.plan_calls, 1)
+            self.assertIsNotNone(stopped.plan_interaction_id)
+            self.assertEqual(stopped.plan_generation, preview.plan_generation + 1)
+            plan_projection = project_interaction(
+                stopped.provider_interaction_ledger, stopped.plan_interaction_id
+            )
+            self.assertEqual(plan_projection.state, ProviderInteractionState.VERIFIED)
+            self.assertEqual(adapter.calls, 0)
+            self.assertEqual(stopped.assignment_outcomes, [])
+
+    def test_reset_and_replan_namespaces_debate_correlations_by_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")
+            )
+            task = TaskRecord(
+                task_id="DIR-DEBATE-CORRELATION-RESET",
+                status=TaskStatus.RUNNING,
+                intake=SlackIntake(
+                    source_event_id="evt-debate-correlation-reset",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="DIRECTOR Project: demo Outcome: compare two options",
+                ),
+                plan=debate_plan(),
+                plan_generation=1,
+            )
+            seed_verified_plan(task)
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            engine = OrchestrationEngine(settings, store)
+            first_turn_ids = {
+                turn.correlation_id
+                for turn in engine._ensure_openai_debate_preamble_records(task)
+            }
+            first_role_ids = {
+                engine._generation_correlation_id(task, role)
+                for role in (
+                    "debate-moderator",
+                    "openai-initial-position",
+                    "provider-rebuttal",
+                    "debate-counter-bias",
+                    "openai-final-vote",
+                    "debate-synthesis",
+                    "debate-tie-judgment",
+                )
+            }
+
+            reset_for_owner_clarification(task)
+            task.plan = debate_plan()
+            task.plan_generation += 1
+            task.status = TaskStatus.RUNNING
+            seed_verified_plan(task)
+            second_turn_ids = {
+                turn.correlation_id
+                for turn in engine._ensure_openai_debate_preamble_records(task)
+            }
+            second_role_ids = {
+                engine._generation_correlation_id(task, role)
+                for role in (
+                    "debate-moderator",
+                    "openai-initial-position",
+                    "provider-rebuttal",
+                    "debate-counter-bias",
+                    "openai-final-vote",
+                    "debate-synthesis",
+                    "debate-tie-judgment",
+                )
+            }
+
+            self.assertTrue(first_turn_ids.isdisjoint(second_turn_ids))
+            self.assertTrue(first_role_ids.isdisjoint(second_role_ids))
+            self.assertTrue(all(":generation-1:" in item for item in first_role_ids))
+            self.assertTrue(all(":generation-2:" in item for item in second_role_ids))
 
     async def test_slack_delivery_retries_twice_with_one_idempotency_key(self):
         class FailTwice(RecordingNotifier):
@@ -953,6 +1656,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["Slack retry is bounded"],
                 ),
             )
+            seed_verified_plan(task)
             store = TaskStore(settings.sqlite_path)
             store.create(task)
             notifier = FailTwice()
@@ -1011,6 +1715,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["No Slack delivery is claimed"],
                 ),
             )
+            seed_verified_plan(task)
             store = TaskStore(settings.sqlite_path)
             store.create(task)
             notifier = RecordingNotifier()
@@ -1081,6 +1786,53 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ["reserved", "delivered"],
             )
 
+    async def test_default_slack_client_id_is_distinct_across_plan_generations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                slack_bot_token="test-slack",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-SLACK-GENERATION-ID",
+                status=TaskStatus.OWNER_DECISION_REQUIRED,
+                intake=SlackIntake(
+                    source_event_id="evt-slack-generation-id",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="DIRECTOR Project: demo Outcome: generation-safe status",
+                ),
+                plan_generation=1,
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            notifier = RecordingNotifier()
+            engine = OrchestrationEngine(settings, store)
+            engine.notifier = notifier
+
+            await engine._deliver_collaboration_message(task, "same owner status")
+            next_generation = store.get(task.task_id)
+            next_generation.plan_generation = 2
+            store.save(next_generation)
+            await engine._deliver_collaboration_message(
+                next_generation, "same owner status"
+            )
+
+            client_ids = [post["client_msg_id"] for post in notifier.posts]
+            persisted = store.get(task.task_id)
+            slack_intents = [
+                effect
+                for effect in persisted.task_effect_ledger
+                if effect.kind == "slack_intent"
+            ]
+            self.assertEqual(len(client_ids), 2)
+            self.assertNotEqual(client_ids[0], client_ids[1])
+            self.assertEqual(
+                [effect.plan_generation for effect in slack_intents], [1, 2]
+            )
+            self.assertEqual(len({effect.effect_key for effect in slack_intents}), 2)
+
     async def test_restart_preserves_atomic_thread_routing_and_delivers_later_messages(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(
@@ -1115,13 +1867,14 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["Later collaboration messages are not silently skipped"],
                 ),
             )
+            seed_verified_plan(task)
             store = TaskStore(settings.sqlite_path)
             store.create(task)
             notifier = RecordingNotifier()
             first_engine = OrchestrationEngine(settings, store)
             first_engine.notifier = notifier
             root_client_id = first_engine._slack_client_id(
-                task.task_id, "collaboration-root"
+                first_engine._generation_correlation_id(task, "collaboration-root")
             )
 
             delivered, timestamp = await first_engine._deliver_collaboration_message(
@@ -1807,6 +2560,19 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(continued)
             persisted = store.get(task.task_id)
             self.assertEqual(
+                persisted.debate_tally,
+                {
+                    "configured_weight_total": 7.0,
+                    "cast_weight_total": 6.0,
+                    "option_weights": {"A": 3.0, "B": 3.0},
+                    "abstaining": [],
+                    "unavailable": [],
+                    "winning_options": ["A", "B"],
+                    "resolution": "openai_director_judgment",
+                    "authorizes_external_action": False,
+                },
+            )
+            self.assertEqual(
                 [vote.member for vote in captured_votes],
                 ["claude", "cursor", "openai"],
             )
@@ -1866,3 +2632,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:58 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | END]]

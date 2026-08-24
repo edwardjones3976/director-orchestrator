@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
@@ -23,6 +25,7 @@ from director_orchestrator.config import Settings
 from director_orchestrator.approvals import (
     apply_oracle_recovery,
     assignment_approval_digest,
+    record_task_effect_observation,
     reset_for_owner_clarification,
     record_provider_effect_observation,
     reserve_task_effect,
@@ -105,6 +108,7 @@ def _seed_verified_interaction(
     result: str,
     assignment_sequence: int | None = None,
     interaction_id: str | None = None,
+    effect_key: str | None = None,
     run_id: str | None = None,
     session_id: str | None = None,
 ) -> tuple[str, str]:
@@ -114,7 +118,7 @@ def _seed_verified_interaction(
         f"test:{record.task_id}:{provider.value}:{phase.value}:"
         f"{assignment_sequence or 0}:{len(record.provider_interaction_ledger)}"
     )
-    effect_key = hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
+    effect_key = effect_key or hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
     drafted_evidence = build_transport_evidence(
         transport=_provider_transport(provider),
         source=TransportEvidenceSource.BACKEND_OBSERVATION,
@@ -176,13 +180,44 @@ def _seed_verified_interaction(
 def _seed_verified_plan(record: TaskRecord) -> None:
     if record.plan is None:
         raise AssertionError("test fixture must install a plan before its evidence")
-    interaction_id, _ = _seed_verified_interaction(
+    plan_result = record.plan.model_dump_json()
+    effect_key = task_effect_key(
+        record,
+        phase="plan",
+        identity={"materialized_plan": json.loads(plan_result)},
+    )
+    reserve_task_effect(
+        record,
+        effect_key=effect_key,
+        kind="director_intent",
+        phase="plan",
+        provider=ProviderName.OPENAI,
+        estimated_cost_usd=0,
+        hop_units=1,
+    )
+    interaction_id, verified_event_digest = _seed_verified_interaction(
         record,
         provider=ProviderName.OPENAI,
         phase=ProviderInteractionPhase.PLAN,
-        result=record.plan.model_dump_json(),
+        result=plan_result,
+        effect_key=effect_key,
     )
     record.plan_interaction_id = interaction_id
+    materialization_binding = OrchestrationEngine._plan_materialization_binding(
+        record,
+        verified_event_digest=verified_event_digest,
+        verified_result_digest=canonical_content_digest(plan_result),
+        effect_key=effect_key,
+    )
+    record_task_effect_observation(
+        record,
+        effect_key=effect_key,
+        intent_kind="director_intent",
+        observation_kind="director_observation",
+        phase="plan",
+        outcome="completed",
+        run_id=materialization_binding,
+    )
 
 
 def _seed_verified_run(record: TaskRecord, run: ProviderRun) -> None:
@@ -407,6 +442,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 artifact_id="artifact-live-owner",
                 digest=lambda: "artifact-digest",
             )
+            _seed_verified_plan(record)
             effect_key = task_effect_key(
                 record,
                 phase="oracle_merge",
@@ -1474,6 +1510,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     final_acceptance=["No provider call"],
                 ),
             )
+            _seed_verified_plan(record)
             store.create(record)
 
             engine = OrchestrationEngine(settings, store)
@@ -1886,4 +1923,6 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | END]]
 
