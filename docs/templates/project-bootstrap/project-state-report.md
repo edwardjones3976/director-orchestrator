@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | BEGIN]] -->
@@ -49,6 +50,7 @@ report or submission envelope.
 - **Purpose/outcome:** <current proposition or delivered result>
 - **Selected modules:** <active modules>
 - **Team routing:** <providers, roles, and discovered workflow skills>
+- **Provider roles contract:** <path to the project's `provider-roles-contract.yaml`, or none; it records the eight responsibility areas and the Cursor, Antigravity, Perplexity, and OpenAI boundaries>
 - **Director/control plane:** <OpenAI Director duties; never a specialist assignment target; separate from its external 1% production share>
 - **Direct-production routing:** <Claude 60%, Cursor 28%, Gemini/Antigravity 7%, Perplexity 4%; separately owner-authorized external Codex/OpenAI 1%; or recorded justified deviation>
 - **External OpenAI production:** <none, or exact owner authorization, authenticated candidate identity, different-provider exact-candidate review, and current security/CI/merge evidence>
@@ -110,3 +112,4 @@ published, enabled, or otherwise changed>.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->

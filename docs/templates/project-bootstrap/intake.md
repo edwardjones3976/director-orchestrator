@@ -1,3 +1,5 @@
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 # PROJECT_BOOTSTRAP
 
 Copy this block into the new project's designated Slack thread or continuity
@@ -65,11 +67,18 @@ Mark each `enabled`, `optional`, `disabled`, or `unknown`.
 ## Initial team hypothesis
 
 Canonical provider roles, debate rules, and committee weights:
-[`docs/team-operating-charter.md`](../../team-operating-charter.md).
+[`docs/team-operating-charter.md`](../../team-operating-charter.md). Record the
+project-local eight responsibility areas and the Cursor, Antigravity,
+Perplexity, and OpenAI boundaries in
+[`provider-roles-contract.yaml`](provider-roles-contract.yaml); keep OpenAI's
+three canonical functions distinct — Moderator, Participant, and Director.
+Only Participant votes, casting the single existing OpenAI advisory vote at
+weight 2.0; Moderator and Director never vote. Coordination, planning, and
+acceptance review are Director duties, not separate functions.
 
 | Lane | Provider/capability | Shared workflow skill | Why it may fit |
 | --- | --- | --- | --- |
-| Director | OpenAI | none | <framing, synthesis, acceptance> |
+| Director | OpenAI | none | <Moderator, Participant, and Director kept distinct; only Participant votes> |
 | Primary | <Claude or Cursor> | <skill name or none> | <bounded contribution> |
 | Independent | <different provider> | <skill name or none> | <research, reproduction, QA, or review> |
 | Supplemental | <Antigravity, Perplexity, Firecrawl, or none> | <skill name or none> | <bounded contribution> |
@@ -100,3 +109,5 @@ Create a provisional project profile and select the smallest useful module set.
 Proceed analysis-only where authority or execution surfaces remain unknown.
 Ask the owner one focused question only when the unresolved choice materially
 changes authority, scope, cost, privacy, repository target, or risk.
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]] -->

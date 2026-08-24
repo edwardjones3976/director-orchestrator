@@ -1,3 +1,6 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | BEGIN]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
@@ -23,6 +26,10 @@ from director_orchestrator.models import (
     SlackIntake,
     TaskRecord,
     TaskStatus,
+)
+from director_orchestrator.antigravity import (
+    DENIED_AUTHORITIES,
+    WITHHELD_CONTEXT,
 )
 from director_orchestrator.team_charter import (
     AdvisoryVote,
@@ -546,10 +553,264 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(material.authorizes_external_action)
 
 
+class ProjectProviderRolesContractTests(unittest.TestCase):
+    """Drift tests for the project-local provider roles contract template."""
+
+    BOOTSTRAP = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "templates"
+        / "project-bootstrap"
+    )
+
+    def contract(self) -> str:
+        return (self.BOOTSTRAP / "provider-roles-contract.yaml").read_text(
+            encoding="utf-8"
+        )
+
+    def test_contract_mirrors_the_charter_responsibility_areas(self):
+        contract = self.contract()
+        areas = team_operating_charter()["responsibility_areas"]
+
+        self.assertEqual(len(areas), 8)
+        for area in areas:
+            with self.subTest(area=area["name"]):
+                self.assertIn(f'- name: "{area["name"]}"', contract)
+                self.assertIn(f'expectation: "{area["expectation"]}"', contract)
+
+    def test_contract_encodes_the_cursor_boundary(self):
+        contract = self.contract()
+        cursor = team_operating_charter()["role_profiles"]["cursor"]
+
+        self.assertEqual(len(cursor["eligible_responsibilities"]), 8)
+        for area in cursor["eligible_responsibilities"]:
+            with self.subTest(area=area):
+                self.assertIn(f'      - "{area}"', contract)
+        self.assertIn(
+            f'capability_parity_target: {cursor["capability_parity_target"]}', contract
+        )
+        for peer in cursor["comparison_peers"]:
+            self.assertIn(peer, contract)
+        self.assertIn('may_handle_critical_work: true', contract)
+        self.assertIn('"critical"', contract)
+        for denial in (
+            "a benchmark, score, ranking, or measured performance claim",
+            "permission, access, or credential expansion",
+            "sole acceptance authority",
+            "authority to review or approve its own work",
+            "merge, deployment, or publication authority",
+            "safety authority",
+        ):
+            with self.subTest(denial=denial):
+                self.assertIn(f'- "{denial}"', contract)
+        for rule in cursor["non_substitution_rules"]:
+            with self.subTest(rule=rule):
+                self.assertIn(f'- "{rule}"', contract)
+
+    def test_contract_encodes_the_antigravity_boundary(self):
+        contract = self.contract()
+
+        self.assertIn('lane: "subordinate_supplemental_specialist"', contract)
+        for category in (
+            "explicit boilerplate",
+            "scaffolding",
+            "low-level mechanical implementation",
+            "alternate/abstract ideation",
+            "the bounded sandbox execution those need",
+        ):
+            with self.subTest(category=category):
+                self.assertIn(f'- "{category}"', contract)
+        self.assertNotIn("sandboxed prototypes", contract)
+        for permitted in (
+            "repository_owned_fixed_strings",
+            "closed_enum_values",
+            "bounded_integers",
+        ):
+            with self.subTest(permitted=permitted):
+                self.assertIn(f'- "{permitted}"', contract)
+        for prose in (
+            "model_authored_prose",
+            "owner_authored_prose",
+            "caller_authored_prose",
+        ):
+            with self.subTest(prose=prose):
+                self.assertIn(f'- "{prose}"', contract)
+        self.assertIn("seatable: false", contract)
+
+    def test_contract_mirrors_the_runtime_antigravity_denied_authorities(self):
+        contract = self.contract()
+
+        # Exact equality with the runtime constant, not a paraphrase: a broad
+        # phrase like "operational authority" does not preserve the typed
+        # boundary the runtime actually sends.
+        block = contract.split("denied_authorities:", 1)[1].split("withheld_context:", 1)[0]
+        mirrored = tuple(
+            line.strip()[3:-1]
+            for line in block.splitlines()
+            if line.strip().startswith('- "')
+        )
+        self.assertEqual(mirrored, DENIED_AUTHORITIES)
+        self.assertEqual(len(mirrored), 11)
+
+        tail = contract.split("withheld_context:", 1)[1].split("\n    debate:", 1)[0]
+        withheld = tuple(
+            line.strip()[3:-1]
+            for line in tail.splitlines()
+            if line.strip().startswith('- "')
+        )
+        self.assertEqual(withheld, WITHHELD_CONTEXT)
+
+    def test_contract_requires_downstream_verification_of_antigravity_work(self):
+        contract = self.contract()
+
+        self.assertIn('artifact_status: "non_authoritative_evidence"', contract)
+        self.assertIn("mandatory_downstream_verification:", contract)
+        self.assertIn("required: true", contract)
+        self.assertIn('assignee: "claude_or_cursor"', contract)
+        self.assertIn(
+            "must feed a later Claude or Cursor assignment that independently "
+            "verifies and integrates or rejects it",
+            contract,
+        )
+        for denied in (
+            "exact-SHA review",
+            "final acceptance",
+            "deterministic merge",
+            "defining research-contract or methodology truth",
+        ):
+            with self.subTest(denied=denied):
+                self.assertIn(f'- "{denied}"', contract)
+
+    def test_contract_encodes_the_perplexity_boundary(self):
+        contract = self.contract()
+        charter = team_operating_charter()["perplexity_contract"]
+
+        self.assertIn(f'role: "{charter["role"]}"', contract)
+        # Every canonical prohibition must appear verbatim. Omitting or
+        # rewording any one of them fails here rather than silently narrowing
+        # what the template appears to permit.
+        self.assertEqual(len(charter["prohibited"]), 6)
+        for prohibited in charter["prohibited"]:
+            with self.subTest(prohibited=prohibited):
+                self.assertIn(f'- "{prohibited}"', contract)
+        self.assertIn('excluded_responsibility_areas:', contract)
+        self.assertIn('      - "programming"', contract)
+        for field in (
+            "query",
+            "result_url",
+            "page_title",
+            "publication_date",
+            "retrieval_date",
+            "supporting_excerpt_or_extracted_content",
+            "source_type",
+            "confidence",
+            "contradictions",
+            "unavailable_evidence",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(f'- "{field}"', contract)
+        self.assertIn(f'review_requirement: "{charter["review_requirement"]}"', contract)
+
+    def test_contract_keeps_the_three_openai_functions_distinct(self):
+        contract = self.contract()
+
+        for function_id in ("moderator", "participant", "director"):
+            with self.subTest(function_id=function_id):
+                self.assertIn(f'- id: "{function_id}"', contract)
+        self.assertIn("function_separation_rule:", contract)
+        self.assertIn("never collapsed or renamed into duty buckets", contract)
+
+        # The voting boundary is what the canonical identities carry: the
+        # Participant holds the one authenticated position and vote, and
+        # neither Moderator nor Director votes.
+        moderator = contract.split('- id: "moderator"', 1)[1].split("- id:", 1)[0]
+        participant = contract.split('- id: "participant"', 1)[1].split("- id:", 1)[0]
+        director = contract.split('- id: "director"', 1)[1].split("\n    participation_record_rule", 1)[0]
+        self.assertIn("votes: false", moderator)
+        self.assertIn("votes: true", participant)
+        self.assertIn("vote_count: 1", participant)
+        self.assertIn("vote_weight: 2.0", participant)
+        self.assertIn("votes: false", director)
+        self.assertIn("Moderation does not cast a vote.", moderator)
+        self.assertIn("no additional vote", participant)
+        self.assertIn("does not create a vote", director)
+
+        # Coordination, planning, and acceptance survive only as nested duties.
+        for duty in ("plan", "decompose", "route", "coordinate", "synthesize", "acceptance_review"):
+            with self.subTest(duty=duty):
+                self.assertIn(f'- "{duty}"', director)
+        self.assertIn("participation_record_rule:", contract)
+        for boundary in (
+            "producer_exclusion:",
+            "material_tie_escalation:",
+            "deterministic_gates:",
+        ):
+            with self.subTest(boundary=boundary):
+                self.assertIn(boundary, contract)
+
+    def test_contract_grants_no_authority_and_changes_no_runtime_surface(self):
+        contract = self.contract()
+
+        self.assertIn('authority_granted: "none"', contract)
+        for unchanged in (
+            "committee voting weights or the immutable denominator",
+            "runtime permissions or allowlists",
+            "provider credentials",
+            "deployments or service state",
+            "Slack behaviour",
+            "deterministic policy in src/director_orchestrator/policy.py",
+        ):
+            with self.subTest(unchanged=unchanged):
+                self.assertIn(f'- "{unchanged}"', contract)
+
+    def test_intake_names_the_canonical_openai_functions(self):
+        intake = (self.BOOTSTRAP / "intake.md").read_text(encoding="utf-8")
+
+        for name in ("Moderator", "Participant", "Director"):
+            with self.subTest(name=name):
+                self.assertIn(name, intake)
+        self.assertIn("Only Participant votes", intake)
+        self.assertIn("Moderator and Director never vote", intake)
+        # The duty-bucket phrasing must not reappear as a function partition.
+        self.assertNotIn(
+            "coordination, planning, and acceptance-review functions distinct", intake
+        )
+        self.assertIn(
+            "acceptance review are Director duties, not separate functions", intake
+        )
+
+    def test_readme_requires_the_contract_whenever_the_profile_is_used(self):
+        readme = (self.BOOTSTRAP / "README.md").read_text(encoding="utf-8")
+        profile = (self.BOOTSTRAP / "project-profile.yaml").read_text(encoding="utf-8")
+
+        # The profile sets the reference unconditionally, so the kit must not
+        # let a single-provider project skip the companion file.
+        self.assertIn('provider_roles_contract: "provider-roles-contract.yaml"', profile)
+        self.assertNotIn("whenever the project staffs more than one provider", readme)
+        self.assertIn("whenever you", readme)
+        self.assertIn("including single-provider", readme)
+        self.assertIn("leaves that reference dangling", readme)
+
+    def test_bootstrap_surfaces_reference_the_roles_contract(self):
+        for surface in (
+            "project-profile.yaml",
+            "workstream-plan.md",
+            "intake.md",
+            "project-state-report.md",
+        ):
+            with self.subTest(surface=surface):
+                self.assertIn(
+                    "provider-roles-contract.yaml",
+                    (self.BOOTSTRAP / surface).read_text(encoding="utf-8"),
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
 
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
-
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]

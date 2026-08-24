@@ -1,0 +1,239 @@
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | BEGIN]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
+# Canonical project-local provider roles contract (director-provider-roles/v1).
+#
+# This template records project-local role scope only. It grants no authority.
+# It changes no committee voting weight, runtime permission, provider credential,
+# deployment, or Slack behaviour, and it never overrides deterministic policy.
+#
+# Naming note: `deep_reasoning` is the canonical charter name for the area also
+# described informally as "deep thinking". The canonical name is used here so a
+# drift test can compare this contract against the charter field by field.
+#
+# Do not place secrets, credentials, tokens, or raw private source here.
+schema_version: "director-provider-roles/v1"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  precedence: "charter_and_deterministic_policy_override_this_template"
+  drift_rule: "If this contract and the charter disagree, the charter wins and this file is wrong."
+
+# The eight stable responsibility areas. Names and expectations are mirrored
+# exactly from the charter's `responsibility_areas`; a drift test enforces it.
+responsibility_areas:
+  - name: "research"
+    expectation: "Research relevant sources; preserve provenance and label facts, inference, dissent, and unknowns."
+  - name: "evidence_verification"
+    expectation: "Cross-check material claims; report contradictions, freshness, and gaps."
+  - name: "programming"
+    expectation: "Build and maintain only within assigned repositories, paths, tools, and effects."
+  - name: "deep_reasoning"
+    expectation: "Compare alternatives, challenge assumptions, and recommend from evidence."
+  - name: "innovation"
+    expectation: "Test novel approaches through bounded, reversible experiments."
+  - name: "development"
+    expectation: "Improve projects and team capability through clear handoffs and reusable knowledge."
+  - name: "quality_assurance"
+    expectation: "Reproduce defects, test by risk, and never treat partial evidence as readiness."
+  - name: "leadership"
+    expectation: "Coordinate dependencies and dissent under owner intent and deterministic policy."
+
+providers:
+
+  cursor:
+    team: "primary"
+    eligible_responsibility_areas:
+      - "research"
+      - "evidence_verification"
+      - "programming"
+      - "deep_reasoning"
+      - "innovation"
+      - "development"
+      - "quality_assurance"
+      - "leadership"
+    eligible_complexity: ["low", "medium", "high", "critical"]
+    may_handle_critical_work: true
+    routing_policy:
+      capability_parity_target: 0.9
+      comparison_peers: ["claude", "openai_codex"]
+      statement: "Route Cursor at approximately 90% capability parity with Claude and Codex, by fit, independence, capacity, and evidence needs."
+      parity_is_not:
+        - "a benchmark, score, ranking, or measured performance claim"
+        - "permission, access, or credential expansion"
+        - "sole acceptance authority"
+        - "authority to review or approve its own work"
+        - "merge, deployment, or publication authority"
+        - "safety authority"
+    non_substitution_rules:
+      - "Cursor cannot perform OpenAI's Director acceptance role."
+      - "Cursor does not replace mandatory Codex Security."
+      - "Cursor cannot review or approve its own work."
+      - "Parity expands no access, credential, merge, deployment, or publication authority."
+
+  antigravity:
+    provider: "gemini"
+    lane: "subordinate_supplemental_specialist"
+    never_a_primary_team_substitute: true
+    # Charter-exact bounded work categories. Nothing broader is in scope.
+    allowed_work:
+      - "explicit boilerplate"
+      - "scaffolding"
+      - "low-level mechanical implementation"
+      - "alternate/abstract ideation"
+      - "the bounded sandbox execution those need"
+    artifact_status: "non_authoritative_evidence"
+    cannot_perform:
+      - "exact-SHA review"
+      - "final acceptance"
+      - "deterministic merge"
+      - "defining research-contract or methodology truth"
+    # Sandbox output is never complete on its own.
+    mandatory_downstream_verification:
+      required: true
+      assignee: "claude_or_cursor"
+      rule: "Every Antigravity work assignment must feed a later Claude or Cursor assignment that independently verifies and integrates or rejects it."
+      planner_rule: "A plan that routes work to Antigravity without that later verifying assignment is incomplete."
+    outbound_work_packet:
+      permitted_value_kinds:
+        - "repository_owned_fixed_strings"
+        - "closed_enum_values"
+        - "bounded_integers"
+      prohibited_value_kinds:
+        - "model_authored_prose"
+        - "owner_authored_prose"
+        - "caller_authored_prose"
+      enforcement: "mechanical_closed_vocabulary_assertion_not_review"
+      failure_mode: "fail_closed_with_generic_labels"
+    # Mirrored exactly from DENIED_AUTHORITIES in
+    # src/director_orchestrator/antigravity.py. Every request denies all of
+    # these regardless of its capability. A drift test asserts equality with the
+    # runtime constant, so a broad paraphrase cannot replace the typed boundary.
+    denied_authorities:
+      - "acceptance_verdict"
+      - "billing_or_spend"
+      - "branch_selection"
+      - "contract_or_methodology_definition"
+      - "deployment_or_publication"
+      - "external_write"
+      - "merge"
+      - "permission_or_credential_change"
+      - "repository_access"
+      - "repository_write"
+      - "review_verdict"
+    # Mirrored exactly from WITHHELD_CONTEXT in the same module: stated on the
+    # wire so the receiving agent cannot mistake absence for oversight.
+    withheld_context:
+      - "acceptance_criteria"
+      - "assignment_task_text"
+      - "dependency_outcomes"
+      - "owner_objective"
+      - "owner_or_slack_identifiers"
+      - "primary_team_handoff_context"
+      - "private_project_data"
+      - "repository_paths_diffs_or_source"
+      - "reviewer_revision_text"
+      - "run_session_or_task_identifiers"
+    debate:
+      seatable: false
+      reason: "Neither the question, the options, nor peer arguments may cross the closed outbound contract."
+      voting_weight_effect: "Weight stays in the immutable denominator and is never cast."
+
+  perplexity:
+    role: "evidence_only_research_specialist"
+    transport: "api_only"
+    allowed:
+      - "methodological research"
+      - "theoretical research"
+      - "source discovery"
+      - "cross-source fact verification"
+      - "user-reviewed evidence gathering"
+    # Mirrored exactly from team_operating_charter()["perplexity_contract"]["prohibited"].
+    # A drift test fails if any canonical prohibition is omitted or reworded.
+    prohibited:
+      - "private repository context or credentials"
+      - "code or repository writes"
+      - "approval, acceptance, or merge verdicts"
+      - "committee votes"
+      - "Slack or other external posts"
+      - "merge, deployment, publication, or permission changes"
+    excluded_responsibility_areas:
+      - "programming"
+    required_provenance_fields:
+      - "query"
+      - "result_url"
+      - "page_title"
+      - "publication_date"
+      - "retrieval_date"
+      - "supporting_excerpt_or_extracted_content"
+      - "source_type"
+      - "confidence"
+      - "contradictions"
+      - "unavailable_evidence"
+    review_requirement: "OpenAI or another authorized primary-team member must evaluate Perplexity evidence before it influences a plan, implementation requirement, or acceptance decision."
+
+  openai:
+    # The three canonical identities from docs/team-operating-charter.md and
+    # prompts/director-system.md. Coordination, planning, and acceptance are
+    # duties nested under these identities; they never replace or blur them,
+    # because only the identity carries the voting boundary.
+    function_separation_rule: "OpenAI keeps Moderator, Participant, and Director separate in every project-local record; they are never collapsed or renamed into duty buckets."
+    functions:
+      - id: "moderator"
+        votes: false
+        duties:
+          - "frame the question and bounded options neutrally"
+          - "request positions without leading language"
+          - "prevent premature cross-exposure"
+          - "run the counter-bias pass against the favored view"
+        boundary: "Moderation does not cast a vote."
+      - id: "participant"
+        votes: true
+        vote_count: 1
+        vote_weight: 2.0
+        duties:
+          - "record an independently formed initial position before specialist conclusions are exposed"
+          - "cast the single existing OpenAI advisory vote during synthesis"
+        boundary: "Participant is the one authenticated OpenAI position and vote. It receives no additional vote for planning, moderation, synthesis, or acceptance."
+      - id: "director"
+        votes: false
+        duties:
+          - "plan"
+          - "decompose"
+          - "route"
+          - "coordinate"
+          - "synthesize"
+          - "acceptance_review"
+          - "review_handoff"
+          - "milestone_reporting"
+        boundary: "Director authority does not create a vote or a participation record that did not actually occur."
+    participation_record_rule: "Record only actual provider responses. Never draft a missing position, convert silence into assent, or claim participation, rebuttal, confidence, or a vote that was not returned."
+    preserved_boundaries:
+      producer_exclusion: "A producer cannot review, accept, or approve its own work; the reviewer must differ from the logical producer and every material author."
+      material_tie_escalation: "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision; only an ordinary tie reaches documented OpenAI evidence judgment."
+      deterministic_gates: "Exact-SHA review, trusted checks, budgets, allowlists, and approval gates remain mandatory where configured."
+      assignment_target: "OpenAI is never emitted as a specialist assignment target; its external production share is separately owner-authorized."
+
+# Requirement of this template, restated so a reader cannot infer more from it.
+this_template_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+project_local_bindings:
+  project_id: "<short-stable-project-id>"
+  recorded_at: "<ISO-8601 timestamp>"
+  lanes_in_use: []          # subset of providers above actually staffed this project
+  deviations:
+    - area: "<responsibility area>"
+      provider: "<provider>"
+      justification: "<why this project deviates from default routing>"
+      owner_authorization: "<exact stored authorization or none>"
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | END]]
+# [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
