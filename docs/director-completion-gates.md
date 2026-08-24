@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]] -->
 # Director Completion Gates
 
@@ -116,7 +117,19 @@ A manual gate describes the eligible evaluator roles, independence requirement,
 and human or provider evidence required. It is not an executable runner and
 cannot carry executable, argument, or working-directory fields. A manual `PASS`
 must bind an authenticated evaluator, exact artifact/head, clean review state,
-and evidence digests.
+and evidence digests. The semantic validator derives evaluator eligibility by
+intersecting the authenticated actor roles with the gate's
+`eligible_evaluator_roles`; the result's `evaluator_eligible` boolean is only a
+consistency assertion and cannot grant a role.
+
+Manual evidence enters the Director's authenticated sanitization pipeline before
+persistence. Raw claims and locations are never stored. Each evidence item stores
+only `sanitized_claim` and `sanitized_location`, their reproducible digest, the
+authenticated sanitization-record digest, redaction/scanner identities and
+digests, and post-redaction findings. A manual `PASS` requires passed redaction
+and secret scanning with no retained findings. The semantic validator must read
+back the sanitization record and authenticate the configured redactor and scanner;
+self-asserted scan fields are not completion evidence.
 
 ### External CI
 
@@ -143,6 +156,15 @@ All contract digests use RFC 8785 canonical JSON and lowercase SHA-256 with the
   only that field omitted.
 - `result_digest`: domain `director-gate-result/v1`; canonical result object with
   only that field omitted.
+- `sanitized_excerpt_digest`: domain `director-gate-sanitized-excerpt/v1`;
+  canonical JSON string value of `decisive_output`.
+- `sanitized_text_digest` for manual evidence: domain
+  `director-gate-sanitized-manual-evidence/v1`; canonical object containing only
+  `sanitized_claim` and `sanitized_location`.
+- `sanitization_record_digest`: domain
+  `director-gate-sanitization-record/v1`; canonical object containing the
+  sanitized-text digest, pipeline source, redaction status/identity/digest/counts,
+  and secret-scan status/identity/digest/counts.
 
 Every other field remains inside its digest, including timestamps, expected head,
 origin, requiredness, registry identity, dependencies, abandonment, environment,
@@ -190,7 +212,11 @@ scanning must cover every persisted text field and pass before a result can be
 Captured, persisted, and omitted byte counts describe sanitized bytes. The semantic
 validator must prove `stdout + stderr = total`, `persisted + omitted = total`,
 `persisted <= ceiling`, and that `truncated` exactly matches whether bytes were
-omitted.
+omitted. It must also derive `exit_code_matches_expected` from the observed exit
+code and the ledger's expected exit code, derive `expected_output_match` by
+applying the ledger matcher to `decisive_output`, require the result output ceiling
+to equal the ledger limit, and recompute the sanitized-excerpt digest. Result
+booleans never substitute for those comparisons.
 
 ## Schema validity is not completion eligibility
 
@@ -207,6 +233,9 @@ increment must load the authenticated current ledger and prove all of the follow
   trusted app, check name, and observed head equal their authenticated bindings;
 - the evidence actor and provider run/readback are authenticated, and an independent
   reviewer is absent from every material-author record;
+- manual evaluator eligibility is derived from authenticated actor roles and the
+  selected gate's role allowlist, and manual text is bound to an authenticated
+  sanitization record before persistence;
 - dependencies reference current-ledger `PASS` result digests; and
 - output digests, byte arithmetic, redaction, scanning, and abandonment policy are
   internally and cross-document consistent.
@@ -215,6 +244,10 @@ A schema-valid document that has not passed that validator is untrusted data and
 cannot contribute to completion, review, security, CI, merge, deployment, dispatch,
 or any other authority decision. PR 1 deliberately implements no such consumer;
 the validator is a hard prerequisite for the separately reviewed binding increment.
+The reference assertions require evaluator roles and sanitization-record digests
+from an authenticated Director-controlled readback supplied separately from the
+result document. The result's role list, scan booleans, and record digest are
+consistency assertions only and cannot authenticate themselves.
 
 ## Future runner boundary
 
@@ -274,3 +307,4 @@ external write, deployment, or LangGraph writer connection is authorized here.
 Removing these new documents and tests fully rolls back this contract-only
 increment without affecting runtime state.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | END]] -->

@@ -110,6 +110,7 @@
       "required": [
         "identity_kind",
         "authenticated_principal",
+        "authenticated_roles",
         "logical_provider",
         "system_label",
         "evidence_source",
@@ -126,6 +127,20 @@
         },
         "authenticated_principal": {
           "$ref": "#/$defs/stableId"
+        },
+        "authenticated_roles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "PRODUCER",
+              "INDEPENDENT_PROVIDER_REVIEWER",
+              "CODEX_SECURITY",
+              "TRUSTED_EXTERNAL_CI",
+              "OWNER"
+            ]
+          }
         },
         "logical_provider": {
           "$ref": "#/$defs/stableId"
@@ -746,7 +761,8 @@
           "maxLength": 8192
         },
         "sanitized_excerpt_digest": {
-          "$ref": "#/$defs/digest"
+          "$ref": "#/$defs/digest",
+          "description": "SHA-256(UTF-8('director-gate-sanitized-excerpt/v1') || 0x00 || RFC8785(decisive_output))."
         },
         "full_output_digest": {
           "$ref": "#/$defs/digest"
@@ -1002,25 +1018,100 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "claim",
+        "sanitized_claim",
+        "sanitized_location",
+        "sanitized_text_digest",
         "evidence_digest",
-        "location"
+        "raw_text_persisted",
+        "sanitization_source",
+        "sanitization_record_digest",
+        "redaction_status",
+        "redaction_policy_id",
+        "redaction_policy_digest",
+        "redaction_count",
+        "redaction_categories",
+        "secret_scan_status",
+        "secret_scanner_id",
+        "secret_scanner_digest",
+        "secret_finding_count",
+        "secret_finding_categories"
       ],
       "properties": {
-        "claim": {
+        "sanitized_claim": {
           "type": "string",
           "minLength": 1,
           "maxLength": 2048
         },
-        "evidence_digest": {
-          "$ref": "#/$defs/digest"
-        },
-        "location": {
+        "sanitized_location": {
           "type": [
             "string",
             "null"
           ],
           "maxLength": 2048
+        },
+        "sanitized_text_digest": {
+          "$ref": "#/$defs/digest",
+          "description": "Domain digest director-gate-sanitized-manual-evidence/v1 over the canonical object containing only sanitized_claim and sanitized_location."
+        },
+        "evidence_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "raw_text_persisted": {
+          "const": false
+        },
+        "sanitization_source": {
+          "const": "DIRECTOR_AUTHENTICATED_PIPELINE"
+        },
+        "sanitization_record_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "redaction_status": {
+          "enum": [
+            "PASSED",
+            "FAILED"
+          ]
+        },
+        "redaction_policy_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "redaction_policy_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "redaction_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "redaction_categories": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/stableId"
+          }
+        },
+        "secret_scan_status": {
+          "enum": [
+            "PASSED",
+            "FAILED"
+          ]
+        },
+        "secret_scanner_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "secret_scanner_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "secret_finding_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "secret_finding_categories": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/stableId"
+          }
         }
       }
     },
@@ -1135,6 +1226,30 @@
                   },
                   "exact_artifact_verified": {
                     "const": true
+                  }
+                }
+              },
+              "manual_evidence": {
+                "items": {
+                  "properties": {
+                    "raw_text_persisted": {
+                      "const": false
+                    },
+                    "sanitization_source": {
+                      "const": "DIRECTOR_AUTHENTICATED_PIPELINE"
+                    },
+                    "redaction_status": {
+                      "const": "PASSED"
+                    },
+                    "secret_scan_status": {
+                      "const": "PASSED"
+                    },
+                    "secret_finding_count": {
+                      "const": 0
+                    },
+                    "secret_finding_categories": {
+                      "maxItems": 0
+                    }
                   }
                 }
               }

@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -36,8 +37,54 @@ def object_without(value: dict[str, Any], field: str) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != field}
 
 
+def expected_output_matches(expected: dict[str, Any], decisive_output: str) -> bool:
+    matcher = expected["matcher"]
+    value = expected["value"]
+    if matcher == "NONE":
+        return value is None
+    if not expected["case_sensitive"]:
+        decisive_output = decisive_output.casefold()
+        value = value.casefold()
+    if matcher == "EXACT":
+        return decisive_output == value
+    if matcher == "CONTAINS":
+        return value in decisive_output
+    raise AssertionError(f"unsupported matcher: {matcher}")
+
+
+def sanitized_manual_evidence_value(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "sanitized_claim": evidence["sanitized_claim"],
+        "sanitized_location": evidence["sanitized_location"],
+    }
+
+
+def sanitization_record_value(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: evidence[field]
+        for field in (
+            "sanitized_text_digest",
+            "sanitization_source",
+            "redaction_status",
+            "redaction_policy_id",
+            "redaction_policy_digest",
+            "redaction_count",
+            "redaction_categories",
+            "secret_scan_status",
+            "secret_scanner_id",
+            "secret_scanner_digest",
+            "secret_finding_count",
+            "secret_finding_categories",
+        )
+    }
+
+
 def semantic_binding_errors(
-    ledger: dict[str, Any], result: dict[str, Any]
+    ledger: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    authenticated_principal_roles: dict[str, set[str]] | None = None,
+    authenticated_sanitization_record_digests: set[str] | None = None,
 ) -> list[str]:
     """Reference PR-1 assertions; production binding is deliberately deferred."""
 
@@ -105,6 +152,22 @@ def semantic_binding_errors(
             if worktree.get(phase, {}).get("head_sha") != ledger.get("expected_head_sha"):
                 errors.append(f"worktree {phase} head mismatch")
         output = result.get("output_evidence", {})
+        exit_code_matches = result.get("exit_code") == gate.get("expected_exit_code")
+        if result.get("exit_code_matches_expected") != exit_code_matches:
+            errors.append("exit code comparison mismatch")
+        output_matches = expected_output_matches(
+            gate.get("expected_output", {}), output.get("decisive_output", "")
+        )
+        if result.get("expected_output_match") != output_matches:
+            errors.append("expected output comparison mismatch")
+        if output.get("output_ceiling_bytes") != gate.get("output_limit_bytes"):
+            errors.append("output ceiling mismatch")
+        expected_excerpt_digest = domain_digest(
+            "director-gate-sanitized-excerpt/v1",
+            output.get("decisive_output", ""),
+        )
+        if output.get("sanitized_excerpt_digest") != expected_excerpt_digest:
+            errors.append("sanitized excerpt digest mismatch")
         if output.get("stdout_bytes_captured", 0) + output.get(
             "stderr_bytes_captured", 0
         ) != output.get("total_output_bytes"):
@@ -124,6 +187,60 @@ def semantic_binding_errors(
             or output.get("secret_finding_categories")
         ):
             errors.append("PASS retains post-redaction secret findings")
+
+    if gate.get("gate_type") == "MANUAL":
+        evaluation = result.get("evaluation", {})
+        evaluator_role = evaluation.get("eligible_evaluator_role")
+        recorded_roles = set(actor.get("authenticated_roles", []))
+        authenticated_roles = (authenticated_principal_roles or {}).get(
+            actor.get("authenticated_principal"), set()
+        )
+        if recorded_roles != authenticated_roles:
+            errors.append("authenticated evaluator roles mismatch")
+        role_is_eligible = (
+            evaluator_role in gate.get("eligible_evaluator_roles", [])
+            and evaluator_role in authenticated_roles
+        )
+        if evaluation.get("evaluator_eligible") != role_is_eligible:
+            errors.append("manual evaluator eligibility mismatch")
+        if not role_is_eligible:
+            errors.append("manual evaluator role is not eligible")
+
+        authors = {
+            item.get("authenticated_principal") for item in ledger.get("material_authors", [])
+        }
+        actor_is_independent = actor.get("authenticated_principal") not in authors
+        if evaluation.get("evaluator_independent_of_material_authors") != actor_is_independent:
+            errors.append("manual evaluator independence mismatch")
+        if gate.get("independence_required") and not actor_is_independent:
+            errors.append("manual gate requires an independent evaluator")
+
+        for index, evidence in enumerate(result.get("manual_evidence", [])):
+            expected_digest = domain_digest(
+                "director-gate-sanitized-manual-evidence/v1",
+                sanitized_manual_evidence_value(evidence),
+            )
+            if evidence.get("sanitized_text_digest") != expected_digest:
+                errors.append(f"manual evidence {index} sanitized text digest mismatch")
+            expected_record_digest = domain_digest(
+                "director-gate-sanitization-record/v1",
+                sanitization_record_value(evidence),
+            )
+            if evidence.get("sanitization_record_digest") != expected_record_digest:
+                errors.append(f"manual evidence {index} sanitization record digest mismatch")
+            if evidence.get("sanitization_record_digest") not in (
+                authenticated_sanitization_record_digests or set()
+            ):
+                errors.append(f"manual evidence {index} sanitization record is not authenticated")
+            if result.get("status") == "PASS" and (
+                evidence.get("sanitization_source") != "DIRECTOR_AUTHENTICATED_PIPELINE"
+                or evidence.get("raw_text_persisted") is not False
+                or evidence.get("redaction_status") != "PASSED"
+                or evidence.get("secret_scan_status") != "PASSED"
+                or evidence.get("secret_finding_count") != 0
+                or evidence.get("secret_finding_categories")
+            ):
+                errors.append(f"manual evidence {index} lacks safe authenticated persistence")
 
     if gate.get("gate_type") == "EXTERNAL_CI":
         binding = gate.get("ci_binding", {})
@@ -182,18 +299,40 @@ class CompletionGateContractTests(unittest.TestCase):
         ):
             result.pop(field)
         gate = self.ledger["director_gates"][1]
+        manual_evidence = {
+            "sanitized_claim": "The exact candidate was reviewed independently.",
+            "sanitized_location": "https://example.invalid/review/1",
+            "sanitized_text_digest": domain_digest(
+                "director-gate-sanitized-manual-evidence/v1",
+                {
+                    "sanitized_claim": "The exact candidate was reviewed independently.",
+                    "sanitized_location": "https://example.invalid/review/1",
+                },
+            ),
+            "evidence_digest": "sha256:" + "3" * 64,
+            "raw_text_persisted": False,
+            "sanitization_source": "DIRECTOR_AUTHENTICATED_PIPELINE",
+            "redaction_status": "PASSED",
+            "redaction_policy_id": "director-output-redaction-v1",
+            "redaction_policy_digest": "sha256:" + "1" * 64,
+            "redaction_count": 0,
+            "redaction_categories": [],
+            "secret_scan_status": "PASSED",
+            "secret_scanner_id": "director-secret-scanner-v1",
+            "secret_scanner_digest": "sha256:" + "2" * 64,
+            "secret_finding_count": 0,
+            "secret_finding_categories": [],
+        }
+        manual_evidence["sanitization_record_digest"] = domain_digest(
+            "director-gate-sanitization-record/v1",
+            sanitization_record_value(manual_evidence),
+        )
         result.update(
             {
                 "gate_id": gate["gate_id"],
                 "gate_definition_digest": gate["gate_definition_digest"],
                 "gate_type": "MANUAL",
-                "manual_evidence": [
-                    {
-                        "claim": "The exact candidate was reviewed independently.",
-                        "evidence_digest": "sha256:" + "3" * 64,
-                        "location": "https://example.invalid/review/1",
-                    }
-                ],
+                "manual_evidence": [manual_evidence],
                 "evaluation": {
                     "eligible_evaluator_role": "INDEPENDENT_PROVIDER_REVIEWER",
                     "evaluator_eligible": True,
@@ -231,6 +370,7 @@ class CompletionGateContractTests(unittest.TestCase):
                     "evidence_source": "GITHUB_API_READBACK",
                     "provider_run_reference": "github-check-run-123",
                     "authentication_record_digest": "sha256:" + "5" * 64,
+                    "authenticated_roles": ["TRUSTED_EXTERNAL_CI"],
                 },
                 "evidence_role": "TRUSTED_EXTERNAL_CI",
                 "reverification": {
@@ -522,6 +662,22 @@ class CompletionGateContractTests(unittest.TestCase):
         result["evidence_role"] = "OWNER"
         self.assertInvalid(self.result_validator, result)
 
+    def test_manual_pass_requires_sanitized_scanned_evidence(self):
+        for field, value in (
+            ("redaction_status", "FAILED"),
+            ("secret_scan_status", "FAILED"),
+            ("raw_text_persisted", True),
+            ("secret_finding_count", 1),
+        ):
+            with self.subTest(field=field):
+                result = self.manual_result()
+                result["manual_evidence"][0][field] = value
+                self.assertInvalid(self.result_validator, result)
+
+        result = self.manual_result()
+        result["manual_evidence"][0]["secret_finding_categories"] = ["api-key"]
+        self.assertInvalid(self.result_validator, result)
+
     def test_abandoned_requires_structured_fail_closed_evidence(self):
         result = copy.deepcopy(self.result)
         result["status"] = "ABANDONED"
@@ -701,6 +857,89 @@ class CompletionGateContractTests(unittest.TestCase):
         contradictory["output_evidence"]["total_output_bytes"] = 999
         self.assertTrue(semantic_binding_errors(self.ledger, contradictory))
 
+    def test_semantic_binding_derives_runnable_assertions_from_the_ledger(self):
+        mutations: list[tuple[str, dict[str, Any]]] = []
+        changed = copy.deepcopy(self.result)
+        changed["exit_code"] = 1
+        mutations.append(("exit code comparison mismatch", changed))
+        changed = copy.deepcopy(self.result)
+        changed["output_evidence"]["decisive_output"] = "not the expected output"
+        changed["output_evidence"]["sanitized_excerpt_digest"] = domain_digest(
+            "director-gate-sanitized-excerpt/v1",
+            changed["output_evidence"]["decisive_output"],
+        )
+        mutations.append(("expected output comparison mismatch", changed))
+        changed = copy.deepcopy(self.result)
+        changed["output_evidence"]["output_ceiling_bytes"] = 1024
+        mutations.append(("output ceiling mismatch", changed))
+        changed = copy.deepcopy(self.result)
+        changed["output_evidence"]["sanitized_excerpt_digest"] = "sha256:" + "0" * 64
+        mutations.append(("sanitized excerpt digest mismatch", changed))
+
+        for expected_error, candidate in mutations:
+            with self.subTest(expected_error=expected_error):
+                self.assertIn(expected_error, semantic_binding_errors(self.ledger, candidate))
+
+    def test_semantic_binding_enforces_authenticated_manual_evaluator_role(self):
+        result = self.manual_result()
+        roles = {
+            result["evidence_actor"]["authenticated_principal"]: set(
+                result["evidence_actor"]["authenticated_roles"]
+            )
+        }
+        records = {result["manual_evidence"][0]["sanitization_record_digest"]}
+        self.assertEqual(
+            [],
+            semantic_binding_errors(
+                self.ledger,
+                result,
+                authenticated_principal_roles=roles,
+                authenticated_sanitization_record_digests=records,
+            ),
+        )
+
+        untrusted_errors = semantic_binding_errors(self.ledger, result)
+        self.assertIn("authenticated evaluator roles mismatch", untrusted_errors)
+        self.assertIn(
+            "manual evidence 0 sanitization record is not authenticated",
+            untrusted_errors,
+        )
+
+        restricted = copy.deepcopy(self.ledger)
+        restricted["director_gates"][1]["eligible_evaluator_roles"] = ["OWNER"]
+        errors = semantic_binding_errors(
+            restricted,
+            result,
+            authenticated_principal_roles=roles,
+            authenticated_sanitization_record_digests=records,
+        )
+        self.assertIn("manual evaluator role is not eligible", errors)
+
+        unauthenticated_role = self.manual_result()
+        unauthenticated_role["evidence_actor"]["authenticated_roles"] = ["CODEX_SECURITY"]
+        codex_security_only = {
+            unauthenticated_role["evidence_actor"]["authenticated_principal"]: {
+                "CODEX_SECURITY"
+            }
+        }
+        errors = semantic_binding_errors(
+            self.ledger,
+            unauthenticated_role,
+            authenticated_principal_roles=codex_security_only,
+            authenticated_sanitization_record_digests=records,
+        )
+        self.assertIn("manual evaluator role is not eligible", errors)
+
+        tampered_evidence = self.manual_result()
+        tampered_evidence["manual_evidence"][0]["sanitized_claim"] = "different"
+        errors = semantic_binding_errors(
+            self.ledger,
+            tampered_evidence,
+            authenticated_principal_roles=roles,
+            authenticated_sanitization_record_digests=records,
+        )
+        self.assertIn("manual evidence 0 sanitized text digest mismatch", errors)
+
     def test_example_gate_graph_is_deterministic_and_non_weakening(self):
         director = self.ledger["director_gates"]
         gate_ids = [gate["gate_id"] for gate in director]
@@ -738,6 +977,10 @@ class CompletionGateContractTests(unittest.TestCase):
             b"director-gate-sanitized-output/v1\0" + framed
         ).hexdigest()
         output = self.result["output_evidence"]
+        self.assertEqual(
+            output["sanitized_excerpt_digest"],
+            domain_digest("director-gate-sanitized-excerpt/v1", output["decisive_output"]),
+        )
         self.assertEqual(output["full_output_digest"], expected)
         self.assertEqual(output["total_output_bytes"], 2)
         self.assertEqual(output["persisted_output_bytes"] + output["omitted_output_bytes"], 2)
@@ -769,3 +1012,4 @@ class CompletionGateContractTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | END]]

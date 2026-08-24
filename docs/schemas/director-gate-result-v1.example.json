@@ -37,6 +37,9 @@
   "evidence_actor": {
     "identity_kind": "PROVIDER",
     "authenticated_principal": "director-provider-cursor",
+    "authenticated_roles": [
+      "INDEPENDENT_PROVIDER_REVIEWER"
+    ],
     "logical_provider": "cursor",
     "system_label": "Cursor Agent",
     "evidence_source": "DIRECTOR_PROVIDER_RUN",
@@ -127,5 +130,5 @@
     "secret_finding_count": 0,
     "secret_finding_categories": []
   },
-  "result_digest": "sha256:da158069011a26902476ba094380b01afd47d2f62eeceb93fb92f96da6313b82"
+  "result_digest": "sha256:4071446c482c8b6e242dad58c689a6b02fb18b60029181e5d6bc395502f819b6"
 }
