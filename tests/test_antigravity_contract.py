@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:48 UTC | BEGIN]]
 """Regressions for the Antigravity outbound boundary.
 
 The controlling finding is PR45-AG-PRIVATE-PROSE (CWE-200): syntax and keyword
@@ -65,6 +66,7 @@ from director_orchestrator.policy import (
 from director_orchestrator.providers import GeminiAdapter, ProviderError
 
 from test_provider_contracts import RecordingAsyncClient
+from test_engine_resume import _seed_verified_plan
 from test_slack_debate_bus import RecordingNotifier, debate_plan
 
 
@@ -773,6 +775,7 @@ class GenericFailureTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 plan=plan,
             )
+            _seed_verified_plan(record)
             store.create(record)
 
             await engine.run("DIR-AG-SINK")
@@ -868,3 +871,4 @@ class UnchangedProtectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:48 UTC | END]]

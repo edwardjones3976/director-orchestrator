@@ -1,13 +1,18 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
 
 from director_orchestrator.config import Settings
-from director_orchestrator.approvals import assignment_approval_digest
+from director_orchestrator.approvals import (
+    assignment_approval_digest,
+    record_task_effect_observation,
+)
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
@@ -22,6 +27,7 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.store import TaskStore
+from director_orchestrator.policy import enforce_plan
 
 
 class AcceptingDirector:
@@ -99,20 +105,56 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
             allowed_starting_refs=("main",),
             sqlite_path=str(Path(directory) / "tasks.sqlite3"),
         )
+        raw_plan = record.plan
+        self.assertIsNotNone(raw_plan)
+        record.plan = None
         store.create(record)
         engine = OrchestrationEngine(settings, store)
         persisted = store.get(record.task_id)
+        target_generation = persisted.plan_generation + 1
+        reservation = engine._reserve_director_effect(
+            persisted,
+            phase="plan",
+            identity={
+                "intake": hashlib.sha256(
+                    persisted.intake.model_dump_json().encode("utf-8")
+                ).hexdigest(),
+                "target_generation": target_generation,
+            },
+            estimated_cost_usd=settings.openai_plan_estimated_cost_usd,
+        )
+        self.assertIsNotNone(reservation)
+        persisted, effect_key = reservation
         plan_interaction_id = engine._begin_director_interaction(
             persisted,
             phase="plan",
-            effect_key="a" * 64,
+            effect_key=effect_key,
+            plan_generation=target_generation,
         )
-        engine._complete_director_interaction(
+        verified_plan_event = engine._complete_director_interaction(
             persisted,
             interaction_id=plan_interaction_id,
-            result=persisted.plan,
+            result=raw_plan,
         )
+        persisted.plan = enforce_plan(raw_plan, persisted.intake.text, settings)
+        persisted.plan_generation = target_generation
         persisted.plan_interaction_id = plan_interaction_id
+        record_task_effect_observation(
+            persisted,
+            effect_key=effect_key,
+            intent_kind="director_intent",
+            observation_kind="director_observation",
+            phase="plan",
+            outcome="completed",
+            run_id=engine._plan_materialization_binding(
+                persisted,
+                verified_event_digest=verified_plan_event.event_digest,
+                verified_result_digest=(
+                    verified_plan_event.transport_evidence.result_digest or ""
+                ),
+                effect_key=effect_key,
+            ),
+        )
         store.save(persisted)
         adapter = RecordingAdapter()
         engine.providers[ProviderName.CURSOR] = adapter
@@ -176,3 +218,4 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | END]]

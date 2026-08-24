@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ import jwt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .config import Settings
-from .models import ClaudeCallback, ProviderName, ProviderRun, TaskRecord
+from .models import Assignment, ClaudeCallback, ProviderName, ProviderRun, TaskRecord
 from .interactions import CommunicationEvidenceFailure, require_verified_result
 from .oracle_diff import (
     GITHUB_DIFF_MEDIA_TYPE,
@@ -134,7 +135,11 @@ class OracleReviewArtifact(BaseModel):
 
 
 def authenticate_provider_review_artifact(
-    record: TaskRecord, run: ProviderRun, secret: str
+    record: TaskRecord,
+    run: ProviderRun,
+    secret: str,
+    *,
+    review_assignment: Assignment | None = None,
 ) -> OracleReviewArtifact | None:
     """Bind one Claude or Cursor result to its stored exact-SHA review assignment."""
     if run.provider not in {ProviderName.CLAUDE, ProviderName.CURSOR}:
@@ -190,7 +195,14 @@ def authenticate_provider_review_artifact(
     assignments = [item for item in record.plan.assignments if item.sequence == sequence]
     if len(assignments) != 1 or assignments[0].agent != run.provider:
         raise ValueError("stored assignment does not match the review provider")
-    assignment = assignments[0]
+    planned_assignment = assignments[0]
+    assignment = review_assignment or planned_assignment
+    dynamic_fields = {"task", "acceptance", "repository", "starting_ref"}
+    if (
+        assignment.model_dump(mode="json", exclude=dynamic_fields)
+        != planned_assignment.model_dump(mode="json", exclude=dynamic_fields)
+    ):
+        raise ValueError("review handoff changed planned reviewer authority or budget")
     if not assignment.repository or canonical_repository(assignment.repository) != canonical_repository(
         artifact.repository
     ):
@@ -2728,3 +2740,4 @@ class GitHubOracleGateway:
         )
         return pull_request.get("isDraft") is False
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]

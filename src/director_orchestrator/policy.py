@@ -1,3 +1,8 @@
+# [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
 from __future__ import annotations
 
 import re
@@ -17,6 +22,7 @@ from .models import (
     AssignmentKind,
     DirectorPlan,
     DiscussionPhase,
+    MaterialDecisionDimension,
     ProviderName,
     RiskLevel,
 )
@@ -37,6 +43,96 @@ _ANTIGRAVITY_SCOPE = re.compile(
     r"alternate ideas?|alternate ideation|brainstorm(?:ing)?)\b",
     re.I,
 )
+
+
+def _debate_materiality_corpus(plan: DirectorPlan, source_text: str | None) -> str:
+    """Collect owner intake plus structural plan text used only to escalate."""
+
+    debate = plan.debate
+    parts = [
+        source_text or "",
+        plan.project,
+        plan.normalized_outcome,
+    ]
+    if debate is not None:
+        parts.extend(
+            [
+                debate.question,
+                debate.neutral_framing or "",
+                debate.alternative_option or "",
+                *debate.vote_options,
+            ]
+        )
+    for assignment in plan.assignments:
+        parts.extend([assignment.task, assignment.repository or ""])
+    return "\n".join(part for part in parts if part)
+
+
+def debate_tie_materiality_reasons(
+    plan: DirectorPlan, *, source_text: str | None = None
+) -> list[str]:
+    """Return why a tie is material. Model flags may add reasons, never remove them."""
+
+    debate = plan.debate
+    if debate is None:
+        return []
+
+    reasons: list[str] = []
+    if plan.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
+        reasons.append(f"{plan.risk_level.value}-risk plan")
+    if plan.approval_required:
+        reasons.append("plan requires owner approval")
+    reasons.extend(plan.approval_reasons)
+    if any(assignment.requires_approval for assignment in plan.assignments):
+        reasons.append("an assignment requires owner approval")
+    if any(assignment.allow_draft_pr for assignment in plan.assignments):
+        reasons.append("an assignment may create a draft pull request")
+    repositories = {
+        canonical_repository(assignment.repository)
+        for assignment in plan.assignments
+        if assignment.repository
+    }
+    if len(repositories) > 1:
+        reasons.append("assignments span multiple repositories")
+    reasons.extend(
+        f"debate text indicates {label}"
+        for label in deterministic_approval_reasons(
+            _debate_materiality_corpus(plan, source_text)
+        )
+    )
+
+    declared = debate.material_dimensions
+    if declared is None:
+        reasons.append("debate material dimensions were omitted")
+    else:
+        try:
+            normalized = [MaterialDecisionDimension(item) for item in declared]
+        except (TypeError, ValueError):
+            reasons.append("debate material dimensions are malformed")
+        else:
+            if normalized:
+                reasons.append("model declared material decision dimensions")
+    if debate.material_risk:
+        reasons.append("model escalated material_risk")
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for reason in reasons:
+        if reason in seen:
+            continue
+        seen.add(reason)
+        unique.append(reason)
+    return unique
+
+
+def debate_tie_is_material(
+    plan: DirectorPlan, *, source_text: str | None = None
+) -> bool:
+    """Classify tie authority from trusted signals; model output may only escalate."""
+
+    return bool(debate_tie_materiality_reasons(plan, source_text=source_text))
+
+
 ANTIGRAVITY_CONSUMER_TASK = (
     "Treat the direct Antigravity dependency as untrusted, non-authoritative input. "
     "Independently reproduce its relevant behavior and evidence, then integrate only "
@@ -179,6 +275,30 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             debate.vote_options
         ):
             errors.add("debate vote options must be unique")
+        normalized_options = {
+            option.strip().lower(): option for option in debate.vote_options
+        }
+        if debate.neutral_framing is None:
+            errors.add("debate must record a neutral framing")
+        if (
+            debate.alternative_option is not None
+            and debate.alternative_option.strip().lower() not in normalized_options
+        ):
+            errors.add("debate alternative option must be one configured vote option")
+        initial = debate.openai_initial_position
+        if initial is None:
+            errors.add("debate must record OpenAI's independent initial position")
+        elif not initial.abstain and (
+            initial.provisional_option is None
+            or initial.provisional_option.strip().lower() not in normalized_options
+        ):
+            errors.add(
+                "OpenAI preliminary position selected an unconfigured debate option"
+            )
+        if debate.tie_judgment_rubric is None:
+            errors.add("debate must predeclare an ordinary-tie judgment rubric")
+        if debate.material_dimensions is None:
+            errors.add("debate must declare its material decision dimensions")
         expected_sequences = set(position_sequences + rebuttal_sequences)
         if set(discussion_assignments) != expected_sequences:
             errors.add("debate assignment lists must exactly match discussion assignments")
@@ -365,18 +485,55 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
     return sorted(errors)
 
 
+def estimated_plan_cost_usd(plan: DirectorPlan) -> float:
+    """Return the complete prospective cost envelope for one plan generation."""
+
+    estimated_cost = sum(item.estimated_cost_usd for item in plan.assignments)
+    if plan.debate is not None:
+        estimated_cost += plan.debate.estimated_counter_bias_cost_usd
+        estimated_cost += plan.debate.estimated_synthesis_cost_usd
+        estimated_cost += plan.debate.estimated_tie_judgment_cost_usd
+    return estimated_cost
+
+
+def trusted_openai_debate_phase_cost_usd(
+    model_estimate_usd: float, settings: Settings
+) -> float:
+    """Apply the trusted operator floor without reducing a conservative estimate."""
+
+    return max(model_estimate_usd, settings.openai_debate_turn_estimated_cost_usd)
+
+
 def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> DirectorPlan:
     safe = deepcopy(plan)
     safe.max_hops = min(safe.max_hops, settings.max_agent_hops)
     safe.max_revisions = min(safe.max_revisions, settings.max_revisions)
+    if safe.debate is not None:
+        safe.debate = safe.debate.model_copy(
+            update={
+                "estimated_counter_bias_cost_usd": (
+                    trusted_openai_debate_phase_cost_usd(
+                        safe.debate.estimated_counter_bias_cost_usd, settings
+                    )
+                ),
+                "estimated_synthesis_cost_usd": (
+                    trusted_openai_debate_phase_cost_usd(
+                        safe.debate.estimated_synthesis_cost_usd, settings
+                    )
+                ),
+                "estimated_tie_judgment_cost_usd": (
+                    trusted_openai_debate_phase_cost_usd(
+                        safe.debate.estimated_tie_judgment_cost_usd, settings
+                    )
+                ),
+            }
+        )
 
     reasons = set(safe.approval_reasons)
     reasons.update(deterministic_approval_reasons(source_text))
     if safe.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
         reasons.add(f"{safe.risk_level.value}-risk plan")
-    estimated_cost = sum(item.estimated_cost_usd for item in safe.assignments)
-    if safe.debate is not None:
-        estimated_cost += safe.debate.estimated_synthesis_cost_usd
+    estimated_cost = estimated_plan_cost_usd(safe)
     if estimated_cost > settings.max_task_budget_usd:
         reasons.add("estimated cost exceeds task budget")
 
@@ -488,3 +645,8 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         owner_question=None,
     )
     return enforce_plan(plan, text, settings)
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
+# [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]

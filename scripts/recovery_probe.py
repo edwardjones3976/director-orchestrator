@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:03 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:17 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:07 UTC | BEGIN]]
 from __future__ import annotations
@@ -9,6 +10,11 @@ import hmac
 from dataclasses import replace
 from pathlib import Path
 
+from director_orchestrator.approvals import (
+    record_task_effect_observation,
+    reserve_task_effect,
+    task_effect_key,
+)
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.interactions import (
@@ -52,14 +58,15 @@ def seed_verified_interaction(
     assignment_sequence: int | None = None,
     provider_run_id: str | None = None,
     provider_session_id: str | None = None,
-) -> None:
+    effect_key: str | None = None,
+) -> str:
     """Install backend-owned VERIFIED evidence for a pre-seeded probe result."""
 
     transports = {
         ProviderName.OPENAI: ProviderTransport.OPENAI_RESPONSES_API,
         ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
     }
-    effect_key = hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
+    effect_key = effect_key or hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
     attempted_evidence = build_transport_evidence(
         transport=transports[provider],
         source=TransportEvidenceSource.BACKEND_OBSERVATION,
@@ -117,6 +124,7 @@ def seed_verified_interaction(
         record.provider_interaction_ledger = append_interaction_event(
             record.provider_interaction_ledger, event
         )
+    return event.event_digest
 
 
 class ProbeIdentityMismatch(AssertionError):
@@ -204,14 +212,57 @@ def seed(database: Path) -> None:
     if record.plan is None:
         raise AssertionError("Probe plan was not installed")
     plan_interaction_id = "recovery-probe:plan"
-    seed_verified_interaction(
+    target_plan_generation = record.plan_generation + 1
+    plan_effect_key = task_effect_key(
+        record,
+        phase="plan",
+        identity={
+            "intake": hashlib.sha256(
+                record.intake.model_dump_json().encode("utf-8")
+            ).hexdigest(),
+            "target_generation": target_plan_generation,
+        },
+    )
+    reserve_task_effect(
+        record,
+        effect_key=plan_effect_key,
+        kind="director_intent",
+        phase="plan",
+        provider=ProviderName.OPENAI,
+        estimated_cost_usd=0,
+        hop_units=1,
+    )
+    record.plan_generation = target_plan_generation
+    verified_plan_event_digest = seed_verified_interaction(
         record,
         provider=ProviderName.OPENAI,
         phase=ProviderInteractionPhase.PLAN,
         result=record.plan.model_dump_json(),
         interaction_id=plan_interaction_id,
+        effect_key=plan_effect_key,
     )
     record.plan_interaction_id = plan_interaction_id
+    verified_plan = require_verified_result(
+        record.provider_interaction_ledger,
+        interaction_id=plan_interaction_id,
+        result=record.plan.model_dump_json(),
+    )
+    record_task_effect_observation(
+        record,
+        effect_key=plan_effect_key,
+        intent_kind="director_intent",
+        observation_kind="director_observation",
+        phase="plan",
+        outcome="completed",
+        run_id=OrchestrationEngine._plan_materialization_binding(
+            record,
+            verified_event_digest=verified_plan_event_digest,
+            verified_result_digest=(
+                verified_plan.transport_evidence.result_digest or ""
+            ),
+            effect_key=plan_effect_key,
+        ),
+    )
 
     run = record.provider_runs[0]
     if not run.result:
@@ -340,3 +391,4 @@ if __name__ == "__main__":
     main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:17 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:03 UTC | END]]

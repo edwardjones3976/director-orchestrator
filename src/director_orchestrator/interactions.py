@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:17 UTC | BEGIN]]
 """Backend-owned, digest-bound provider interaction evidence.
@@ -67,7 +68,9 @@ class ProviderInteractionPhase(StrEnum):
     CALLBACK = "callback"
     REVISION = "revision"
     ACCEPTANCE_REVIEW = "acceptance_review"
+    DEBATE_COUNTER_BIAS = "debate_counter_bias"
     DEBATE_SYNTHESIS = "debate_synthesis"
+    DEBATE_TIE_JUDGMENT = "debate_tie_judgment"
     USAGE_CHECK = "usage_check"
     SLACK_DELIVERY = "slack_delivery"
 
@@ -629,3 +632,4 @@ def require_verified_result(
 
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:17 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]

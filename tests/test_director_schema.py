@@ -1,5 +1,9 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 from dataclasses import replace
@@ -10,6 +14,7 @@ from director_orchestrator.director import OpenAIDirector, _strict_schema
 from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
+    DebatePlan,
     DirectorPlan,
     ProviderName,
     ReviewDecision,
@@ -22,9 +27,12 @@ from director_orchestrator.models import (
 from director_orchestrator.team_charter import (
     AdvisoryVote,
     TEAM_CHARTER_MAX_BYTES,
+    canonical_director_operating_directive_json,
     canonical_team_charter_json,
     canonical_team_charter_manifest_json,
+    director_operating_directive_sha256,
     tally_advisory_votes,
+    team_charter_manifest,
     team_operating_charter,
 )
 
@@ -51,6 +59,68 @@ class StrictSchemaTests(unittest.TestCase):
 
 
 class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_review_budget_estimate_includes_both_debate_control_calls(self):
+        class CapturingDirector(OpenAIDirector):
+            async def _structured(self, prompt, model, schema_name):
+                self.captured = json.loads(prompt)
+                return ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Accepted.",
+                    evidence=[],
+                )
+
+        record = TaskRecord(
+            task_id="DIR-REVIEW-DEBATE-BUDGET",
+            status=TaskStatus.REVIEWING,
+            intake=SlackIntake(
+                source_event_id="evt-review-debate-budget",
+                channel_id="C123",
+                thread_ts="123.47",
+                user_id="U123",
+                text="DIRECTOR Project: demo Outcome: verify debate budget",
+            ),
+            plan=DirectorPlan(
+                project="demo",
+                normalized_outcome="verify debate budget",
+                risk_level=RiskLevel.LOW,
+                approval_required=False,
+                max_hops=2,
+                max_revisions=0,
+                assignments=[
+                    Assignment(
+                        sequence=1,
+                        agent=ProviderName.CLAUDE,
+                        task="Assess A",
+                        acceptance=["Evidence recorded"],
+                        estimated_cost_usd=0.10,
+                    ),
+                    Assignment(
+                        sequence=2,
+                        agent=ProviderName.CURSOR,
+                        task="Assess B",
+                        acceptance=["Evidence recorded"],
+                        estimated_cost_usd=0.20,
+                    ),
+                ],
+                final_acceptance=["Budget estimate is complete"],
+                debate=DebatePlan(
+                    question="A or B?",
+                    position_assignments=[1, 2],
+                    rebuttal_assignments=[1, 2],
+                    vote_options=["A", "B"],
+                    estimated_counter_bias_cost_usd=0.30,
+                    estimated_synthesis_cost_usd=0.40,
+                ),
+            ),
+        )
+        director = CapturingDirector(replace(Settings(), openai_api_key="test-openai"))
+
+        await director.review(record, "Claude supplied bounded evidence.")
+
+        self.assertAlmostEqual(
+            director.captured["plan_context"]["estimated_total_cost_usd"], 1.0
+        )
+
     async def test_intermediate_review_excludes_future_final_acceptance(self):
         class CapturingDirector(OpenAIDirector):
             async def _structured(self, prompt, model, schema_name):
@@ -301,6 +371,73 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(documented, canonical_team_charter_manifest_json())
 
+    def test_manifest_binds_the_complete_director_operating_directive(self):
+        manifest = team_charter_manifest()
+        directive = team_operating_charter()["director_operating_directive"]
+
+        self.assertEqual(manifest["director_operating_directive"], directive)
+        self.assertEqual(
+            manifest["director_operating_directive_sha256"],
+            director_operating_directive_sha256(),
+        )
+        self.assertEqual(
+            director_operating_directive_sha256(),
+            hashlib.sha256(
+                canonical_director_operating_directive_json().encode("utf-8")
+            ).hexdigest(),
+        )
+
+    def test_full_directive_fingerprint_is_synchronized_across_surfaces(self):
+        root = Path(__file__).resolve().parents[1]
+        expected = (
+            "DIRECTOR_OPERATING_DIRECTIVE_SHA256="
+            f"{director_operating_directive_sha256()}"
+        )
+        surfaces = [
+            root / "docs" / "team-operating-charter.md",
+            root / "prompts" / "director-system.md",
+            root / "README.md",
+            root
+            / "docs"
+            / "templates"
+            / "project-bootstrap"
+            / "project-state-report.md",
+        ]
+
+        for surface in surfaces:
+            content = surface.read_text(encoding="utf-8")
+            matching_lines = [
+                line
+                for line in content.splitlines()
+                if "DIRECTOR_OPERATING_DIRECTIVE_SHA256=" in line
+            ]
+            self.assertEqual(matching_lines, [f"<!-- {expected} -->"], surface)
+
+    def test_openai_external_production_boundary_is_synchronized_across_surfaces(self):
+        root = Path(__file__).resolve().parents[1]
+        charter = (root / "docs" / "team-operating-charter.md").read_text(
+            encoding="utf-8"
+        )
+        prompt = (root / "prompts" / "director-system.md").read_text(
+            encoding="utf-8"
+        )
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        report = (
+            root
+            / "docs"
+            / "templates"
+            / "project-bootstrap"
+            / "project-state-report.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("must never emit OpenAI as an assignment target", charter)
+        self.assertIn("Never emit OpenAI as a specialist assignment target", prompt)
+        self.assertIn("never emits OpenAI as a", readme)
+        self.assertIn("different-provider exact-candidate review", charter)
+        self.assertIn("different-provider exact-candidate review", prompt)
+        self.assertIn("different-provider exact-candidate review", readme)
+        self.assertIn("different-provider exact-candidate review", report)
+
     def test_minimal_fix_policy_is_present_across_authoritative_surfaces(self):
         root = Path(__file__).resolve().parents[1]
         surfaces = [
@@ -411,4 +548,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
 

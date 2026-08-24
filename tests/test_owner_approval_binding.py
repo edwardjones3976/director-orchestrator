@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:53 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -55,8 +57,10 @@ from director_orchestrator.models import (
     AssignmentOutcome,
     CollaborationTurn,
     ClaudeCallback,
+    DebateCounterBias,
     DirectorPlan,
     DebateSynthesis,
+    DebateTieJudgment,
     OracleRecoveryApproval,
     OpaqueEvidenceDigest,
     OwnerApproval,
@@ -71,6 +75,7 @@ from director_orchestrator.models import (
     TaskEffectEvidence,
     TaskRecord,
     TaskStatus,
+    TieRubricApplication,
     canonical_task_effect_digest,
     canonical_opaque_identifier_digest,
 )
@@ -79,6 +84,7 @@ from director_orchestrator.store import (
     StaleTaskWrite,
     TaskStore,
 )
+from tests.plan_binding_helpers import seed_production_plan_materialization
 
 
 def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int] | None = None) -> TaskRecord:
@@ -915,6 +921,7 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             record.approved_assignment_digests[1] = assignment_approval_digest(
                 record.plan.assignments[0]
             )
+            seed_production_plan_materialization(record)
             first_store.create(record)
             test_settings = replace(
                 main.settings,
@@ -955,7 +962,7 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             self.assertEqual(stored.status, TaskStatus.RUNNING)
             self.assertEqual(
                 [item.kind for item in stored.task_effect_ledger],
-                ["provider_intent"],
+                ["director_intent", "director_observation", "provider_intent"],
             )
             self.assertEqual(stored.cumulative_estimated_cost_usd, 0.5)
 
@@ -972,6 +979,7 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             record.approved_assignment_digests[1] = assignment_approval_digest(
                 assignment
             )
+            seed_production_plan_materialization(record)
             owner_store.create(record)
             settings = replace(
                 main.settings,
@@ -1045,7 +1053,12 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             self.assertEqual(stored.provider_runs[0].result, "winner-result")
             self.assertEqual(
                 [item.kind for item in stored.task_effect_ledger],
-                ["provider_intent", "provider_observation"],
+                [
+                    "director_intent",
+                    "director_observation",
+                    "provider_intent",
+                    "provider_observation",
+                ],
             )
 
     def test_late_revision_worker_cannot_overwrite_effect_owner_result(self):
@@ -1071,6 +1084,7 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
                     result="initial-result",
                 )
             ]
+            seed_production_plan_materialization(record)
             owner_store.create(record)
             settings = replace(
                 main.settings,
@@ -1141,7 +1155,7 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             self.assertEqual(stored.provider_runs[-1].result, "revised-result")
             self.assertEqual(
                 [item.phase for item in stored.task_effect_ledger],
-                ["revision", "revision"],
+                ["plan", "plan", "revision", "revision"],
             )
 
     def test_restart_and_replan_preserve_intent_and_block_duplicate_effect(self):
@@ -1917,6 +1931,102 @@ class AmbiguousDispatchReconciliationTests(unittest.TestCase):
 
 
 class OwnerClarificationResetTests(unittest.TestCase):
+    def test_reset_discards_generation_bound_debate_state_and_allows_clean_replan(self):
+        record = _record(owner_approved=True, approved=[1])
+        old_plan = record.plan.model_copy(deep=True)
+        record.plan_generation = 4
+        record.plan_interaction_id = "plan-old"
+        record.review_interaction_id = "review-old"
+        record.debate_tally = {"winner": "A", "participating_weight": 4.5}
+        record.debate_counter_bias = DebateCounterBias(
+            strongest_counterargument="Old counterargument",
+            challenged_assumptions=["Old assumption"],
+            alternatives_reconsidered=["B"],
+            independence_assessment="Old-generation assessment",
+            recommendation_changed=False,
+            provisional_recommendation="A",
+            confidence=0.75,
+        )
+        record.debate_counter_bias_interaction_id = "counter-old"
+        record.debate_synthesis = DebateSynthesis(
+            decision="Old decision",
+            rationale="Old rationale",
+            next_action="Old next action",
+            openai_vote_option="A",
+            confidence=0.8,
+        )
+        record.debate_synthesis_interaction_id = "synthesis-old"
+        record.debate_tie_judgment = DebateTieJudgment(
+            chosen_option="A",
+            rubric_applications=[
+                TieRubricApplication(
+                    criterion="Evidence quality",
+                    finding="Old evidence favored A",
+                    favors_option="A",
+                ),
+                TieRubricApplication(
+                    criterion="Reversibility",
+                    finding="Old assessment favored B",
+                    favors_option="B",
+                ),
+            ],
+            rationale="Old tie judgment",
+            confidence=0.7,
+        )
+        record.debate_tie_judgment_interaction_id = "tie-old"
+        reserve_task_effect(
+            record,
+            effect_key="a" * 64,
+            kind="director_intent",
+            phase="debate_counter_bias",
+            provider=ProviderName.OPENAI,
+            estimated_cost_usd=0.1,
+            hop_units=1,
+        )
+        durable_effects = list(record.task_effect_ledger)
+
+        reset_for_owner_clarification(record)
+
+        self.assertIsNone(record.debate_tally)
+        self.assertIsNone(record.debate_counter_bias)
+        self.assertIsNone(record.debate_counter_bias_interaction_id)
+        self.assertIsNone(record.debate_synthesis)
+        self.assertIsNone(record.debate_synthesis_interaction_id)
+        self.assertIsNone(record.debate_tie_judgment)
+        self.assertIsNone(record.debate_tie_judgment_interaction_id)
+        self.assertIsNone(record.plan_interaction_id)
+        self.assertIsNone(record.review_interaction_id)
+        self.assertEqual(record.task_effect_ledger, durable_effects)
+        self.assertEqual(record.cumulative_estimated_cost_usd, 0.1)
+        for stale_id in (
+            "plan-old",
+            "review-old",
+            "counter-old",
+            "synthesis-old",
+            "tie-old",
+        ):
+            self.assertNotIn(stale_id, record.model_dump_json())
+
+        record.plan = old_plan
+        record.plan_generation += 1
+        record.plan_interaction_id = "plan-new"
+        new_intent = reserve_task_effect(
+            record,
+            effect_key="b" * 64,
+            kind="director_intent",
+            phase="plan",
+            provider=ProviderName.OPENAI,
+            estimated_cost_usd=0.1,
+            hop_units=1,
+        )
+
+        self.assertEqual(new_intent.plan_generation, 5)
+        self.assertEqual(record.plan_interaction_id, "plan-new")
+        self.assertEqual(
+            [item.plan_generation for item in record.task_effect_ledger],
+            [4, 5],
+        )
+
     def test_discarded_plan_clears_all_sequence_scoped_execution_state(self):
         record = _record(owner_approved=True, approved=[1])
         record.plan.assignments[0].estimated_cost_usd = 0.75
@@ -2884,3 +2994,5 @@ class SlackGatewayProofTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:53 UTC | END]]

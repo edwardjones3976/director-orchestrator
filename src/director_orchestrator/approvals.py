@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | BEGIN]]
 from __future__ import annotations
 
 import hashlib
@@ -1138,7 +1139,14 @@ def reset_for_owner_clarification(record: TaskRecord) -> None:
     record.collaboration_fallback_active = False
     record.collaboration_fallback_reason = None
     record.debate_tally = None
+    record.debate_counter_bias = None
+    record.debate_counter_bias_interaction_id = None
     record.debate_synthesis = None
+    record.debate_synthesis_interaction_id = None
+    record.debate_tie_judgment = None
+    record.debate_tie_judgment_interaction_id = None
+    record.plan_interaction_id = None
+    record.review_interaction_id = None
     record.review = None
     record.oracle_recovery = None
     record.revision_count = 0
@@ -1214,3 +1222,4 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
     record.status = TaskStatus.QUEUED
     record.error = None
     record.message = note
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | END]]

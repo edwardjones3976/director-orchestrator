@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
@@ -7,7 +9,16 @@ from typing import Any
 import httpx
 
 from .config import Settings
-from .models import DebateSynthesis, DirectorPlan, DiscussionPhase, ReviewDecision, TaskRecord
+from .models import (
+    DebateCounterBias,
+    DebateSynthesis,
+    DebateTieJudgment,
+    DirectorPlan,
+    DiscussionPhase,
+    ReviewDecision,
+    TaskRecord,
+)
+from .policy import estimated_plan_cost_usd
 from .team_charter import team_operating_charter
 
 
@@ -29,7 +40,13 @@ def _openai_strict_subset(value: Any) -> Any:
 
 
 def _strict_schema(
-    model: type[DirectorPlan] | type[ReviewDecision] | type[DebateSynthesis],
+    model: (
+        type[DirectorPlan]
+        | type[ReviewDecision]
+        | type[DebateCounterBias]
+        | type[DebateSynthesis]
+        | type[DebateTieJudgment]
+    ),
     name: str,
 ) -> dict[str, Any]:
     schema = _openai_strict_subset(model.model_json_schema())
@@ -156,12 +173,7 @@ class OpenAIDirector:
                 "max_revisions": record.plan.max_revisions if record.plan else 0,
                 "configured_max_task_budget_usd": self.settings.max_task_budget_usd,
                 "estimated_total_cost_usd": (
-                    sum(item.estimated_cost_usd for item in record.plan.assignments)
-                    + (
-                        record.plan.debate.estimated_synthesis_cost_usd
-                        if record.plan.debate
-                        else 0
-                    )
+                    estimated_plan_cost_usd(record.plan)
                     if record.plan
                     else 0
                 ),
@@ -204,7 +216,11 @@ class OpenAIDirector:
             + (
                 " This is a structured debate contribution. If accepting it, populate "
                 "debate_contribution with a concise position, bounded evidence and contradictions, "
-                "confidence, and exactly one vote_option from the debate plan or abstain=true. "
+                "confidence, and exactly one vote_option from the debate plan or abstain=true. For "
+                "a POSITION contribution, also require an explicit rationale, assumptions, material "
+                "risks (an empty list is allowed), unknowns, and conditions that would change the "
+                "position. Do not fabricate these fields; reject or escalate when the provider did "
+                "not supply enough evidence. A REBUTTAL may leave those five fields null. "
                 "Do not copy secrets, raw private source, or unrelated project context into it."
                 if current_assignment
                 and current_assignment.discussion_phase != DiscussionPhase.WORK
@@ -213,7 +229,50 @@ class OpenAIDirector:
         }
         return await self._structured(json.dumps(request), ReviewDecision, "review_decision")
 
-    async def synthesize_debate(self, record: TaskRecord) -> DebateSynthesis:
+    async def counter_bias_debate(self, record: TaskRecord) -> DebateCounterBias:
+        if record.plan is None or record.plan.debate is None:
+            raise ValueError("counter-bias pass requires a debate plan")
+        debate = record.plan.debate
+        request = {
+            "task_id": record.task_id,
+            "project": record.plan.project,
+            "question": debate.question,
+            "neutral_framing": debate.neutral_framing,
+            "vote_options": debate.vote_options,
+            "alternative_option": debate.alternative_option,
+            "openai_initial_position": (
+                debate.openai_initial_position.model_dump(mode="json")
+                if debate.openai_initial_position is not None
+                else None
+            ),
+            "specialist_turns": [
+                turn.model_dump(mode="json")
+                for turn in record.collaboration_turns
+                if turn.phase in {"position", "rebuttal"}
+                and turn.assignment_sequence is not None
+            ],
+            "instruction": (
+                "Act only as OpenAI Moderator. Before any final synthesis or OpenAI vote, "
+                "challenge the preliminary view's assumptions, state the strongest "
+                "counterargument, identify disconfirming evidence, reconsider the configured "
+                "options and any designated alternative, assess independence from anchoring and "
+                "provider imitation, and state whether the provisional recommendation changed. "
+                "Do not cast a vote, choose a tie winner, authorize an action, or invent missing "
+                "participation. Return only the structured counter-bias result."
+            ),
+        }
+        return await self._structured(
+            json.dumps(request), DebateCounterBias, "debate_counter_bias"
+        )
+
+    async def synthesize_debate(
+        self,
+        record: TaskRecord,
+        counter_bias: DebateCounterBias,
+        *,
+        counter_bias_interaction_id: str,
+        counter_bias_event_digest: str,
+    ) -> DebateSynthesis:
         if record.plan is None or record.plan.debate is None:
             raise ValueError("debate synthesis requires a debate plan")
         request = {
@@ -222,6 +281,15 @@ class OpenAIDirector:
             "question": record.plan.debate.question,
             "vote_options": record.plan.debate.vote_options,
             "material_risk": record.plan.debate.material_risk,
+            "material_dimensions": record.plan.debate.material_dimensions,
+            "tie_judgment_rubric": (
+                record.plan.debate.tie_judgment_rubric.model_dump(mode="json")
+                if record.plan.debate.tie_judgment_rubric is not None
+                else None
+            ),
+            "verified_counter_bias": counter_bias.model_dump(mode="json"),
+            "counter_bias_interaction_id": counter_bias_interaction_id,
+            "counter_bias_verified_event_digest": counter_bias_event_digest,
             "turns": [
                 turn.model_dump(mode="json")
                 for turn in record.collaboration_turns
@@ -230,8 +298,10 @@ class OpenAIDirector:
             "unavailable_providers": [item.value for item in record.unavailable_providers],
             "availability_impacts": record.availability_impacts,
             "instruction": (
-                "Synthesize the bounded debate without inventing missing evidence. Preserve meaningful "
-                "dissent and select exactly one configured vote option or abstain. Your vote is advisory. "
+                "Synthesize the bounded debate using the separately completed, verified counter-bias "
+                "result without inventing missing evidence. Preserve meaningful dissent and select "
+                "exactly one configured vote option or abstain. Your vote is advisory. Do not perform "
+                "or claim a tie judgment in this response; deterministic tallying occurs afterward. "
                 "Do not authorize merge, deployment, publication, spending, access, or any other action. "
                 "State one bounded next action. A material tie is handled deterministically after this call."
             ),
@@ -239,3 +309,38 @@ class OpenAIDirector:
         return await self._structured(
             json.dumps(request), DebateSynthesis, "debate_synthesis"
         )
+
+    async def judge_debate_tie(
+        self,
+        record: TaskRecord,
+        *,
+        winning_options: list[str],
+        synthesis_interaction_id: str,
+        synthesis_event_digest: str,
+    ) -> DebateTieJudgment:
+        if record.plan is None or record.plan.debate is None:
+            raise ValueError("tie judgment requires a debate plan")
+        rubric = record.plan.debate.tie_judgment_rubric
+        if rubric is None:
+            raise ValueError("tie judgment requires a predeclared rubric")
+        request = {
+            "task_id": record.task_id,
+            "project": record.plan.project,
+            "question": record.plan.debate.question,
+            "tied_winning_options": winning_options,
+            "predeclared_rubric": rubric.model_dump(mode="json"),
+            "verified_synthesis": record.debate_synthesis.model_dump(mode="json"),
+            "synthesis_interaction_id": synthesis_interaction_id,
+            "synthesis_verified_event_digest": synthesis_event_digest,
+            "instruction": (
+                "Act only as the non-voting OpenAI Director. Apply every predeclared rubric "
+                "criterion once and in order, cite a concrete finding for each, and choose only "
+                "from the deterministic tied_winning_options. Do not cast another vote, change "
+                "the tally, invent participation, or authorize an external action."
+            ),
+        }
+        return await self._structured(
+            json.dumps(request), DebateTieJudgment, "debate_tie_judgment"
+        )
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]

@@ -1,17 +1,34 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:10 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .models import Assignment, ProviderName, ProviderRun, TaskRecord
-from .approvals import assignment_is_approved
+from .models import (
+    Assignment,
+    ProviderName,
+    ProviderRun,
+    TaskRecord,
+    canonical_opaque_identifier_digest,
+)
+from .approvals import assignment_approval_digest, assignment_is_approved
 from .policy import canonical_repository
-from .interactions import CommunicationEvidenceFailure, require_verified_result
+from .interactions import (
+    CommunicationEvidenceFailure,
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    canonical_content_digest,
+    project_interaction,
+    require_verified_result,
+)
 
 
 class ReviewCandidateArtifact(BaseModel):
@@ -157,6 +174,10 @@ def bind_review_handoff(
         raise ValueError("review provider is listed as a material author")
     if reviewer.allow_draft_pr:
         raise ValueError("review assignment cannot create another draft pull request")
+    if reviewer.requires_approval:
+        raise ValueError(
+            "pre-budgeted review assignment cannot require a second owner approval"
+        )
 
     actor_map = trusted_provider_actors or {}
     producer_actors = actor_map.get(producer_assignment.agent.value, frozenset())
@@ -236,4 +257,253 @@ def bind_review_handoff(
         }
     )
     return reviewer.sequence, bound
+
+
+def _require_accounted_interaction_effect(
+    record: TaskRecord,
+    *,
+    effect_key: str | None,
+    intent_kind: str,
+    observation_kind: str,
+    phase: str,
+    provider: ProviderName,
+    assignment: Assignment | None,
+    successful_outcome: str,
+    run_identifier: str,
+    label: str,
+) -> None:
+    """Require one exact immutable intent/observation pair for an interaction."""
+
+    if effect_key is None:
+        raise ValueError(f"review handoff {label} lacks external-effect accounting")
+    keyed = [
+        item
+        for item in record.task_effect_ledger
+        if hmac.compare_digest(item.effect_key, effect_key)
+    ]
+    intents = [item for item in keyed if item.kind == intent_kind]
+    observations = [item for item in keyed if item.kind == observation_kind]
+    if len(keyed) != 2 or len(intents) != 1 or len(observations) != 1:
+        raise ValueError(
+            f"review handoff {label} effect accounting is missing or duplicated"
+        )
+    intent = intents[0]
+    observation = observations[0]
+    expected_sequence = assignment.sequence if assignment is not None else None
+    expected_assignment_digest = (
+        assignment_approval_digest(assignment) if assignment is not None else None
+    )
+    expected_run_digest = canonical_opaque_identifier_digest(run_identifier)
+    common_matches = all(
+        (
+            item.phase == phase
+            and item.plan_generation == record.plan_generation
+            and item.assignment_sequence == expected_sequence
+            and item.assignment_digest == expected_assignment_digest
+            and item.provider == provider
+        )
+        for item in (intent, observation)
+    )
+    if (
+        not common_matches
+        or intent.outcome != "reserved"
+        or intent.run_id_digest is not None
+        or observation.outcome != successful_outcome
+        or observation.run_id_digest is None
+        or not hmac.compare_digest(
+            observation.run_id_digest,
+            expected_run_digest,
+        )
+        or intent.attempt != observation.attempt
+        or intent.estimated_cost_usd != observation.estimated_cost_usd
+        or intent.hop_units != 1
+        or observation.hop_units != 1
+    ):
+        raise ValueError(f"review handoff {label} effect accounting changed")
+
+
+def reconstruct_review_handoff(
+    record: TaskRecord,
+    reviewer: Assignment,
+    *,
+    trusted_provider_actors: Mapping[str, frozenset[str]] | None = None,
+) -> Assignment:
+    """Rebuild one bound reviewer from immutable plan and provider evidence.
+
+    The authenticated Director plan remains unchanged. The only durable mutable
+    marker is the producer-candidate digest; all review prompt details are
+    deterministically reconstructed from the exact accepted producer run.
+    """
+
+    expected_digest = record.review_handoff_digests.get(reviewer.sequence)
+    if expected_digest is None:
+        return reviewer
+    if record.plan is None:
+        raise ValueError("review handoff has no stored plan")
+    planned = [
+        item for item in record.plan.assignments if item.sequence == reviewer.sequence
+    ]
+    if len(planned) != 1 or planned[0] != reviewer:
+        raise ValueError("review handoff does not target the exact planned reviewer slot")
+    if len(reviewer.depends_on) != 1:
+        raise ValueError("review handoff reviewer must depend on exactly one producer")
+
+    producer_sequence = reviewer.depends_on[0]
+    producers = [
+        item for item in record.plan.assignments if item.sequence == producer_sequence
+    ]
+    if len(producers) != 1:
+        raise ValueError("review handoff producer is absent from the stored plan")
+    producer = producers[0]
+    outcomes = [
+        item
+        for item in record.assignment_outcomes
+        if item.assignment_sequence == producer_sequence
+        and item.provider == producer.agent
+    ]
+    if len(outcomes) != 1:
+        raise ValueError("review handoff producer lacks one accepted outcome")
+    outcome = outcomes[0]
+    runs = [
+        item
+        for item in record.provider_runs
+        if item.assignment_sequence == producer_sequence
+        and item.provider == producer.agent
+        and hmac.compare_digest(item.run_id, outcome.run_id)
+        and hmac.compare_digest(item.result or "", outcome.result)
+    ]
+    if len(runs) != 1:
+        raise ValueError("review handoff producer outcome lacks one exact stored run")
+    run = runs[0]
+    if (
+        not outcome.interaction_id
+        or not outcome.verified_interaction_event_digest
+        or not outcome.provider_result_digest
+        or not run.interaction_id
+        or not hmac.compare_digest(outcome.interaction_id, run.interaction_id)
+    ):
+        raise ValueError("review handoff producer outcome lacks exact VERIFIED metadata")
+    try:
+        verified_producer = require_verified_result(
+            record.provider_interaction_ledger,
+            interaction_id=run.interaction_id,
+            result=run.result or "",
+        )
+    except CommunicationEvidenceFailure as exc:
+        raise ValueError(str(exc)) from exc
+    if (
+        verified_producer.task_id != record.task_id
+        or verified_producer.provider.value != producer.agent.value
+        or verified_producer.assignment_sequence != producer.sequence
+        or verified_producer.plan_generation != record.plan_generation
+        or verified_producer.effect_key is None
+        or verified_producer.phase
+        not in {ProviderInteractionPhase.DISPATCH, ProviderInteractionPhase.REVISION}
+        or not hmac.compare_digest(
+            outcome.verified_interaction_event_digest,
+            verified_producer.event_digest,
+        )
+        or not hmac.compare_digest(
+            outcome.provider_result_digest,
+            canonical_content_digest(run.result or ""),
+        )
+    ):
+        raise ValueError("review handoff producer outcome changed from VERIFIED evidence")
+    _require_accounted_interaction_effect(
+        record,
+        effect_key=verified_producer.effect_key,
+        intent_kind="provider_intent",
+        observation_kind="provider_observation",
+        phase=verified_producer.phase.value,
+        provider=producer.agent,
+        assignment=producer,
+        successful_outcome="submitted",
+        run_identifier=run.run_id,
+        label="producer",
+    )
+
+    review_metadata = (
+        outcome.director_review_interaction_id,
+        outcome.verified_director_review_event_digest,
+        outcome.director_review_result_digest,
+    )
+    if not all(review_metadata):
+        raise ValueError(
+            "review handoff acceptance outcome lacks complete authenticated "
+            "Director review metadata"
+        )
+
+    try:
+        review_projection = project_interaction(
+            record.provider_interaction_ledger,
+            outcome.director_review_interaction_id or "",
+        )
+    except CommunicationEvidenceFailure as exc:
+        raise ValueError(str(exc)) from exc
+    review_event = next(
+        (
+            item
+            for item in record.provider_interaction_ledger
+            if item.interaction_id == outcome.director_review_interaction_id
+            and item.event_digest
+            == outcome.verified_director_review_event_digest
+        ),
+        None,
+    )
+    if (
+        review_projection.task_id != record.task_id
+        or review_projection.provider.value != ProviderName.OPENAI.value
+        or review_projection.assignment_sequence is not None
+        or review_projection.state != ProviderInteractionState.VERIFIED
+        or review_event is None
+        or review_event.plan_generation != record.plan_generation
+        or review_event.phase != ProviderInteractionPhase.ACCEPTANCE_REVIEW
+        or review_event.effect_key is None
+        or review_projection.verified_result_digest is None
+        or not hmac.compare_digest(
+            outcome.director_review_result_digest or "",
+            review_projection.verified_result_digest,
+        )
+    ):
+        raise ValueError("review handoff acceptance review evidence changed")
+    _require_accounted_interaction_effect(
+        record,
+        effect_key=review_event.effect_key,
+        intent_kind="director_intent",
+        observation_kind="director_observation",
+        phase="acceptance_review",
+        provider=ProviderName.OPENAI,
+        assignment=None,
+        successful_outcome="completed",
+        run_identifier=f"sha256:{outcome.director_review_result_digest}",
+        label="acceptance review",
+    )
+
+    rebound = bind_review_handoff(
+        record,
+        producer,
+        run,
+        trusted_provider_actors=trusted_provider_actors,
+    )
+    if rebound is None or rebound[0] != reviewer.sequence:
+        raise ValueError("review handoff no longer resolves to the planned reviewer")
+    bound = rebound[1]
+    handoff = json.loads(bound.task)
+    actual_digest = handoff.get("artifact_digest")
+    if not isinstance(actual_digest, str) or not hmac.compare_digest(
+        expected_digest, actual_digest
+    ):
+        raise ValueError("stored review handoff digest is missing or changed")
+
+    # Producer evidence may fill the exact candidate context, but it cannot
+    # alter any authority-bearing property of the pre-budgeted reviewer slot.
+    dynamic_fields = {"task", "acceptance", "repository", "starting_ref"}
+    planned_authority = reviewer.model_dump(mode="json", exclude=dynamic_fields)
+    bound_authority = bound.model_dump(mode="json", exclude=dynamic_fields)
+    if planned_authority != bound_authority:
+        raise ValueError("review handoff changed reviewer authority or budget")
+    return bound
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:10 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | END]]

@@ -1,3 +1,12 @@
+# [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 12:12 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
@@ -34,6 +43,7 @@ from .approvals import (
     record_oracle_recovery,
     record_provider_effect_observation,
     record_task_effect_observation,
+    reset_for_owner_clarification,
     reserve_provider_effect,
     reserve_task_effect,
     task_effect_key,
@@ -43,6 +53,7 @@ from .models import (
     Assignment,
     AssignmentOutcome,
     CollaborationTurn,
+    DebateActorRole,
     DiscussionPhase,
     ProviderName,
     ProviderContactAttempt,
@@ -73,14 +84,25 @@ from .oracle_merge import (
     OracleMergeStatus,
     authenticate_provider_review_artifact,
 )
-from .policy import enforce_plan, execution_policy_errors, preview_plan
+from .policy import (
+    debate_tie_is_material,
+    enforce_plan,
+    estimated_plan_cost_usd,
+    execution_policy_errors,
+    preview_plan,
+    trusted_openai_debate_phase_cost_usd,
+)
 from .providers import (
     PostSubmitAmbiguityError,
     ProviderError,
     ProviderRun,
     provider_registry,
 )
-from .review_handoff import bind_review_handoff, transitive_dependency_sequences
+from .review_handoff import (
+    bind_review_handoff,
+    reconstruct_review_handoff,
+    transitive_dependency_sequences,
+)
 from .store import PrivacyCleanupPending, StaleTaskWrite, TaskStore
 from .team_charter import AdvisoryVote, tally_advisory_votes
 
@@ -92,6 +114,11 @@ _POST_SUBMIT_AMBIGUITY_ERRORS = (
     LookupError,
     TypeError,
 )
+
+_DRY_RUN_PREVIEW_MESSAGE = (
+    "Dry-run plan created. Live provider execution remains disabled."
+)
+_OPENAI_KEY_BLOCK_MESSAGE = "OPENAI_API_KEY is not configured"
 
 _STANDING_PROVIDER_ROLES = {
     ProviderName.OPENAI: "Director",
@@ -244,12 +271,22 @@ class OrchestrationEngine:
         return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
     def _begin_director_interaction(
-        self, record: TaskRecord, *, phase: str, effect_key: str
+        self,
+        record: TaskRecord,
+        *,
+        phase: str,
+        effect_key: str,
+        plan_generation: int | None = None,
     ) -> str:
+        interaction_generation = (
+            record.plan_generation
+            if plan_generation is None
+            else plan_generation
+        )
         interaction_id = str(
             uuid5(
                 NAMESPACE_URL,
-                f"{record.task_id}:{record.plan_generation}:openai:{phase}:{effect_key}",
+                f"{record.task_id}:{interaction_generation}:openai:{phase}:{effect_key}",
             )
         )
         if any(
@@ -265,7 +302,7 @@ class OrchestrationEngine:
         drafted = start_interaction(
             task_id=record.task_id,
             interaction_id=interaction_id,
-            plan_generation=record.plan_generation,
+            plan_generation=interaction_generation,
             assignment_sequence=None,
             provider=ProviderName.OPENAI.value,
             phase=ProviderInteractionPhase(phase),
@@ -577,17 +614,48 @@ class OrchestrationEngine:
                 record.plan = preview_plan(record.intake.text, self.settings)
                 record.plan_generation += 1
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
-                record.message = "Dry-run plan created. Live provider execution remains disabled."
+                record.message = _DRY_RUN_PREVIEW_MESSAGE
                 self.store.save(record)
                 await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\nDry-run plan created; no paid provider was called. Suggested first specialist: `{record.plan.assignments[0].agent.value}`. Enable live execution only after credentials and spend limits are verified.")
                 return
 
             if not self.settings.openai_api_key:
-                self.store.set_status(task_id, TaskStatus.BLOCKED, message="OPENAI_API_KEY is not configured")
+                self.store.set_status(
+                    task_id,
+                    TaskStatus.BLOCKED,
+                    message=_OPENAI_KEY_BLOCK_MESSAGE,
+                )
                 await self._status_post(record, f"*{task_id} — BLOCKED*\nThe Director API credential is not configured.")
                 return
 
+            is_unbound_no_work_preview = (
+                record.plan is not None
+                and record.plan_interaction_id is None
+                and record.message
+                in {_DRY_RUN_PREVIEW_MESSAGE, _OPENAI_KEY_BLOCK_MESSAGE}
+                and not record.provider_runs
+                and not record.assignment_outcomes
+                and all(
+                    effect.kind in {"slack_intent", "slack_observation"}
+                    for effect in record.task_effect_ledger
+                )
+                and not any(
+                    event.plan_generation == record.plan_generation
+                    for event in record.provider_interaction_ledger
+                )
+            )
+            if is_unbound_no_work_preview:
+                # An unbound preview is display-only. Recognize only its bounded
+                # lifecycle markers (including the missing-key stop), then require
+                # complete absence of paid/director/provider effect or interaction
+                # evidence before creating one fresh authenticated PLAN.
+                reset_for_owner_clarification(record)
+                record.status = TaskStatus.QUEUED
+                record.message = "Dry-run preview discarded; creating a fresh authenticated live plan."
+                self.store.save(record)
+
             if record.plan is None:
+                target_plan_generation = record.plan_generation + 1
                 reservation = self._reserve_director_effect(
                     record,
                     phase="plan",
@@ -595,7 +663,7 @@ class OrchestrationEngine:
                         "intake": hashlib.sha256(
                             record.intake.model_dump_json().encode("utf-8")
                         ).hexdigest(),
-                        "target_generation": record.plan_generation + 1,
+                        "target_generation": target_plan_generation,
                     },
                     estimated_cost_usd=self.settings.openai_plan_estimated_cost_usd,
                 )
@@ -603,7 +671,10 @@ class OrchestrationEngine:
                     return
                 record, effect_key = reservation
                 plan_interaction_id = self._begin_director_interaction(
-                    record, phase="plan", effect_key=effect_key
+                    record,
+                    phase="plan",
+                    effect_key=effect_key,
+                    plan_generation=target_plan_generation,
                 )
                 self.store.save(record)
                 try:
@@ -622,9 +693,11 @@ class OrchestrationEngine:
                     )
                     self.store.save(record)
                     raise
-                self._complete_director_interaction(
+                verified_plan_event = self._complete_director_interaction(
                     record, interaction_id=plan_interaction_id, result=plan
                 )
+                record.plan = enforce_plan(plan, record.intake.text, self.settings)
+                record.plan_generation = target_plan_generation
                 record.plan_interaction_id = plan_interaction_id
                 record_task_effect_observation(
                     record,
@@ -633,11 +706,30 @@ class OrchestrationEngine:
                     observation_kind="director_observation",
                     phase="plan",
                     outcome="completed",
-                    run_id=self._result_digest(plan),
+                    run_id=self._plan_materialization_binding(
+                        record,
+                        verified_event_digest=verified_plan_event.event_digest,
+                        verified_result_digest=(
+                            verified_plan_event.transport_evidence.result_digest or ""
+                        ),
+                        effect_key=effect_key,
+                    ),
                 )
-                record.plan = enforce_plan(plan, record.intake.text, self.settings)
-                record.plan_generation += 1
                 plan_installed = True
+            try:
+                self._require_verified_plan_materialization(record)
+            except CommunicationEvidenceFailure as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(
+                    record,
+                    f"*{task_id} — OWNER DECISION REQUIRED*\n"
+                    "The current plan has no exact authenticated execution authority. "
+                    "Create a fresh live plan before provider work can begin.",
+                )
+                return
             policy_errors = execution_policy_errors(record.plan, self.settings)
             if policy_errors:
                 record.status = TaskStatus.BLOCKED
@@ -646,11 +738,7 @@ class OrchestrationEngine:
                 await self._status_post(record, f"*{task_id} — BLOCKED*\n{record.message}")
                 return
             if plan_installed:
-                prospective_cost = sum(
-                    item.estimated_cost_usd for item in record.plan.assignments
-                )
-                if record.plan.debate is not None:
-                    prospective_cost += record.plan.debate.estimated_synthesis_cost_usd
+                prospective_cost = estimated_plan_cost_usd(record.plan)
                 if (
                     record.cumulative_estimated_cost_usd + prospective_cost
                     > self.settings.max_task_budget_usd
@@ -680,7 +768,16 @@ class OrchestrationEngine:
 
             while record.next_assignment_index < len(record.plan.assignments):
                 assignments = sorted(record.plan.assignments, key=lambda item: item.sequence)
-                assignment = assignments[record.next_assignment_index]
+                planned_assignment = assignments[record.next_assignment_index]
+                try:
+                    assignment = self._effective_assignment(record, planned_assignment)
+                except CommunicationEvidenceFailure as exc:
+                    self._stop_for_unverified_plan(record, exc)
+                    await self._status_post(
+                        record,
+                        f"*{task_id} — OWNER DECISION REQUIRED*\n{record.error}",
+                    )
+                    return
                 if assignment.agent == ProviderName.OWNER:
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
                     record.message = assignment.task
@@ -997,6 +1094,18 @@ class OrchestrationEngine:
         return str(uuid5(NAMESPACE_URL, ":".join(str(part) for part in parts)))
 
     @staticmethod
+    def _generation_correlation_id(
+        record: TaskRecord, *parts: object
+    ) -> str:
+        return ":".join(
+            (
+                record.task_id,
+                f"generation-{record.plan_generation}",
+                *(str(part) for part in parts),
+            )
+        )
+
+    @staticmethod
     def _result_digest(value: object) -> str:
         if hasattr(value, "model_dump_json"):
             encoded = value.model_dump_json().encode("utf-8")
@@ -1005,6 +1114,152 @@ class OrchestrationEngine:
                 value, ensure_ascii=True, separators=(",", ":"), sort_keys=True
             ).encode("utf-8")
         return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _canonical_plan_digest(record: TaskRecord) -> str:
+        if record.plan is None:
+            raise CommunicationEvidenceFailure(
+                "live execution requires a materialized Director plan"
+            )
+        encoded = json.dumps(
+            record.plan.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _plan_materialization_binding(
+        cls,
+        record: TaskRecord,
+        *,
+        verified_event_digest: str,
+        verified_result_digest: str,
+        effect_key: str,
+    ) -> str:
+        """Bind one normalized installed plan to exact authenticated PLAN evidence."""
+
+        if not record.plan_interaction_id:
+            raise CommunicationEvidenceFailure(
+                "live plan lacks its Director interaction binding"
+            )
+        return json.dumps(
+            {
+                "binding_version": "director-plan-materialization-v1",
+                "task_id": record.task_id,
+                "plan_generation": record.plan_generation,
+                "plan_interaction_id": record.plan_interaction_id,
+                "verified_event_digest": verified_event_digest,
+                "verified_result_digest": verified_result_digest,
+                "effect_key": effect_key,
+                "materialized_plan_digest": cls._canonical_plan_digest(record),
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def _require_verified_plan_materialization(self, record: TaskRecord):
+        """Return exact PLAN evidence only when it authorizes the current plan."""
+
+        if record.plan is None:
+            raise CommunicationEvidenceFailure(
+                "live execution requires a materialized Director plan"
+            )
+        if not record.plan_interaction_id:
+            raise CommunicationEvidenceFailure(
+                "live plan lacks its Director interaction binding"
+            )
+        projection = project_interaction(
+            record.provider_interaction_ledger, record.plan_interaction_id
+        )
+        plan_event = next(
+            (
+                item
+                for item in record.provider_interaction_ledger
+                if item.interaction_id == record.plan_interaction_id
+                and item.event_digest == projection.latest_event_digest
+            ),
+            None,
+        )
+        if (
+            projection.task_id != record.task_id
+            or projection.provider.value != ProviderName.OPENAI.value
+            or projection.assignment_sequence is not None
+            or projection.state != ProviderInteractionState.VERIFIED
+            or projection.verified_result_digest is None
+            or plan_event is None
+            or plan_event.phase != ProviderInteractionPhase.PLAN
+            or plan_event.plan_generation != record.plan_generation
+            or plan_event.transport_evidence.source
+            != TransportEvidenceSource.AUTHENTICATED_PROVIDER
+        ):
+            raise CommunicationEvidenceFailure(
+                "live plan is not bound to the exact VERIFIED OpenAI plan generation"
+            )
+
+        if plan_event.effect_key is None:
+            raise CommunicationEvidenceFailure(
+                "live plan lacks verified Director effect and materialization accounting"
+            )
+
+        binding = self._plan_materialization_binding(
+            record,
+            verified_event_digest=plan_event.event_digest,
+            verified_result_digest=projection.verified_result_digest,
+            effect_key=plan_event.effect_key,
+        )
+        expected_binding_digest = canonical_identifier_digest(binding)
+        observations = [
+            effect
+            for effect in record.task_effect_ledger
+            if effect.effect_key == plan_event.effect_key
+            and effect.kind == "director_observation"
+            and effect.phase == "plan"
+            and effect.outcome == "completed"
+            and effect.provider == ProviderName.OPENAI
+            and effect.plan_generation == record.plan_generation
+            and effect.run_id_digest is not None
+            and hmac.compare_digest(
+                effect.run_id_digest, expected_binding_digest
+            )
+        ]
+        allowed_intent_generations = {record.plan_generation}
+        if record.plan_generation > 0:
+            allowed_intent_generations.add(record.plan_generation - 1)
+        matching_intent = any(
+            effect.effect_key == plan_event.effect_key
+            and effect.kind == "director_intent"
+            and effect.phase == "plan"
+            and effect.outcome == "reserved"
+            and effect.provider == ProviderName.OPENAI
+            and effect.plan_generation in allowed_intent_generations
+            for effect in record.task_effect_ledger
+        )
+        if len(observations) != 1 or not matching_intent:
+            raise CommunicationEvidenceFailure(
+                "materialized plan changed from its exact VERIFIED OpenAI plan binding"
+            )
+        return projection, plan_event
+
+    def _stop_for_unverified_plan(
+        self, record: TaskRecord, exc: CommunicationEvidenceFailure
+    ) -> None:
+        """Persist one fail-closed stop when current plan authority no longer verifies."""
+
+        record.status = TaskStatus.OWNER_DECISION_REQUIRED
+        record.message = CommunicationEvidenceFailure.code
+        record.error = str(exc)[:2_000]
+        self.store.save(record)
+
+    def _verified_plan_or_stop(self, record: TaskRecord) -> bool:
+        try:
+            self._require_verified_plan_materialization(record)
+        except CommunicationEvidenceFailure as exc:
+            self._stop_for_unverified_plan(record, exc)
+            return False
+        return True
 
     def _reserve_director_effect(
         self,
@@ -1015,6 +1270,15 @@ class OrchestrationEngine:
         estimated_cost_usd: float,
     ) -> tuple[TaskRecord, str] | None:
         """Atomically reserve one paid OpenAI call before network I/O."""
+
+        if phase in {
+            "debate_counter_bias",
+            "debate_synthesis",
+            "debate_tie_judgment",
+        }:
+            estimated_cost_usd = trusted_openai_debate_phase_cost_usd(
+                estimated_cost_usd, self.settings
+            )
 
         expected_version = record._store_version
         if expected_version is None:
@@ -1039,6 +1303,8 @@ class OrchestrationEngine:
             )
 
         def reserve(current: TaskRecord) -> None:
+            if phase != "plan":
+                self._require_verified_plan_materialization(current)
             if current.plan_generation != record.plan_generation or (
                 phase == "plan" and current.plan is not None
             ):
@@ -1069,6 +1335,10 @@ class OrchestrationEngine:
             stored = self.store.mutate_if_version(
                 record.task_id, expected_version, reserve
             )
+        except CommunicationEvidenceFailure as exc:
+            current = self.store.get(record.task_id) or record
+            self._stop_for_unverified_plan(current, exc)
+            return None
         except EffectAlreadyClaimed:
             return None
         if stored is None:
@@ -1119,14 +1389,24 @@ class OrchestrationEngine:
             return True, None
         kwargs.setdefault(
             "client_msg_id",
-            self._slack_client_id(record.task_id, "slack", message),
+            self._slack_client_id(
+                record.task_id,
+                f"generation-{record.plan_generation}",
+                "slack",
+                message,
+            ),
         )
         event_id = str(kwargs["client_msg_id"])
         root_message = bool(kwargs.get("root_message"))
         slack_effect_key: str | None = None
         if self.settings.slack_bot_token:
             slack_effect_key = task_effect_key(
-                record, phase="slack_delivery", identity={"client_msg_id": event_id}
+                record,
+                phase="slack_delivery",
+                identity={
+                    "client_msg_id": event_id,
+                    "plan_generation": record.plan_generation,
+                },
             )
             reserve_task_effect(
                 record,
@@ -1223,12 +1503,183 @@ class OrchestrationEngine:
         )
         return timestamp
 
+    def _ensure_openai_debate_preamble_records(
+        self, record: TaskRecord
+    ) -> list[CollaborationTurn]:
+        """Persist real plan-time Moderator and Participant records before peers run."""
+
+        projection, plan_event = self._require_verified_plan_materialization(record)
+        debate = record.plan.debate if record.plan else None
+        if debate is None:
+            return []
+
+        initial = debate.openai_initial_position
+        if (
+            debate.neutral_framing is None
+            or initial is None
+            or debate.tie_judgment_rubric is None
+            or debate.material_dimensions is None
+        ):
+            raise CommunicationEvidenceFailure(
+                "debate lacks neutral framing, OpenAI's initial position, its tie rubric, "
+                "or declared material dimensions"
+            )
+        preference = (
+            "OpenAI recorded no preliminary preference (not a vote)."
+            if initial.abstain
+            else (
+                "Preliminary preference (not an advisory vote): "
+                + str(initial.provisional_option)
+            )
+        )
+        candidates = [
+            CollaborationTurn(
+                assignment_sequence=None,
+                provider=ProviderName.OPENAI,
+                phase="moderator",
+                debate_role=DebateActorRole.OPENAI_MODERATOR,
+                correlation_id=self._generation_correlation_id(
+                    record, "debate-moderator"
+                ),
+                run_id=record.plan_interaction_id,
+                position=debate.neutral_framing,
+                evidence=[
+                    (
+                        f"Designated alternative: {debate.alternative_option}"
+                        if debate.alternative_option is not None
+                        else "No separate alternative was appropriate for this decision."
+                    )
+                ],
+                confidence=1,
+                abstain=True,
+                interaction_id=record.plan_interaction_id,
+                verified_interaction_event_digest=projection.latest_event_digest,
+                provider_result_digest=projection.verified_result_digest,
+            ),
+            CollaborationTurn(
+                assignment_sequence=None,
+                provider=ProviderName.OPENAI,
+                phase="position",
+                debate_role=DebateActorRole.OPENAI_PARTICIPANT,
+                correlation_id=self._generation_correlation_id(
+                    record, "openai-initial-position"
+                ),
+                run_id=record.plan_interaction_id,
+                position=initial.position,
+                rationale=initial.rationale,
+                evidence=[preference, *initial.evidence][:10],
+                contradictions=initial.contradictions,
+                assumptions=initial.assumptions,
+                material_risks=initial.material_risks,
+                unknowns=initial.unknowns,
+                conditions_to_change=initial.conditions_to_change,
+                confidence=initial.confidence,
+                # The only weighted OpenAI vote is emitted after rebuttals.
+                vote_option=None,
+                abstain=True,
+                interaction_id=record.plan_interaction_id,
+                verified_interaction_event_digest=projection.latest_event_digest,
+                provider_result_digest=projection.verified_result_digest,
+            ),
+        ]
+        persisted: list[CollaborationTurn] = []
+        for candidate in candidates:
+            existing = next(
+                (
+                    item
+                    for item in record.collaboration_turns
+                    if item.correlation_id == candidate.correlation_id
+                ),
+                None,
+            )
+            if existing is None:
+                record.collaboration_turns.append(candidate)
+                persisted.append(candidate)
+                continue
+            comparable = (
+                "assignment_sequence",
+                "provider",
+                "phase",
+                "debate_role",
+                "run_id",
+                "position",
+                "rationale",
+                "evidence",
+                "contradictions",
+                "assumptions",
+                "material_risks",
+                "unknowns",
+                "conditions_to_change",
+                "confidence",
+                "vote_option",
+                "abstain",
+                "interaction_id",
+                "verified_interaction_event_digest",
+                "provider_result_digest",
+            )
+            if any(
+                getattr(existing, field) != getattr(candidate, field)
+                for field in comparable
+            ):
+                raise CommunicationEvidenceFailure(
+                    f"OpenAI debate role record changed at {candidate.correlation_id}"
+                )
+            persisted.append(existing)
+        return persisted
+
+    async def _publish_openai_debate_preamble(
+        self, record: TaskRecord, turns: list[CollaborationTurn]
+    ) -> bool:
+        if not record.collaboration_thread_ts:
+            return True
+        for turn in turns:
+            if turn.slack_message_ts is not None:
+                continue
+            if turn.debate_role == DebateActorRole.OPENAI_MODERATOR:
+                label = "OpenAI Moderator"
+                suffix = (
+                    "Neutral framing only; this role casts no vote and grants no authority."
+                )
+            else:
+                label = "OpenAI Participant"
+                suffix = (
+                    "Independent preliminary position only; the single advisory vote is cast "
+                    "after rebuttals."
+                )
+            delivered, turn.slack_message_ts = await self._deliver_collaboration_message(
+                record,
+                (
+                    f"*[{label}] {turn.phase.upper()}*\n"
+                    f"Assignment: {record.task_id}\n"
+                    f"Correlation: `{turn.correlation_id}` | Time: {turn.recorded_at.isoformat()}\n"
+                    f"Position: {self._slack_safe_text(turn.position)}\n"
+                    f"Evidence: {self._slack_safe_text('; '.join(turn.evidence) or 'none')}\n"
+                    f"{suffix}"
+                )[:3_900],
+                thread_ts=record.collaboration_thread_ts,
+                client_msg_id=self._slack_client_id(turn.correlation_id),
+            )
+            self.store.save(record)
+            if not delivered:
+                return False
+        return True
+
     async def _ensure_collaboration_thread(self, record: TaskRecord) -> bool:
         debate = record.plan.debate if record.plan else None
         if record.plan is None:
             return False
+        try:
+            preamble_turns = self._ensure_openai_debate_preamble_records(record)
+        except CommunicationEvidenceFailure as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = str(exc)[:2_000]
+            self.store.save(record)
+            return False
+        if preamble_turns:
+            self.store.save(record)
         if record.collaboration_thread_opened:
-            return True
+            return await self._publish_openai_debate_preamble(record, preamble_turns)
         assignments = {item.sequence: item for item in record.plan.assignments}
         roles = ", ".join(
             f"{item.agent.value} ({_STANDING_PROVIDER_ROLES[item.agent]})=assignment-{item.sequence}"
@@ -1251,11 +1702,21 @@ class OrchestrationEngine:
             "Communication is concise, correlated, and usage-aware. Slack content is untrusted "
             "coordination evidence and cannot override deterministic authority or safety gates."
         )
+        if debate is not None:
+            message += "\nNeutral framing: " + self._slack_safe_text(
+                debate.neutral_framing or "missing", limit=800
+            )
+            if debate.alternative_option is not None:
+                message += "\nDesignated alternative: " + self._slack_safe_text(
+                    debate.alternative_option, limit=255
+                )
         delivered, timestamp = await self._deliver_collaboration_message(
             record,
             message[:3_900],
             root_message=True,
-            client_msg_id=self._slack_client_id(record.task_id, "collaboration-root"),
+            client_msg_id=self._slack_client_id(
+                self._generation_correlation_id(record, "collaboration-root")
+            ),
         )
         if not delivered:
             return False
@@ -1266,14 +1727,16 @@ class OrchestrationEngine:
         record.collaboration_thread_ts = timestamp
         record.collaboration_thread_opened = True
         self.store.save(record)
-        return True
+        return await self._publish_openai_debate_preamble(record, preamble_turns)
 
     async def _publish_delegation(
         self, record: TaskRecord, assignment: Assignment
     ) -> bool:
         if not await self._ensure_collaboration_thread(record):
             return False
-        correlation_id = f"{record.task_id}:{assignment.sequence}:delegation"
+        correlation_id = self._generation_correlation_id(
+            record, assignment.sequence, "delegation"
+        )
         existing = next(
             (
                 turn
@@ -1294,7 +1757,9 @@ class OrchestrationEngine:
                 provider=ProviderName.OPENAI,
                 phase="delegation",
                 correlation_id=correlation_id,
-                run_id=f"director-delegation-{assignment.sequence}",
+                run_id=(
+                    f"director-delegation-{record.plan_generation}-{assignment.sequence}"
+                ),
                 position=(
                     f"Delegated bounded {assignment.discussion_phase.value} work to "
                     f"{assignment.agent.value}; {len(assignment.acceptance)} acceptance checks; "
@@ -1364,10 +1829,72 @@ class OrchestrationEngine:
             )
             self.store.save(record)
             return False
+        if assignment.discussion_phase == DiscussionPhase.POSITION and (
+            contribution.rationale is None
+            or contribution.assumptions is None
+            or contribution.material_risks is None
+            or contribution.unknowns is None
+            or contribution.conditions_to_change is None
+        ):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = (
+                f"POSITION assignment {assignment.sequence} lacks rationale, assumptions, "
+                "material risks, unknowns, or conditions to change"
+            )
+            self.store.save(record)
+            return False
+        accepted_outcome = next(
+            (
+                item
+                for item in record.assignment_outcomes
+                if item.assignment_sequence == assignment.sequence
+            ),
+            None,
+        )
+        if is_discussion:
+            try:
+                if (
+                    accepted_outcome is None
+                    or not accepted_outcome.director_review_interaction_id
+                    or not accepted_outcome.verified_director_review_event_digest
+                    or not accepted_outcome.director_review_result_digest
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "debate contribution lacks its exact Director review evidence"
+                    )
+                review_text = self._interaction_result_text(decision)
+                verified_review = require_verified_result(
+                    record.provider_interaction_ledger,
+                    interaction_id=accepted_outcome.director_review_interaction_id,
+                    result=review_text,
+                )
+                if (
+                    verified_review.task_id != record.task_id
+                    or verified_review.provider.value != ProviderName.OPENAI.value
+                    or verified_review.assignment_sequence is not None
+                    or verified_review.phase
+                    != ProviderInteractionPhase.ACCEPTANCE_REVIEW
+                    or verified_review.event_digest
+                    != accepted_outcome.verified_director_review_event_digest
+                    or canonical_content_digest(review_text)
+                    != accepted_outcome.director_review_result_digest
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "debate contribution Director review evidence changed"
+                    )
+            except CommunicationEvidenceFailure as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                return False
         if not await self._ensure_collaboration_thread(record):
             return False
         run_digest = hashlib.sha256(run.run_id.encode("utf-8")).hexdigest()[:16]
-        correlation_id = f"{record.task_id}:{assignment.sequence}:{run_digest}"
+        correlation_id = self._generation_correlation_id(
+            record, assignment.sequence, run_digest
+        )
         existing = next(
             (
                 turn
@@ -1390,6 +1917,11 @@ class OrchestrationEngine:
                 position=self._slack_safe_text(
                     contribution.position if contribution else decision.summary
                 ),
+                rationale=(
+                    self._slack_safe_text(contribution.rationale, limit=4_000)
+                    if contribution and contribution.rationale
+                    else None
+                ),
                 evidence=[
                     self._slack_safe_text(item, limit=1_000)
                     for item in (contribution.evidence if contribution else decision.evidence)
@@ -1398,6 +1930,46 @@ class OrchestrationEngine:
                     self._slack_safe_text(item, limit=1_000)
                     for item in (contribution.contradictions if contribution else [])
                 ],
+                assumptions=(
+                    [self._slack_safe_text(item, limit=1_000) for item in contribution.assumptions]
+                    if contribution and contribution.assumptions is not None
+                    else None
+                ),
+                material_risks=(
+                    [self._slack_safe_text(item, limit=1_000) for item in contribution.material_risks]
+                    if contribution and contribution.material_risks is not None
+                    else None
+                ),
+                unknowns=(
+                    [self._slack_safe_text(item, limit=1_000) for item in contribution.unknowns]
+                    if contribution and contribution.unknowns is not None
+                    else None
+                ),
+                conditions_to_change=(
+                    [
+                        self._slack_safe_text(item, limit=1_000)
+                        for item in contribution.conditions_to_change
+                    ]
+                    if contribution and contribution.conditions_to_change is not None
+                    else None
+                ),
+                verified_debate_contribution=contribution,
+                director_review=decision,
+                director_review_interaction_id=(
+                    accepted_outcome.director_review_interaction_id
+                    if accepted_outcome
+                    else None
+                ),
+                verified_director_review_event_digest=(
+                    accepted_outcome.verified_director_review_event_digest
+                    if accepted_outcome
+                    else None
+                ),
+                director_review_result_digest=(
+                    accepted_outcome.director_review_result_digest
+                    if accepted_outcome
+                    else None
+                ),
                 confidence=(contribution.confidence if contribution else 1),
                 vote_option=(contribution.vote_option if contribution else None),
                 abstain=(contribution.abstain if contribution else True),
@@ -1407,6 +1979,24 @@ class OrchestrationEngine:
             )
             record.collaboration_turns.append(existing)
             self.store.save(record)
+        elif is_discussion and (
+            existing.verified_debate_contribution != contribution
+            or existing.director_review != decision
+            or existing.director_review_interaction_id
+            != accepted_outcome.director_review_interaction_id
+            or existing.verified_director_review_event_digest
+            != accepted_outcome.verified_director_review_event_digest
+            or existing.director_review_result_digest
+            != accepted_outcome.director_review_result_digest
+        ):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = (
+                "COMMUNICATION_EVIDENCE_FAILURE: persisted debate contribution changed "
+                "from its exact Director review"
+            )
+            self.store.save(record)
+            return False
         if existing.slack_message_ts is None and record.collaboration_thread_ts:
             evidence = "; ".join(existing.evidence[:5]) or "none reported"
             contradictions = "; ".join(existing.contradictions[:5]) or "none reported"
@@ -1446,11 +2036,188 @@ class OrchestrationEngine:
         debate = record.plan.debate if record.plan else None
         if debate is None or assignment.sequence != max(debate.rebuttal_assignments):
             return True
+        try:
+            self._ensure_openai_debate_preamble_records(record)
+        except CommunicationEvidenceFailure as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = str(exc)[:2_000]
+            self.store.save(record)
+            return False
+        self.store.save(record)
+        if record.debate_counter_bias is None:
+            counter_identity = {
+                "debate": hashlib.sha256(
+                    debate.model_dump_json().encode("utf-8")
+                ).hexdigest(),
+                "turns": [
+                    self._result_digest(turn)
+                    for turn in record.collaboration_turns
+                    if turn.phase in {"position", "rebuttal"}
+                ],
+            }
+            reservation = self._reserve_director_effect(
+                record,
+                phase="debate_counter_bias",
+                identity=counter_identity,
+                estimated_cost_usd=debate.estimated_counter_bias_cost_usd,
+            )
+            if reservation is None:
+                return False
+            record, counter_effect_key = reservation
+            counter_interaction_id = self._begin_director_interaction(
+                record,
+                phase="debate_counter_bias",
+                effect_key=counter_effect_key,
+            )
+            self.store.save(record)
+            try:
+                counter_bias = await self.director.counter_bias_debate(record)
+            except Exception as exc:
+                self._fail_director_interaction(
+                    record, interaction_id=counter_interaction_id, exc=exc
+                )
+                record_task_effect_observation(
+                    record,
+                    effect_key=counter_effect_key,
+                    intent_kind="director_intent",
+                    observation_kind="director_observation",
+                    phase="debate_counter_bias",
+                    outcome="ambiguous",
+                )
+                self.store.save(record)
+                raise
+            record_task_effect_observation(
+                record,
+                effect_key=counter_effect_key,
+                intent_kind="director_intent",
+                observation_kind="director_observation",
+                phase="debate_counter_bias",
+                outcome="completed",
+                run_id=self._result_digest(counter_bias),
+            )
+            self._complete_director_interaction(
+                record,
+                interaction_id=counter_interaction_id,
+                result=counter_bias,
+            )
+            record.debate_counter_bias = counter_bias
+            record.debate_counter_bias_interaction_id = counter_interaction_id
+            self.store.save(record)
+        counter_bias = record.debate_counter_bias
+        if not record.debate_counter_bias_interaction_id:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = (
+                "COMMUNICATION_EVIDENCE_FAILURE: counter-bias result lacks its "
+                "separate interaction binding"
+            )
+            self.store.save(record)
+            return False
+        try:
+            verified_counter_bias = require_verified_result(
+                record.provider_interaction_ledger,
+                interaction_id=record.debate_counter_bias_interaction_id,
+                result=self._interaction_result_text(counter_bias),
+            )
+            if (
+                verified_counter_bias.task_id != record.task_id
+                or verified_counter_bias.provider.value != ProviderName.OPENAI.value
+                or verified_counter_bias.assignment_sequence is not None
+                or verified_counter_bias.phase
+                != ProviderInteractionPhase.DEBATE_COUNTER_BIAS
+                or verified_counter_bias.plan_generation != record.plan_generation
+                or verified_counter_bias.transport_evidence.source
+                != TransportEvidenceSource.AUTHENTICATED_PROVIDER
+            ):
+                raise CommunicationEvidenceFailure(
+                    "counter-bias result is not exact authenticated OpenAI evidence"
+                )
+        except CommunicationEvidenceFailure as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = str(exc)[:2_000]
+            self.store.save(record)
+            return False
+        counter_turn_candidate = CollaborationTurn(
+            assignment_sequence=None,
+            provider=ProviderName.OPENAI,
+            phase="counter_bias",
+            debate_role=DebateActorRole.OPENAI_MODERATOR,
+            correlation_id=self._generation_correlation_id(
+                record, "debate-counter-bias"
+            ),
+            run_id=record.debate_counter_bias_interaction_id,
+            position=self._slack_safe_text(counter_bias.strongest_counterargument),
+            evidence=[
+                *[
+                    self._slack_safe_text(item, limit=1_000)
+                    for item in counter_bias.challenged_assumptions[:5]
+                ],
+                "Counter-bias pass changed recommendation="
+                + str(counter_bias.recommendation_changed).lower(),
+            ],
+            confidence=counter_bias.confidence,
+            abstain=True,
+            interaction_id=record.debate_counter_bias_interaction_id,
+            verified_interaction_event_digest=verified_counter_bias.event_digest,
+            provider_result_digest=canonical_content_digest(
+                self._interaction_result_text(counter_bias)
+            ),
+        )
+        counter_turn = next(
+            (
+                item
+                for item in record.collaboration_turns
+                if item.correlation_id == counter_turn_candidate.correlation_id
+            ),
+            None,
+        )
+        if counter_turn is None:
+            record.collaboration_turns.append(counter_turn_candidate)
+            counter_turn = counter_turn_candidate
+            self.store.save(record)
+        elif counter_turn.model_dump(
+            mode="json", exclude={"recorded_at", "slack_message_ts"}
+        ) != counter_turn_candidate.model_dump(
+            mode="json", exclude={"recorded_at", "slack_message_ts"}
+        ):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = (
+                "COMMUNICATION_EVIDENCE_FAILURE: persisted counter-bias role record changed"
+            )
+            self.store.save(record)
+            return False
+        if counter_turn.slack_message_ts is None and record.collaboration_thread_ts:
+            delivered, counter_turn.slack_message_ts = (
+                await self._deliver_collaboration_message(
+                    record,
+                    (
+                        f"*[OpenAI Moderator] COUNTER_BIAS*\nAssignment: {record.task_id}\n"
+                        f"Correlation: `{counter_turn.correlation_id}` | "
+                        f"Time: {counter_turn.recorded_at.isoformat()}\n"
+                        f"Position: {self._slack_safe_text(counter_turn.position)}\n"
+                        f"Evidence: {self._slack_safe_text('; '.join(counter_turn.evidence))}\n"
+                        "Separate authenticated counter-bias check only; no vote or authority."
+                    )[:3_900],
+                    thread_ts=record.collaboration_thread_ts,
+                    client_msg_id=self._slack_client_id(counter_turn.correlation_id),
+                )
+            )
+            self.store.save(record)
+            if not delivered:
+                return False
         if record.debate_synthesis is None:
             synthesis_identity = {
                 "debate": hashlib.sha256(
                     debate.model_dump_json().encode("utf-8")
                 ).hexdigest(),
+                "counter_bias_interaction_id": record.debate_counter_bias_interaction_id,
+                "counter_bias_verified_event_digest": verified_counter_bias.event_digest,
+                "counter_bias_result_digest": canonical_content_digest(
+                    self._interaction_result_text(counter_bias)
+                ),
                 "turns": [
                     self._result_digest(turn)
                     for turn in record.collaboration_turns
@@ -1471,7 +2238,14 @@ class OrchestrationEngine:
             )
             self.store.save(record)
             try:
-                synthesis = await self.director.synthesize_debate(record)
+                synthesis = await self.director.synthesize_debate(
+                    record,
+                    counter_bias,
+                    counter_bias_interaction_id=(
+                        record.debate_counter_bias_interaction_id
+                    ),
+                    counter_bias_event_digest=verified_counter_bias.event_digest,
+                )
             except Exception as exc:
                 self._fail_director_interaction(
                     record, interaction_id=synthesis_interaction_id, exc=exc
@@ -1518,6 +2292,21 @@ class OrchestrationEngine:
                 interaction_id=record.debate_synthesis_interaction_id,
                 result=self._interaction_result_text(synthesis),
             )
+            if (
+                verified_synthesis.task_id != record.task_id
+                or verified_synthesis.provider.value != ProviderName.OPENAI.value
+                or verified_synthesis.assignment_sequence is not None
+                or verified_synthesis.phase
+                != ProviderInteractionPhase.DEBATE_SYNTHESIS
+                or verified_synthesis.plan_generation != record.plan_generation
+                or verified_synthesis.transport_evidence.source
+                != TransportEvidenceSource.AUTHENTICATED_PROVIDER
+                or verified_synthesis.recorded_at
+                <= verified_counter_bias.recorded_at
+            ):
+                raise CommunicationEvidenceFailure(
+                    "final synthesis is not authenticated after the exact counter-bias result"
+                )
         except CommunicationEvidenceFailure as exc:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = CommunicationEvidenceFailure.code
@@ -1529,21 +2318,182 @@ class OrchestrationEngine:
             record.message = "OpenAI synthesis selected an unconfigured debate option"
             self.store.save(record)
             return False
+        assignments_by_sequence = {
+            item.sequence: item for item in record.plan.assignments
+        }
+        valid_discussion_sequences = set(
+            debate.position_assignments + debate.rebuttal_assignments
+        )
+        eligible_participants = {ProviderName.CLAUDE, ProviderName.CURSOR}
         latest_by_provider: dict[ProviderName, CollaborationTurn] = {}
         for turn in record.collaboration_turns:
+            if turn.provider == ProviderName.OPENAI or turn.phase not in {
+                "position",
+                "rebuttal",
+            }:
+                continue
+            assigned = assignments_by_sequence.get(turn.assignment_sequence or -1)
             if (
-                turn.phase in {"position", "rebuttal"}
-                and turn.verified_interaction_event_digest is not None
+                assigned is None
+                or assigned.sequence not in valid_discussion_sequences
+                or assigned.agent != turn.provider
+                or assigned.agent not in eligible_participants
+                or assigned.discussion_phase.value != turn.phase
+            ):
+                # Unassigned or ineligible prose is not participation and casts no vote.
+                continue
+            try:
+                if (
+                    not turn.interaction_id
+                    or not turn.verified_interaction_event_digest
+                    or not turn.provider_result_digest
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "assigned debate turn lacks exact provider evidence"
+                    )
+                projection = project_interaction(
+                    record.provider_interaction_ledger, turn.interaction_id
+                )
+                verified_turn_event = next(
+                    (
+                        event
+                        for event in record.provider_interaction_ledger
+                        if event.interaction_id == turn.interaction_id
+                        and event.event_digest == projection.latest_event_digest
+                    ),
+                    None,
+                )
+                if (
+                    projection.task_id != record.task_id
+                    or projection.provider.value != turn.provider.value
+                    or projection.assignment_sequence != turn.assignment_sequence
+                    or projection.state != ProviderInteractionState.VERIFIED
+                    or projection.latest_event_digest
+                    != turn.verified_interaction_event_digest
+                    or projection.verified_result_digest
+                    != turn.provider_result_digest
+                    or verified_turn_event is None
+                    or verified_turn_event.phase != ProviderInteractionPhase.DISPATCH
+                    or verified_turn_event.plan_generation != record.plan_generation
+                    or verified_turn_event.transport_evidence.source
+                    != TransportEvidenceSource.AUTHENTICATED_PROVIDER
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "assigned debate turn evidence changed"
+                    )
+                contribution = turn.verified_debate_contribution
+                review = turn.director_review
+                if (
+                    contribution is None
+                    or review is None
+                    or review.debate_contribution != contribution
+                    or not turn.director_review_interaction_id
+                    or not turn.verified_director_review_event_digest
+                    or not turn.director_review_result_digest
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "assigned debate turn lacks exact reviewed contribution evidence"
+                    )
+                review_text = self._interaction_result_text(review)
+                verified_review = require_verified_result(
+                    record.provider_interaction_ledger,
+                    interaction_id=turn.director_review_interaction_id,
+                    result=review_text,
+                )
+                if (
+                    verified_review.task_id != record.task_id
+                    or verified_review.provider.value != ProviderName.OPENAI.value
+                    or verified_review.assignment_sequence is not None
+                    or verified_review.phase
+                    != ProviderInteractionPhase.ACCEPTANCE_REVIEW
+                    or verified_review.event_digest
+                    != turn.verified_director_review_event_digest
+                    or canonical_content_digest(review_text)
+                    != turn.director_review_result_digest
+                    or turn.position
+                    != self._slack_safe_text(contribution.position)
+                    or turn.rationale
+                    != (
+                        self._slack_safe_text(contribution.rationale, limit=4_000)
+                        if contribution.rationale
+                        else None
+                    )
+                    or turn.evidence
+                    != [
+                        self._slack_safe_text(item, limit=1_000)
+                        for item in contribution.evidence
+                    ]
+                    or turn.contradictions
+                    != [
+                        self._slack_safe_text(item, limit=1_000)
+                        for item in contribution.contradictions
+                    ]
+                    or turn.assumptions
+                    != (
+                        [
+                            self._slack_safe_text(item, limit=1_000)
+                            for item in contribution.assumptions
+                        ]
+                        if contribution.assumptions is not None
+                        else None
+                    )
+                    or turn.material_risks
+                    != (
+                        [
+                            self._slack_safe_text(item, limit=1_000)
+                            for item in contribution.material_risks
+                        ]
+                        if contribution.material_risks is not None
+                        else None
+                    )
+                    or turn.unknowns
+                    != (
+                        [
+                            self._slack_safe_text(item, limit=1_000)
+                            for item in contribution.unknowns
+                        ]
+                        if contribution.unknowns is not None
+                        else None
+                    )
+                    or turn.conditions_to_change
+                    != (
+                        [
+                            self._slack_safe_text(item, limit=1_000)
+                            for item in contribution.conditions_to_change
+                        ]
+                        if contribution.conditions_to_change is not None
+                        else None
+                    )
+                    or turn.confidence != contribution.confidence
+                    or turn.vote_option != contribution.vote_option
+                    or turn.abstain != contribution.abstain
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "persisted debate fields changed from exact authenticated review"
+                    )
+            except CommunicationEvidenceFailure as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                return False
+            previous = latest_by_provider.get(turn.provider)
+            if previous is None or (turn.assignment_sequence or 0) > (
+                previous.assignment_sequence or 0
             ):
                 latest_by_provider[turn.provider] = turn
         votes = [
             AdvisoryVote(
                 member=self._committee_member(provider),
-                disposition="abstain" if turn.abstain else "vote",
-                option=turn.vote_option,
-                rationale=turn.position,
-                evidence=turn.evidence,
-                confidence=turn.confidence,
+                disposition=(
+                    "abstain"
+                    if turn.verified_debate_contribution.abstain
+                    else "vote"
+                ),
+                option=turn.verified_debate_contribution.vote_option,
+                rationale=turn.verified_debate_contribution.position,
+                evidence=turn.verified_debate_contribution.evidence,
+                confidence=turn.verified_debate_contribution.confidence,
             )
             for provider, turn in latest_by_provider.items()
         ]
@@ -1554,7 +2504,7 @@ class OrchestrationEngine:
                 if item.sequence == sequence
             )
             for sequence in debate.position_assignments
-        }
+        }.intersection(eligible_participants)
         for provider in sorted(participants - set(latest_by_provider), key=lambda item: item.value):
             votes.append(
                 AdvisoryVote(
@@ -1573,72 +2523,318 @@ class OrchestrationEngine:
                 confidence=synthesis.confidence,
             )
         )
-        tally = tally_advisory_votes(votes, material_risk=debate.material_risk)
+        tally = tally_advisory_votes(
+            votes,
+            material_risk=debate_tie_is_material(
+                record.plan, source_text=record.intake.text
+            ),
+        )
         record.debate_tally = tally.model_dump(mode="json")
-        correlation_id = f"{record.task_id}:debate-synthesis"
-        if not any(
-            turn.correlation_id == correlation_id
-            for turn in record.collaboration_turns
-        ):
-            record.collaboration_turns.append(
-                CollaborationTurn(
-                    assignment_sequence=assignment.sequence,
-                    provider=ProviderName.OPENAI,
-                    phase="synthesis",
-                    correlation_id=correlation_id,
-                    run_id="openai-director-synthesis",
-                    position=self._slack_safe_text(synthesis.decision),
-                    evidence=[
-                        self._slack_safe_text(item, limit=1_000)
-                        for item in [synthesis.rationale, *synthesis.dissent][:10]
-                    ],
-                    confidence=synthesis.confidence,
-                    vote_option=synthesis.openai_vote_option,
-                    abstain=synthesis.openai_abstains,
-                    interaction_id=record.debate_synthesis_interaction_id,
-                    verified_interaction_event_digest=verified_synthesis.event_digest,
-                    provider_result_digest=canonical_content_digest(
+        tie_judgment = None
+        verified_tie_judgment = None
+        if tally.resolution == "openai_director_judgment":
+            if record.debate_tie_judgment is None:
+                # The reservation below is a CAS reload. Persist the exact tally
+                # first so the reloaded task cannot silently drop the vote result.
+                self.store.save(record)
+                tie_identity = {
+                    "winning_options": tally.winning_options,
+                    "rubric": debate.tie_judgment_rubric.model_dump(mode="json"),
+                    "synthesis_interaction_id": record.debate_synthesis_interaction_id,
+                    "synthesis_verified_event_digest": verified_synthesis.event_digest,
+                    "synthesis_result_digest": canonical_content_digest(
                         self._interaction_result_text(synthesis)
                     ),
+                }
+                reservation = self._reserve_director_effect(
+                    record,
+                    phase="debate_tie_judgment",
+                    identity=tie_identity,
+                    estimated_cost_usd=debate.estimated_tie_judgment_cost_usd,
                 )
+                if reservation is None:
+                    return False
+                record, tie_effect_key = reservation
+                tie_interaction_id = self._begin_director_interaction(
+                    record,
+                    phase="debate_tie_judgment",
+                    effect_key=tie_effect_key,
+                )
+                self.store.save(record)
+                try:
+                    tie_judgment = await self.director.judge_debate_tie(
+                        record,
+                        winning_options=tally.winning_options,
+                        synthesis_interaction_id=record.debate_synthesis_interaction_id,
+                        synthesis_event_digest=verified_synthesis.event_digest,
+                    )
+                except Exception as exc:
+                    self._fail_director_interaction(
+                        record, interaction_id=tie_interaction_id, exc=exc
+                    )
+                    record_task_effect_observation(
+                        record,
+                        effect_key=tie_effect_key,
+                        intent_kind="director_intent",
+                        observation_kind="director_observation",
+                        phase="debate_tie_judgment",
+                        outcome="ambiguous",
+                    )
+                    self.store.save(record)
+                    raise
+                record_task_effect_observation(
+                    record,
+                    effect_key=tie_effect_key,
+                    intent_kind="director_intent",
+                    observation_kind="director_observation",
+                    phase="debate_tie_judgment",
+                    outcome="completed",
+                    run_id=self._result_digest(tie_judgment),
+                )
+                self._complete_director_interaction(
+                    record,
+                    interaction_id=tie_interaction_id,
+                    result=tie_judgment,
+                )
+                record.debate_tie_judgment = tie_judgment
+                record.debate_tie_judgment_interaction_id = tie_interaction_id
+                self.store.save(record)
+            tie_judgment = record.debate_tie_judgment
+            if not record.debate_tie_judgment_interaction_id:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = (
+                    "COMMUNICATION_EVIDENCE_FAILURE: ordinary tie judgment lacks "
+                    "its separate interaction binding"
+                )
+                self.store.save(record)
+                return False
+            try:
+                verified_tie_judgment = require_verified_result(
+                    record.provider_interaction_ledger,
+                    interaction_id=record.debate_tie_judgment_interaction_id,
+                    result=self._interaction_result_text(tie_judgment),
+                )
+                if (
+                    verified_tie_judgment.task_id != record.task_id
+                    or verified_tie_judgment.provider.value
+                    != ProviderName.OPENAI.value
+                    or verified_tie_judgment.assignment_sequence is not None
+                    or verified_tie_judgment.phase
+                    != ProviderInteractionPhase.DEBATE_TIE_JUDGMENT
+                    or verified_tie_judgment.plan_generation
+                    != record.plan_generation
+                    or verified_tie_judgment.transport_evidence.source
+                    != TransportEvidenceSource.AUTHENTICATED_PROVIDER
+                    or verified_tie_judgment.recorded_at
+                    <= verified_synthesis.recorded_at
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "ordinary tie judgment is not exact authenticated post-tally evidence"
+                    )
+            except CommunicationEvidenceFailure as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                return False
+            rubric = debate.tie_judgment_rubric
+            applications = tie_judgment.rubric_applications
+            expected_criteria = (
+                [item.criterion for item in rubric.criteria]
+                if rubric is not None
+                else []
             )
-        self.store.save(record)
-        synthesis_turn = next(
-            turn
-            for turn in record.collaboration_turns
-            if turn.correlation_id == correlation_id
-        )
-        if (
-            synthesis_turn.interaction_id != record.debate_synthesis_interaction_id
-            or synthesis_turn.verified_interaction_event_digest
-            != verified_synthesis.event_digest
-            or synthesis_turn.provider_result_digest
-            != canonical_content_digest(self._interaction_result_text(synthesis))
-        ):
+            if (
+                tie_judgment.chosen_option not in tally.winning_options
+                or [item.criterion for item in applications] != expected_criteria
+                or any(
+                    item.favors_option is not None
+                    and item.favors_option not in tally.winning_options
+                    for item in applications
+                )
+            ):
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = (
+                    "COMMUNICATION_EVIDENCE_FAILURE: ordinary tie lacks an exact "
+                    "predeclared-rubric application and judgment among tied options"
+                )
+                self.store.save(record)
+                return False
+        elif record.debate_tie_judgment is not None:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = CommunicationEvidenceFailure.code
             record.error = (
-                "COMMUNICATION_EVIDENCE_FAILURE: debate synthesis turn is not bound "
-                "to the exact VERIFIED Director interaction"
+                "COMMUNICATION_EVIDENCE_FAILURE: persisted Director tie judgment exists "
+                "without the same ordinary advisory tie"
             )
             self.store.save(record)
             return False
-        if synthesis_turn.slack_message_ts is None and record.collaboration_thread_ts:
-            delivered, synthesis_turn.slack_message_ts = await self._deliver_collaboration_message(
-                record,
+
+        synthesis_result_digest = canonical_content_digest(
+            self._interaction_result_text(synthesis)
+        )
+        vote_position = (
+            "OpenAI Participant abstained from the advisory vote."
+            if synthesis.openai_abstains
+            else f"OpenAI Participant cast its one advisory vote for {synthesis.openai_vote_option}."
+        )
+        turn_candidates = [
+            CollaborationTurn(
+                assignment_sequence=None,
+                provider=ProviderName.OPENAI,
+                phase="rebuttal",
+                debate_role=DebateActorRole.OPENAI_PARTICIPANT,
+                correlation_id=self._generation_correlation_id(
+                    record, "openai-final-vote"
+                ),
+                run_id=record.debate_synthesis_interaction_id,
+                position=vote_position,
+                evidence=[self._slack_safe_text(synthesis.rationale, limit=1_000)],
+                contradictions=[
+                    self._slack_safe_text(item, limit=1_000)
+                    for item in synthesis.dissent[:10]
+                ],
+                confidence=synthesis.confidence,
+                vote_option=synthesis.openai_vote_option,
+                abstain=synthesis.openai_abstains,
+                interaction_id=record.debate_synthesis_interaction_id,
+                verified_interaction_event_digest=verified_synthesis.event_digest,
+                provider_result_digest=synthesis_result_digest,
+            ),
+            CollaborationTurn(
+                assignment_sequence=None,
+                provider=ProviderName.OPENAI,
+                phase="synthesis",
+                debate_role=DebateActorRole.OPENAI_DIRECTOR,
+                correlation_id=self._generation_correlation_id(
+                    record, "debate-synthesis"
+                ),
+                run_id=record.debate_synthesis_interaction_id,
+                position=self._slack_safe_text(synthesis.decision),
+                evidence=[
+                    self._slack_safe_text(item, limit=1_000)
+                    for item in [synthesis.rationale, *synthesis.dissent][:10]
+                ],
+                confidence=synthesis.confidence,
+                vote_option=None,
+                abstain=True,
+                interaction_id=record.debate_synthesis_interaction_id,
+                verified_interaction_event_digest=verified_synthesis.event_digest,
+                provider_result_digest=synthesis_result_digest,
+            ),
+        ]
+        if tie_judgment is not None and verified_tie_judgment is not None:
+            turn_candidates.append(
+                CollaborationTurn(
+                    assignment_sequence=None,
+                    provider=ProviderName.OPENAI,
+                    phase="tie_judgment",
+                    debate_role=DebateActorRole.OPENAI_DIRECTOR,
+                    correlation_id=self._generation_correlation_id(
+                        record, "debate-tie-judgment"
+                    ),
+                    run_id=record.debate_tie_judgment_interaction_id,
+                    position=self._slack_safe_text(tie_judgment.rationale),
+                    evidence=[
+                        self._slack_safe_text(item.finding, limit=1_000)
+                        for item in tie_judgment.rubric_applications
+                    ],
+                    confidence=tie_judgment.confidence,
+                    vote_option=None,
+                    abstain=True,
+                    interaction_id=record.debate_tie_judgment_interaction_id,
+                    verified_interaction_event_digest=(
+                        verified_tie_judgment.event_digest
+                    ),
+                    provider_result_digest=canonical_content_digest(
+                        self._interaction_result_text(tie_judgment)
+                    ),
+                )
+            )
+        final_turns: list[CollaborationTurn] = []
+        comparable = (
+            "assignment_sequence",
+            "provider",
+            "phase",
+            "debate_role",
+            "run_id",
+            "position",
+            "evidence",
+            "contradictions",
+            "confidence",
+            "vote_option",
+            "abstain",
+            "interaction_id",
+            "verified_interaction_event_digest",
+            "provider_result_digest",
+        )
+        for candidate in turn_candidates:
+            existing = next(
                 (
-                    f"*[OpenAI Director] SYNTHESIS*\nAssignment: {record.task_id}\n"
-                    f"Correlation: `{correlation_id}` | Time: {synthesis_turn.recorded_at.isoformat()}\n"
-                    f"Decision: {self._slack_safe_text(synthesis.decision)}\n"
-                    f"Rationale: {self._slack_safe_text(synthesis.rationale)}\n"
-                    f"Dissent: {self._slack_safe_text('; '.join(synthesis.dissent) or 'none')}\n"
+                    item
+                    for item in record.collaboration_turns
+                    if item.correlation_id == candidate.correlation_id
+                ),
+                None,
+            )
+            if existing is None:
+                record.collaboration_turns.append(candidate)
+                final_turns.append(candidate)
+            elif any(
+                getattr(existing, field) != getattr(candidate, field)
+                for field in comparable
+            ):
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = (
+                    "COMMUNICATION_EVIDENCE_FAILURE: OpenAI debate role record changed at "
+                    + candidate.correlation_id
+                )
+                self.store.save(record)
+                return False
+            else:
+                final_turns.append(existing)
+        self.store.save(record)
+
+        labels = {
+            "rebuttal": "OpenAI Participant",
+            "synthesis": "OpenAI Director",
+            "tie_judgment": "OpenAI Director",
+        }
+        for turn in final_turns:
+            if turn.slack_message_ts is not None or not record.collaboration_thread_ts:
+                continue
+            if turn.phase == "rebuttal":
+                details = (
+                    "Exactly one OpenAI advisory vote at the configured 2.0 weight; no authority."
+                )
+            elif turn.phase == "tie_judgment":
+                details = (
                     f"Tally: {self._slack_safe_text(json.dumps(tally.option_weights, sort_keys=True))} "
-                    f"| Resolution: {tally.resolution}\n"
+                    f"| Resolution: {tally.resolution} | "
+                    f"Judgment: {tie_judgment.chosen_option}\n"
+                    "Separate non-voting rubric judgment; no external-action authority."
+                )
+            else:
+                details = (
+                    "Synthesis is non-voting Director context; the Participant vote is separate.\n"
                     f"Next action: {self._slack_safe_text(synthesis.next_action)}\n"
                     "Advisory only; deterministic execution and merge gates remain authoritative."
+                )
+            delivered, turn.slack_message_ts = await self._deliver_collaboration_message(
+                record,
+                (
+                    f"*[{labels[turn.phase]}] {turn.phase.upper()}*\n"
+                    f"Assignment: {record.task_id}\n"
+                    f"Correlation: `{turn.correlation_id}` | Time: {turn.recorded_at.isoformat()}\n"
+                    f"Position: {self._slack_safe_text(turn.position)}\n"
+                    f"Evidence: {self._slack_safe_text('; '.join(turn.evidence) or 'none')}\n"
+                    f"{details}"
                 )[:3_900],
                 thread_ts=record.collaboration_thread_ts,
-                client_msg_id=self._slack_client_id(correlation_id),
+                client_msg_id=self._slack_client_id(turn.correlation_id),
             )
             self.store.save(record)
             if not delivered:
@@ -1656,7 +2852,7 @@ class OrchestrationEngine:
     async def _publish_collaboration_completion(self, record: TaskRecord) -> bool:
         if not await self._ensure_collaboration_thread(record):
             return False
-        correlation_id = f"{record.task_id}:completion"
+        correlation_id = self._generation_correlation_id(record, "completion")
         existing = next(
             (
                 turn
@@ -1772,7 +2968,12 @@ class OrchestrationEngine:
 
         def reserve(current: TaskRecord) -> None:
             nonlocal reserved_key
+            self._require_verified_plan_materialization(current)
             current_assignment = pending_assignment(current)
+            if current_assignment is not None:
+                current_assignment = self._effective_assignment(
+                    current, current_assignment
+                )
             if (
                 current.plan_generation != record.plan_generation
                 or current_assignment is None
@@ -1810,6 +3011,10 @@ class OrchestrationEngine:
             stored = self.store.mutate_if_version(
                 record.task_id, expected_version, reserve
             )
+        except CommunicationEvidenceFailure as exc:
+            current = self.store.get(record.task_id) or record
+            self._stop_for_unverified_plan(current, exc)
+            return None
         except EffectAlreadyClaimed:
             return None
         if stored is None:
@@ -1819,16 +3024,36 @@ class OrchestrationEngine:
         return stored, reserved_key
 
     async def _process_exact_sha_review(
-        self, record: TaskRecord, run: ProviderRun
+        self,
+        record: TaskRecord,
+        run: ProviderRun,
+        assignment: Assignment | None = None,
     ) -> bool | None:
         service = self.oracle_merge_service
         if service is None or not service.policy.enabled or service.policy.kill_switch:
             return None
         try:
+            self._require_verified_plan_materialization(record)
+            planned = [
+                item
+                for item in (record.plan.assignments if record.plan else [])
+                if item.sequence == run.assignment_sequence
+            ]
+            if len(planned) != 1:
+                raise ValueError("review run has no exact planned assignment")
+            reconstructed = self._effective_assignment(record, planned[0])
+            if assignment is not None and assignment_approval_digest(
+                assignment
+            ) != assignment_approval_digest(reconstructed):
+                raise ValueError("review assignment changed before exact-SHA merge")
+            assignment = reconstructed
             artifact = authenticate_provider_review_artifact(
-                record, run, service.policy.review_secret
+                record,
+                run,
+                service.policy.review_secret,
+                review_assignment=assignment,
             )
-        except (ValueError, TypeError) as exc:
+        except (CommunicationEvidenceFailure, ValueError, TypeError) as exc:
             record_oracle_recovery(
                 record,
                 run,
@@ -1863,7 +3088,7 @@ class OrchestrationEngine:
             effect_key=oracle_effect_key,
             kind="oracle_merge_intent",
             phase="oracle_merge",
-            assignment=pending_assignment(record),
+            assignment=assignment,
             replay_safe=True,
         )
         prior_merge = next(
@@ -2047,17 +3272,37 @@ class OrchestrationEngine:
         if bound is None:
             return True
         sequence, review_assignment = bound
-        record.plan.assignments = sorted(
-            [
-                review_assignment if item.sequence == sequence else item
-                for item in record.plan.assignments
-            ],
-            key=lambda item: item.sequence,
-        )
         handoff = json.loads(review_assignment.task)
-        record.review_handoff_digests[sequence] = handoff["artifact_digest"]
+        artifact_digest = handoff["artifact_digest"]
+        existing = record.review_handoff_digests.get(sequence)
+        if existing is not None and not hmac.compare_digest(existing, artifact_digest):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "Review handoff failed closed: exact candidate changed after binding"
+            )
+            self.store.save(record)
+            await self._status_post(record, record.message)
+            return False
+        record.review_handoff_digests[sequence] = artifact_digest
         self.store.save(record)
         return True
+
+    def _effective_assignment(
+        self, record: TaskRecord, planned_assignment: Assignment
+    ) -> Assignment:
+        """Return a derived exact-review overlay without changing the plan."""
+
+        try:
+            return reconstruct_review_handoff(
+                record,
+                planned_assignment,
+                trusted_provider_actors=self.settings.oracle_provider_actor_map(),
+            )
+        except (TypeError, ValueError) as exc:
+            raise CommunicationEvidenceFailure(
+                "review handoff cannot be reconstructed from authenticated evidence: "
+                + str(exc)
+            ) from exc
 
     @staticmethod
     def _recorded_no_response_attempts(
@@ -2127,6 +3372,10 @@ class OrchestrationEngine:
         return True
 
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
+        # This record may have been reloaded after a prior assignment. Rebind the
+        # exact current plan before any Slack, provider, or review-side effect.
+        if not self._verified_plan_or_stop(record):
+            return False
         completed_sequences = {
             outcome.assignment_sequence for outcome in record.assignment_outcomes
         }
@@ -2351,11 +3600,17 @@ class OrchestrationEngine:
             )
             record.provider_runs.append(run)
             self.store.save(record)
+            if not self._verified_plan_or_stop(record):
+                return False
             await self._status_post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
 
+        if not self._verified_plan_or_stop(record):
+            return False
         try:
             run = await self._wait(adapter, run, record, assignment)
         except ProviderUnavailableError as exc:
+            if not self._verified_plan_or_stop(record):
+                return False
             run = exc.run
             run_index = next(
                 index
@@ -2365,6 +3620,8 @@ class OrchestrationEngine:
             record.provider_runs[run_index] = run
             await self._defer_unavailable(record, assignment, run)
             return True
+        if not self._verified_plan_or_stop(record):
+            return False
         run_index = next(index for index in range(len(record.provider_runs) - 1, -1, -1) if record.provider_runs[index].run_id == run.run_id)
         record.provider_runs[run_index] = run
         if not run.result:
@@ -2396,7 +3653,9 @@ class OrchestrationEngine:
                 return False
             if not await self._bind_review_candidate(record, assignment, run):
                 return False
-            merge_result = await self._process_exact_sha_review(record, run)
+            merge_result = await self._process_exact_sha_review(
+                record, run, assignment
+            )
             if merge_result is not True:
                 if merge_result is None:
                     record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -2449,6 +3708,8 @@ class OrchestrationEngine:
             )
             self.store.save(record)
             raise
+        if not self._verified_plan_or_stop(record):
+            return False
         self._complete_director_interaction(
             record, interaction_id=review_interaction_id, result=decision
         )
@@ -2467,7 +3728,9 @@ class OrchestrationEngine:
         if decision.verdict == ReviewVerdict.ACCEPT:
             if not await self._bind_review_candidate(record, assignment, run):
                 return False
-            merge_result = await self._process_exact_sha_review(record, run)
+            merge_result = await self._process_exact_sha_review(
+                record, run, assignment
+            )
             if merge_result is False:
                 return False
             self._record_outcome(record, assignment, run, decision)
@@ -2568,6 +3831,8 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 raise
+            if not self._verified_plan_or_stop(record):
+                return False
             record.revision_count += 1
             revised.assignment_sequence = assignment.sequence
             revised.interaction_id = revision_interaction_id
@@ -2586,10 +3851,14 @@ class OrchestrationEngine:
             try:
                 revised = await self._wait(adapter, revised, record, assignment)
             except ProviderUnavailableError as exc:
+                if not self._verified_plan_or_stop(record):
+                    return False
                 revised = exc.run
                 record.provider_runs[-1] = revised
                 await self._defer_unavailable(record, assignment, revised)
                 return True
+            if not self._verified_plan_or_stop(record):
+                return False
             record.provider_runs[-1] = revised
             self.store.save(record)
             if not revised.result:
@@ -2647,6 +3916,8 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 raise
+            if not self._verified_plan_or_stop(record):
+                return False
             self._complete_director_interaction(
                 record,
                 interaction_id=final_review_interaction_id,
@@ -2666,7 +3937,9 @@ class OrchestrationEngine:
             if final_decision.verdict == ReviewVerdict.ACCEPT:
                 if not await self._bind_review_candidate(record, assignment, revised):
                     return False
-                merge_result = await self._process_exact_sha_review(record, revised)
+                merge_result = await self._process_exact_sha_review(
+                    record, revised, assignment
+                )
                 if merge_result is False:
                     return False
                 self._record_outcome(record, assignment, revised, final_decision)
@@ -2797,3 +4070,12 @@ class OrchestrationEngine:
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 12:12 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | END]]
+# [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]

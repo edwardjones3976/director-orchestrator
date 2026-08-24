@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:53 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.store import TaskStore
+from tests.plan_binding_helpers import seed_production_plan_materialization
 
 
 class NoProviderCallAdapter:
@@ -161,6 +163,7 @@ class PersistedProviderRunIdentityTests(unittest.IsolatedAsyncioTestCase):
                     ),
                     provider_runs=[run],
                 )
+                seed_production_plan_materialization(record)
                 _seed_verified_run_identity(record, run)
                 record.provider_runs[0] = run.model_copy(update=changes)
                 store = TaskStore(database)
@@ -189,3 +192,4 @@ class PersistedProviderRunIdentityTests(unittest.IsolatedAsyncioTestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 16:53 UTC | END]]
