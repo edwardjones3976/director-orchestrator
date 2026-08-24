@@ -1,3 +1,6 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:44 UTC | BEGIN]]
 from __future__ import annotations
@@ -7,6 +10,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
@@ -25,12 +29,17 @@ from director_orchestrator.interactions import (
 )
 from director_orchestrator.models import (
     Assignment,
+    DebateActorRole,
+    DebateCounterBias,
     DebateContribution,
+    DebateInitialPosition,
     DebatePlan,
     DebateSynthesis,
+    DebateTieJudgment,
     CollaborationTurn,
     DirectorPlan,
     DiscussionPhase,
+    MaterialDecisionDimension,
     ProviderName,
     ProviderRun,
     ReviewDecision,
@@ -39,9 +48,13 @@ from director_orchestrator.models import (
     SlackIntake,
     TaskRecord,
     TaskStatus,
+    TieJudgmentRubric,
+    TieRubricApplication,
+    TieRubricCriterion,
 )
 from director_orchestrator.policy import enforce_plan, execution_policy_errors
 from director_orchestrator.store import TaskStore
+from director_orchestrator.team_charter import AdvisoryVoteTally
 
 
 def interaction_result_text(value: object) -> str:
@@ -149,6 +162,38 @@ def seed_verified_plan(record: TaskRecord) -> None:
     record.plan_interaction_id = interaction_id
 
 
+def bind_reviewed_contribution(record: TaskRecord, turn: CollaborationTurn) -> None:
+    contribution = DebateContribution(
+        position=turn.position,
+        evidence=turn.evidence,
+        contradictions=turn.contradictions,
+        confidence=turn.confidence,
+        vote_option=turn.vote_option,
+        abstain=turn.abstain,
+    )
+    decision = ReviewDecision(
+        verdict=ReviewVerdict.ACCEPT,
+        summary="Exact debate contribution accepted.",
+        evidence=["exact structured contribution"],
+        debate_contribution=contribution,
+    )
+    interaction_id = f"{record.task_id}:openai-review:{turn.assignment_sequence}"
+    verified = seed_verified_interaction(
+        record,
+        interaction_id=interaction_id,
+        provider=ProviderName.OPENAI,
+        phase=ProviderInteractionPhase.ACCEPTANCE_REVIEW,
+        result=decision,
+    )
+    turn.verified_debate_contribution = contribution
+    turn.director_review = decision
+    turn.director_review_interaction_id = interaction_id
+    turn.verified_director_review_event_digest = verified.event_digest
+    turn.director_review_result_digest = canonical_content_digest(
+        interaction_result_text(decision)
+    )
+
+
 def debate_plan(*, include_gemini: bool = False, material_risk: bool = False) -> DirectorPlan:
     providers = [ProviderName.CLAUDE, ProviderName.CURSOR]
     if include_gemini:
@@ -190,9 +235,41 @@ def debate_plan(*, include_gemini: bool = False, material_risk: bool = False) ->
         final_acceptance=["Decision and dissent are recorded"],
         debate=DebatePlan(
             question="Should the team choose option A or option B?",
+            neutral_framing=(
+                "Compare the evidence for A and B without presuming either is correct; "
+                "retain a bounded option to gather more evidence."
+            ),
+            alternative_option="Gather more evidence",
+            openai_initial_position=DebateInitialPosition(
+                position="OpenAI preliminarily favors B while preserving uncertainty.",
+                rationale="The limited plan-time evidence gives B a provisional edge.",
+                evidence=["Plan-time evidence only"],
+                contradictions=["Specialist evidence has not been collected"],
+                assumptions=["The bounded fixture represents the expected decision"],
+                material_risks=[],
+                unknowns=["Independent specialist results are not available yet"],
+                conditions_to_change=["Verified specialist evidence favors another option"],
+                confidence=0.55,
+                provisional_option="B",
+            ),
+            tie_judgment_rubric=TieJudgmentRubric(
+                criteria=[
+                    TieRubricCriterion(
+                        criterion="evidence_quality",
+                        evaluation_question="Which tied option has stronger verified evidence?",
+                    ),
+                    TieRubricCriterion(
+                        criterion="reversibility",
+                        evaluation_question="Which tied option is easier to reverse safely?",
+                    ),
+                ]
+            ),
+            material_dimensions=(
+                [MaterialDecisionDimension.PROJECT_DIRECTION] if material_risk else []
+            ),
             position_assignments=position_sequences,
             rebuttal_assignments=[item.sequence for item in rebuttals],
-            vote_options=["A", "B"],
+            vote_options=["A", "B", "Gather more evidence"],
             material_risk=material_risk,
         ),
     )
@@ -237,6 +314,80 @@ class DebatePolicyTests(unittest.TestCase):
         self.assertIn("estimated cost exceeds task budget", guarded.approval_reasons)
         self.assertTrue(guarded.approval_required)
 
+    def test_neutral_alternative_and_preliminary_option_must_be_configured(self):
+        plan = debate_plan()
+        plan.debate = plan.debate.model_copy(update={"alternative_option": None})
+        self.assertEqual(execution_policy_errors(plan, self.settings), [])
+
+        plan = debate_plan()
+        plan.debate = plan.debate.model_copy(update={"alternative_option": "Hidden D"})
+        errors = execution_policy_errors(plan, self.settings)
+        self.assertIn(
+            "debate alternative option must be one configured vote option", errors
+        )
+
+        plan = debate_plan()
+        plan.debate = plan.debate.model_copy(
+            update={
+                "openai_initial_position": plan.debate.openai_initial_position.model_copy(
+                    update={"provisional_option": "Hidden D"}
+                )
+            }
+        )
+        errors = execution_policy_errors(plan, self.settings)
+        self.assertIn(
+            "OpenAI preliminary position selected an unconfigured debate option",
+            errors,
+        )
+
+    def test_legacy_debate_records_remain_readable_but_cannot_execute(self):
+        payload = debate_plan().model_dump(mode="json")
+        for field in (
+            "neutral_framing",
+            "alternative_option",
+            "openai_initial_position",
+            "tie_judgment_rubric",
+            "material_dimensions",
+        ):
+            payload["debate"].pop(field)
+
+        legacy = DirectorPlan.model_validate(payload)
+
+        self.assertIsNone(legacy.debate.neutral_framing)
+        self.assertIn(
+            "debate must record a neutral framing",
+            execution_policy_errors(legacy, self.settings),
+        )
+        self.assertIn(
+            "debate must record OpenAI's independent initial position",
+            execution_policy_errors(legacy, self.settings),
+        )
+        self.assertIn(
+            "debate must predeclare an ordinary-tie judgment rubric",
+            execution_policy_errors(legacy, self.settings),
+        )
+        self.assertIn(
+            "debate must declare its material decision dimensions",
+            execution_policy_errors(legacy, self.settings),
+        )
+
+        legacy_synthesis = DebateSynthesis.model_validate(
+            {
+                "decision": "Legacy decision",
+                "rationale": "Legacy rationale",
+                "dissent": [],
+                "next_action": "Stop for migration",
+                "counter_bias_analysis": "Old post-hoc field",
+                "counter_bias_changed_decision": False,
+                "openai_vote_option": "A",
+                "openai_abstains": False,
+                "confidence": 0.5,
+            }
+        )
+        self.assertNotIn(
+            "counter_bias_analysis", legacy_synthesis.model_dump(mode="json")
+        )
+
 
 class RecordingNotifier:
     def __init__(self):
@@ -268,6 +419,9 @@ class CompletingAdapter:
 
 
 class DebateDirector:
+    def __init__(self, *, omit_position_fields: bool = False):
+        self.omit_position_fields = omit_position_fields
+
     async def review(self, record, result):
         assignment = sorted(record.plan.assignments, key=lambda item: item.sequence)[
             record.next_assignment_index
@@ -279,14 +433,68 @@ class DebateDirector:
             evidence=["structured evidence"],
             debate_contribution=DebateContribution(
                 position=f"{assignment.agent.value} supports {option}",
+                rationale=(
+                    None
+                    if self.omit_position_fields
+                    and assignment.discussion_phase == DiscussionPhase.POSITION
+                    else f"{assignment.agent.value} evaluated the bounded evidence."
+                ),
                 evidence=[f"evidence-{assignment.sequence}"],
                 contradictions=["bounded disagreement"],
+                assumptions=(
+                    None
+                    if self.omit_position_fields
+                    and assignment.discussion_phase == DiscussionPhase.POSITION
+                    else ["The bounded fixture is representative"]
+                ),
+                material_risks=(
+                    None
+                    if self.omit_position_fields
+                    and assignment.discussion_phase == DiscussionPhase.POSITION
+                    else []
+                ),
+                unknowns=(
+                    None
+                    if self.omit_position_fields
+                    and assignment.discussion_phase == DiscussionPhase.POSITION
+                    else ["No live environment evidence was supplied"]
+                ),
+                conditions_to_change=(
+                    None
+                    if self.omit_position_fields
+                    and assignment.discussion_phase == DiscussionPhase.POSITION
+                    else ["Contrary exact evidence is verified"]
+                ),
                 confidence=0.8,
                 vote_option=option,
             ),
         )
 
-    async def synthesize_debate(self, record):
+    async def counter_bias_debate(self, record):
+        return DebateCounterBias(
+            strongest_counterargument="Claude's evidence provides the strongest case for A.",
+            challenged_assumptions=["The preliminary OpenAI preference for B may anchor review"],
+            disconfirming_evidence=["Claude produced contrary verified evidence"],
+            alternatives_reconsidered=["A", "Gather more evidence"],
+            independence_assessment=(
+                "Specialist positions were authenticated before this moderator pass."
+            ),
+            recommendation_changed=False,
+            provisional_recommendation="B",
+            confidence=0.7,
+        )
+
+    async def synthesize_debate(
+        self,
+        record,
+        counter_bias,
+        *,
+        counter_bias_interaction_id,
+        counter_bias_event_digest,
+    ):
+        self.counter_bias_received = counter_bias
+        self.counter_bias_interaction_id_received = counter_bias_interaction_id
+        self.counter_bias_event_digest_received = counter_bias_event_digest
         return DebateSynthesis(
             decision="Choose option B",
             rationale="The combined Cursor and OpenAI evidence is stronger.",
@@ -296,8 +504,78 @@ class DebateDirector:
             confidence=0.75,
         )
 
+    async def judge_debate_tie(self, record, **kwargs):
+        self.tie_judgment_calls = getattr(self, "tie_judgment_calls", 0) + 1
+        return DebateTieJudgment(
+            chosen_option="B",
+            rubric_applications=[
+                TieRubricApplication(
+                    criterion="evidence_quality",
+                    finding="B has the stronger exact verified evidence.",
+                    favors_option="B",
+                ),
+                TieRubricApplication(
+                    criterion="reversibility",
+                    finding="Both are reversible; B has the narrower change.",
+                    favors_option="B",
+                ),
+            ],
+            rationale="The predeclared rubric favors B among the tied winners.",
+            confidence=0.8,
+        )
+
 
 class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_new_plan_budget_reserves_counter_bias_and_synthesis_costs(self):
+        class PlanningDirector:
+            async def plan(self, record):
+                plan = debate_plan()
+                plan.debate = plan.debate.model_copy(
+                    update={
+                        "estimated_counter_bias_cost_usd": 0.30,
+                        "estimated_synthesis_cost_usd": 0.20,
+                    }
+                )
+                return plan
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                openai_plan_estimated_cost_usd=0.10,
+                max_task_budget_usd=0.55,
+                max_agent_hops=4,
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-DEBATE-PROSPECTIVE-BUDGET",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-debate-prospective-budget",
+                    channel_id="C-ORACLE",
+                    thread_ts="owner-thread",
+                    user_id="U-OWNER",
+                    text="DIRECTOR Project: demo Outcome: choose a direction",
+                ),
+            )
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            engine = OrchestrationEngine(settings, store)
+            engine.director = PlanningDirector()
+            engine.notifier = RecordingNotifier()
+
+            await engine.run(task.task_id)
+
+            blocked = store.get(task.task_id)
+            self.assertEqual(blocked.status, TaskStatus.BLOCKED)
+            self.assertIn("Cumulative task budget blocks", blocked.message)
+            self.assertIn("new plan $0.50", blocked.message)
+            self.assertAlmostEqual(blocked.cumulative_estimated_cost_usd, 0.10)
+
     def test_slack_relay_redacts_credentials_and_raw_source_without_unrelated_content_scanning(self):
         # The signed decimal is an ordinary research value. It is here to prove the
         # relay leaves unrelated numeric text alone: _slack_safe_text redacts by
@@ -942,7 +1220,8 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ProviderName.CLAUDE: claude,
                 ProviderName.CURSOR: cursor,
             }
-            engine.director = DebateDirector()
+            director = DebateDirector()
+            engine.director = director
             engine.notifier = notifier
 
             await engine.run(task.task_id)
@@ -950,9 +1229,120 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             completed = store.get(task.task_id)
             self.assertEqual(completed.status, TaskStatus.DONE, completed.error)
             self.assertEqual(completed.collaboration_thread_ts, "1700000000.000001")
-            self.assertEqual(len(completed.collaboration_turns), 10)
+            self.assertEqual(len(completed.collaboration_turns), 14)
             self.assertEqual(completed.debate_tally["option_weights"], {"A": 2.5, "B": 3.5})
             self.assertFalse(completed.debate_tally["authorizes_external_action"])
+            self.assertIsNotNone(completed.debate_counter_bias)
+            self.assertNotEqual(
+                completed.debate_counter_bias_interaction_id,
+                completed.debate_synthesis_interaction_id,
+            )
+            counter_projection = project_interaction(
+                completed.provider_interaction_ledger,
+                completed.debate_counter_bias_interaction_id,
+            )
+            synthesis_projection = project_interaction(
+                completed.provider_interaction_ledger,
+                completed.debate_synthesis_interaction_id,
+            )
+            self.assertEqual(counter_projection.state, ProviderInteractionState.VERIFIED)
+            self.assertEqual(synthesis_projection.state, ProviderInteractionState.VERIFIED)
+            self.assertEqual(director.counter_bias_received, completed.debate_counter_bias)
+            self.assertEqual(
+                director.counter_bias_interaction_id_received,
+                completed.debate_counter_bias_interaction_id,
+            )
+            self.assertEqual(
+                director.counter_bias_event_digest_received,
+                counter_projection.latest_event_digest,
+            )
+            counter_event = next(
+                event
+                for event in completed.provider_interaction_ledger
+                if event.event_digest == counter_projection.latest_event_digest
+            )
+            synthesis_event = next(
+                event
+                for event in completed.provider_interaction_ledger
+                if event.event_digest == synthesis_projection.latest_event_digest
+            )
+            self.assertEqual(
+                counter_event.phase, ProviderInteractionPhase.DEBATE_COUNTER_BIAS
+            )
+            self.assertEqual(
+                synthesis_event.phase, ProviderInteractionPhase.DEBATE_SYNTHESIS
+            )
+            self.assertLess(counter_event.recorded_at, synthesis_event.recorded_at)
+            openai_turns = [
+                turn
+                for turn in completed.collaboration_turns
+                if turn.debate_role is not None
+            ]
+            self.assertEqual(
+                [turn.debate_role for turn in openai_turns],
+                [
+                    DebateActorRole.OPENAI_MODERATOR,
+                    DebateActorRole.OPENAI_PARTICIPANT,
+                    DebateActorRole.OPENAI_MODERATOR,
+                    DebateActorRole.OPENAI_PARTICIPANT,
+                    DebateActorRole.OPENAI_DIRECTOR,
+                ],
+            )
+            self.assertEqual(
+                len(
+                    [
+                        turn
+                        for turn in openai_turns
+                        if turn.vote_option is not None and not turn.abstain
+                    ]
+                ),
+                1,
+            )
+            director_turn = next(
+                turn
+                for turn in openai_turns
+                if turn.debate_role == DebateActorRole.OPENAI_DIRECTOR
+            )
+            self.assertTrue(director_turn.abstain)
+            self.assertIsNone(director_turn.vote_option)
+            plan_projection = project_interaction(
+                completed.provider_interaction_ledger,
+                completed.plan_interaction_id,
+            )
+            self.assertTrue(
+                all(
+                    turn.interaction_id == completed.plan_interaction_id
+                    and turn.verified_interaction_event_digest
+                    == plan_projection.latest_event_digest
+                    and turn.provider_result_digest
+                    == plan_projection.verified_result_digest
+                    for turn in openai_turns[:2]
+                )
+            )
+            self.assertTrue(
+                all(
+                    turn.rationale
+                    and turn.assumptions is not None
+                    and turn.material_risks is not None
+                    and turn.unknowns is not None
+                    and turn.conditions_to_change is not None
+                    for turn in completed.collaboration_turns
+                    if turn.phase == "position"
+                )
+            )
+            counter_turn = next(
+                turn
+                for turn in openai_turns
+                if turn.phase == "counter_bias"
+            )
+            self.assertEqual(
+                counter_turn.interaction_id,
+                completed.debate_counter_bias_interaction_id,
+            )
+            self.assertEqual(
+                counter_turn.verified_interaction_event_digest,
+                counter_projection.latest_event_digest,
+            )
             roots = [item for item in notifier.posts if item.get("root_message")]
             self.assertEqual(len(roots), 1)
             debate_replies = [
@@ -960,7 +1350,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 for item in notifier.posts
                 if item.get("thread_ts") == completed.collaboration_thread_ts
             ]
-            self.assertEqual(len(debate_replies), 10)
+            self.assertEqual(len(debate_replies), 14)
             self.assertTrue(all("client_msg_id" in item for item in [*roots, *debate_replies]))
             self.assertNotIn("bounded result from", "\n".join(item["message"] for item in debate_replies))
             self.assertEqual(claude.contexts[0].count('"dependency_outcomes"'), 1)
@@ -985,6 +1375,17 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     completed.debate_synthesis_interaction_id,
                 ).state,
                 ProviderInteractionState.VERIFIED,
+            )
+            self.assertEqual(
+                [
+                    (item.kind, item.outcome)
+                    for item in completed.task_effect_ledger
+                    if item.phase == "debate_counter_bias"
+                ],
+                [
+                    ("director_intent", "reserved"),
+                    ("director_observation", "completed"),
+                ],
             )
             synthesis_turn = next(
                 turn for turn in completed.collaboration_turns if turn.phase == "synthesis"
@@ -1012,13 +1413,77 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertGreaterEqual(completed.cumulative_effect_hops, 9)
 
+            tampered = next(
+                turn
+                for turn in completed.collaboration_turns
+                if turn.provider == ProviderName.CURSOR and turn.phase == "rebuttal"
+            )
+            tampered.vote_option = "A"
+            store.save(completed)
+            continued = await engine._finalize_debate(
+                completed, completed.plan.assignments[-1]
+            )
+            self.assertFalse(continued)
+            rejected = store.get(completed.task_id)
+            self.assertEqual(rejected.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(rejected.message, "COMMUNICATION_EVIDENCE_FAILURE")
+            self.assertIn("persisted debate fields changed", rejected.error)
+
+    async def test_position_without_full_initial_evidence_fields_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.invalid/fire",
+                claude_routine_token="test-claude",
+                cursor_api_key="test-cursor",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                max_agent_hops=4,
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            task = TaskRecord(
+                task_id="DIR-MISSING-POSITION-FIELDS",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-missing-position-fields",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="DIRECTOR Project: demo Outcome: verify initial evidence",
+                ),
+                plan=debate_plan(),
+            )
+            seed_verified_plan(task)
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            engine = OrchestrationEngine(settings, store)
+            engine.providers = {
+                ProviderName.CLAUDE: CompletingAdapter(ProviderName.CLAUDE),
+                ProviderName.CURSOR: CompletingAdapter(ProviderName.CURSOR),
+            }
+            engine.director = DebateDirector(omit_position_fields=True)
+
+            await engine.run(task.task_id)
+
+            stopped = store.get(task.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
+            self.assertIn("lacks rationale, assumptions", stopped.error)
+            self.assertEqual(stopped.next_assignment_index, 0)
+            self.assertIsNone(stopped.debate_counter_bias)
+
     async def test_material_tie_stops_for_owner_and_never_authorizes_action(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(
                 Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")
             )
             store = TaskStore(settings.sqlite_path)
-            plan = debate_plan(include_gemini=True, material_risk=True)
+            plan = debate_plan(include_gemini=True, material_risk=False).model_copy(
+                update={"risk_level": RiskLevel.HIGH}
+            )
             task = TaskRecord(
                 task_id="DIR-TIE",
                 status=TaskStatus.RUNNING,
@@ -1063,6 +1528,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     ),
                 ],
             )
+            seed_verified_plan(task)
             for turn in task.collaboration_turns:
                 provider_result = f"verified {turn.provider.value} rebuttal"
                 interaction_id = f"{task.task_id}:{turn.provider.value}:rebuttal"
@@ -1077,17 +1543,197 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 turn.interaction_id = interaction_id
                 turn.verified_interaction_event_digest = verified.event_digest
                 turn.provider_result_digest = canonical_content_digest(provider_result)
+                if turn.provider in {ProviderName.CLAUDE, ProviderName.CURSOR}:
+                    bind_reviewed_contribution(task, turn)
             store.create(task)
             engine = OrchestrationEngine(settings, store)
-            engine.director = DebateDirector()
+            director = DebateDirector()
+            engine.director = director
 
-            continued = await engine._finalize_debate(task, plan.assignments[-1])
+            captured_votes = []
+
+            def material_tie(votes, *, material_risk=False):
+                captured_votes.extend(votes)
+                self.assertTrue(material_risk)
+                return AdvisoryVoteTally(
+                    configured_weight_total=7.0,
+                    cast_weight_total=6.0,
+                    option_weights={"A": 3.0, "B": 3.0},
+                    abstaining=[],
+                    unavailable=[],
+                    winning_options=["A", "B"],
+                    resolution="owner_decision_required",
+                    authorizes_external_action=False,
+                )
+
+            with patch(
+                "director_orchestrator.engine.tally_advisory_votes",
+                side_effect=material_tie,
+            ):
+                continued = await engine._finalize_debate(
+                    task, plan.assignments[-1]
+                )
 
             self.assertFalse(continued)
             stopped = store.get(task.task_id)
             self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
             self.assertEqual(stopped.debate_tally["resolution"], "owner_decision_required")
             self.assertFalse(stopped.debate_tally["authorizes_external_action"])
+            self.assertEqual(
+                [vote.member for vote in captured_votes],
+                ["claude", "cursor", "openai"],
+            )
+            self.assertIsNone(stopped.debate_tie_judgment)
+            self.assertEqual(getattr(director, "tie_judgment_calls", 0), 0)
+            self.assertNotEqual(stopped.message, "COMMUNICATION_EVIDENCE_FAILURE")
+
+    async def test_ordinary_tie_requires_documented_director_judgment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")
+            )
+            plan = debate_plan()
+            task = TaskRecord(
+                task_id="DIR-ORDINARY-TIE",
+                status=TaskStatus.RUNNING,
+                intake=SlackIntake(
+                    source_event_id="evt-ordinary-tie",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="DIRECTOR Project: demo Outcome: ordinary technical choice",
+                ),
+                plan=plan,
+                collaboration_turns=[
+                    CollaborationTurn(
+                        assignment_sequence=3,
+                        provider=ProviderName.CLAUDE,
+                        phase="rebuttal",
+                        correlation_id="ordinary-claude",
+                        run_id="claude-run",
+                        position="A",
+                        confidence=0.8,
+                        vote_option="A",
+                    ),
+                    CollaborationTurn(
+                        assignment_sequence=4,
+                        provider=ProviderName.CURSOR,
+                        phase="rebuttal",
+                        correlation_id="ordinary-cursor",
+                        run_id="cursor-run",
+                        position="B",
+                        confidence=0.8,
+                        vote_option="B",
+                    ),
+                    # Unassigned text cannot manufacture participation or a vote.
+                    CollaborationTurn(
+                        assignment_sequence=4,
+                        provider=ProviderName.GEMINI,
+                        phase="rebuttal",
+                        correlation_id="invented-gemini",
+                        run_id="gemini-run",
+                        position="A",
+                        confidence=0.99,
+                        vote_option="A",
+                    ),
+                ],
+            )
+            seed_verified_plan(task)
+            for turn in task.collaboration_turns:
+                provider_result = f"verified {turn.provider.value} rebuttal"
+                interaction_id = f"{task.task_id}:{turn.provider.value}:rebuttal"
+                verified = seed_verified_interaction(
+                    task,
+                    interaction_id=interaction_id,
+                    provider=turn.provider,
+                    phase=ProviderInteractionPhase.DISPATCH,
+                    result=provider_result,
+                    assignment_sequence=turn.assignment_sequence,
+                )
+                turn.interaction_id = interaction_id
+                turn.verified_interaction_event_digest = verified.event_digest
+                turn.provider_result_digest = canonical_content_digest(provider_result)
+                if turn.provider in {ProviderName.CLAUDE, ProviderName.CURSOR}:
+                    bind_reviewed_contribution(task, turn)
+            store = TaskStore(settings.sqlite_path)
+            store.create(task)
+            engine = OrchestrationEngine(settings, store)
+            director = DebateDirector()
+            engine.director = director
+            captured_votes = []
+
+            def ordinary_tie(votes, *, material_risk=False):
+                captured_votes.extend(votes)
+                self.assertFalse(material_risk)
+                return AdvisoryVoteTally(
+                    configured_weight_total=7.0,
+                    cast_weight_total=6.0,
+                    option_weights={"A": 3.0, "B": 3.0},
+                    abstaining=[],
+                    unavailable=[],
+                    winning_options=["A", "B"],
+                    resolution="openai_director_judgment",
+                    authorizes_external_action=False,
+                )
+
+            with patch(
+                "director_orchestrator.engine.tally_advisory_votes",
+                side_effect=ordinary_tie,
+            ):
+                continued = await engine._finalize_debate(
+                    task, plan.assignments[-1]
+                )
+
+            self.assertTrue(continued)
+            persisted = store.get(task.task_id)
+            self.assertEqual(
+                [vote.member for vote in captured_votes],
+                ["claude", "cursor", "openai"],
+            )
+            synthesis_turn = next(
+                turn
+                for turn in persisted.collaboration_turns
+                if turn.phase == "synthesis"
+            )
+            tie_turn = next(
+                turn
+                for turn in persisted.collaboration_turns
+                if turn.phase == "tie_judgment"
+            )
+            self.assertIn("Choose option B", synthesis_turn.position)
+            self.assertTrue(synthesis_turn.abstain)
+            self.assertIsNone(synthesis_turn.vote_option)
+            self.assertTrue(tie_turn.abstain)
+            self.assertIsNone(tie_turn.vote_option)
+            self.assertEqual(persisted.debate_tie_judgment.chosen_option, "B")
+            self.assertEqual(director.tie_judgment_calls, 1)
+            synthesis_projection = project_interaction(
+                persisted.provider_interaction_ledger,
+                persisted.debate_synthesis_interaction_id,
+            )
+            judgment_projection = project_interaction(
+                persisted.provider_interaction_ledger,
+                persisted.debate_tie_judgment_interaction_id,
+            )
+            self.assertNotEqual(
+                persisted.debate_synthesis_interaction_id,
+                persisted.debate_tie_judgment_interaction_id,
+            )
+            self.assertEqual(
+                tie_turn.verified_interaction_event_digest,
+                judgment_projection.latest_event_digest,
+            )
+            synthesis_event = next(
+                event
+                for event in persisted.provider_interaction_ledger
+                if event.event_digest == synthesis_projection.latest_event_digest
+            )
+            judgment_event = next(
+                event
+                for event in persisted.provider_interaction_ledger
+                if event.event_digest == judgment_projection.latest_event_digest
+            )
+            self.assertLess(synthesis_event.recorded_at, judgment_event.recorded_at)
 
 
 if __name__ == "__main__":
@@ -1095,3 +1741,6 @@ if __name__ == "__main__":
 
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:44 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]

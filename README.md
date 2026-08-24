@@ -1,8 +1,14 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:18 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
+
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=7a03b09530a21ef7c5b626bf0db18f8f200c08c9c57b3d10e342ce66f001dd99 -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -17,6 +23,8 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - An OpenAI Director planner/reviewer using Structured Outputs.
 - A primary OpenAI–Claude–Cursor team, with Claude Pro 20x as the coding/general workhorse and Gemini/Perplexity retained as optional specialists.
 - Standing project roles with flexible capacity targets: OpenAI Director, Claude Chief Programmer, Cursor Project Secretary, Gemini/Antigravity Specialist and Backup Programmer, and Perplexity.ai Research Programmers.
+- A full-time OpenAI Director/control plane, distinct from direct-production workload targets of Claude 60%, Cursor 28%, Gemini/Antigravity 7%, Perplexity 4%, and a 1% separately owner-authorized Codex/OpenAI lane outside this runtime.
+- Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
 - Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
 - A local n8n deployment and an importable intake workflow.
@@ -46,6 +54,39 @@ Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-se
    written `/director approve DIR-… <clarification>` response.
 9. In-progress tasks resume after an orchestrator restart without redispatching an already-recorded provider run.
 10. When live execution is enabled, the usage monitor prompts each configured provider no more often than the configured interval and persists its latest status.
+
+OpenAI keeps Moderator, Participant, and Director functions separate. Moderation
+uses neutral framing, gathers independent positions before cross-exposure when
+practical, and performs a counter-bias check without voting. OpenAI may then
+contribute one participant position and its one existing advisory vote; Director
+synthesis and tie handling create no extra vote and never fabricate participation.
+Milestone updates lead with evidence, exact candidate identity, blockers, and one
+next action rather than activity summaries.
+
+Repository oversight is read-only. The Director runtime never emits OpenAI as a
+specialist assignment target. The 1% OpenAI production share applies only to
+separately owner-authorized Codex/OpenAI work outside this runtime; it requires a
+different-provider exact-candidate review, and a changed candidate invalidates
+review, security, CI, and merge evidence. It grants no external-action authority.
+Prepared but undelivered content is labeled
+`DRAFT — NOT SENT`; offline exercises use
+`SIMULATION — NO PROVIDER INTERACTION`; hypothetical provider views use
+`PREDICTED POSITION — PROVIDER HAS NOT RESPONDED` and never count as participation
+or a vote. Alternatives are recorded only when credible and decision-relevant.
+
+The 5% coordination reserve covers checks, drift, evidence gaps, recovery,
+process failures, and infrastructure variance; it is not planned idle time. The
+33% avoidable micro/fixup reduction is measured against a rolling comparable
+baseline with the baseline, current result, delta, exclusions, and window recorded.
+Milestone records include project/assignment IDs; starting/current SHA or digest;
+categorized status; authenticated participation; workload deviation; OpenAI
+functions and dissent; tests, CI, security, and review; risks; cost/tokens/time;
+commit-efficiency measurement; scope or authority changes; recovery/rollback;
+next gate; owner decisions; and explicit not-done/unverified items.
+
+External actions require exact stored owner authorization for the named action
+and scope plus all current deterministic gates. Neither browser content nor
+provider output creates authority.
 
 ## Windows desktop quick start
 
@@ -193,3 +234,7 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:18 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->

@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
@@ -129,6 +131,26 @@ class DiscussionPhase(StrEnum):
     REBUTTAL = "rebuttal"
 
 
+class DebateActorRole(StrEnum):
+    """Auditable OpenAI roles; none of these labels grants authority."""
+
+    OPENAI_MODERATOR = "openai_moderator"
+    OPENAI_PARTICIPANT = "openai_participant"
+    OPENAI_DIRECTOR = "openai_director"
+
+
+class MaterialDecisionDimension(StrEnum):
+    """Decision dimensions that require owner resolution when tied."""
+
+    COST = "cost"
+    AUTHORITY = "authority"
+    SAFETY = "safety"
+    PRIVACY = "privacy"
+    REPOSITORY_SCOPE = "repository_scope"
+    RUNTIME_BEHAVIOR = "runtime_behavior"
+    PROJECT_DIRECTION = "project_direction"
+
+
 class AntigravityFixtureLane(StrEnum):
     """The complete set of disposable public work units Antigravity can be given.
 
@@ -221,19 +243,90 @@ class Assignment(BaseModel):
     discussion_phase: DiscussionPhase = DiscussionPhase.WORK
 
 
+class DebateInitialPosition(BaseModel):
+    """OpenAI's preliminary view captured before specialist conclusions exist.
+
+    ``provisional_option`` is deliberately not an advisory vote. OpenAI casts its
+    one weighted vote only in the later synthesis response.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    position: str = Field(min_length=1, max_length=2_000)
+    rationale: str = Field(min_length=1, max_length=4_000)
+    evidence: list[str] = Field(default_factory=list, max_length=10)
+    contradictions: list[str] = Field(default_factory=list, max_length=10)
+    assumptions: list[str] = Field(min_length=1, max_length=10)
+    material_risks: list[str] = Field(default_factory=list, max_length=10)
+    unknowns: list[str] = Field(min_length=1, max_length=10)
+    conditions_to_change: list[str] = Field(min_length=1, max_length=10)
+    confidence: float = Field(ge=0, le=1)
+    provisional_option: str | None = Field(default=None, min_length=1, max_length=255)
+    abstain: bool = False
+
+    @model_validator(mode="after")
+    def validate_preference(self) -> DebateInitialPosition:
+        if self.abstain == (self.provisional_option is not None):
+            raise ValueError(
+                "exactly one of provisional_option or abstain is required"
+            )
+        return self
+
+
+class TieRubricCriterion(BaseModel):
+    """One predeclared, ordered criterion for an ordinary tie judgment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    criterion: str = Field(min_length=1, max_length=255)
+    evaluation_question: str = Field(min_length=1, max_length=1_000)
+
+
+class TieJudgmentRubric(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    criteria: list[TieRubricCriterion] = Field(min_length=2, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_unique_criteria(self) -> TieJudgmentRubric:
+        normalized = [item.criterion.strip().lower() for item in self.criteria]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("tie rubric criteria must be unique")
+        return self
+
+
+class TieRubricApplication(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    criterion: str = Field(min_length=1, max_length=255)
+    finding: str = Field(min_length=1, max_length=2_000)
+    favors_option: str | None = Field(default=None, min_length=1, max_length=255)
+
+
 class DebatePlan(BaseModel):
     """A bounded, Director-owned discussion attached to one task."""
 
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(min_length=1, max_length=2_000)
+    # Optional on deserialization so pre-transition persisted tasks remain readable;
+    # execution policy requires all three fields before any new debate can run.
+    neutral_framing: str | None = Field(default=None, min_length=1, max_length=2_000)
+    alternative_option: str | None = Field(default=None, min_length=1, max_length=255)
+    openai_initial_position: DebateInitialPosition | None = None
+    tie_judgment_rubric: TieJudgmentRubric | None = None
+    material_dimensions: list[MaterialDecisionDimension] | None = Field(
+        default=None, max_length=7
+    )
     position_assignments: list[int] = Field(min_length=2, max_length=4)
     rebuttal_assignments: list[int] = Field(min_length=2, max_length=4)
     vote_options: list[str] = Field(min_length=2, max_length=6)
     deadline_minutes: int = Field(default=20, ge=5, le=120)
     max_rebuttal_rounds: Literal[1] = 1
     material_risk: bool = False
+    estimated_counter_bias_cost_usd: float = Field(default=0, ge=0, le=1_000)
     estimated_synthesis_cost_usd: float = Field(default=0, ge=0, le=1_000)
+    estimated_tie_judgment_cost_usd: float = Field(default=0, ge=0, le=1_000)
 
 
 class DirectorPlan(BaseModel):
@@ -258,8 +351,15 @@ class DebateContribution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     position: str = Field(min_length=1, max_length=2_000)
+    # Optional only so pre-transition persisted reviews remain readable. A new
+    # POSITION assignment fails closed unless every field is explicitly present.
+    rationale: str | None = Field(default=None, min_length=1, max_length=4_000)
     evidence: list[str] = Field(default_factory=list, max_length=10)
     contradictions: list[str] = Field(default_factory=list, max_length=10)
+    assumptions: list[str] | None = Field(default=None, max_length=10)
+    material_risks: list[str] | None = Field(default=None, max_length=10)
+    unknowns: list[str] | None = Field(default=None, max_length=10)
+    conditions_to_change: list[str] | None = Field(default=None, max_length=10)
     confidence: float = Field(ge=0, le=1)
     vote_option: str | None = Field(default=None, min_length=1, max_length=255)
     abstain: bool = False
@@ -294,6 +394,20 @@ class DebateSynthesis(BaseModel):
     confidence: float = Field(ge=0, le=1)
     owner_question: str | None = Field(default=None, max_length=2_000)
 
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_post_hoc_counter_bias(cls, value: object) -> object:
+        """Read old rows without exposing obsolete fields to new output schemas."""
+
+        if isinstance(value, dict):
+            migrated = dict(value)
+            migrated.pop("counter_bias_analysis", None)
+            migrated.pop("counter_bias_changed_decision", None)
+            migrated.pop("director_judgment_option", None)
+            migrated.pop("tie_rubric_applications", None)
+            return migrated
+        return value
+
     @model_validator(mode="after")
     def validate_openai_vote(self) -> DebateSynthesis:
         if self.openai_abstains == (self.openai_vote_option is not None):
@@ -301,19 +415,70 @@ class DebateSynthesis(BaseModel):
         return self
 
 
+class DebateTieJudgment(BaseModel):
+    """A separate non-voting Director judgment for a deterministic ordinary tie."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chosen_option: str = Field(min_length=1, max_length=255)
+    rubric_applications: list[TieRubricApplication] = Field(min_length=2, max_length=8)
+    rationale: str = Field(min_length=1, max_length=4_000)
+    confidence: float = Field(ge=0, le=1)
+
+
+class DebateCounterBias(BaseModel):
+    """A separate OpenAI Moderator result completed before final synthesis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    strongest_counterargument: str = Field(min_length=1, max_length=2_000)
+    challenged_assumptions: list[str] = Field(min_length=1, max_length=10)
+    disconfirming_evidence: list[str] = Field(default_factory=list, max_length=10)
+    alternatives_reconsidered: list[str] = Field(min_length=1, max_length=10)
+    independence_assessment: str = Field(min_length=1, max_length=2_000)
+    recommendation_changed: bool
+    provisional_recommendation: str | None = Field(
+        default=None, min_length=1, max_length=255
+    )
+    confidence: float = Field(ge=0, le=1)
+
+
 class CollaborationTurn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    assignment_sequence: int = Field(ge=1, le=20)
+    assignment_sequence: int | None = Field(default=None, ge=1, le=20)
     provider: ProviderName
     phase: Literal[
-        "delegation", "work_result", "position", "rebuttal", "synthesis", "completion"
+        "delegation",
+        "work_result",
+        "moderator",
+        "position",
+        "rebuttal",
+        "counter_bias",
+        "tie_judgment",
+        "synthesis",
+        "completion",
     ]
+    debate_role: DebateActorRole | None = None
     correlation_id: str = Field(min_length=1, max_length=255)
     run_id: str = Field(min_length=1, max_length=255)
     position: str = Field(min_length=1, max_length=2_000)
+    rationale: str | None = Field(default=None, max_length=4_000)
     evidence: list[str] = Field(default_factory=list, max_length=10)
     contradictions: list[str] = Field(default_factory=list, max_length=10)
+    assumptions: list[str] | None = Field(default=None, max_length=10)
+    material_risks: list[str] | None = Field(default=None, max_length=10)
+    unknowns: list[str] | None = Field(default=None, max_length=10)
+    conditions_to_change: list[str] | None = Field(default=None, max_length=10)
+    verified_debate_contribution: DebateContribution | None = None
+    director_review: ReviewDecision | None = None
+    director_review_interaction_id: str | None = Field(default=None, max_length=255)
+    verified_director_review_event_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    director_review_result_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
     confidence: float = Field(ge=0, le=1)
     vote_option: str | None = Field(default=None, max_length=255)
     abstain: bool = False
@@ -454,7 +619,9 @@ class TaskEffectEvidence(BaseModel):
         "revision",
         "plan",
         "acceptance_review",
+        "debate_counter_bias",
         "debate_synthesis",
+        "debate_tie_judgment",
         "slack_delivery",
         "oracle_merge",
     ]
@@ -619,7 +786,11 @@ class TaskRecord(BaseModel):
     collaboration_fallback_active: bool = False
     collaboration_fallback_reason: str | None = Field(default=None, max_length=1_000)
     debate_tally: dict[str, Any] | None = None
+    debate_counter_bias: DebateCounterBias | None = None
+    debate_counter_bias_interaction_id: str | None = Field(default=None, max_length=255)
     debate_synthesis: DebateSynthesis | None = None
+    debate_tie_judgment: DebateTieJudgment | None = None
+    debate_tie_judgment_interaction_id: str | None = Field(default=None, max_length=255)
     plan_interaction_id: str | None = Field(default=None, max_length=255)
     review_interaction_id: str | None = Field(default=None, max_length=255)
     debate_synthesis_interaction_id: str | None = Field(default=None, max_length=255)
@@ -801,3 +972,5 @@ class ManualRunCompletion(BaseModel):
     result: str = Field(min_length=1, max_length=50_000)
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]

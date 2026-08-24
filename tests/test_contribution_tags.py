@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:23 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
@@ -7,6 +8,7 @@
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:05 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -423,14 +425,14 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             encoding="utf-8"
         )
         for expected in (
-            "Director | OpenAI | 7%",
-            "Chief Programmer | Claude | 50%",
-            "Project Secretary | Cursor | 30%",
-            "Specialist and Backup Programmer | Gemini/Antigravity | 10%",
-            "Research Programmers | Perplexity.ai | 3%",
+            "Chief Programmer | Claude | 60%",
+            "Project Secretary | Cursor | 28%",
+            "Specialist and Backup Programmer | Gemini/Antigravity | 7%",
+            "Research Programmers | Perplexity.ai | 4%",
+            "Separately authorized direct-production lane | OpenAI/Codex | 1%",
         ):
             self.assertIn(expected, charter)
-        self.assertIn("flexible project-capacity targets", prompt)
+        self.assertIn("flexible direct-production workload targets", prompt)
         self.assertIn("canonical matching UTC contribution", prompt)
         self.assertIn("never authenticate provider", charter.lower())
 
@@ -1187,3 +1189,5 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:23 UTC | END]]

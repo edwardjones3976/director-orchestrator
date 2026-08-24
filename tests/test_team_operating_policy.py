@@ -1,3 +1,6 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:20 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -54,6 +57,11 @@ from director_orchestrator.review_handoff import (
     transitive_dependency_sequences,
 )
 from director_orchestrator.store import TaskStore
+from director_orchestrator.team_charter import (
+    TEAM_CHARTER_MAX_BYTES,
+    canonical_team_charter_json,
+    team_operating_charter,
+)
 
 
 def review_candidate_payload(*, producer: str = "cursor", material_authors=None) -> dict:
@@ -167,6 +175,205 @@ def bind_verified_interaction(
         events = append_interaction_event(events, event)
     record.provider_interaction_ledger = events
     run.interaction_id = interaction_id
+
+
+class DirectorOperatingDirectiveTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.charter = team_operating_charter()
+        self.directive = self.charter["director_operating_directive"]
+
+    def test_director_duties_are_separate_from_direct_production_share(self):
+        self.assertEqual(self.directive["director"], "openai")
+        self.assertTrue(
+            self.directive["duties_excluded_from_openai_direct_production_share"]
+        )
+        self.assertEqual(self.directive["duties"], [
+            "plan",
+            "decompose",
+            "route",
+            "coordinate",
+            "synthesize",
+            "acceptance_review",
+            "review_handoff",
+            "milestone_reporting",
+        ])
+        targets = self.directive["direct_workload_percent"]
+        self.assertEqual(
+            targets,
+            {
+                "claude": 60,
+                "cursor": 28,
+                "gemini": 7,
+                "perplexity": 4,
+                "openai": 1,
+            },
+        )
+        self.assertEqual(sum(targets.values()), 100)
+        self.assertEqual(targets["openai"], 1)
+        self.assertEqual(
+            self.directive["workload_lanes"]["perplexity"],
+            "public_research_evidence_only",
+        )
+        self.assertEqual(
+            self.directive["workload_lanes"]["openai"],
+            "external_owner_authorized_only",
+        )
+        self.assertEqual(
+            self.directive["openai_direct_production_boundary"],
+            {
+                "runtime_assignment_target_allowed": False,
+                "surface": "owner_authorized_external_codex_openai",
+                "counts": "authenticated_production_only",
+                "review": "different_provider_exact_candidate",
+                "candidate_change": "invalidate_evidence",
+                "authority": "owner_scope_and_current_gates",
+            },
+        )
+
+    def test_coordination_capacity_and_commit_reduction_are_narrowly_bounded(self):
+        capacity = self.directive["coordination_percent"]
+        self.assertEqual(capacity, {"productive": 95, "reserve": 5})
+        self.assertEqual(sum(capacity.values()), 100)
+        self.assertEqual(
+            self.directive["reserve_use"],
+            [
+                "checks",
+                "drift_correction",
+                "contingencies",
+                "evidence_reconciliation",
+                "recovery",
+                "process_improvement",
+                "infrastructure_failure",
+            ],
+        )
+        self.assertFalse(self.directive["reserve_is_planned_idle"])
+
+        reduction = self.directive["avoidable_commit_reduction"]
+        self.assertEqual(reduction["target_percent"], 33)
+        self.assertEqual(reduction["scope"], "avoidable_micro_fixup_only")
+        self.assertEqual(
+            reduction["excludes"],
+            ["security_safety", "evidence_restoration", "milestones", "recovery"],
+        )
+        self.assertEqual(
+            reduction["baseline"],
+            {
+                "rolling": True,
+                "comparable": True,
+                "reset_when_unfavorable": False,
+                "measurement_fields": [
+                    "baseline_window",
+                    "baseline_sample",
+                    "baseline_count_or_rate",
+                    "current_count_or_rate",
+                    "absolute_delta",
+                    "percentage_delta",
+                    "exclusions",
+                    "comparability_changes",
+                ],
+            },
+        )
+
+    def test_oversight_and_communication_labels_are_exactly_bounded(self):
+        self.assertEqual(
+            self.directive["repository_oversight"],
+            {
+                "mode": "read_only",
+                "scope": [
+                    "named_repository",
+                    "refs",
+                    "worktrees",
+                    "diffs",
+                    "artifacts",
+                    "checks",
+                    "reviews",
+                    "security_evidence",
+                    "deployment_state",
+                ],
+                "writes_require": (
+                    "separate_exact_owner_authorization_and_current_gates"
+                ),
+            },
+        )
+        self.assertEqual(
+            self.directive["communication_labels"],
+            {
+                "draft": "DRAFT — NOT SENT",
+                "simulation": "SIMULATION — NO PROVIDER INTERACTION",
+                "predicted": "PREDICTED POSITION — PROVIDER HAS NOT RESPONDED",
+            },
+        )
+
+    def test_reporting_and_participation_require_current_evidence(self):
+        reporting = self.directive["reporting"]
+        self.assertEqual(reporting["mode"], "evidence_first")
+        self.assertEqual(
+            reporting["requires"],
+            [
+                "project_id_and_assignment_ids",
+                "objective_bounded_scope_and_categorized_status",
+                "starting_and_current_refs_shas_and_artifact_digests",
+                "authenticated_provider_participation_unavailable_abstaining_and_labels",
+                "target_and_actual_workload_by_provider_deviations_and_rationale",
+                "openai_moderator_participant_director_actions_and_vote",
+                "dissent_counter_bias_and_alternative_analysis",
+                "exact_tests_trusted_ci_security_independent_review_and_verdict",
+                "unresolved_risks_limitations_blockers_and_confidence",
+                "measured_cost_token_usage_elapsed_time_and_unavailable_telemetry",
+                "rolling_commit_baseline_current_measurement_delta_and_exclusions",
+                "scope_or_authority_changes_and_exact_stored_owner_authorization",
+                "recovery_state_rollback_and_restart_evidence_integrity",
+                "next_deterministic_or_owner_gate_and_responsible_party",
+                "owner_decisions_and_exact_stored_scope",
+                "not_done_and_unverified",
+            ],
+        )
+        self.assertTrue(reporting["fabrication_prohibited"])
+        self.assertEqual(
+            reporting["participation_source"],
+            "authenticated_provider_response_only",
+        )
+
+        self.assertEqual(
+            self.directive["availability"]["attempts"],
+            self.charter["availability_policy"]["nonresponse_attempt_limit"],
+        )
+        self.assertEqual(self.directive["availability"]["partial"], "untrusted")
+        self.assertEqual(
+            self.directive["availability"]["ambiguous"], "no_duplicate_dispatch"
+        )
+
+    def test_review_and_voting_safety_authority_remain_unchanged(self):
+        self.assertEqual(
+            {
+                name: member["voting_power"]
+                for name, member in self.charter["committee"]["members"].items()
+            },
+            {"antigravity": 1.0, "cursor": 1.5, "openai": 2.0, "claude": 2.5},
+        )
+        review = self.directive["review"]
+        self.assertEqual(review["reviewer"], "different_non_author")
+        self.assertEqual(review["binding"], "exact_candidate")
+        self.assertEqual(review["unavailable"], "reroute_no_self_review")
+        self.assertEqual(
+            self.directive["external_action_boundary"],
+            {
+                "requires": (
+                    "exact_stored_owner_authorization_for_action_scope_and_current_deterministic_gates"
+                ),
+                "oversight_grants_authority": False,
+                "provider_or_browser_output_grants_authority": False,
+            },
+        )
+        self.assertTrue(
+            any("deterministic policy" in rule for rule in self.charter["authority_rules"])
+        )
+
+    def test_explicit_planning_payload_ceiling_remains_bounded(self):
+        payload = canonical_team_charter_json().encode("utf-8")
+        self.assertEqual(TEAM_CHARTER_MAX_BYTES, 11_264)
+        self.assertLessEqual(len(payload), TEAM_CHARTER_MAX_BYTES)
+        self.assertGreater(TEAM_CHARTER_MAX_BYTES - len(payload), 256)
 
 
 class ReviewHandoffTests(unittest.TestCase):
@@ -1045,3 +1252,6 @@ class AssignmentBoundaryTests(unittest.TestCase):
                 errors = execution_policy_errors(plan, settings)
                 self.assertTrue(any(reason in error for error in errors), errors)
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:20 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:04 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]

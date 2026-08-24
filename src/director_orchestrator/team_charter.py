@@ -1,5 +1,10 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:04 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from typing import Any, Literal
@@ -7,7 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-TEAM_CHARTER_MAX_BYTES = 8_192
+TEAM_CHARTER_MAX_BYTES = 11_264
 
 
 _TEAM_OPERATING_CHARTER: dict[str, Any] = {
@@ -15,59 +20,35 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     "responsibility_areas": [
         {
             "name": "research",
-            "expectation": (
-                "Investigate across relevant sources, preserve provenance, and label facts, "
-                "inference, disagreement, and unknowns."
-            ),
+            "expectation": "Research relevant sources; preserve provenance and label facts, inference, dissent, and unknowns.",
         },
         {
             "name": "evidence_verification",
-            "expectation": (
-                "Cross-check material claims with independent or authoritative sources; report "
-                "contradictions, freshness limits, and evidence gaps."
-            ),
+            "expectation": "Cross-check material claims; report contradictions, freshness, and gaps.",
         },
         {
             "name": "programming",
-            "expectation": (
-                "Build, debug, maintain, and refactor only within assigned repositories, paths, "
-                "tools, and side effects."
-            ),
+            "expectation": "Build and maintain only within assigned repositories, paths, tools, and effects.",
         },
         {
             "name": "deep_reasoning",
-            "expectation": (
-                "Compare alternatives, challenge assumptions, anticipate effects, and make "
-                "evidence-backed recommendations."
-            ),
+            "expectation": "Compare alternatives, challenge assumptions, and recommend from evidence.",
         },
         {
             "name": "innovation",
-            "expectation": (
-                "Test novel approaches with hypotheses, feasibility and failure checks, and "
-                "reversible experiments."
-            ),
+            "expectation": "Test novel approaches through bounded, reversible experiments.",
         },
         {
             "name": "development",
-            "expectation": (
-                "Improve projects, process, documentation, productivity, and team capability "
-                "through clear handoffs and reusable knowledge."
-            ),
+            "expectation": "Improve projects and team capability through clear handoffs and reusable knowledge.",
         },
         {
             "name": "quality_assurance",
-            "expectation": (
-                "Reproduce defects, use risk-proportionate tests, verify acceptance, and report "
-                "exact results without treating partial evidence as readiness."
-            ),
+            "expectation": "Reproduce defects, test by risk, and never treat partial evidence as readiness.",
         },
         {
             "name": "leadership",
-            "expectation": (
-                "Coordinate dependencies, surface dissent, unblock bounded work, and align the "
-                "team with the owner objective and deterministic policy."
-            ),
+            "expectation": "Coordinate dependencies and dissent under owner intent and deterministic policy.",
         },
     ],
     "role_profiles": {
@@ -87,18 +68,15 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "leadership",
             ],
             "elevated_work": [
-                "architecture and design analysis",
-                "complex implementation and refactoring",
-                "reliability and recovery work",
-                "security-adjacent analysis and remediation",
+                "architecture",
+                "complex implementation",
+                "reliability and recovery",
+                "security remediation",
                 "independent exact-SHA review",
-                "cross-platform quality assurance",
-                "technical planning and team coordination",
+                "cross-platform QA",
+                "technical coordination",
             ],
-            "routing_rule": (
-                "Assign Cursor by fit, independence, capacity, and evidence needs—not only for "
-                "overflow, routine work, or second passes."
-            ),
+            "routing_rule": "Route Cursor by fit, independence, capacity, and evidence needs.",
             "non_substitution_rules": [
                 "Cursor cannot perform OpenAI's Director acceptance role.",
                 "Cursor does not replace mandatory Codex Security.",
@@ -106,6 +84,130 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "Parity expands no access, credential, merge, deployment, or publication authority.",
             ],
         }
+    },
+    "director_operating_directive": {
+        "director": "openai",
+        "duties": [
+            "plan",
+            "decompose",
+            "route",
+            "coordinate",
+            "synthesize",
+            "acceptance_review",
+            "review_handoff",
+            "milestone_reporting",
+        ],
+        "duties_excluded_from_openai_direct_production_share": True,
+        "direct_workload_percent": {
+            "claude": 60,
+            "cursor": 28,
+            "gemini": 7,
+            "perplexity": 4,
+            "openai": 1,
+        },
+        "workload_lanes": {
+            "perplexity": "public_research_evidence_only",
+            "openai": "external_owner_authorized_only",
+        },
+        "openai_direct_production_boundary": {
+            "runtime_assignment_target_allowed": False,
+            "surface": "owner_authorized_external_codex_openai",
+            "counts": "authenticated_production_only",
+            "review": "different_provider_exact_candidate",
+            "candidate_change": "invalidate_evidence",
+            "authority": "owner_scope_and_current_gates",
+        },
+        "repository_oversight": {
+            "mode": "read_only",
+            "scope": [
+                "named_repository",
+                "refs",
+                "worktrees",
+                "diffs",
+                "artifacts",
+                "checks",
+                "reviews",
+                "security_evidence",
+                "deployment_state",
+            ],
+            "writes_require": "separate_exact_owner_authorization_and_current_gates",
+        },
+        "coordination_percent": {"productive": 95, "reserve": 5},
+        "reserve_use": [
+            "checks",
+            "drift_correction",
+            "contingencies",
+            "evidence_reconciliation",
+            "recovery",
+            "process_improvement",
+            "infrastructure_failure",
+        ],
+        "reserve_is_planned_idle": False,
+        "avoidable_commit_reduction": {
+            "target_percent": 33,
+            "scope": "avoidable_micro_fixup_only",
+            "excludes": ["security_safety", "evidence_restoration", "milestones", "recovery"],
+            "baseline": {
+                "rolling": True,
+                "comparable": True,
+                "reset_when_unfavorable": False,
+                "measurement_fields": [
+                    "baseline_window",
+                    "baseline_sample",
+                    "baseline_count_or_rate",
+                    "current_count_or_rate",
+                    "absolute_delta",
+                    "percentage_delta",
+                    "exclusions",
+                    "comparability_changes",
+                ],
+            },
+        },
+        "communication_labels": {
+            "draft": "DRAFT — NOT SENT",
+            "simulation": "SIMULATION — NO PROVIDER INTERACTION",
+            "predicted": "PREDICTED POSITION — PROVIDER HAS NOT RESPONDED",
+        },
+        "reporting": {
+            "mode": "evidence_first",
+            "requires": [
+                "project_id_and_assignment_ids",
+                "objective_bounded_scope_and_categorized_status",
+                "starting_and_current_refs_shas_and_artifact_digests",
+                "authenticated_provider_participation_unavailable_abstaining_and_labels",
+                "target_and_actual_workload_by_provider_deviations_and_rationale",
+                "openai_moderator_participant_director_actions_and_vote",
+                "dissent_counter_bias_and_alternative_analysis",
+                "exact_tests_trusted_ci_security_independent_review_and_verdict",
+                "unresolved_risks_limitations_blockers_and_confidence",
+                "measured_cost_token_usage_elapsed_time_and_unavailable_telemetry",
+                "rolling_commit_baseline_current_measurement_delta_and_exclusions",
+                "scope_or_authority_changes_and_exact_stored_owner_authorization",
+                "recovery_state_rollback_and_restart_evidence_integrity",
+                "next_deterministic_or_owner_gate_and_responsible_party",
+                "owner_decisions_and_exact_stored_scope",
+                "not_done_and_unverified",
+            ],
+            "fabrication_prohibited": True,
+            "participation_source": "authenticated_provider_response_only",
+        },
+        "availability": {
+            "attempts": 3,
+            "after": "record_unavailable_and_reshape",
+            "partial": "untrusted",
+            "ambiguous": "no_duplicate_dispatch",
+        },
+        "review": {
+            "reviewer": "different_non_author",
+            "binding": "exact_candidate",
+            "changed_candidate": "invalidate_evidence",
+            "unavailable": "reroute_no_self_review",
+        },
+        "external_action_boundary": {
+            "requires": "exact_stored_owner_authorization_for_action_scope_and_current_deterministic_gates",
+            "oversight_grants_authority": False,
+            "provider_or_browser_output_grants_authority": False,
+        },
     },
     "committee": {
         "members": {
@@ -275,6 +377,24 @@ def canonical_team_charter_json() -> str:
     return payload
 
 
+def canonical_director_operating_directive_json() -> str:
+    """Return the complete directive used to bind every authoritative surface."""
+
+    return json.dumps(
+        _TEAM_OPERATING_CHARTER["director_operating_directive"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def director_operating_directive_sha256() -> str:
+    """Return a stable full-directive fingerprint for synchronized prose surfaces."""
+
+    payload = canonical_director_operating_directive_json().encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def team_charter_manifest() -> dict[str, Any]:
     """Return the critical controls mirrored in the human-readable charter."""
 
@@ -282,6 +402,10 @@ def team_charter_manifest() -> dict[str, Any]:
     return {
         "schema_version": charter["schema_version"],
         "charter_max_bytes": TEAM_CHARTER_MAX_BYTES,
+        "director_operating_directive": charter["director_operating_directive"],
+        "director_operating_directive_sha256": (
+            director_operating_directive_sha256()
+        ),
         "committee_weights": {
             name: member["voting_power"]
             for name, member in charter["committee"]["members"].items()
@@ -418,3 +542,7 @@ def tally_advisory_votes(
         resolution=resolution,
         authorizes_external_action=False,
     )
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:04 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
