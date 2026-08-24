@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | BEGIN]]
@@ -483,6 +484,11 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             content = surface.read_text(encoding="utf-8")
             self.assertIn("`pplx-cli`", content, surface)
             self.assertIn("research-only", content, surface)
+        protocol = (root / "docs" / "project-bootstrap-protocol.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Linux-only `pplx-cli`", protocol)
+        self.assertIn("project WSL", protocol)
 
     def test_provider_cannot_mutate_canonical_roles_or_supply_weights(self):
         mutable = team_operating_charter()
@@ -835,3 +841,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | END]]
