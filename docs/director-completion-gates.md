@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]] -->
 # Director Completion Gates
@@ -165,6 +166,10 @@ All contract digests use RFC 8785 canonical JSON and lowercase SHA-256 with the
   `director-gate-sanitization-record/v1`; canonical object containing the
   sanitized-text digest, pipeline source, redaction status/identity/digest/counts,
   and secret-scan status/identity/digest/counts.
+- `artifact_binding_digest` for manual evaluation: domain
+  `director-gate-manual-artifact-binding/v1`; canonical object containing the
+  repository, gate ID/definition digest, expected and executed SHA, worktree
+  before/after SHA, authenticated principal, and provider run reference.
 
 Every other field remains inside its digest, including timestamps, expected head,
 origin, requiredness, registry identity, dependencies, abandonment, environment,
@@ -248,6 +253,9 @@ The reference assertions require evaluator roles and sanitization-record digests
 from an authenticated Director-controlled readback supplied separately from the
 result document. The result's role list, scan booleans, and record digest are
 consistency assertions only and cannot authenticate themselves.
+Manual artifact-binding digests are likewise recomputed and must appear in a
+separately supplied authenticated readback. `exact_artifact_verified` cannot make
+an otherwise unbound review authoritative.
 
 ## Future runner boundary
 
@@ -308,3 +316,4 @@ Removing these new documents and tests fully rolls back this contract-only
 increment without affecting runtime state.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | END]] -->

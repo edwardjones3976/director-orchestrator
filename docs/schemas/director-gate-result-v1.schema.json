@@ -1143,7 +1143,8 @@
           "type": "boolean"
         },
         "artifact_binding_digest": {
-          "$ref": "#/$defs/digest"
+          "$ref": "#/$defs/digest",
+          "description": "Domain digest director-gate-manual-artifact-binding/v1 over repository, gate_id, gate_definition_digest, expected_head_sha, executed_sha, worktree before/after head SHA, authenticated_principal, and provider_run_reference. A semantic validator must also verify this digest through a separately authenticated readback."
         }
       }
     },

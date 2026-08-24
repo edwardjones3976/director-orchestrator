@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]]
 from __future__ import annotations
@@ -79,12 +80,29 @@ def sanitization_record_value(evidence: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def manual_artifact_binding_value(result: dict[str, Any]) -> dict[str, Any]:
+    actor = result["evidence_actor"]
+    worktree = result["worktree_evidence"]
+    return {
+        "repository": result["repository"],
+        "gate_id": result["gate_id"],
+        "gate_definition_digest": result["gate_definition_digest"],
+        "expected_head_sha": result["expected_head_sha"],
+        "executed_sha": result["executed_sha"],
+        "worktree_before_head_sha": worktree["before"]["head_sha"],
+        "worktree_after_head_sha": worktree["after"]["head_sha"],
+        "authenticated_principal": actor["authenticated_principal"],
+        "provider_run_reference": actor["provider_run_reference"],
+    }
+
+
 def semantic_binding_errors(
     ledger: dict[str, Any],
     result: dict[str, Any],
     *,
     authenticated_principal_roles: dict[str, set[str]] | None = None,
     authenticated_sanitization_record_digests: set[str] | None = None,
+    authenticated_artifact_binding_digests: set[str] | None = None,
 ) -> list[str]:
     """Reference PR-1 assertions; production binding is deliberately deferred."""
 
@@ -215,6 +233,18 @@ def semantic_binding_errors(
         if gate.get("independence_required") and not actor_is_independent:
             errors.append("manual gate requires an independent evaluator")
 
+        expected_artifact_binding_digest = domain_digest(
+            "director-gate-manual-artifact-binding/v1",
+            manual_artifact_binding_value(result),
+        )
+        artifact_binding_digest = evaluation.get("artifact_binding_digest")
+        if artifact_binding_digest != expected_artifact_binding_digest:
+            errors.append("manual artifact binding digest mismatch")
+        if artifact_binding_digest not in (
+            authenticated_artifact_binding_digests or set()
+        ):
+            errors.append("manual artifact binding is not authenticated")
+
         for index, evidence in enumerate(result.get("manual_evidence", [])):
             expected_digest = domain_digest(
                 "director-gate-sanitized-manual-evidence/v1",
@@ -341,6 +371,10 @@ class CompletionGateContractTests(unittest.TestCase):
                     "artifact_binding_digest": "sha256:" + "4" * 64,
                 },
             }
+        )
+        result["evaluation"]["artifact_binding_digest"] = domain_digest(
+            "director-gate-manual-artifact-binding/v1",
+            manual_artifact_binding_value(result),
         )
         return result
 
@@ -888,6 +922,7 @@ class CompletionGateContractTests(unittest.TestCase):
             )
         }
         records = {result["manual_evidence"][0]["sanitization_record_digest"]}
+        artifact_bindings = {result["evaluation"]["artifact_binding_digest"]}
         self.assertEqual(
             [],
             semantic_binding_errors(
@@ -895,6 +930,7 @@ class CompletionGateContractTests(unittest.TestCase):
                 result,
                 authenticated_principal_roles=roles,
                 authenticated_sanitization_record_digests=records,
+                authenticated_artifact_binding_digests=artifact_bindings,
             ),
         )
 
@@ -904,6 +940,7 @@ class CompletionGateContractTests(unittest.TestCase):
             "manual evidence 0 sanitization record is not authenticated",
             untrusted_errors,
         )
+        self.assertIn("manual artifact binding is not authenticated", untrusted_errors)
 
         restricted = copy.deepcopy(self.ledger)
         restricted["director_gates"][1]["eligible_evaluator_roles"] = ["OWNER"]
@@ -912,6 +949,7 @@ class CompletionGateContractTests(unittest.TestCase):
             result,
             authenticated_principal_roles=roles,
             authenticated_sanitization_record_digests=records,
+            authenticated_artifact_binding_digests=artifact_bindings,
         )
         self.assertIn("manual evaluator role is not eligible", errors)
 
@@ -927,6 +965,7 @@ class CompletionGateContractTests(unittest.TestCase):
             unauthenticated_role,
             authenticated_principal_roles=codex_security_only,
             authenticated_sanitization_record_digests=records,
+            authenticated_artifact_binding_digests=artifact_bindings,
         )
         self.assertIn("manual evaluator role is not eligible", errors)
 
@@ -937,8 +976,20 @@ class CompletionGateContractTests(unittest.TestCase):
             tampered_evidence,
             authenticated_principal_roles=roles,
             authenticated_sanitization_record_digests=records,
+            authenticated_artifact_binding_digests=artifact_bindings,
         )
         self.assertIn("manual evidence 0 sanitized text digest mismatch", errors)
+
+        tampered_binding = self.manual_result()
+        tampered_binding["evaluation"]["artifact_binding_digest"] = "sha256:" + "0" * 64
+        errors = semantic_binding_errors(
+            self.ledger,
+            tampered_binding,
+            authenticated_principal_roles=roles,
+            authenticated_sanitization_record_digests=records,
+            authenticated_artifact_binding_digests=artifact_bindings,
+        )
+        self.assertIn("manual artifact binding digest mismatch", errors)
 
     def test_example_gate_graph_is_deterministic_and_non_weakening(self):
         director = self.ledger["director_gates"]
@@ -1013,3 +1064,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | END]]
