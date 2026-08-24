@@ -1,3 +1,5 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
@@ -10,6 +12,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
+from .interactions import (
+    ProviderInteractionEvent,
+    append_interaction_event,
+)
 from .models import TaskEffectEvidence, TaskRecord, TaskStatus, UsageCheckRecord
 
 
@@ -22,6 +28,7 @@ _INTENT_KINDS = frozenset(
     }
 )
 _MAX_TASK_EFFECTS = 200
+_MAX_PROVIDER_INTERACTION_EVENTS = 500
 
 
 class StaleTaskWrite(RuntimeError):
@@ -217,6 +224,54 @@ class TaskStore:
                 CREATE TRIGGER IF NOT EXISTS task_effect_events_no_delete
                 BEFORE DELETE ON task_effect_events
                 BEGIN SELECT RAISE(ABORT, 'task effect events are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS provider_interaction_events (
+                    task_id TEXT NOT NULL,
+                    interaction_id TEXT NOT NULL,
+                    transition_ordinal INTEGER NOT NULL,
+                    state TEXT NOT NULL,
+                    event_digest TEXT NOT NULL,
+                    event_json TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    PRIMARY KEY(task_id, interaction_id, transition_ordinal),
+                    UNIQUE(task_id, event_digest),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS provider_interaction_events_no_replace
+                BEFORE INSERT ON provider_interaction_events
+                WHEN EXISTS (
+                    SELECT 1 FROM provider_interaction_events existing
+                    WHERE existing.task_id = NEW.task_id
+                    AND (
+                        (
+                            existing.interaction_id = NEW.interaction_id
+                            AND existing.transition_ordinal = NEW.transition_ordinal
+                        )
+                        OR existing.event_digest = NEW.event_digest
+                    )
+                )
+                BEGIN SELECT RAISE(ABORT, 'provider interaction events are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS provider_interaction_events_no_update
+                BEFORE UPDATE ON provider_interaction_events
+                BEGIN SELECT RAISE(ABORT, 'provider interaction events are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS provider_interaction_events_no_delete
+                BEFORE DELETE ON provider_interaction_events
+                BEGIN SELECT RAISE(ABORT, 'provider interaction events are append-only'); END
                 """
             )
             connection.execute(
@@ -604,7 +659,11 @@ class TaskStore:
                 ),
             )
             self._append_effects(connection, record.task_id, record.task_effect_ledger)
+            self._append_provider_interactions(
+                connection, record.task_id, record.provider_interaction_ledger
+            )
             self._hydrate_effects(connection, record)
+            self._hydrate_provider_interactions(connection, record)
             connection.execute(
                 "UPDATE tasks SET record_json = ? WHERE task_id = ?",
                 (
@@ -673,7 +732,11 @@ class TaskStore:
                 connection, row["record_json"], replacement_json
             )
             self._append_effects(connection, record.task_id, record.task_effect_ledger)
+            self._append_provider_interactions(
+                connection, record.task_id, record.provider_interaction_ledger
+            )
             self._hydrate_effects(connection, record)
+            self._hydrate_provider_interactions(connection, record)
             replacement_json = self._record_json_without_effect_projection(record)
             updated = connection.execute(
                 """
@@ -751,7 +814,11 @@ class TaskStore:
                 connection, row["record_json"], replacement_json
             )
             self._append_effects(connection, task_id, record.task_effect_ledger)
+            self._append_provider_interactions(
+                connection, task_id, record.provider_interaction_ledger
+            )
             self._hydrate_effects(connection, record)
+            self._hydrate_provider_interactions(connection, record)
             record.updated_at = datetime.now(timezone.utc)
             replacement_json = self._record_json_without_effect_projection(record)
             updated = connection.execute(
@@ -779,6 +846,12 @@ class TaskStore:
         with self._lock, self._connect() as connection:
             return self._load_effects(connection, task_id)
 
+    def list_provider_interactions(
+        self, task_id: str
+    ) -> list[ProviderInteractionEvent]:
+        with self._lock, self._connect() as connection:
+            return self._load_provider_interactions(connection, task_id)
+
     @staticmethod
     def _require_effect_migration(row: sqlite3.Row) -> None:
         if row["effect_migration_status"] != "complete":
@@ -791,6 +864,7 @@ class TaskStore:
         record.compact_history_projections()
         persisted = record.model_copy(deep=True)
         persisted.task_effect_ledger = []
+        persisted.provider_interaction_ledger = []
         return persisted.model_dump_json()
 
     def _record_from_row(
@@ -800,7 +874,61 @@ class TaskStore:
         record = TaskRecord.model_validate_json(row["record_json"])
         record._store_version = int(row["record_version"])
         self._hydrate_effects(connection, record)
+        self._hydrate_provider_interactions(connection, record)
         return record
+
+    def _append_provider_interactions(
+        self,
+        connection: sqlite3.Connection,
+        task_id: str,
+        events: list[ProviderInteractionEvent],
+    ) -> None:
+        existing = self._load_provider_interactions(connection, task_id)
+        existing_digests = {item.event_digest for item in existing}
+        new_events = [item for item in events if item.event_digest not in existing_digests]
+        if len(existing) + len(new_events) > _MAX_PROVIDER_INTERACTION_EVENTS:
+            raise ValueError("Immutable provider interaction ledger is full")
+        validated = list(existing)
+        for event in new_events:
+            if event.task_id != task_id:
+                raise ValueError("Provider interaction event task binding changed")
+            validated = append_interaction_event(validated, event)
+            connection.execute(
+                """INSERT INTO provider_interaction_events(
+                    task_id, interaction_id, transition_ordinal, state,
+                    event_digest, event_json, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    task_id,
+                    event.interaction_id,
+                    event.transition_ordinal,
+                    event.state.value,
+                    event.event_digest,
+                    event.model_dump_json(),
+                    event.recorded_at.isoformat(),
+                ),
+            )
+
+    @staticmethod
+    def _load_provider_interactions(
+        connection: sqlite3.Connection, task_id: str
+    ) -> list[ProviderInteractionEvent]:
+        rows = connection.execute(
+            """SELECT event_json FROM provider_interaction_events
+            WHERE task_id = ? ORDER BY recorded_at, rowid""",
+            (task_id,),
+        ).fetchall()
+        return [
+            ProviderInteractionEvent.model_validate_json(row["event_json"])
+            for row in rows
+        ]
+
+    def _hydrate_provider_interactions(
+        self, connection: sqlite3.Connection, record: TaskRecord
+    ) -> None:
+        record.provider_interaction_ledger = self._load_provider_interactions(
+            connection, record.task_id
+        )
 
     def _append_effects(
         self,
@@ -933,6 +1061,10 @@ class TaskStore:
                     allow_privacy_pending=True,
                 )
                 self._hydrate_effects(connection, record)
+                self._append_provider_interactions(
+                    connection, record.task_id, record.provider_interaction_ledger
+                )
+                self._hydrate_provider_interactions(connection, record)
                 connection.execute(
                     """UPDATE tasks SET record_json = ?, effect_migration_status = 'complete',
                         record_version = record_version + 1
@@ -1029,3 +1161,5 @@ class TaskStore:
             for record in records
             if record.checked_at.astimezone(timezone.utc) >= boundary
         ]
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]

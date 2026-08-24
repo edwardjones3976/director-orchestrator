@@ -1,12 +1,29 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:17 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:07 UTC | BEGIN]]
 from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import hmac
 from dataclasses import replace
 from pathlib import Path
 
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.interactions import (
+    InteractionProvider,
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    ProviderTransport,
+    TransportEvidenceSource,
+    append_interaction_event,
+    build_transport_evidence,
+    canonical_identifier_digest,
+    require_verified_result,
+    start_interaction,
+    transition_interaction,
+)
 from director_orchestrator.models import (
     Assignment,
     DirectorPlan,
@@ -23,6 +40,87 @@ from director_orchestrator.store import TaskStore
 
 
 TASK_ID = "DIR-RECOVERY-PROBE"
+
+
+def seed_verified_interaction(
+    record: TaskRecord,
+    *,
+    provider: ProviderName,
+    phase: ProviderInteractionPhase,
+    result: str,
+    interaction_id: str,
+    assignment_sequence: int | None = None,
+    provider_run_id: str | None = None,
+    provider_session_id: str | None = None,
+) -> None:
+    """Install backend-owned VERIFIED evidence for a pre-seeded probe result."""
+
+    transports = {
+        ProviderName.OPENAI: ProviderTransport.OPENAI_RESPONSES_API,
+        ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
+    }
+    effect_key = hashlib.sha256(interaction_id.encode("utf-8")).hexdigest()
+    attempted_evidence = build_transport_evidence(
+        transport=transports[provider],
+        source=TransportEvidenceSource.BACKEND_OBSERVATION,
+        execution_mode="simulation",
+        idempotency_key=effect_key,
+        provider_run_id=provider_run_id,
+        provider_session_id=provider_session_id,
+    )
+    event = start_interaction(
+        task_id=record.task_id,
+        interaction_id=interaction_id,
+        plan_generation=record.plan_generation,
+        assignment_sequence=assignment_sequence,
+        provider=InteractionProvider(provider.value),
+        phase=phase,
+        attempt=1,
+        transport_evidence=attempted_evidence,
+        effect_key=effect_key,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    event = transition_interaction(
+        record.provider_interaction_ledger,
+        interaction_id=interaction_id,
+        next_state=ProviderInteractionState.ATTEMPTED,
+        transport_evidence=attempted_evidence,
+    )
+    record.provider_interaction_ledger = append_interaction_event(
+        record.provider_interaction_ledger, event
+    )
+    verified_evidence = build_transport_evidence(
+        transport=transports[provider],
+        source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+        execution_mode="simulation",
+        idempotency_key=interaction_id,
+        provider_run_id=provider_run_id,
+        provider_session_id=provider_session_id,
+        result=result,
+        native_status="completed",
+    )
+    for state in (
+        ProviderInteractionState.DISPATCHED,
+        ProviderInteractionState.ACKNOWLEDGED,
+        ProviderInteractionState.RESPONDED,
+        ProviderInteractionState.COMPLETED,
+        ProviderInteractionState.VERIFIED,
+    ):
+        event = transition_interaction(
+            record.provider_interaction_ledger,
+            interaction_id=interaction_id,
+            next_state=state,
+            transport_evidence=verified_evidence,
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, event
+        )
+
+
+class ProbeIdentityMismatch(AssertionError):
+    pass
 
 
 class AcceptingDirector:
@@ -103,13 +201,75 @@ def seed(database: Path) -> None:
             )
         ],
     )
+    if record.plan is None:
+        raise AssertionError("Probe plan was not installed")
+    plan_interaction_id = "recovery-probe:plan"
+    seed_verified_interaction(
+        record,
+        provider=ProviderName.OPENAI,
+        phase=ProviderInteractionPhase.PLAN,
+        result=record.plan.model_dump_json(),
+        interaction_id=plan_interaction_id,
+    )
+    record.plan_interaction_id = plan_interaction_id
+
+    run = record.provider_runs[0]
+    if not run.result:
+        raise AssertionError("Probe provider result was not installed")
+    run_interaction_id = "recovery-probe:cursor:run-recovery-probe"
+    seed_verified_interaction(
+        record,
+        provider=run.provider,
+        phase=ProviderInteractionPhase.DISPATCH,
+        assignment_sequence=run.assignment_sequence,
+        result=run.result,
+        interaction_id=run_interaction_id,
+        provider_run_id=run.run_id,
+        provider_session_id=run.session_id,
+    )
+    run.interaction_id = run_interaction_id
+
     _, created = store.create(record)
     if not created:
         raise AssertionError("Probe database was not empty")
 
 
+def assert_seeded_run_identity(record: TaskRecord) -> None:
+    run = record.provider_runs[0]
+    if not run.interaction_id:
+        raise ProbeIdentityMismatch("Probe run lacks its interaction binding")
+    if not run.result:
+        raise ProbeIdentityMismatch("Probe run lacks its exact result binding")
+    verified = require_verified_result(
+        record.provider_interaction_ledger,
+        interaction_id=run.interaction_id,
+        result=run.result,
+    )
+    expected_run_id_digest = canonical_identifier_digest(run.run_id)
+    actual_run_id_digest = verified.transport_evidence.provider_run_id_digest
+    if actual_run_id_digest is None or not hmac.compare_digest(
+        actual_run_id_digest, expected_run_id_digest
+    ):
+        raise ProbeIdentityMismatch("Probe run_id does not match VERIFIED evidence")
+    expected_session_id_digest = canonical_identifier_digest(run.session_id or "")
+    actual_session_id_digest = (
+        verified.transport_evidence.provider_session_id_digest
+    )
+    if actual_session_id_digest is None or not hmac.compare_digest(
+        actual_session_id_digest, expected_session_id_digest
+    ):
+        raise ProbeIdentityMismatch(
+            "Probe session_id does not match VERIFIED evidence"
+        )
+
+
 async def resume(database: Path) -> None:
     store = TaskStore(str(database))
+    persisted = store.get(TASK_ID)
+    if persisted is None:
+        raise AssertionError("Persisted task disappeared before recovery")
+    assert_seeded_run_identity(persisted)
+
     adapter = NoRedispatchAdapter()
     engine = OrchestrationEngine(probe_settings(database), store)
     engine.providers[ProviderName.CURSOR] = adapter
@@ -132,17 +292,51 @@ async def resume(database: Path) -> None:
         raise AssertionError("Recovery redispatched a recorded provider run")
 
 
+async def resume_substituted_identity(database: Path) -> None:
+    store = TaskStore(str(database))
+    persisted = store.get(TASK_ID)
+    if persisted is None:
+        raise AssertionError("Persisted task disappeared before adversarial recovery")
+    if persisted.status != TaskStatus.RUNNING:
+        raise AssertionError("Adversarial recovery requires a freshly seeded task")
+    run = persisted.provider_runs[0]
+    run.run_id = "run-recovery-probe-substituted"
+    run.session_id = "session-recovery-probe-substituted"
+    store.save(persisted)
+
+    try:
+        await resume(database)
+    except ProbeIdentityMismatch:
+        pass
+    else:
+        raise AssertionError("Substituted run identity was allowed to resume")
+
+    rejected = store.get(TASK_ID)
+    if rejected is None:
+        raise AssertionError("Persisted task disappeared after adversarial recovery")
+    if rejected.status == TaskStatus.DONE:
+        raise AssertionError("Substituted run identity reached DONE")
+    if rejected.next_assignment_index != 0 or rejected.assignment_outcomes:
+        raise AssertionError("Substituted run identity advanced recovery state")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Deterministic cross-process recovery probe")
-    parser.add_argument("phase", choices=("seed", "resume"))
+    parser.add_argument(
+        "phase", choices=("seed", "resume", "resume-substituted-identity")
+    )
     parser.add_argument("--database", type=Path, required=True)
     args = parser.parse_args()
 
     if args.phase == "seed":
         seed(args.database)
-    else:
+    elif args.phase == "resume":
         asyncio.run(resume(args.database))
+    else:
+        asyncio.run(resume_substituted_identity(args.database))
 
 
 if __name__ == "__main__":
     main()
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:07 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:17 UTC | END]]

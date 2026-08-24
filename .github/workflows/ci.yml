@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 name: CI
 
@@ -154,4 +155,8 @@ jobs:
           python scripts/recovery_probe.py seed --database "$database"
           python scripts/recovery_probe.py resume --database "$database"
           python scripts/recovery_probe.py resume --database "$database"
+          substituted_database="${RUNNER_TEMP}/director-recovery-substituted-ci.sqlite3"
+          python scripts/recovery_probe.py seed --database "$substituted_database"
+          python scripts/recovery_probe.py resume-substituted-identity --database "$substituted_database"
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | END]]

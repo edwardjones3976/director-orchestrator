@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
@@ -20,6 +21,7 @@ from pydantic import ValidationError
 
 import director_orchestrator.main as main
 from director_orchestrator.callbacks import apply_claude_callback
+from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.approvals import (
     StaleApproval,
@@ -2519,6 +2521,23 @@ class DurableEffectStoreTests(unittest.TestCase):
                     status="WAITING_CALLBACK",
                 )
             ]
+            interaction_engine = OrchestrationEngine(
+                replace(Settings(), sqlite_path=database), owner_store
+            )
+            callback_assignment = record.plan.assignments[0].model_copy(
+                update={"agent": ProviderName.CLAUDE}
+            )
+            interaction_id = interaction_engine._begin_provider_interaction(
+                record,
+                callback_assignment,
+                phase="dispatch",
+                attempt=1,
+                effect_key="b" * 64,
+            )
+            record.provider_runs[0].interaction_id = interaction_id
+            interaction_engine._record_dispatch_acknowledgement(
+                record, record.provider_runs[0]
+            )
             owner_store.create(record)
             stale_callback = callback_store.get(record.task_id)
             current = owner_store.get(record.task_id)
@@ -2864,3 +2883,4 @@ class SlackGatewayProofTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | END]]

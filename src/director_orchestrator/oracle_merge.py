@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
 import base64
@@ -25,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .config import Settings
 from .models import ClaudeCallback, ProviderName, ProviderRun, TaskRecord
+from .interactions import CommunicationEvidenceFailure, require_verified_result
 from .oracle_diff import (
     GITHUB_DIFF_MEDIA_TYPE,
     MAX_COMPARE_DIFF_BYTES,
@@ -262,6 +264,19 @@ def authenticate_provider_review_artifact(
         raise ValueError("provider assignment was not pinned to the exact reviewed head SHA")
     if artifact.base_sha not in review_context:
         raise ValueError("provider assignment was not pinned to the exact reviewed base SHA")
+    # Preserve specific artifact/assignment policy diagnostics above, then
+    # require the immutable provider event that authenticates an otherwise
+    # valid exact-SHA review candidate.
+    if not run.interaction_id:
+        raise ValueError("review completion lacks immutable interaction evidence")
+    try:
+        require_verified_result(
+            record.provider_interaction_ledger,
+            interaction_id=run.interaction_id,
+            result=run.result,
+        )
+    except CommunicationEvidenceFailure as exc:
+        raise ValueError(str(exc)) from exc
     return artifact.sign(secret)
 
 
@@ -2712,3 +2727,4 @@ class GitHubOracleGateway:
             .get("pullRequest", {})
         )
         return pull_request.get("isDraft") is False
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]

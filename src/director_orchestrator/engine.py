@@ -1,9 +1,15 @@
+# [[Codex | GPT-5.6 | 2026-08-24 | 12:12 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import re
 import time
@@ -44,6 +50,21 @@ from .models import (
     ReviewVerdict,
     TaskRecord,
     TaskStatus,
+)
+from .interactions import (
+    CommunicationEvidenceFailure,
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    ProviderTransport,
+    TransportEvidenceSource,
+    append_interaction_event,
+    build_transport_evidence,
+    canonical_content_digest,
+    canonical_identifier_digest,
+    project_interaction,
+    require_verified_result,
+    start_interaction,
+    transition_interaction,
 )
 from .oracle_merge import (
     OracleMergeClaimExpired,
@@ -206,6 +227,340 @@ class OrchestrationEngine:
         self.notifier = SlackNotifier(settings)
         self._task_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
+    @staticmethod
+    def _provider_transport(provider: ProviderName) -> ProviderTransport:
+        return {
+            ProviderName.OPENAI: ProviderTransport.OPENAI_RESPONSES_API,
+            ProviderName.CLAUDE: ProviderTransport.CLAUDE_ROUTINE,
+            ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
+            ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
+            ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
+        }.get(provider, ProviderTransport.DIRECTOR_BACKEND)
+
+    @staticmethod
+    def _interaction_result_text(value: object) -> str:
+        if hasattr(value, "model_dump_json"):
+            return value.model_dump_json()
+        return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+
+    def _begin_director_interaction(
+        self, record: TaskRecord, *, phase: str, effect_key: str
+    ) -> str:
+        interaction_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"{record.task_id}:{record.plan_generation}:openai:{phase}:{effect_key}",
+            )
+        )
+        if any(
+            item.interaction_id == interaction_id
+            for item in record.provider_interaction_ledger
+        ):
+            return interaction_id
+        evidence = build_transport_evidence(
+            transport=ProviderTransport.OPENAI_RESPONSES_API,
+            source=TransportEvidenceSource.BACKEND_OBSERVATION,
+            idempotency_key=effect_key,
+        )
+        drafted = start_interaction(
+            task_id=record.task_id,
+            interaction_id=interaction_id,
+            plan_generation=record.plan_generation,
+            assignment_sequence=None,
+            provider=ProviderName.OPENAI.value,
+            phase=ProviderInteractionPhase(phase),
+            attempt=1,
+            transport_evidence=evidence,
+            effect_key=effect_key,
+        )
+        attempted = transition_interaction(
+            [drafted],
+            interaction_id=interaction_id,
+            next_state=ProviderInteractionState.ATTEMPTED,
+            transport_evidence=evidence,
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, drafted
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, attempted
+        )
+        return interaction_id
+
+    def _complete_director_interaction(
+        self, record: TaskRecord, *, interaction_id: str, result: object
+    ):
+        result_text = self._interaction_result_text(result)
+        evidence = build_transport_evidence(
+            transport=ProviderTransport.OPENAI_RESPONSES_API,
+            source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+            idempotency_key=interaction_id,
+            result=result_text,
+            native_status="completed",
+        )
+        for state in (
+            ProviderInteractionState.DISPATCHED,
+            ProviderInteractionState.ACKNOWLEDGED,
+            ProviderInteractionState.RESPONDED,
+            ProviderInteractionState.COMPLETED,
+            ProviderInteractionState.VERIFIED,
+        ):
+            event = transition_interaction(
+                record.provider_interaction_ledger,
+                interaction_id=interaction_id,
+                next_state=state,
+                transport_evidence=evidence,
+            )
+            record.provider_interaction_ledger = append_interaction_event(
+                record.provider_interaction_ledger, event
+            )
+        return require_verified_result(
+            record.provider_interaction_ledger,
+            interaction_id=interaction_id,
+            result=result_text,
+        )
+
+    def _fail_director_interaction(
+        self, record: TaskRecord, *, interaction_id: str, exc: Exception
+    ) -> None:
+        self._advance_interaction_id(
+            record,
+            interaction_id=interaction_id,
+            provider=ProviderName.OPENAI,
+            state=ProviderInteractionState.UNKNOWN,
+            source=TransportEvidenceSource.BACKEND_OBSERVATION,
+            error_code=type(exc).__name__,
+            ambiguity_reason="authenticated Director call did not yield a verified response",
+        )
+
+    @staticmethod
+    def _interaction_id(
+        record: TaskRecord,
+        assignment: Assignment,
+        *,
+        phase: str,
+        attempt: int,
+        effect_key: str,
+    ) -> str:
+        return str(
+            uuid5(
+                NAMESPACE_URL,
+                ":".join(
+                    (
+                        record.task_id,
+                        str(record.plan_generation),
+                        str(assignment.sequence),
+                        assignment.agent.value,
+                        phase,
+                        str(attempt),
+                        effect_key,
+                    )
+                ),
+            )
+        )
+
+    def _begin_provider_interaction(
+        self,
+        record: TaskRecord,
+        assignment: Assignment,
+        *,
+        phase: str,
+        attempt: int,
+        effect_key: str,
+    ) -> str:
+        interaction_id = self._interaction_id(
+            record,
+            assignment,
+            phase=phase,
+            attempt=attempt,
+            effect_key=effect_key,
+        )
+        if any(
+            item.interaction_id == interaction_id
+            for item in record.provider_interaction_ledger
+        ):
+            return interaction_id
+        evidence = build_transport_evidence(
+            transport=self._provider_transport(assignment.agent),
+            source=TransportEvidenceSource.BACKEND_OBSERVATION,
+            idempotency_key=effect_key,
+        )
+        drafted = start_interaction(
+            task_id=record.task_id,
+            interaction_id=interaction_id,
+            plan_generation=record.plan_generation,
+            assignment_sequence=assignment.sequence,
+            provider=assignment.agent.value,
+            phase=ProviderInteractionPhase(phase),
+            attempt=attempt,
+            transport_evidence=evidence,
+            effect_key=effect_key,
+        )
+        attempted = transition_interaction(
+            [drafted],
+            interaction_id=interaction_id,
+            next_state=ProviderInteractionState.ATTEMPTED,
+            transport_evidence=evidence,
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, drafted
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, attempted
+        )
+        return interaction_id
+
+    def _advance_provider_interaction(
+        self,
+        record: TaskRecord,
+        run: ProviderRun,
+        state: ProviderInteractionState,
+        *,
+        source: TransportEvidenceSource,
+        error_code: str | None = None,
+        ambiguity_reason: str | None = None,
+        contact_attempt_ordinal: int | None = None,
+    ) -> None:
+        if not run.interaction_id:
+            raise CommunicationEvidenceFailure("provider run lacks an interaction binding")
+        self._advance_interaction_id(
+            record,
+            interaction_id=run.interaction_id,
+            provider=run.provider,
+            state=state,
+            source=source,
+            run_id=run.run_id,
+            session_id=run.session_id,
+            native_status=run.status,
+            result=run.result,
+            error_code=error_code,
+            ambiguity_reason=ambiguity_reason,
+            contact_attempt_ordinal=contact_attempt_ordinal,
+        )
+
+    def _advance_interaction_id(
+        self,
+        record: TaskRecord,
+        *,
+        interaction_id: str,
+        provider: ProviderName,
+        state: ProviderInteractionState,
+        source: TransportEvidenceSource,
+        run_id: str | None = None,
+        session_id: str | None = None,
+        native_status: str | None = None,
+        result: str | None = None,
+        error_code: str | None = None,
+        ambiguity_reason: str | None = None,
+        contact_attempt_ordinal: int | None = None,
+    ) -> None:
+        evidence = build_transport_evidence(
+            transport=self._provider_transport(provider),
+            source=source,
+            idempotency_key=interaction_id,
+            provider_run_id=run_id,
+            provider_session_id=session_id,
+            native_status=native_status,
+            result=result,
+            error_code=error_code,
+            ambiguity_reason=ambiguity_reason,
+            contact_attempt_ordinal=contact_attempt_ordinal,
+        )
+        event = transition_interaction(
+            record.provider_interaction_ledger,
+            interaction_id=interaction_id,
+            next_state=state,
+            transport_evidence=evidence,
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, event
+        )
+
+    def _record_dispatch_acknowledgement(
+        self, record: TaskRecord, run: ProviderRun
+    ) -> None:
+        self._advance_provider_interaction(
+            record,
+            run,
+            ProviderInteractionState.DISPATCHED,
+            source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+        )
+        self._advance_provider_interaction(
+            record,
+            run,
+            ProviderInteractionState.ACKNOWLEDGED,
+            source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+        )
+
+    def _verify_provider_result(
+        self, record: TaskRecord, run: ProviderRun
+    ):
+        if not run.result:
+            raise CommunicationEvidenceFailure("provider result is empty")
+        if len(run.result) > 50_000:
+            raise CommunicationEvidenceFailure(
+                "provider result exceeds the 50000-character accepted-evidence limit"
+            )
+        projection = project_interaction(
+            record.provider_interaction_ledger, run.interaction_id or ""
+        )
+        if projection.state == ProviderInteractionState.ACKNOWLEDGED:
+            self._advance_provider_interaction(
+                record,
+                run,
+                ProviderInteractionState.RESPONDED,
+                source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+            )
+            self._advance_provider_interaction(
+                record,
+                run,
+                ProviderInteractionState.COMPLETED,
+                source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+            )
+            self._advance_provider_interaction(
+                record,
+                run,
+                ProviderInteractionState.VERIFIED,
+                source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+            )
+        verified = require_verified_result(
+            record.provider_interaction_ledger,
+            interaction_id=run.interaction_id or "",
+            result=run.result,
+        )
+        evidence = verified.transport_evidence
+        if (
+            verified.task_id != record.task_id
+            or verified.provider.value != run.provider.value
+            or verified.assignment_sequence != run.assignment_sequence
+            or evidence.source != TransportEvidenceSource.AUTHENTICATED_PROVIDER
+        ):
+            raise CommunicationEvidenceFailure(
+                "verified provider result correlation does not match the persisted run"
+            )
+        expected_run_id_digest = canonical_identifier_digest(run.run_id)
+        if evidence.provider_run_id_digest is None or not hmac.compare_digest(
+            evidence.provider_run_id_digest, expected_run_id_digest
+        ):
+            raise CommunicationEvidenceFailure(
+                "persisted provider run_id is not bound to the VERIFIED transport event"
+            )
+        expected_session_id_digest = (
+            canonical_identifier_digest(run.session_id) if run.session_id else None
+        )
+        if expected_session_id_digest is None:
+            if evidence.provider_session_id_digest is not None:
+                raise CommunicationEvidenceFailure(
+                    "persisted provider session_id is missing from a session-bound VERIFIED event"
+                )
+        elif evidence.provider_session_id_digest is None or not hmac.compare_digest(
+            evidence.provider_session_id_digest, expected_session_id_digest
+        ):
+            raise CommunicationEvidenceFailure(
+                "persisted provider session_id is not bound to the VERIFIED transport event"
+            )
+        return verified
+
     async def run(self, task_id: str) -> None:
         async with self._task_locks[task_id]:
             await self._run_locked(task_id)
@@ -247,9 +602,16 @@ class OrchestrationEngine:
                 if reservation is None:
                     return
                 record, effect_key = reservation
+                plan_interaction_id = self._begin_director_interaction(
+                    record, phase="plan", effect_key=effect_key
+                )
+                self.store.save(record)
                 try:
                     plan = await self.director.plan(record)
-                except Exception:
+                except Exception as exc:
+                    self._fail_director_interaction(
+                        record, interaction_id=plan_interaction_id, exc=exc
+                    )
                     record_task_effect_observation(
                         record,
                         effect_key=effect_key,
@@ -260,6 +622,10 @@ class OrchestrationEngine:
                     )
                     self.store.save(record)
                     raise
+                self._complete_director_interaction(
+                    record, interaction_id=plan_interaction_id, result=plan
+                )
+                record.plan_interaction_id = plan_interaction_id
                 record_task_effect_observation(
                     record,
                     effect_key=effect_key,
@@ -355,6 +721,7 @@ class OrchestrationEngine:
                 record.next_assignment_index += 1
                 record.revision_count = 0
                 record.review = None
+                record.review_interaction_id = None
                 self.store.save(record)
 
             if record.plan.debate is not None and record.debate_synthesis is None:
@@ -374,6 +741,102 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{record.message}")
+                return
+            try:
+                if not record.plan_interaction_id:
+                    raise CommunicationEvidenceFailure(
+                        "live plan lacks its Director interaction binding"
+                    )
+                if project_interaction(
+                    record.provider_interaction_ledger,
+                    record.plan_interaction_id,
+                ).state != ProviderInteractionState.VERIFIED:
+                    raise CommunicationEvidenceFailure(
+                        "live plan interaction is not VERIFIED"
+                    )
+                for outcome in record.assignment_outcomes:
+                    if not outcome.interaction_id:
+                        raise CommunicationEvidenceFailure(
+                            f"assignment {outcome.assignment_sequence} lacks interaction evidence"
+                        )
+                    verified = require_verified_result(
+                        record.provider_interaction_ledger,
+                        interaction_id=outcome.interaction_id,
+                        result=outcome.result,
+                    )
+                    if outcome.verified_interaction_event_digest != verified.event_digest:
+                        raise CommunicationEvidenceFailure(
+                            f"assignment {outcome.assignment_sequence} verification digest changed"
+                        )
+                    if outcome.provider_result_digest != canonical_content_digest(
+                        outcome.result
+                    ):
+                        raise CommunicationEvidenceFailure(
+                            f"assignment {outcome.assignment_sequence} result digest changed"
+                        )
+                    if (
+                        verified.task_id != record.task_id
+                        or verified.provider.value != outcome.provider.value
+                        or verified.assignment_sequence != outcome.assignment_sequence
+                        or verified.phase
+                        not in {
+                            ProviderInteractionPhase.DISPATCH,
+                            ProviderInteractionPhase.REVISION,
+                        }
+                    ):
+                        raise CommunicationEvidenceFailure(
+                            f"assignment {outcome.assignment_sequence} provider evidence identity changed"
+                        )
+                    if (
+                        not outcome.director_review_interaction_id
+                        or not outcome.verified_director_review_event_digest
+                        or not outcome.director_review_result_digest
+                    ):
+                        raise CommunicationEvidenceFailure(
+                            f"assignment {outcome.assignment_sequence} lacks Director acceptance evidence"
+                        )
+                    review_projection = project_interaction(
+                        record.provider_interaction_ledger,
+                        outcome.director_review_interaction_id,
+                    )
+                    if (
+                        review_projection.task_id != record.task_id
+                        or review_projection.provider.value != ProviderName.OPENAI.value
+                        or review_projection.assignment_sequence is not None
+                        or review_projection.state != ProviderInteractionState.VERIFIED
+                        or review_projection.latest_event_digest
+                        != outcome.verified_director_review_event_digest
+                        or review_projection.verified_result_digest
+                        != outcome.director_review_result_digest
+                    ):
+                        raise CommunicationEvidenceFailure(
+                            f"assignment {outcome.assignment_sequence} Director acceptance evidence changed"
+                        )
+                    review_event = next(
+                        (
+                            item
+                            for item in record.provider_interaction_ledger
+                            if item.interaction_id
+                            == outcome.director_review_interaction_id
+                            and item.event_digest
+                            == outcome.verified_director_review_event_digest
+                        ),
+                        None,
+                    )
+                    if (
+                        review_event is None
+                        or review_event.phase
+                        != ProviderInteractionPhase.ACCEPTANCE_REVIEW
+                    ):
+                        raise CommunicationEvidenceFailure(
+                            f"assignment {outcome.assignment_sequence} is not bound to an acceptance review"
+                        )
+            except CommunicationEvidenceFailure as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\n{record.error}")
                 return
             if not await self._publish_collaboration_completion(record):
                 return
@@ -469,12 +932,53 @@ class OrchestrationEngine:
         run: ProviderRun,
         decision: ReviewDecision,
     ) -> None:
+        verified = self._verify_provider_result(record, run)
+        if not record.review_interaction_id:
+            raise CommunicationEvidenceFailure(
+                "accepted result lacks its Director review interaction binding"
+            )
+        review_result_text = self._interaction_result_text(decision)
+        verified_review = require_verified_result(
+            record.provider_interaction_ledger,
+            interaction_id=record.review_interaction_id,
+            result=review_result_text,
+        )
+        if (
+            verified.task_id != record.task_id
+            or verified.provider.value != assignment.agent.value
+            or verified.assignment_sequence != assignment.sequence
+            or verified.phase
+            not in {
+                ProviderInteractionPhase.DISPATCH,
+                ProviderInteractionPhase.REVISION,
+            }
+        ):
+            raise CommunicationEvidenceFailure(
+                "accepted provider result identity does not match its assignment"
+            )
+        if (
+            verified_review.task_id != record.task_id
+            or verified_review.provider.value != ProviderName.OPENAI.value
+            or verified_review.assignment_sequence is not None
+            or verified_review.phase != ProviderInteractionPhase.ACCEPTANCE_REVIEW
+        ):
+            raise CommunicationEvidenceFailure(
+                "accepted result is not bound to a Director acceptance review"
+            )
         outcome = AssignmentOutcome(
             assignment_sequence=assignment.sequence,
             provider=assignment.agent,
             run_id=run.run_id,
-            result=(run.result or "")[:50_000],
+            result=run.result or "",
             review_summary=decision.summary,
+            interaction_id=run.interaction_id,
+            verified_interaction_event_digest=verified.event_digest,
+            provider_result_digest=canonical_content_digest(run.result or ""),
+            director_review_interaction_id=record.review_interaction_id,
+            verified_director_review_event_digest=verified_review.event_digest,
+            director_review_result_digest=canonical_content_digest(
+                review_result_text
+            ),
             evidence=decision.evidence,
             unresolved_question=decision.owner_question,
         )
@@ -605,11 +1109,20 @@ class OrchestrationEngine:
 
         if record.collaboration_fallback_active:
             return True, None
+        if not self.settings.slack_bot_token:
+            record.collaboration_fallback_active = True
+            record.collaboration_fallback_reason = (
+                "Slack transport is not configured; communication was not delivered. "
+                "Continuing through durable SQLite/API and provider-native evidence only."
+            )
+            self.store.save(record)
+            return True, None
         kwargs.setdefault(
             "client_msg_id",
             self._slack_client_id(record.task_id, "slack", message),
         )
         event_id = str(kwargs["client_msg_id"])
+        root_message = bool(kwargs.get("root_message"))
         slack_effect_key: str | None = None
         if self.settings.slack_bot_token:
             slack_effect_key = task_effect_key(
@@ -637,6 +1150,15 @@ class OrchestrationEngine:
                 # raw Slack timestamp. A task-level thread timestamp, when one
                 # exists, is the only non-secret routing projection needed by
                 # later messages.
+                if root_message and not record.collaboration_thread_ts:
+                    record.collaboration_fallback_active = True
+                    record.collaboration_fallback_reason = (
+                        "Slack root delivery was recorded, but its routing timestamp is "
+                        "unavailable; thread delivery cannot continue. Continuing through "
+                        "durable SQLite/API and provider-native evidence only."
+                    )
+                    self.store.save(record)
+                    return True, None
                 return True, record.collaboration_thread_ts
             # Slack's stable client_msg_id is the transport idempotency key. A
             # restart may retry the same key, but cannot create a second
@@ -648,6 +1170,9 @@ class OrchestrationEngine:
                 if self.settings.slack_bot_token and not timestamp:
                     raise RuntimeError("Slack did not return a message timestamp")
                 if slack_effect_key is not None:
+                    if root_message:
+                        record.collaboration_thread_ts = timestamp
+                        record.collaboration_thread_opened = True
                     record_task_effect_observation(
                         record,
                         effect_key=slack_effect_key,
@@ -685,7 +1210,6 @@ class OrchestrationEngine:
             "Slack was unavailable after three bounded idempotent attempts; continuing through "
             "the prior durable SQLite/API state and provider-native run evidence paths."
         )
-        record.message = record.collaboration_fallback_reason
         self.store.save(record)
         return True, None
 
@@ -735,6 +1259,10 @@ class OrchestrationEngine:
         )
         if not delivered:
             return False
+        if timestamp is None:
+            # Durable fallback is usable, but it is not a Slack thread and must
+            # never be presented as one.
+            return True
         record.collaboration_thread_ts = timestamp
         record.collaboration_thread_opened = True
         self.store.save(record)
@@ -803,6 +1331,18 @@ class OrchestrationEngine:
         run: ProviderRun,
         decision: ReviewDecision,
     ) -> bool:
+        try:
+            verified = self._verify_provider_result(record, run)
+        except CommunicationEvidenceFailure as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.error = str(exc)[:2_000]
+            record.message = CommunicationEvidenceFailure.code
+            self.store.save(record)
+            await self._status_post(
+                record,
+                f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.error}",
+            )
+            return False
         debate = record.plan.debate if record.plan else None
         contribution = decision.debate_contribution
         is_discussion = assignment.discussion_phase != DiscussionPhase.WORK
@@ -861,6 +1401,9 @@ class OrchestrationEngine:
                 confidence=(contribution.confidence if contribution else 1),
                 vote_option=(contribution.vote_option if contribution else None),
                 abstain=(contribution.abstain if contribution else True),
+                interaction_id=run.interaction_id,
+                verified_interaction_event_digest=verified.event_digest,
+                provider_result_digest=canonical_content_digest(run.result or ""),
             )
             record.collaboration_turns.append(existing)
             self.store.save(record)
@@ -923,9 +1466,16 @@ class OrchestrationEngine:
             if reservation is None:
                 return False
             record, effect_key = reservation
+            synthesis_interaction_id = self._begin_director_interaction(
+                record, phase="debate_synthesis", effect_key=effect_key
+            )
+            self.store.save(record)
             try:
                 synthesis = await self.director.synthesize_debate(record)
-            except Exception:
+            except Exception as exc:
+                self._fail_director_interaction(
+                    record, interaction_id=synthesis_interaction_id, exc=exc
+                )
                 record_task_effect_observation(
                     record,
                     effect_key=effect_key,
@@ -945,9 +1495,35 @@ class OrchestrationEngine:
                 outcome="completed",
                 run_id=self._result_digest(synthesis),
             )
+            self._complete_director_interaction(
+                record,
+                interaction_id=synthesis_interaction_id,
+                result=synthesis,
+            )
             record.debate_synthesis = synthesis
+            record.debate_synthesis_interaction_id = synthesis_interaction_id
             self.store.save(record)
         synthesis = record.debate_synthesis
+        if not record.debate_synthesis_interaction_id:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = (
+                "COMMUNICATION_EVIDENCE_FAILURE: debate synthesis lacks its interaction binding"
+            )
+            self.store.save(record)
+            return False
+        try:
+            verified_synthesis = require_verified_result(
+                record.provider_interaction_ledger,
+                interaction_id=record.debate_synthesis_interaction_id,
+                result=self._interaction_result_text(synthesis),
+            )
+        except CommunicationEvidenceFailure as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = str(exc)[:2_000]
+            self.store.save(record)
+            return False
         if synthesis.openai_vote_option not in debate.vote_options and not synthesis.openai_abstains:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = "OpenAI synthesis selected an unconfigured debate option"
@@ -955,7 +1531,10 @@ class OrchestrationEngine:
             return False
         latest_by_provider: dict[ProviderName, CollaborationTurn] = {}
         for turn in record.collaboration_turns:
-            if turn.phase in {"position", "rebuttal"}:
+            if (
+                turn.phase in {"position", "rebuttal"}
+                and turn.verified_interaction_event_digest is not None
+            ):
                 latest_by_provider[turn.provider] = turn
         votes = [
             AdvisoryVote(
@@ -1016,6 +1595,11 @@ class OrchestrationEngine:
                     confidence=synthesis.confidence,
                     vote_option=synthesis.openai_vote_option,
                     abstain=synthesis.openai_abstains,
+                    interaction_id=record.debate_synthesis_interaction_id,
+                    verified_interaction_event_digest=verified_synthesis.event_digest,
+                    provider_result_digest=canonical_content_digest(
+                        self._interaction_result_text(synthesis)
+                    ),
                 )
             )
         self.store.save(record)
@@ -1024,6 +1608,21 @@ class OrchestrationEngine:
             for turn in record.collaboration_turns
             if turn.correlation_id == correlation_id
         )
+        if (
+            synthesis_turn.interaction_id != record.debate_synthesis_interaction_id
+            or synthesis_turn.verified_interaction_event_digest
+            != verified_synthesis.event_digest
+            or synthesis_turn.provider_result_digest
+            != canonical_content_digest(self._interaction_result_text(synthesis))
+        ):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = CommunicationEvidenceFailure.code
+            record.error = (
+                "COMMUNICATION_EVIDENCE_FAILURE: debate synthesis turn is not bound "
+                "to the exact VERIFIED Director interaction"
+            )
+            self.store.save(record)
+            return False
         if synthesis_turn.slack_message_ts is None and record.collaboration_thread_ts:
             delivered, synthesis_turn.slack_message_ts = await self._deliver_collaboration_message(
                 record,
@@ -1502,6 +2101,14 @@ class OrchestrationEngine:
     async def _defer_unavailable(
         self, record: TaskRecord, assignment: Assignment, run: ProviderRun
     ) -> None:
+        self._advance_provider_interaction(
+            record,
+            run,
+            ProviderInteractionState.UNAVAILABLE,
+            source=TransportEvidenceSource.BACKEND_OBSERVATION,
+            error_code="NO_RESPONSE_AFTER_THREE_ATTEMPTS",
+            contact_attempt_ordinal=3,
+        )
         if assignment.agent not in record.unavailable_providers:
             record.unavailable_providers.append(assignment.agent)
         if assignment.sequence not in record.deferred_assignments:
@@ -1575,6 +2182,41 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 return False
+            try:
+                if (
+                    not accepted_outcome.director_review_interaction_id
+                    or not accepted_outcome.verified_director_review_event_digest
+                    or not accepted_outcome.director_review_result_digest
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "accepted outcome lacks durable Director review evidence"
+                    )
+                review_result_text = self._interaction_result_text(decision)
+                verified_review = require_verified_result(
+                    record.provider_interaction_ledger,
+                    interaction_id=accepted_outcome.director_review_interaction_id,
+                    result=review_result_text,
+                )
+                if (
+                    verified_review.task_id != record.task_id
+                    or verified_review.provider.value != ProviderName.OPENAI.value
+                    or verified_review.assignment_sequence is not None
+                    or verified_review.phase
+                    != ProviderInteractionPhase.ACCEPTANCE_REVIEW
+                    or verified_review.event_digest
+                    != accepted_outcome.verified_director_review_event_digest
+                    or canonical_content_digest(review_result_text)
+                    != accepted_outcome.director_review_result_digest
+                ):
+                    raise CommunicationEvidenceFailure(
+                        "accepted outcome Director review evidence changed"
+                    )
+            except CommunicationEvidenceFailure as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = CommunicationEvidenceFailure.code
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                return False
             if not await self._record_and_publish_collaboration_turn(
                 record, assignment, run, decision
             ):
@@ -1621,12 +2263,29 @@ class OrchestrationEngine:
             if reservation is None:
                 return False
             record, effect_key = reservation
+            interaction_id = self._begin_provider_interaction(
+                record,
+                assignment,
+                phase="dispatch",
+                attempt=1,
+                effect_key=effect_key,
+            )
+            self.store.save(record)
             try:
                 run = await adapter.dispatch(
                     assignment,
                     context=self._handoff_context(record, assignment),
                 )
             except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+                self._advance_interaction_id(
+                    record,
+                    interaction_id=interaction_id,
+                    provider=assignment.agent,
+                    state=ProviderInteractionState.UNKNOWN,
+                    source=TransportEvidenceSource.BACKEND_OBSERVATION,
+                    error_code=type(exc).__name__,
+                    ambiguity_reason="provider dispatch outcome is ambiguous",
+                )
                 record_provider_effect_observation(
                     record,
                     assignment,
@@ -1660,7 +2319,15 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
-            except Exception:
+            except Exception as exc:
+                self._advance_interaction_id(
+                    record,
+                    interaction_id=interaction_id,
+                    provider=assignment.agent,
+                    state=ProviderInteractionState.FAILED,
+                    source=TransportEvidenceSource.BACKEND_OBSERVATION,
+                    error_code=type(exc).__name__,
+                )
                 record_provider_effect_observation(
                     record,
                     assignment,
@@ -1671,7 +2338,9 @@ class OrchestrationEngine:
                 self.store.save(record)
                 raise
             run.assignment_sequence = assignment.sequence
+            run.interaction_id = interaction_id
             run.evidence_source = "provider_authenticated"
+            self._record_dispatch_acknowledgement(record, run)
             record_provider_effect_observation(
                 record,
                 assignment,
@@ -1704,6 +2373,17 @@ class OrchestrationEngine:
             self.store.save(record)
             await self._status_post(record, f"*{record.task_id} — OWNER DECISION REQUIRED*\nThe `{assignment.agent.value}` run must be reviewed at its provider session before the loop can continue." + (f" [Open run]({run.url})" if run.url else ""))
             return False
+
+        try:
+            self._verify_provider_result(record, run)
+        except CommunicationEvidenceFailure as exc:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.error = str(exc)[:2_000]
+            record.message = CommunicationEvidenceFailure.code
+            self.store.save(record)
+            await self._status_post(record, f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.error}")
+            return False
+        self.store.save(record)
 
         if oracle_recovery_matches(record, assignment, run):
             decision = record.review
@@ -1749,9 +2429,16 @@ class OrchestrationEngine:
         if reservation is None:
             return False
         record, review_effect_key = reservation
+        review_interaction_id = self._begin_director_interaction(
+            record, phase="acceptance_review", effect_key=review_effect_key
+        )
+        self.store.save(record)
         try:
             decision = await self.director.review(record, run.result)
-        except Exception:
+        except Exception as exc:
+            self._fail_director_interaction(
+                record, interaction_id=review_interaction_id, exc=exc
+            )
             record_task_effect_observation(
                 record,
                 effect_key=review_effect_key,
@@ -1762,6 +2449,10 @@ class OrchestrationEngine:
             )
             self.store.save(record)
             raise
+        self._complete_director_interaction(
+            record, interaction_id=review_interaction_id, result=decision
+        )
+        record.review_interaction_id = review_interaction_id
         record_task_effect_observation(
             record,
             effect_key=review_effect_key,
@@ -1801,6 +2492,14 @@ class OrchestrationEngine:
             if reservation is None:
                 return False
             record, revision_effect_key = reservation
+            revision_interaction_id = self._begin_provider_interaction(
+                record,
+                assignment,
+                phase="revision",
+                attempt=min(10, record.revision_count + 2),
+                effect_key=revision_effect_key,
+            )
+            self.store.save(record)
             try:
                 revised = await adapter.revise(
                     run,
@@ -1809,6 +2508,15 @@ class OrchestrationEngine:
                     context=self._handoff_context(record, assignment),
                 )
             except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+                self._advance_interaction_id(
+                    record,
+                    interaction_id=revision_interaction_id,
+                    provider=assignment.agent,
+                    state=ProviderInteractionState.UNKNOWN,
+                    source=TransportEvidenceSource.BACKEND_OBSERVATION,
+                    error_code=type(exc).__name__,
+                    ambiguity_reason="provider revision outcome is ambiguous",
+                )
                 record_provider_effect_observation(
                     record,
                     assignment,
@@ -1842,7 +2550,15 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
-            except Exception:
+            except Exception as exc:
+                self._advance_interaction_id(
+                    record,
+                    interaction_id=revision_interaction_id,
+                    provider=assignment.agent,
+                    state=ProviderInteractionState.FAILED,
+                    source=TransportEvidenceSource.BACKEND_OBSERVATION,
+                    error_code=type(exc).__name__,
+                )
                 record_provider_effect_observation(
                     record,
                     assignment,
@@ -1854,7 +2570,9 @@ class OrchestrationEngine:
                 raise
             record.revision_count += 1
             revised.assignment_sequence = assignment.sequence
+            revised.interaction_id = revision_interaction_id
             revised.evidence_source = "provider_authenticated"
+            self._record_dispatch_acknowledgement(record, revised)
             record_provider_effect_observation(
                 record,
                 assignment,
@@ -1884,6 +2602,15 @@ class OrchestrationEngine:
                     + (f" [Open run]({revised.url})" if revised.url else ""),
                 )
                 return False
+            try:
+                self._verify_provider_result(record, revised)
+            except CommunicationEvidenceFailure as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.error = str(exc)[:2_000]
+                record.message = CommunicationEvidenceFailure.code
+                self.store.save(record)
+                return False
+            self.store.save(record)
             final_review_identity = {
                 "assignment": assignment_approval_digest(assignment),
                 "run": self._result_digest(revised),
@@ -1898,9 +2625,18 @@ class OrchestrationEngine:
             if reservation is None:
                 return False
             record, final_review_effect_key = reservation
+            final_review_interaction_id = self._begin_director_interaction(
+                record,
+                phase="acceptance_review",
+                effect_key=final_review_effect_key,
+            )
+            self.store.save(record)
             try:
                 final_decision = await self.director.review(record, revised.result)
-            except Exception:
+            except Exception as exc:
+                self._fail_director_interaction(
+                    record, interaction_id=final_review_interaction_id, exc=exc
+                )
                 record_task_effect_observation(
                     record,
                     effect_key=final_review_effect_key,
@@ -1911,6 +2647,12 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 raise
+            self._complete_director_interaction(
+                record,
+                interaction_id=final_review_interaction_id,
+                result=final_decision,
+            )
+            record.review_interaction_id = final_review_interaction_id
             record_task_effect_observation(
                 record,
                 effect_key=final_review_effect_key,
@@ -1975,8 +2717,44 @@ class OrchestrationEngine:
                 raise TimeoutError(f"{current.provider.value} run timed out")
             await asyncio.sleep(self.settings.provider_poll_seconds)
             try:
-                current = await adapter.poll(current)
-                current.evidence_source = "provider_authenticated"
+                observed = await adapter.poll(current)
+                correlation_changed = (
+                    observed.provider != current.provider
+                    or observed.run_id != current.run_id
+                    or (
+                        current.session_id is not None
+                        and observed.session_id != current.session_id
+                    )
+                    or (
+                        observed.interaction_id is not None
+                        and observed.interaction_id != current.interaction_id
+                    )
+                    or (
+                        observed.assignment_sequence is not None
+                        and observed.assignment_sequence != current.assignment_sequence
+                    )
+                )
+                if correlation_changed:
+                    if record is not None and current.interaction_id:
+                        self._advance_provider_interaction(
+                            record,
+                            current,
+                            ProviderInteractionState.UNKNOWN,
+                            source=TransportEvidenceSource.BACKEND_OBSERVATION,
+                            error_code="PROVIDER_CORRELATION_MISMATCH",
+                            ambiguity_reason=(
+                                "provider poll changed the dispatched run identity"
+                            ),
+                        )
+                        self.store.save(record)
+                    raise CommunicationEvidenceFailure(
+                        "provider poll changed the dispatched run identity"
+                    )
+                observed.interaction_id = current.interaction_id
+                observed.assignment_sequence = current.assignment_sequence
+                observed.session_id = observed.session_id or current.session_id
+                observed.evidence_source = "provider_authenticated"
+                current = observed
             except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                 no_response_attempts += 1
                 if record is not None and assignment is not None:
@@ -2001,7 +2779,21 @@ class OrchestrationEngine:
             "requires_action",
             "budget_exceeded",
         }:
+            if record is not None and current.interaction_id:
+                self._advance_provider_interaction(
+                    record,
+                    current,
+                    ProviderInteractionState.FAILED,
+                    source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+                    error_code=f"PROVIDER_{current.status.upper()}",
+                )
+                self.store.save(record)
             raise ProviderError(f"{current.provider.value} ended with status {current.status}")
         return current
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-22 | 14:50 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 | 12:12 UTC | END]]
