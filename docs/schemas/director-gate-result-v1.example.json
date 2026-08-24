@@ -1,0 +1,131 @@
+{
+  "schema_version": "director-gate-result/v1",
+  "document_type": "director-gate-result",
+  "digest_profile": "rfc8785-sha256-domain-separated/v1",
+  "semantic_validation_profile": "director-gate-result-semantic-binding/v1",
+  "result_id": "gate-result-DIR-COMPLETION-EXAMPLE-1-review-1",
+  "attempt_id": "gate-attempt-DIR-COMPLETION-EXAMPLE-1-review-1",
+  "attempt_number": 1,
+  "task_id": "DIR-COMPLETION-EXAMPLE",
+  "assignment_id": "DIR-COMPLETION-EXAMPLE-1",
+  "work_packet_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "authority_snapshot_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "repository": "edwardjones3976/director-orchestrator",
+  "ledger_series_id": "gate-series-DIR-COMPLETION-EXAMPLE-1",
+  "ledger_id": "gate-ledger-DIR-COMPLETION-EXAMPLE-1-r2",
+  "ledger_revision": 2,
+  "ledger_digest": "sha256:fcd2e76eb4df0fa10c116bf1f69cfa869e361fffbc2bf55fcb9a4416a0e30a1c",
+  "ledger_state": "HEAD_BOUND",
+  "expected_head_sha": "2222222222222222222222222222222222222222",
+  "gate_id": "director.contract-tests",
+  "gate_definition_digest": "sha256:e636f89caccefbd646fb311c9fafa8c8a98b8cd2c14d1c0d1612aceb3f1726da",
+  "gate_type": "RUNNABLE",
+  "executed_sha": "2222222222222222222222222222222222222222",
+  "logical_producer": {
+    "provider_id": "claude",
+    "system_label": "Claude Code"
+  },
+  "material_authors": [
+    {
+      "identity_kind": "PROVIDER",
+      "provider_id": "claude",
+      "authenticated_principal": "director-provider-claude",
+      "evidence_source": "DIRECTOR_PROVIDER_RUN",
+      "run_reference": "provider-run-example-1"
+    }
+  ],
+  "evidence_actor": {
+    "identity_kind": "PROVIDER",
+    "authenticated_principal": "director-provider-cursor",
+    "logical_provider": "cursor",
+    "system_label": "Cursor Agent",
+    "evidence_source": "DIRECTOR_PROVIDER_RUN",
+    "provider_run_reference": "provider-run-example-review-1",
+    "authentication_record_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "evidence_role": "INDEPENDENT_REVIEWER",
+  "reverification": {
+    "mode": "INDEPENDENT_REVERIFICATION",
+    "previous_result_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "repository_verified": true,
+    "ledger_digest_verified": true,
+    "exact_sha_verified": true,
+    "material_author_exclusion_verified": true
+  },
+  "dependency_results": [],
+  "started_at": "2026-08-24T05:20:00Z",
+  "completed_at": "2026-08-24T05:20:10Z",
+  "status": "PASS",
+  "abandonment": null,
+  "resolved_runner": {
+    "registry_id": "director-runner-registry",
+    "registry_version": "1",
+    "registry_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "runner_id": "python_unittest",
+    "runner_definition_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "parameter_profile_id": "completion-gate-contract-tests",
+    "parameter_profile_digest": "sha256:1212121212121212121212121212121212121212121212121212121212121212",
+    "runner_implementation_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "executable_fingerprint": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+    "executable_version": "CPython 3.12.10",
+    "argv_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    "sanitized_environment_profile_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "environment_fingerprint": {
+    "operating_system": "Windows",
+    "operating_system_version": "11",
+    "architecture": "AMD64",
+    "runtime_versions": {
+      "python": "3.12.10"
+    },
+    "fingerprint_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "worktree_evidence": {
+    "worktree_identity_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "repository_relative_working_directory": ".",
+    "check_mode": "PORCELAIN_V2_WITH_UNTRACKED_AND_SUBMODULES",
+    "before": {
+      "head_sha": "2222222222222222222222222222222222222222",
+      "status_output_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "clean": true,
+      "untracked_files_included": true,
+      "submodules_checked": true
+    },
+    "after": {
+      "head_sha": "2222222222222222222222222222222222222222",
+      "status_output_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "clean": true,
+      "untracked_files_included": true,
+      "submodules_checked": true
+    }
+  },
+  "exit_code": 0,
+  "exit_code_matches_expected": true,
+  "expected_output_match": true,
+  "output_evidence": {
+    "decisive_output": "OK",
+    "sanitized_excerpt_digest": "sha256:8454941a7c178ad6d11a71b2acfd6ebae6d4a4f190d344e6b7a49b359aa6c5db",
+    "full_output_digest": "sha256:bdebadb0b12b8da7bb6f5e2a903a1377cce645733977a12a5c20745d0d365d70",
+    "digest_scope": "COMPLETE_SANITIZED_STREAMS_BEFORE_PERSISTENCE_TRUNCATION",
+    "frame_format": "UTF8_LENGTH_PREFIXED_STREAM_V1",
+    "raw_output_persisted": false,
+    "stdout_bytes_captured": 2,
+    "stderr_bytes_captured": 0,
+    "total_output_bytes": 2,
+    "persisted_output_bytes": 2,
+    "omitted_output_bytes": 0,
+    "output_ceiling_bytes": 1048576,
+    "truncated": false,
+    "redaction_status": "PASSED",
+    "redaction_policy_id": "director-output-redaction-v1",
+    "redaction_policy_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "redaction_count": 0,
+    "redaction_categories": [],
+    "secret_scan_status": "PASSED",
+    "secret_scanner_id": "director-secret-scanner-v1",
+    "secret_scanner_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "secret_finding_count": 0,
+    "secret_finding_categories": []
+  },
+  "result_digest": "sha256:da158069011a26902476ba094380b01afd47d2f62eeceb93fb92f96da6313b82"
+}

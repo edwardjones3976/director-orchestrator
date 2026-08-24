@@ -1,0 +1,1379 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/director-gate-result-v1.schema.json",
+  "title": "Director Completion Gate Result v1",
+  "type": "object",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/runnableResult"
+    },
+    {
+      "$ref": "#/$defs/manualResult"
+    },
+    {
+      "$ref": "#/$defs/externalCiResult"
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullableDigest": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/digest"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "stableId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "repository": {
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$"
+    },
+    "repositoryRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?:\\.|(?!/)(?!.*//)(?!.*[/]$)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)\\.[Gg][Ii][Tt](?:/|$))(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*|/|$))(?!.*(?:^|/)[^/]*[ .](?:/|$))[A-Za-z0-9._@+/-]+)$"
+    },
+    "logicalProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_id",
+        "system_label"
+      ],
+      "properties": {
+        "provider_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "system_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "materialAuthor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity_kind",
+        "provider_id",
+        "authenticated_principal",
+        "evidence_source",
+        "run_reference"
+      ],
+      "properties": {
+        "identity_kind": {
+          "enum": [
+            "PROVIDER",
+            "HUMAN",
+            "TOOL"
+          ]
+        },
+        "provider_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "authenticated_principal": {
+          "$ref": "#/$defs/stableId"
+        },
+        "evidence_source": {
+          "enum": [
+            "DIRECTOR_PROVIDER_RUN",
+            "GITHUB_COMMIT_READBACK",
+            "OWNER_ATTESTATION"
+          ]
+        },
+        "run_reference": {
+          "$ref": "#/$defs/stableId"
+        }
+      }
+    },
+    "evidenceActor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity_kind",
+        "authenticated_principal",
+        "logical_provider",
+        "system_label",
+        "evidence_source",
+        "provider_run_reference",
+        "authentication_record_digest"
+      ],
+      "properties": {
+        "identity_kind": {
+          "enum": [
+            "PROVIDER",
+            "HUMAN",
+            "EXTERNAL_CI"
+          ]
+        },
+        "authenticated_principal": {
+          "$ref": "#/$defs/stableId"
+        },
+        "logical_provider": {
+          "$ref": "#/$defs/stableId"
+        },
+        "system_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "evidence_source": {
+          "enum": [
+            "DIRECTOR_PROVIDER_RUN",
+            "OWNER_ATTESTATION",
+            "GITHUB_API_READBACK"
+          ]
+        },
+        "provider_run_reference": {
+          "$ref": "#/$defs/stableId"
+        },
+        "authentication_record_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "dependencyResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate_id",
+        "status",
+        "result_digest"
+      ],
+      "properties": {
+        "gate_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "status": {
+          "const": "PASS"
+        },
+        "result_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "reverification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "previous_result_digest",
+        "repository_verified",
+        "ledger_digest_verified",
+        "exact_sha_verified",
+        "material_author_exclusion_verified"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "ORIGINAL",
+            "INDEPENDENT_REVERIFICATION"
+          ]
+        },
+        "previous_result_digest": {
+          "$ref": "#/$defs/nullableDigest"
+        },
+        "repository_verified": {
+          "type": "boolean"
+        },
+        "ledger_digest_verified": {
+          "type": "boolean"
+        },
+        "exact_sha_verified": {
+          "type": "boolean"
+        },
+        "material_author_exclusion_verified": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "ORIGINAL"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "previous_result_digest": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "previous_result_digest": {
+                "$ref": "#/$defs/digest"
+              },
+              "repository_verified": {
+                "const": true
+              },
+              "ledger_digest_verified": {
+                "const": true
+              },
+              "exact_sha_verified": {
+                "const": true
+              },
+              "material_author_exclusion_verified": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "gitState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "head_sha",
+        "status_output_digest",
+        "clean",
+        "untracked_files_included",
+        "submodules_checked"
+      ],
+      "properties": {
+        "head_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "status_output_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "clean": {
+          "type": "boolean"
+        },
+        "untracked_files_included": {
+          "const": true
+        },
+        "submodules_checked": {
+          "const": true
+        }
+      }
+    },
+    "worktreeEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "worktree_identity_digest",
+        "repository_relative_working_directory",
+        "check_mode",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "worktree_identity_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "repository_relative_working_directory": {
+          "$ref": "#/$defs/repositoryRelativePath"
+        },
+        "check_mode": {
+          "const": "PORCELAIN_V2_WITH_UNTRACKED_AND_SUBMODULES"
+        },
+        "before": {
+          "$ref": "#/$defs/gitState"
+        },
+        "after": {
+          "$ref": "#/$defs/gitState"
+        }
+      }
+    },
+    "abandonment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason_code",
+        "actor",
+        "recorded_at",
+        "attempts",
+        "last_evidence_digest",
+        "lost_coverage",
+        "next_disposition",
+        "abandonment_policy_digest",
+        "policy_permitted"
+      ],
+      "properties": {
+        "reason_code": {
+          "enum": [
+            "PROVIDER_UNAVAILABLE",
+            "TOOL_UNAVAILABLE",
+            "ENVIRONMENT_UNAVAILABLE",
+            "BUDGET_EXHAUSTED",
+            "TIMEOUT_EXHAUSTED",
+            "OWNER_STOP",
+            "SCOPE_RESHAPED"
+          ]
+        },
+        "actor": {
+          "$ref": "#/$defs/evidenceActor"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "last_evidence_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "lost_coverage": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "next_disposition": {
+          "enum": [
+            "BLOCKS_ACCEPTANCE",
+            "OWNER_DECISION_REQUIRED",
+            "RESHAPE_REQUIRED"
+          ]
+        },
+        "abandonment_policy_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policy_permitted": {
+          "const": true
+        }
+      }
+    },
+    "commonResult": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "document_type",
+        "digest_profile",
+        "semantic_validation_profile",
+        "result_id",
+        "attempt_id",
+        "attempt_number",
+        "task_id",
+        "assignment_id",
+        "work_packet_digest",
+        "authority_snapshot_digest",
+        "repository",
+        "ledger_series_id",
+        "ledger_id",
+        "ledger_revision",
+        "ledger_digest",
+        "ledger_state",
+        "expected_head_sha",
+        "gate_id",
+        "gate_definition_digest",
+        "gate_type",
+        "executed_sha",
+        "logical_producer",
+        "material_authors",
+        "evidence_actor",
+        "evidence_role",
+        "reverification",
+        "dependency_results",
+        "started_at",
+        "completed_at",
+        "status",
+        "abandonment",
+        "result_digest"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "director-gate-result/v1"
+        },
+        "document_type": {
+          "const": "director-gate-result"
+        },
+        "digest_profile": {
+          "const": "rfc8785-sha256-domain-separated/v1"
+        },
+        "semantic_validation_profile": {
+          "const": "director-gate-result-semantic-binding/v1"
+        },
+        "result_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "attempt_number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "task_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "assignment_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "work_packet_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "authority_snapshot_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "repository": {
+          "$ref": "#/$defs/repository"
+        },
+        "ledger_series_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "ledger_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "ledger_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "ledger_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "ledger_state": {
+          "const": "HEAD_BOUND"
+        },
+        "expected_head_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "gate_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "gate_definition_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "gate_type": {
+          "enum": [
+            "RUNNABLE",
+            "MANUAL",
+            "EXTERNAL_CI"
+          ]
+        },
+        "executed_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "logical_producer": {
+          "$ref": "#/$defs/logicalProvider"
+        },
+        "material_authors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/materialAuthor"
+          }
+        },
+        "evidence_actor": {
+          "$ref": "#/$defs/evidenceActor"
+        },
+        "evidence_role": {
+          "enum": [
+            "PRODUCER",
+            "INDEPENDENT_REVIEWER",
+            "TRUSTED_EXTERNAL_CI",
+            "OWNER"
+          ]
+        },
+        "reverification": {
+          "$ref": "#/$defs/reverification"
+        },
+        "dependency_results": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/dependencyResult"
+          }
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "BLOCKED",
+            "ABANDONED"
+          ]
+        },
+        "abandonment": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/abandonment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "ABANDONED"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "abandonment": {
+                "$ref": "#/$defs/abandonment"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "abandonment": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evidence_role": {
+                "const": "INDEPENDENT_REVIEWER"
+              }
+            },
+            "required": [
+              "evidence_role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reverification": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/reverification"
+                  },
+                  {
+                    "properties": {
+                      "mode": {
+                        "const": "INDEPENDENT_REVERIFICATION"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "resolvedRunner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry_id",
+        "registry_version",
+        "registry_digest",
+        "runner_id",
+        "runner_definition_digest",
+        "parameter_profile_id",
+        "parameter_profile_digest",
+        "runner_implementation_digest",
+        "executable_fingerprint",
+        "executable_version",
+        "argv_digest",
+        "sanitized_environment_profile_digest"
+      ],
+      "properties": {
+        "registry_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "registry_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "registry_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "runner_id": {
+          "enum": [
+            "python_unittest",
+            "python_compileall",
+            "pip_check",
+            "json_schema_validate",
+            "compose_config",
+            "container_build",
+            "git_diff_check",
+            "secret_hygiene",
+            "powershell_parse",
+            "repository_owned_script"
+          ]
+        },
+        "runner_definition_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "parameter_profile_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "parameter_profile_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "runner_implementation_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "executable_fingerprint": {
+          "$ref": "#/$defs/digest"
+        },
+        "executable_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "argv_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "sanitized_environment_profile_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "environmentFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operating_system",
+        "operating_system_version",
+        "architecture",
+        "runtime_versions",
+        "fingerprint_digest"
+      ],
+      "properties": {
+        "operating_system": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "operating_system_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "runtime_versions": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "fingerprint_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "outputEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decisive_output",
+        "sanitized_excerpt_digest",
+        "full_output_digest",
+        "digest_scope",
+        "frame_format",
+        "raw_output_persisted",
+        "stdout_bytes_captured",
+        "stderr_bytes_captured",
+        "total_output_bytes",
+        "persisted_output_bytes",
+        "omitted_output_bytes",
+        "output_ceiling_bytes",
+        "truncated",
+        "redaction_status",
+        "redaction_policy_id",
+        "redaction_policy_digest",
+        "redaction_count",
+        "redaction_categories",
+        "secret_scan_status",
+        "secret_scanner_id",
+        "secret_scanner_digest",
+        "secret_finding_count",
+        "secret_finding_categories"
+      ],
+      "properties": {
+        "decisive_output": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "sanitized_excerpt_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "full_output_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "digest_scope": {
+          "const": "COMPLETE_SANITIZED_STREAMS_BEFORE_PERSISTENCE_TRUNCATION"
+        },
+        "frame_format": {
+          "const": "UTF8_LENGTH_PREFIXED_STREAM_V1"
+        },
+        "raw_output_persisted": {
+          "const": false
+        },
+        "stdout_bytes_captured": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10485760
+        },
+        "stderr_bytes_captured": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10485760
+        },
+        "total_output_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20971520
+        },
+        "persisted_output_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10485760
+        },
+        "omitted_output_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20971520
+        },
+        "output_ceiling_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10485760
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "redaction_status": {
+          "enum": [
+            "PASSED",
+            "FAILED"
+          ]
+        },
+        "redaction_policy_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "redaction_policy_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "redaction_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "redaction_categories": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/stableId"
+          }
+        },
+        "secret_scan_status": {
+          "enum": [
+            "PASSED",
+            "FAILED"
+          ]
+        },
+        "secret_scanner_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "secret_scanner_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "secret_finding_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "secret_finding_categories": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/stableId"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "truncated": {
+                "const": false
+              }
+            },
+            "required": [
+              "truncated"
+            ]
+          },
+          "then": {
+            "properties": {
+              "omitted_output_bytes": {
+                "const": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "omitted_output_bytes": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runnableResult": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/commonResult"
+        },
+        {
+          "type": "object",
+          "required": [
+            "resolved_runner",
+            "environment_fingerprint",
+            "worktree_evidence",
+            "exit_code",
+            "exit_code_matches_expected",
+            "expected_output_match",
+            "output_evidence"
+          ],
+          "properties": {
+            "gate_type": {
+              "const": "RUNNABLE"
+            },
+            "evidence_actor": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/evidenceActor"
+                },
+                {
+                  "properties": {
+                    "identity_kind": {
+                      "const": "PROVIDER"
+                    },
+                    "evidence_source": {
+                      "const": "DIRECTOR_PROVIDER_RUN"
+                    }
+                  }
+                }
+              ]
+            },
+            "evidence_role": {
+              "enum": [
+                "PRODUCER",
+                "INDEPENDENT_REVIEWER"
+              ]
+            },
+            "resolved_runner": {
+              "$ref": "#/$defs/resolvedRunner"
+            },
+            "environment_fingerprint": {
+              "$ref": "#/$defs/environmentFingerprint"
+            },
+            "worktree_evidence": {
+              "$ref": "#/$defs/worktreeEvidence"
+            },
+            "exit_code": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "exit_code_matches_expected": {
+              "type": "boolean"
+            },
+            "expected_output_match": {
+              "type": "boolean"
+            },
+            "output_evidence": {
+              "$ref": "#/$defs/outputEvidence"
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "PASS"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "exit_code_matches_expected": {
+                "const": true
+              },
+              "expected_output_match": {
+                "const": true
+              },
+              "worktree_evidence": {
+                "properties": {
+                  "before": {
+                    "properties": {
+                      "clean": {
+                        "const": true
+                      }
+                    }
+                  },
+                  "after": {
+                    "properties": {
+                      "clean": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "output_evidence": {
+                "properties": {
+                  "redaction_status": {
+                    "const": "PASSED"
+                  },
+                  "secret_scan_status": {
+                    "const": "PASSED"
+                  },
+                  "secret_finding_count": {
+                    "const": 0
+                  },
+                  "secret_finding_categories": {
+                    "maxItems": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "manualEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim",
+        "evidence_digest",
+        "location"
+      ],
+      "properties": {
+        "claim": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "evidence_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2048
+        }
+      }
+    },
+    "manualEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eligible_evaluator_role",
+        "evaluator_eligible",
+        "evaluator_independent_of_material_authors",
+        "exact_artifact_verified",
+        "artifact_binding_digest"
+      ],
+      "properties": {
+        "eligible_evaluator_role": {
+          "enum": [
+            "OWNER",
+            "INDEPENDENT_PROVIDER_REVIEWER",
+            "CODEX_SECURITY"
+          ]
+        },
+        "evaluator_eligible": {
+          "type": "boolean"
+        },
+        "evaluator_independent_of_material_authors": {
+          "type": "boolean"
+        },
+        "exact_artifact_verified": {
+          "type": "boolean"
+        },
+        "artifact_binding_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "manualResult": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/commonResult"
+        },
+        {
+          "type": "object",
+          "required": [
+            "worktree_evidence",
+            "manual_evidence",
+            "evaluation"
+          ],
+          "properties": {
+            "gate_type": {
+              "const": "MANUAL"
+            },
+            "evidence_role": {
+              "enum": [
+                "INDEPENDENT_REVIEWER",
+                "OWNER"
+              ]
+            },
+            "worktree_evidence": {
+              "$ref": "#/$defs/worktreeEvidence"
+            },
+            "manual_evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "$ref": "#/$defs/manualEvidence"
+              }
+            },
+            "evaluation": {
+              "$ref": "#/$defs/manualEvaluation"
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "PASS"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "worktree_evidence": {
+                "properties": {
+                  "before": {
+                    "properties": {
+                      "clean": {
+                        "const": true
+                      }
+                    }
+                  },
+                  "after": {
+                    "properties": {
+                      "clean": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation": {
+                "properties": {
+                  "evaluator_eligible": {
+                    "const": true
+                  },
+                  "evaluator_independent_of_material_authors": {
+                    "const": true
+                  },
+                  "exact_artifact_verified": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evidence_role": {
+                "const": "OWNER"
+              }
+            },
+            "required": [
+              "evidence_role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_actor": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/evidenceActor"
+                  },
+                  {
+                    "properties": {
+                      "identity_kind": {
+                        "const": "HUMAN"
+                      },
+                      "evidence_source": {
+                        "const": "OWNER_ATTESTATION"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "evidence_actor": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/evidenceActor"
+                  },
+                  {
+                    "properties": {
+                      "identity_kind": {
+                        "const": "PROVIDER"
+                      },
+                      "evidence_source": {
+                        "const": "DIRECTOR_PROVIDER_RUN"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ciObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "repository",
+        "workflow_path",
+        "workflow_blob_sha",
+        "workflow_definition_digest",
+        "check_run_id",
+        "workflow_run_id",
+        "check_suite_id",
+        "check_name",
+        "observed_head_sha",
+        "conclusion",
+        "url",
+        "completed_at",
+        "fetched_at",
+        "trusted_app_id",
+        "trusted_app_slug",
+        "trusted_app_verified",
+        "authenticated_readback",
+        "response_digest",
+        "observation_digest"
+      ],
+      "properties": {
+        "provider": {
+          "const": "GITHUB"
+        },
+        "repository": {
+          "$ref": "#/$defs/repository"
+        },
+        "workflow_path": {
+          "$ref": "#/$defs/repositoryRelativePath"
+        },
+        "workflow_blob_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "workflow_definition_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "check_run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workflow_run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "check_suite_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "check_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "observed_head_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "conclusion": {
+          "enum": [
+            "SUCCESS",
+            "FAILURE",
+            "CANCELLED",
+            "TIMED_OUT",
+            "ACTION_REQUIRED",
+            "NEUTRAL",
+            "SKIPPED"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trusted_app_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trusted_app_slug": {
+          "$ref": "#/$defs/stableId"
+        },
+        "trusted_app_verified": {
+          "type": "boolean"
+        },
+        "authenticated_readback": {
+          "type": "boolean"
+        },
+        "response_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "observation_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "externalCiResult": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/commonResult"
+        },
+        {
+          "type": "object",
+          "required": [
+            "ci_observation"
+          ],
+          "properties": {
+            "gate_type": {
+              "const": "EXTERNAL_CI"
+            },
+            "evidence_actor": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/evidenceActor"
+                },
+                {
+                  "properties": {
+                    "identity_kind": {
+                      "const": "EXTERNAL_CI"
+                    },
+                    "evidence_source": {
+                      "const": "GITHUB_API_READBACK"
+                    }
+                  }
+                }
+              ]
+            },
+            "evidence_role": {
+              "const": "TRUSTED_EXTERNAL_CI"
+            },
+            "ci_observation": {
+              "$ref": "#/$defs/ciObservation"
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "PASS"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "ci_observation": {
+                "properties": {
+                  "conclusion": {
+                    "const": "SUCCESS"
+                  },
+                  "trusted_app_verified": {
+                    "const": true
+                  },
+                  "authenticated_readback": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}
