@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:10 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
 # Provider Setup Matrix
 
@@ -53,7 +54,7 @@ non-positive or non-finite configured value prevents the service from starting.
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
 | Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
-| Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
+| Supplemental — current research | Perplexity Search API through the official asynchronous SDK; Agent API only for the bounded no-tools availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
 
 ## Perplexity research-only profile
 
@@ -65,7 +66,7 @@ start with `PERPLEXITY_ENABLED=false`:
 PERPLEXITY_ENABLED=false
 PERPLEXITY_API_KEY=
 PERPLEXITY_API_BASE=https://api.perplexity.ai
-PERPLEXITY_PRESET=fast-search
+PERPLEXITY_PRESET=fast
 PERPLEXITY_MODE=research_only
 PERPLEXITY_MAX_RESULTS=10
 PERPLEXITY_SEARCH_CONTEXT_SIZE=high
@@ -76,23 +77,35 @@ PERPLEXITY_ALLOW_REPOSITORY_WRITE=false
 PERPLEXITY_ALLOW_REVIEW_VERDICT=false
 ```
 
-Normal assignments use `POST /search`. Every Perplexity assignment requires an
+Normal assignments use the official `perplexityai` SDK's Search API client,
+which sends `POST /search`. Every Perplexity assignment requires an
 owner approval bound to the digest of the exact assignment; the Slack prompt
 shows the complete outbound `public_research_query`, and a later query mutation
 invalidates that approval. The adapter sends only the approved bounded research query and
-result limit; it does not send repository context,
+result limit plus the configured Search API snippet-depth setting; it does not send repository context,
 acceptance authority, credentials, or Slack state. Results are normalized with
 the query, retrieval time, URL, page title, available publication/update dates,
 supporting excerpt, source type, and explicit markers where confidence or
-contradiction evidence is unavailable. OpenAI or another primary-team model
+contradiction evidence is unavailable. Results with the same URL are
+deduplicated before the evidence packet is returned. OpenAI or another primary-team model
 evaluates that evidence; Perplexity does not issue approval, review, or merge
 verdicts.
 
-`PERPLEXITY_SEARCH_CONTEXT_SIZE` is validated now for compatibility with an
-optional future Agent API research lane, where the web-search tool supports
-`low`, `medium`, or `high`. The raw Search API does not accept that field, so the
-current adapter does not send it. The existing no-tools Agent API call is used
-only for the bounded availability/usage prompt.
+`PERPLEXITY_SEARCH_CONTEXT_SIZE` is sent to Search and must be `low`, `medium`,
+or `high`. The Agent API call remains intentionally limited to the bounded
+availability/usage prompt: it sends no tools, stores no response, and receives
+no repository context. Legacy Agent preset names are translated to the current
+tier names (`fast`, `low`, `medium`, `high`, and `xhigh`) at the adapter boundary.
+The official SDK performs at most two retries and honors a reasonable
+`Retry-After` value for rate limits; the Director reports only sanitized status
+codes and never logs the API key or provider response body.
+
+The Router API is deliberately not the Director's universal model transport.
+It is currently private preview, has a key-specific live catalog, provides no
+web grounding, and would blur the provider identities used by the Director's
+separation-of-duties and exact-provider evidence controls. If Router is evaluated
+later, query `GET /router/v1/models` with the deployment key first and add it as
+a separately gated transport; never invent or persist an unverified model slug.
 
 The adapter refuses to run unless every research-only control is valid. It also
 rejects draft-PR authority and any assignment whose estimated cost exceeds
@@ -218,3 +231,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart
 - Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:10 UTC | END]] -->

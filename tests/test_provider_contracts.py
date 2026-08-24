@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
@@ -6,6 +7,7 @@ from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from perplexity import APIStatusError
 
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
@@ -68,10 +70,52 @@ class RecordingAsyncClient:
         return response if isinstance(response, FakeResponse) else FakeResponse(response)
 
 
+class FakeSdkResponse:
+    def __init__(self, payload: dict):
+        self.payload = payload
+
+    def model_dump(self, *, mode: str) -> dict:
+        if mode != "json":
+            raise AssertionError("SDK responses must be normalized in JSON mode")
+        return self.payload
+
+
+class RecordingSdkResource:
+    def __init__(self, operation: str):
+        self.operation = operation
+
+    async def create(self, **kwargs: object) -> FakeSdkResponse:
+        RecordingAsyncPerplexity.calls.append(
+            {"operation": self.operation, "kwargs": kwargs}
+        )
+        response = RecordingAsyncPerplexity.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return FakeSdkResponse(response)
+
+
+class RecordingAsyncPerplexity:
+    calls: list[dict] = []
+    responses: list[dict | Exception] = []
+
+    def __init__(self, **kwargs: object):
+        self.search = RecordingSdkResource("search")
+        self.responses = RecordingSdkResource("agent")
+        self.calls.append({"operation": "client", "kwargs": kwargs})
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+
 class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         RecordingAsyncClient.calls = []
         RecordingAsyncClient.responses = []
+        RecordingAsyncPerplexity.calls = []
+        RecordingAsyncPerplexity.responses = []
 
     async def test_cursor_usage_check_reads_models_instead_of_launching_an_agent(self):
         # A usage probe must never launch a paid cloud agent: POST /v1/agents
@@ -770,7 +814,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             perplexity_api_key="test-perplexity",
             perplexity_preset="fast-search",
         )
-        RecordingAsyncClient.responses = [
+        RecordingAsyncPerplexity.responses = [
             {
                 "id": "response-1",
                 "status": "completed",
@@ -779,14 +823,21 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             }
         ]
 
-        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+        with patch(
+            "director_orchestrator.providers.AsyncPerplexity",
+            RecordingAsyncPerplexity,
+        ):
             run = await PerplexityAdapter(settings).usage_check("probe")
 
-        request = RecordingAsyncClient.calls[0]
-        self.assertEqual(request["url"], "https://api.perplexity.ai/v1/agent")
-        self.assertEqual(request["json"]["preset"], "fast-search")
-        self.assertEqual(request["json"]["tools"], [])
-        self.assertNotIn("background", request["json"])
+        client = RecordingAsyncPerplexity.calls[0]
+        request = RecordingAsyncPerplexity.calls[1]
+        self.assertEqual(client["kwargs"]["base_url"], "https://api.perplexity.ai")
+        self.assertEqual(client["kwargs"]["max_retries"], 2)
+        self.assertEqual(request["operation"], "agent")
+        self.assertEqual(request["kwargs"]["preset"], "fast")
+        self.assertEqual(request["kwargs"]["tools"], [])
+        self.assertFalse(request["kwargs"]["store"])
+        self.assertNotIn("background", request["kwargs"])
         self.assertEqual(run.status, "completed")
         self.assertEqual(run.result, "STATUS=OK")
 
@@ -806,7 +857,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             repository="example/private-repository",
             estimated_cost_usd=0.25,
         )
-        RecordingAsyncClient.responses = [
+        RecordingAsyncPerplexity.responses = [
             {
                 "id": "search-1",
                 "results": [
@@ -816,22 +867,34 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
                         "snippet": "A supporting excerpt.",
                         "date": "2026-08-01",
                         "last_updated": "2026-08-10",
-                    }
+                    },
+                    {
+                        "title": "Duplicate calibration reference",
+                        "url": "https://example.test/reference",
+                        "snippet": "Duplicate URL must be removed.",
+                    },
                 ],
             }
         ]
 
-        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+        with patch(
+            "director_orchestrator.providers.AsyncPerplexity",
+            RecordingAsyncPerplexity,
+        ):
             run = await PerplexityAdapter(settings).dispatch(
                 assignment,
                 "PRIVATE REPOSITORY CONTEXT MUST NOT LEAVE THE ORCHESTRATOR",
             )
 
-        request = RecordingAsyncClient.calls[0]
-        self.assertEqual(request["url"], "https://api.perplexity.ai/search")
+        request = RecordingAsyncPerplexity.calls[1]
+        self.assertEqual(request["operation"], "search")
         self.assertEqual(
-            request["json"],
-            {"query": assignment.public_research_query, "max_results": 7},
+            request["kwargs"],
+            {
+                "query": assignment.public_research_query,
+                "max_results": 7,
+                "search_context_size": "high",
+            },
         )
         self.assertNotIn("PRIVATE", json.dumps(request))
         self.assertNotIn("example/private-repository", json.dumps(request))
@@ -843,6 +906,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence["results"][0]["supporting_excerpt"], "A supporting excerpt.")
         self.assertEqual(evidence["results"][0]["source_type"], "web_result")
         self.assertEqual(evidence["results"][0]["confidence"], "not_provided_by_search_api")
+        self.assertEqual(len(evidence["results"]), 1)
 
     async def test_perplexity_revise_reuses_bounded_query_and_drops_director_text(self):
         settings = replace(
@@ -865,7 +929,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             status="completed",
             result="{}",
         )
-        RecordingAsyncClient.responses = [
+        RecordingAsyncPerplexity.responses = [
             {
                 "id": "search-2",
                 "results": [
@@ -878,7 +942,10 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             }
         ]
 
-        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+        with patch(
+            "director_orchestrator.providers.AsyncPerplexity",
+            RecordingAsyncPerplexity,
+        ):
             run = await PerplexityAdapter(settings).revise(
                 prior,
                 "Retry using SHA abcdef0123456789abcdef0123456789abcdef01 and src/secret.py",
@@ -886,11 +953,15 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
                 context="PRIVATE REPOSITORY CONTEXT MUST NOT LEAVE THE ORCHESTRATOR",
             )
 
-        request = RecordingAsyncClient.calls[0]
-        self.assertEqual(request["url"], "https://api.perplexity.ai/search")
+        request = RecordingAsyncPerplexity.calls[1]
+        self.assertEqual(request["operation"], "search")
         self.assertEqual(
-            request["json"],
-            {"query": assignment.public_research_query, "max_results": 7},
+            request["kwargs"],
+            {
+                "query": assignment.public_research_query,
+                "max_results": 7,
+                "search_context_size": "high",
+            },
         )
         serialized = json.dumps(request)
         self.assertNotIn("PRIVATE", serialized)
@@ -938,7 +1009,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
                         **kwargs,
                     )
 
-        self.assertEqual(RecordingAsyncClient.calls, [])
+        self.assertEqual(RecordingAsyncPerplexity.calls, [])
 
     async def test_perplexity_dispatch_fails_closed_when_research_policy_is_not_ready(self):
         assignment = Assignment(
@@ -998,7 +1069,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(ProviderError):
                     await PerplexityAdapter(settings).dispatch(assignment, "context")
 
-        self.assertEqual(RecordingAsyncClient.calls, [])
+        self.assertEqual(RecordingAsyncPerplexity.calls, [])
 
     async def test_perplexity_dispatch_rejects_write_authority_and_budget_overrun(self):
         settings = replace(
@@ -1023,8 +1094,49 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(ProviderError):
                     await PerplexityAdapter(settings).dispatch(assignment, "context")
 
-        self.assertEqual(RecordingAsyncClient.calls, [])
+        self.assertEqual(RecordingAsyncPerplexity.calls, [])
+
+    async def test_perplexity_sdk_errors_are_bounded_and_redacted(self):
+        settings = replace(
+            Settings(),
+            perplexity_enabled=True,
+            perplexity_api_key="test-perplexity",
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.PERPLEXITY,
+            task="Find sources",
+            acceptance=["Report URLs"],
+            public_research_query="primary sources about calibration metrics",
+        )
+
+        for status_code, expected_attempts in ((401, 1), (429, 3)):
+            with self.subTest(status_code=status_code):
+                response = httpx.Response(
+                    status_code,
+                    headers={"Retry-After": "1"},
+                    request=httpx.Request("POST", "https://api.perplexity.ai/search"),
+                )
+                RecordingAsyncPerplexity.calls = []
+                RecordingAsyncPerplexity.responses = [
+                    APIStatusError(
+                        "provider body included secret-value",
+                        response=response,
+                        body={"detail": "secret-value"},
+                    )
+                ]
+                with patch(
+                    "director_orchestrator.providers.AsyncPerplexity",
+                    RecordingAsyncPerplexity,
+                ):
+                    with self.assertRaises(ProviderError) as captured:
+                        await PerplexityAdapter(settings).dispatch(assignment, "context")
+
+                self.assertEqual(captured.exception.code, f"http_{status_code}")
+                self.assertEqual(captured.exception.attempt_count, expected_attempts)
+                self.assertNotIn("secret-value", str(captured.exception))
 
 
 if __name__ == "__main__":
     unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | END]]

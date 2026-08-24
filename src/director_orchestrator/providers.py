@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
@@ -7,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+from perplexity import APIConnectionError, APIStatusError, AsyncPerplexity
 
 from .antigravity import (
     NON_AUTHORITATIVE_NOTICE,
@@ -19,6 +21,14 @@ from .policy import antigravity_assignment_errors
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
+_PERPLEXITY_MAX_RETRIES = 2
+_PERPLEXITY_PRESET_ALIASES = {
+    "fast-search": "fast",
+    "pro-search": "low",
+    "deep-research": "medium",
+    "advanced-deep-research": "high",
+    "ultra": "xhigh",
+}
 
 
 class ProviderError(RuntimeError):
@@ -668,9 +678,53 @@ class GeminiAdapter(ProviderAdapter):
 class PerplexityAdapter(ProviderAdapter):
     name = ProviderName.PERPLEXITY
 
-    @property
-    def headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.settings.perplexity_api_key}", "Content-Type": "application/json"}
+    def _client(self) -> AsyncPerplexity:
+        return AsyncPerplexity(
+            api_key=self.settings.perplexity_api_key,
+            base_url=self.settings.perplexity_api_base,
+            timeout=float(self.settings.perplexity_timeout_seconds),
+            max_retries=_PERPLEXITY_MAX_RETRIES,
+        )
+
+    @staticmethod
+    def _payload(response: Any) -> dict[str, Any]:
+        if isinstance(response, dict):
+            payload = response
+        else:
+            model_dump = getattr(response, "model_dump", None)
+            if not callable(model_dump):
+                raise ProviderError(
+                    "Perplexity API returned an unsupported response shape",
+                    code="invalid_response",
+                )
+            payload = model_dump(mode="json")
+        if not isinstance(payload, dict):
+            raise ProviderError(
+                "Perplexity API returned an unsupported response shape",
+                code="invalid_response",
+            )
+        return payload
+
+    @staticmethod
+    def _request_error(exc: Exception) -> ProviderError:
+        if isinstance(exc, APIStatusError):
+            status_code = exc.status_code
+            retryable = status_code in {408, 409, 429} or status_code >= 500
+            return ProviderError(
+                f"Perplexity API request failed with http_{status_code}",
+                code=f"http_{status_code}",
+                attempt_count=(_PERPLEXITY_MAX_RETRIES + 1 if retryable else 1),
+            )
+        if isinstance(exc, APIConnectionError):
+            return ProviderError(
+                "Perplexity API request failed with transport_error",
+                code="transport_error",
+                attempt_count=_PERPLEXITY_MAX_RETRIES + 1,
+            )
+        return ProviderError(
+            "Perplexity API request failed with invalid_response",
+            code="invalid_response",
+        )
 
     def _require_research_only(self, assignment: Assignment | None = None) -> None:
         failed = [
@@ -691,14 +745,22 @@ class PerplexityAdapter(ProviderAdapter):
                 )
 
     @staticmethod
-    def _search_run(payload: dict[str, Any], query: str) -> ProviderRun:
+    def _search_run(
+        payload: dict[str, Any], query: str | list[str]
+    ) -> ProviderRun:
         retrieved_at = datetime.now(timezone.utc).isoformat()
-        evidence = {
-            "query": query,
-            "retrieved_at": retrieved_at,
-            "results": [
+        results: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        for item in payload.get("results", []):
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if not isinstance(url, str) or not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            results.append(
                 {
-                    "result_url": item.get("url"),
+                    "result_url": url,
                     "page_title": item.get("title"),
                     "publication_date": item.get("date"),
                     "last_updated": item.get("last_updated"),
@@ -707,13 +769,21 @@ class PerplexityAdapter(ProviderAdapter):
                     "confidence": "not_provided_by_search_api",
                     "contradictions_and_unavailable_evidence": "not_evaluated_in_raw_search",
                 }
-                for item in payload.get("results", [])
-                if isinstance(item, dict)
-            ],
+            )
+        evidence = {
+            "query": query,
+            "retrieved_at": retrieved_at,
+            "results": results,
         }
+        run_id = payload.get("id")
+        if not isinstance(run_id, str) or not run_id:
+            raise ProviderError(
+                "Perplexity Search API response omitted its run id",
+                code="invalid_response",
+            )
         return ProviderRun(
             provider=ProviderName.PERPLEXITY,
-            run_id=payload["id"],
+            run_id=run_id,
             status="completed",
             result=json.dumps(evidence, sort_keys=True),
             raw=payload,
@@ -742,14 +812,18 @@ class PerplexityAdapter(ProviderAdapter):
         self._require_research_only(assignment)
         if not assignment.public_research_query:
             raise ProviderError("Perplexity requires a bounded public research query")
-        body = {
-            "query": assignment.public_research_query,
-            "max_results": self.settings.perplexity_max_results,
-        }
-        async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
-            response = await client.post(f"{self.settings.perplexity_api_base}/search", headers=self.headers, json=body)
-            response.raise_for_status()
-        payload = response.json()
+        try:
+            async with self._client() as client:
+                response = await client.search.create(
+                    query=assignment.public_research_query,
+                    max_results=self.settings.perplexity_max_results,
+                    search_context_size=self.settings.perplexity_search_context_size,
+                )
+            payload = self._payload(response)
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise self._request_error(exc) from exc
         return self._search_run(payload, assignment.public_research_query)
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
@@ -770,20 +844,23 @@ class PerplexityAdapter(ProviderAdapter):
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         self._require_research_only()
-        body = {
-            "preset": self.settings.perplexity_preset,
-            "input": prompt,
-            "max_output_tokens": self.settings.usage_check_max_output_tokens,
-            "tools": [],
-        }
-        async with httpx.AsyncClient(timeout=self.settings.perplexity_timeout_seconds) as client:
-            response = await client.post(
-                f"{self.settings.perplexity_api_base}/v1/agent",
-                headers=self.headers,
-                json=body,
-            )
-            response.raise_for_status()
-        payload = response.json()
+        preset = _PERPLEXITY_PRESET_ALIASES.get(
+            self.settings.perplexity_preset, self.settings.perplexity_preset
+        )
+        try:
+            async with self._client() as client:
+                response = await client.responses.create(
+                    preset=preset,
+                    input=prompt,
+                    max_output_tokens=self.settings.usage_check_max_output_tokens,
+                    tools=[],
+                    store=False,
+                )
+            payload = self._payload(response)
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise self._request_error(exc) from exc
         return self._run(payload)
 
 
@@ -794,3 +871,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
         ProviderName.GEMINI: GeminiAdapter(settings),
         ProviderName.PERPLEXITY: PerplexityAdapter(settings),
     }
+# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | END]]

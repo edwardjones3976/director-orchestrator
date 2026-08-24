@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 fastapi>=0.115,<1
 httpx>=0.28,<1
@@ -6,9 +7,11 @@ langgraph==1.2.10
 langgraph-checkpoint-sqlite==3.1.1
 PyJWT[crypto]>=2.10,<3
 pydantic>=2.10,<3
+perplexityai>=0.43,<1
 rfc8785>=0.1.4,<1
 slack-bolt>=1.23,<2
 uvicorn[standard]>=0.34,<1
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-24 23:10 UTC | END]]
 
