@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:50 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:03 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:17 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:07 UTC | BEGIN]]
@@ -33,6 +34,7 @@ from director_orchestrator.interactions import (
 from director_orchestrator.models import (
     Assignment,
     DirectorPlan,
+    IntakeAuthentication,
     ProviderName,
     ProviderRun,
     ReviewDecision,
@@ -173,6 +175,7 @@ def seed(database: Path) -> None:
     record = TaskRecord(
         task_id=TASK_ID,
         status=TaskStatus.RUNNING,
+        intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
         intake=SlackIntake(
             source_event_id="evt-recovery-probe",
             channel_id="C-PROBE",
@@ -286,6 +289,10 @@ def seed(database: Path) -> None:
 
 
 def assert_seeded_run_identity(record: TaskRecord) -> None:
+    if record.intake_authentication != IntakeAuthentication.SLACK_GATEWAY_ATTESTED:
+        raise ProbeIdentityMismatch(
+            "Probe task lacks its authenticated live-intake binding"
+        )
     run = record.provider_runs[0]
     if not run.interaction_id:
         raise ProbeIdentityMismatch("Probe run lacks its interaction binding")
@@ -392,3 +399,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:17 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:50 UTC | END]]
