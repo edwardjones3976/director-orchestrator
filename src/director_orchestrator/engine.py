@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:58 UTC | BEGIN]]
@@ -49,6 +50,7 @@ from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .director import OpenAIDirector
 from .approvals import (
     EffectAlreadyClaimed,
+    PAID_REARM_MESSAGE,
     StaleApproval,
     approval_button_value,
     assignment_approval_digest,
@@ -1600,9 +1602,7 @@ class OrchestrationEngine:
             ):
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.owner_approved = False
-                record.message = (
-                    "Paid execution requires a fresh authenticated Slack gateway proof."
-                )
+                record.message = PAID_REARM_MESSAGE
                 self.store.save(record)
                 await self._status_post(
                     record,
@@ -5554,3 +5554,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
@@ -20,6 +21,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -207,12 +209,43 @@ def _is_link_or_reparse(path: Path) -> bool:
 
 
 def _remove_snapshot(root: Path) -> None:
+    def restore_permissions(path: Path) -> None:
+        if not path.exists() or _is_link_or_reparse(path):
+            return
+        os.chmod(path, 0o700 if path.is_dir() else 0o600)
+
     def make_writable_and_retry(function: Any, path: str, _error: Any) -> None:
-        os.chmod(path, 0o700)
+        candidate = Path(path)
+        if candidate.parent == root or root in candidate.parent.parents:
+            restore_permissions(candidate.parent)
+        restore_permissions(candidate)
         function(path)
 
+    def prepare_for_removal(path: Path) -> None:
+        try:
+            restore_permissions(path)
+        except OSError:
+            # The rmtree callback retries the exact failing operation and keeps
+            # cleanup fail-closed if the permission repair remains impossible.
+            pass
+
     if root.exists():
-        shutil.rmtree(root, onerror=make_writable_and_retry)
+        # POSIX unlink/rmdir authority belongs to the parent directory, not the
+        # read-only child. Restore every snapshot directory before traversal;
+        # Windows also benefits from clearing file read-only attributes.
+        for current, directories, files in os.walk(
+            root, topdown=True, followlinks=False
+        ):
+            current_path = Path(current)
+            prepare_for_removal(current_path)
+            for name in directories:
+                prepare_for_removal(current_path / name)
+            for name in files:
+                prepare_for_removal(current_path / name)
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(root, onexc=make_writable_and_retry)
+        else:  # pragma: no cover - supported compatibility path
+            shutil.rmtree(root, onerror=make_writable_and_retry)
     if root.exists():
         raise CompletionWorkerError("tracked snapshot cleanup could not be verified")
 
@@ -1016,3 +1049,4 @@ def _evidence(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]

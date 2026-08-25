@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:35 UTC | BEGIN]]
@@ -25,6 +26,7 @@ from director_orchestrator.completion_worker_backends import (
     SanitizedWorkerOutput,
     _git_environment,
     _repository_state,
+    _remove_snapshot,
     _start_cat_file_batch,
     _tracked_repository_snapshot,
 )
@@ -405,6 +407,22 @@ class CompletionWorkerTests(unittest.TestCase):
         self.assertIsNotNone(snapshot_path)
         self.assertFalse(snapshot_path.exists())
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission semantics only")
+    def test_posix_cleanup_restores_readonly_parent_directory_permissions(self):
+        snapshot = self.root / "readonly-posix-snapshot"
+        nested = snapshot / "one" / "two"
+        nested.mkdir(parents=True)
+        payload = nested / "fixture.txt"
+        payload.write_text("immutable fixture\n", encoding="utf-8")
+        os.chmod(payload, 0o444)
+        os.chmod(nested, 0o555)
+        os.chmod(nested.parent, 0o555)
+        os.chmod(snapshot, 0o555)
+
+        _remove_snapshot(snapshot)
+
+        self.assertFalse(snapshot.exists())
+
     def test_live_mutate_read_restore_cannot_change_worker_snapshot(self):
         live = self.repository / "fixture.txt"
         original = live.read_text(encoding="utf-8")
@@ -700,3 +718,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]

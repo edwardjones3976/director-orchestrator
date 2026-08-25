@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
@@ -53,7 +54,7 @@ _SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_TASK_EFFECTS = 200
 _SLACK_GATEWAY_PROOF_TTL_SECONDS = 300
 _SLACK_GATEWAY_FUTURE_SKEW_SECONDS = 30
-_PAID_REARM_MESSAGE = (
+PAID_REARM_MESSAGE = (
     "Paid execution requires a fresh authenticated Slack gateway proof."
 )
 _SLACK_GATEWAY_MIN_SECRET_LENGTH = 32
@@ -609,7 +610,7 @@ def current_owner_decision(record: TaskRecord) -> CurrentOwnerDecision | None:
         return None
     if (
         record.intake_authentication != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
-        and hmac.compare_digest(record.message or "", _PAID_REARM_MESSAGE)
+        and hmac.compare_digest(record.message or "", PAID_REARM_MESSAGE)
     ):
         return CurrentOwnerDecision(
             kind="paid_rearm",
@@ -1382,3 +1383,4 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
