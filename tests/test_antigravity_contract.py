@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:22 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:48 UTC | BEGIN]]
 """Regressions for the Antigravity outbound boundary.
@@ -157,15 +158,15 @@ def gemini_settings() -> Settings:
     )
 
 
-def string_leaves(payload: object) -> list[str]:
+def string_values(payload: object) -> list[str]:
     if isinstance(payload, dict):
         return [
             leaf
-            for key, value in payload.items()
-            for leaf in [key, *string_leaves(value)]
+            for value in payload.values()
+            for leaf in string_values(value)
         ]
     if isinstance(payload, list):
-        return [leaf for item in payload for leaf in string_leaves(item)]
+        return [leaf for item in payload for leaf in string_values(item)]
     return [payload] if isinstance(payload, str) else []
 
 
@@ -207,10 +208,10 @@ class WireCompositionTests(unittest.TestCase):
                     payload = json.loads(
                         antigravity_wire_input(assignment, revision=revision)
                     )
-                    for leaf in string_leaves(payload):
+                    for leaf in string_values(payload):
                         self.assertIn(
                             leaf,
-                            APPROVED_STRINGS | set(payload),
+                            APPROVED_STRINGS,
                             f"{leaf!r} is not a Director-owned constant",
                         )
 
@@ -1084,3 +1085,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:48 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:22 UTC | END]]
