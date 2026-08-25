@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
@@ -1916,6 +1917,194 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "accepted result 1",
             )
 
+    async def test_max_revisions_runs_every_bounded_revision_before_acceptance(self):
+        class Director:
+            def __init__(self):
+                self.calls = 0
+
+            async def review(self, record, result):
+                self.calls += 1
+                if self.calls <= 2:
+                    return ReviewDecision(
+                        verdict=ReviewVerdict.REVISE,
+                        summary="More evidence required.",
+                        revision_prompt=f"Add evidence round {self.calls}.",
+                    )
+                return ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Both revisions passed.",
+                    evidence=[result],
+                )
+
+        class Adapter:
+            def __init__(self):
+                self.revisions = 0
+
+            async def dispatch(self, assignment, context):
+                return ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    run_id="original",
+                    status="completed",
+                    result="initial",
+                )
+
+            async def poll(self, run):
+                raise AssertionError("terminal run must not be polled")
+
+            async def revise(self, run, prompt, *, assignment, context):
+                self.revisions += 1
+                return ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    run_id=f"revision-{self.revisions}",
+                    status="completed",
+                    result=f"revised-{self.revisions}",
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                claude_routine_url="https://claude.example/routine",
+                claude_routine_token="test-claude",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                max_agent_hops=6,
+                max_revisions=2,
+                sqlite_path=database,
+            )
+            assignment = Assignment(
+                sequence=1,
+                agent=ProviderName.CLAUDE,
+                task="Iterate twice",
+                acceptance=["Return final evidence"],
+                repository="example/demo",
+            )
+            record = TaskRecord(
+                task_id="DIR-TWO-REVISIONS",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-two-revisions",
+                    channel_id="C123",
+                    thread_ts="123.45",
+                    user_id="U123",
+                    text="DIRECTOR Project: demo Outcome: iterate twice",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="iterate twice",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=3,
+                    max_revisions=2,
+                    assignments=[assignment],
+                    final_acceptance=["Accepted"],
+                ),
+            )
+            _seed_verified_plan(record)
+            store.create(record)
+            engine = OrchestrationEngine(settings, store)
+            adapter = Adapter()
+            director = Director()
+            engine.providers[ProviderName.CLAUDE] = adapter
+            engine.director = director
+
+            await engine.run(record.task_id)
+
+            completed = store.get(record.task_id)
+            self.assertEqual(completed.status, TaskStatus.DONE)
+            self.assertEqual(adapter.revisions, 2)
+            self.assertEqual(director.calls, 3)
+            self.assertEqual(
+                [item.run_id for item in completed.provider_runs],
+                ["original", "revision-1", "revision-2"],
+            )
+
+    async def test_perplexity_revision_requires_new_owner_approved_public_query(self):
+        class Director:
+            async def review(self, record, result):
+                return ReviewDecision(
+                    verdict=ReviewVerdict.REVISE,
+                    summary="Research must be narrowed.",
+                    revision_prompt="Private repository-derived feedback must not leave.",
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                openai_api_key="test-openai",
+                perplexity_enabled=True,
+                perplexity_api_key="test-perplexity",
+                perplexity_mode="research_only",
+                project_allowlist=("demo",),
+                max_agent_hops=3,
+                max_revisions=2,
+                sqlite_path=database,
+            )
+            assignment = Assignment(
+                sequence=1,
+                agent=ProviderName.PERPLEXITY,
+                task="Find public methodology sources",
+                acceptance=["Return source URLs"],
+                requires_approval=True,
+                public_research_query="public calibration methodology evidence",
+                estimated_cost_usd=0.05,
+            )
+            record = TaskRecord(
+                task_id="DIR-PERPLEXITY-REFINEMENT",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-perplexity-refinement",
+                    channel_id="C123",
+                    thread_ts="123.45",
+                    user_id="U123",
+                    text="DIRECTOR Project: demo Outcome: research methodology",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="research methodology",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=2,
+                    max_revisions=2,
+                    assignments=[assignment],
+                    final_acceptance=["Accepted"],
+                ),
+                approved_assignments=[1],
+                approved_assignment_digests={1: assignment_approval_digest(assignment)},
+                provider_runs=[
+                    ProviderRun(
+                        provider=ProviderName.PERPLEXITY,
+                        assignment_sequence=1,
+                        run_id="pplx-original",
+                        status="completed",
+                        result="public evidence packet",
+                        evidence_source="provider_authenticated",
+                    )
+                ],
+            )
+            _seed_verified_plan(record)
+            _seed_verified_run(record, record.provider_runs[0])
+            store.create(record)
+            engine = OrchestrationEngine(settings, store)
+            engine.director = Director()
+            engine.providers[ProviderName.PERPLEXITY] = NoRedispatchAdapter()
+
+            await engine.run(record.task_id)
+
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.revision_count, 0)
+            self.assertEqual(len(stopped.provider_runs), 1)
+            self.assertIn("new bounded public research query", stopped.message or "")
+            self.assertNotIn("Private repository-derived", stopped.message or "")
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1925,4 +2114,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 

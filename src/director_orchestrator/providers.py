@@ -1,10 +1,18 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
 import json
+import re
+import sqlite3
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterator
 
 import httpx
 
@@ -36,6 +44,123 @@ class ProviderError(RuntimeError):
 
 class PostSubmitAmbiguityError(ProviderError):
     """A provider accepted a create request, but its new run cannot be identified."""
+
+
+class ProviderDailyLimitExceeded(ProviderError):
+    """A durable provider-wide request or estimated-spend ceiling is exhausted."""
+
+
+class ProviderReservationIdentityConflict(ProviderError):
+    """A durable effect key was replayed with contradictory accounting identity."""
+
+
+class ProviderDailySpendLedger:
+    """Reserve daily supplemental-provider requests before paid submission.
+
+    Reservations are conservative and idempotent by external-effect key. They are
+    never released after a failed or ambiguous call because the provider may have
+    accepted work and because under-counting is less safe than over-counting.
+    """
+
+    _EFFECT_KEY = re.compile(r"^[0-9a-f]{64}$")
+    _SUPPORTED = {ProviderName.GEMINI, ProviderName.PERPLEXITY}
+
+    def __init__(self, sqlite_path: str):
+        self.path = sqlite_path
+        Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS provider_daily_spend_reservations (
+                    provider TEXT NOT NULL,
+                    effect_key TEXT NOT NULL,
+                    utc_day TEXT NOT NULL,
+                    estimated_cost_usd REAL NOT NULL CHECK(estimated_cost_usd >= 0),
+                    recorded_at TEXT NOT NULL,
+                    PRIMARY KEY(provider, effect_key)
+                )
+                """
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_provider_daily_spend_day
+                ON provider_daily_spend_reservations(provider, utc_day)"""
+            )
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self.path, timeout=30)
+        connection.execute("PRAGMA secure_delete = ON")
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    def reserve(
+        self,
+        *,
+        provider: ProviderName,
+        effect_key: str,
+        estimated_cost_usd: float,
+        request_limit: int,
+        budget_usd: float,
+        now: datetime | None = None,
+    ) -> tuple[int, float]:
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily assignment spend applies only to Gemini and Perplexity")
+        if not self._EFFECT_KEY.fullmatch(effect_key):
+            raise ValueError("provider spend reservation requires a canonical effect key")
+        if request_limit < 1 or budget_usd <= 0 or estimated_cost_usd < 0:
+            raise ValueError("provider daily ceilings must be positive")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        utc_day = observed_at.date().isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """SELECT utc_day, estimated_cost_usd
+                FROM provider_daily_spend_reservations
+                WHERE provider = ? AND effect_key = ?""",
+                (provider.value, effect_key),
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != utc_day or abs(float(existing[1]) - estimated_cost_usd) > 1e-9:
+                    raise ProviderReservationIdentityConflict(
+                        "provider daily reservation identity was reused with different accounting"
+                    )
+            else:
+                count, reserved = connection.execute(
+                    """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
+                    FROM provider_daily_spend_reservations
+                    WHERE provider = ? AND utc_day = ?""",
+                    (provider.value, utc_day),
+                ).fetchone()
+                if int(count) + 1 > request_limit:
+                    raise ProviderDailyLimitExceeded(
+                        f"{provider.value} daily assignment request limit reached"
+                    )
+                if float(reserved) + estimated_cost_usd > budget_usd + 1e-9:
+                    raise ProviderDailyLimitExceeded(
+                        f"{provider.value} daily assignment budget reached"
+                    )
+                connection.execute(
+                    """INSERT INTO provider_daily_spend_reservations(
+                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at
+                    ) VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        provider.value,
+                        effect_key,
+                        utc_day,
+                        estimated_cost_usd,
+                        observed_at.isoformat(),
+                    ),
+                )
+            count, reserved = connection.execute(
+                """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
+                FROM provider_daily_spend_reservations
+                WHERE provider = ? AND utc_day = ?""",
+                (provider.value, utc_day),
+            ).fetchone()
+        return int(count), float(reserved)
 
 
 def _response_error_blob(response: httpx.Response) -> str:
@@ -424,15 +549,24 @@ class GeminiAdapter(ProviderAdapter):
             )
 
     def _antigravity_input(
-        self, assignment: Assignment, *, revision: bool = False
+        self,
+        assignment: Assignment,
+        *,
+        revision: bool = False,
+        context: str | None = None,
+        revision_prompt: str | None = None,
     ) -> str:
-        """Build the only text this adapter may send, or fail closed before HTTP.
+        """Build the phase-specific Antigravity envelope, or fail closed before HTTP.
 
-        The returned string is pure JSON of the closed contract, so every byte
-        leaving this process is a repository constant, a closed-enum value, or a
-        bounded integer. No assignment task, acceptance check, owner objective,
-        dependency result, Slack text, or repository context is composed into it, in
-        any phase -- the adapter has no code path that could.
+        Ordinary work stays pure JSON of the closed-vocabulary contract, so every
+        byte leaving this process is a repository constant, a closed-enum value, or
+        a bounded integer. No assignment task, acceptance check, owner objective,
+        dependency result, Slack text, or repository context is composed into it.
+
+        An invited debate turn is the one prose-bearing envelope, and it is built
+        only from the dedicated Director invitation plus the integrity-bound prior
+        contributions that invitation declares. The generic primary-team handoff
+        fields never cross this boundary in either phase.
 
         The rejected assignment's text never enters the error.
         `AntigravityContractError` carries generic labels only, and this is the one
@@ -448,10 +582,15 @@ class GeminiAdapter(ProviderAdapter):
                     + "; ".join(errors)
                 )
         try:
-            return antigravity_wire_input(assignment, revision=revision)
+            return antigravity_wire_input(
+                assignment,
+                revision=revision,
+                context=context,
+                revision_prompt=revision_prompt,
+            )
         except AntigravityContractError as exc:
             raise ProviderError(
-                "Antigravity assignment is outside its subordinate lane: "
+                "Antigravity assignment is outside its phase contract: "
                 + "; ".join(exc.labels)
             ) from None
 
@@ -538,9 +677,10 @@ class GeminiAdapter(ProviderAdapter):
         )
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
-        # `context` is the primary-team handoff and is deliberately unused. There is
-        # no phase in which Antigravity receives it, or any other model-authored text.
-        prompt = self._antigravity_input(assignment)
+        # The debate builder extracts only its dedicated invitation and the
+        # accepted declared dependencies that invitation names. The ordinary-work
+        # builder ignores `context` entirely.
+        prompt = self._antigravity_input(assignment, context=context)
         body = {
             "agent": self.settings.gemini_agent,
             "input": prompt,
@@ -577,10 +717,19 @@ class GeminiAdapter(ProviderAdapter):
     ) -> ProviderRun:
         if assignment is None:
             raise ProviderError("Antigravity revision requires the bound assignment")
-        # `prompt` is Director text derived from untrusted provider output and
-        # `context` is the primary-team handoff. Neither reaches Antigravity: the
-        # lane is re-issued its own original bounded request, in every phase.
-        revision_input = self._antigravity_input(assignment, revision=True)
+        # Ordinary work still ignores revision prose and is re-issued its own
+        # original bounded request. A debate turn may carry the bounded Director
+        # revision request, which the debate contract sanitizes and truncates.
+        revision_input = self._antigravity_input(
+            assignment,
+            revision=True,
+            context=context,
+            revision_prompt=(
+                prompt
+                if assignment.discussion_phase != DiscussionPhase.WORK
+                else None
+            ),
+        )
         if not run.session_id:
             # Falling back to a fresh "remote" sandbox while still chaining
             # previous_interaction_id would silently drop the prior files and
@@ -763,10 +912,13 @@ class PerplexityAdapter(ProviderAdapter):
         assignment: Assignment | None = None,
         context: str | None = None,
     ) -> ProviderRun:
-        del run, prompt  # Revision text is untrusted Director output, not a Search query.
+        del run, prompt, context  # Director feedback is private and never becomes a query.
         if assignment is None:
             raise ProviderError("Perplexity requires a bounded public research query")
-        return await self.dispatch(assignment, context or "")
+        self._require_research_only(assignment)
+        raise ProviderError(
+            "Perplexity revision requires a new owner-approved bounded public research query"
+        )
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         self._require_research_only()
@@ -794,3 +946,7 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
         ProviderName.GEMINI: GeminiAdapter(settings),
         ProviderName.PERPLEXITY: PerplexityAdapter(settings),
     }
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

@@ -1,3 +1,5 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:09 UTC | BEGIN]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
 # LangGraph control-plane transition plan
 
 **Status:** Gate 0 accepted; documentation/schema authority proposed for merge; runtime transition not started
@@ -214,3 +216,78 @@ Rollback never deletes evidence or rewrites Git history.
 - **Project Uppercut team:** validates that migration cannot change combat canon or evidence meaning.
 
 No model may approve its own implementation or merge its own migration PR.
+
+## Runtime activation switches
+
+The packet coordinator (`langgraph_runtime.LangGraphPacketRuntime`) is now
+constructible from configuration by `runtime_activation.RuntimeActivation`, but it
+remains off by default and cannot reach a provider without every switch below.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `LANGGRAPH_RUNTIME_ENABLED` | off | Activates the coordinator as an internal coordinator |
+| `LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED` | off | Additionally permits live provider dispatch |
+| `ALLOW_PAID_RUNS` | off | Required as well before any live dispatch |
+| `LANGGRAPH_RUNTIME_CHECKPOINT_PATH` | sibling of `SQLITE_PATH` | Coordinator checkpoints |
+| `LANGGRAPH_RUNTIME_LEDGER_PATH` | sibling of `SQLITE_PATH` | Dispatch ledger and writer ownership |
+| `LANGGRAPH_RUNTIME_CHECKPOINT_NAMESPACE` | `director-<env>-runtime-v1` | Must differ from the shadow namespace |
+| `LANGGRAPH_RUNTIME_WRITER_OWNER_ID` | `langgraph-packet-runtime` | Writer ownership identity |
+
+Live dispatch additionally requires a configured execution profile
+(`PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`, and
+`CLAUDE_CALLBACK_SECRET`). Startup fails closed when the coordinator is enabled and
+the runtime checkpoint, runtime ledger, shadow checkpoint, shadow resume-claim, and
+`SQLITE_PATH` databases are not all distinct files.
+
+### Single writer
+
+Exactly one engine may own provider dispatch and external side effects for a task.
+When the coordinator holds live dispatch authority, the legacy engine surrenders it:
+`OrchestrationEngine` stops at `OWNER_DECISION_REQUIRED` *before* reserving an
+external effect key rather than racing for the same key. `/health` reflects this —
+`langgraph.legacy_sole_writer` becomes false once live dispatch is active.
+
+### Adapter boundary
+
+An activated coordinator sets `require_packet_boundary_adapter`, so live dispatch
+only accepts `langgraph_runtime.PacketBoundaryAdapter`. That adapter revalidates the
+work packet against `model-work-packet-v1` and hands the transport canonical RFC 8785
+bytes, then validates the raw reply against `model-result-packet-v1` and re-checks
+work/result linkage before anything can reach the dispatch ledger. The v1 packet
+contract is therefore the live boundary in both directions, not a convention.
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->
+
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | BEGIN]] -->
+### Recovering a stranded dispatch
+
+A live dispatch reserves its idempotency key as `DISPATCHING` in one committed
+transaction, and `run_packet` only moves it to `RECONCILIATION_REQUIRED` from its
+exception handler. A hard kill — SIGKILL, power loss, container eviction — can land
+between the two and leave a durable `DISPATCHING` row that no ordinary edge accepts:
+`run_packet` refuses to resend it, `open_reconciliation` accepts only a legacy
+`CLAIMED` row, and `reconcile_result` accepts only `RECONCILIATION_REQUIRED`.
+
+`LangGraphPacketRuntime.recover_stranded_dispatch` is the bounded recovery edge for
+that one case. It performs exactly one transition, `DISPATCHING` to
+`RECONCILIATION_REQUIRED`, and nothing else.
+
+| Property | Behaviour |
+| --- | --- |
+| Explicit | Requires `dispatch_process_confirmed_stopped=True`; the default refuses |
+| Bound | Requires the task writer token and the exact packet, provider, and idempotency-key bindings already recorded in the ledger |
+| Fail-closed | `CLAIMED`, `REJECTED`, a wrong writer, or a mismatched binding raises; the row is left untouched |
+| Idempotent | A repeat call reports that the dispatch is already awaiting reconciliation |
+| Concurrency-safe | `BEGIN IMMEDIATE` plus a status-guarded update, so concurrent callers transition the row once |
+| Never infers completion | Contacts no provider, resends nothing, and records no result |
+
+Recovery does not decide what the provider did. The owner must still bind
+authenticated readback evidence through `reconcile_result`, which remains the only
+path that can write a result packet.
+
+The attestation is required because a `DISPATCHING` row is indistinguishable from a
+dispatch still in flight in another worker, and the ledger cannot settle that
+question. A wrong attestation still fails closed rather than racing: the live
+worker's result write is guarded on `CLAIMED`/`DISPATCHING`, so it loses its
+reservation, its result is refused, and the row stays in reconciliation.
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:09 UTC | END]] -->

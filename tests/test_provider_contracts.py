@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
@@ -844,7 +845,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence["results"][0]["source_type"], "web_result")
         self.assertEqual(evidence["results"][0]["confidence"], "not_provided_by_search_api")
 
-    async def test_perplexity_revise_reuses_bounded_query_and_drops_director_text(self):
+    async def test_perplexity_revise_requires_new_owner_approved_query_without_http(self):
         settings = replace(
             Settings(),
             perplexity_enabled=True,
@@ -865,40 +866,19 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             status="completed",
             result="{}",
         )
-        RecordingAsyncClient.responses = [
-            {
-                "id": "search-2",
-                "results": [
-                    {
-                        "title": "Calibration follow-up",
-                        "url": "https://example.test/follow-up",
-                        "snippet": "A later excerpt.",
-                    }
-                ],
-            }
-        ]
-
         with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
-            run = await PerplexityAdapter(settings).revise(
-                prior,
-                "Retry using SHA abcdef0123456789abcdef0123456789abcdef01 and src/secret.py",
-                assignment=assignment,
-                context="PRIVATE REPOSITORY CONTEXT MUST NOT LEAVE THE ORCHESTRATOR",
-            )
+            with self.assertRaisesRegex(
+                ProviderError,
+                "new owner-approved bounded public research query",
+            ):
+                await PerplexityAdapter(settings).revise(
+                    prior,
+                    "Retry using SHA abcdef0123456789abcdef0123456789abcdef01 and src/secret.py",
+                    assignment=assignment,
+                    context="PRIVATE REPOSITORY CONTEXT MUST NOT LEAVE THE ORCHESTRATOR",
+                )
 
-        request = RecordingAsyncClient.calls[0]
-        self.assertEqual(request["url"], "https://api.perplexity.ai/search")
-        self.assertEqual(
-            request["json"],
-            {"query": assignment.public_research_query, "max_results": 7},
-        )
-        serialized = json.dumps(request)
-        self.assertNotIn("PRIVATE", serialized)
-        self.assertNotIn("src/secret.py", serialized)
-        self.assertNotIn("abcdef0123456789abcdef0123456789abcdef01", serialized)
-        evidence = json.loads(run.result or "{}")
-        self.assertEqual(evidence["query"], assignment.public_research_query)
-        self.assertEqual(run.run_id, "search-2")
+        self.assertEqual(RecordingAsyncClient.calls, [])
 
     async def test_perplexity_revise_rejects_write_authority_and_missing_query(self):
         settings = replace(
@@ -1028,3 +1008,4 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from __future__ import annotations
 
 import tempfile
@@ -5,10 +6,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from director_orchestrator.antigravity import (
-    DEBATE_UNAVAILABLE_LABEL,
-    antigravity_wire_input,
-)
+from director_orchestrator.antigravity import antigravity_wire_input
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
     AntigravityDirective,
@@ -292,8 +290,13 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(guarded.assignments[1].kind, AssignmentKind.IMPLEMENTATION)
         self.assertEqual(execution_policy_errors(guarded, settings), [])
 
-    def test_antigravity_cannot_be_seated_in_a_debate(self):
-        """A position or rebuttal cannot be formed from the closed wire vocabulary."""
+    def test_antigravity_cannot_seat_itself_in_a_debate(self):
+        """Antigravity debates only inside a persisted, bounded Director plan.
+
+        A lone discussion assignment is not an invitation: without a debate plan
+        there is no question, no options, and no committee, so the plan is refused
+        rather than producing a one-sided advisory turn.
+        """
         settings = replace(
             Settings(),
             project_allowlist=("demo",),
@@ -313,9 +316,7 @@ class PolicyTests(unittest.TestCase):
             update={"depends_on": []}
         )
         errors = execution_policy_errors(plan, settings)
-        self.assertIn(
-            f"assignment 1: Antigravity {DEBATE_UNAVAILABLE_LABEL}", errors
-        )
+        self.assertIn("discussion assignments require a bounded debate plan", errors)
 
     def test_execution_policy_pins_the_primary_team(self):
         settings = replace(
@@ -612,3 +613,4 @@ class StoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]

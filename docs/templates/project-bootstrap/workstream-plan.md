@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
@@ -114,14 +115,16 @@ serious-safety signal. Any changed candidate invalidates prior review evidence.
 ## Debate and decision
 
 - **Decision question:** <question or none>
-- **Debate participants (`POSITION` / `REBUTTAL`):** Claude and Cursor only.
-  Antigravity cannot be seated: none of the question, options, or peer arguments
-  may cross its outbound contract.
+- **Debate participants (`POSITION` / `REBUTTAL`):** list the Director-seated
+  members. Antigravity may be seated only through a matching persisted Director
+  invitation; it cannot initiate, self-route, widen, or autonomously continue
+  the discussion. Its separate typed debate contract carries only the bounded,
+  sanitized debate subset, while ordinary Antigravity work remains prose-free.
 - **Independent positions:** <provider, position, evidence, confidence>
 - **Rebuttal:** <one focused round or none>
 - **Advisory votes:** <full configured weights for seated members, including
-  producer votes; Antigravity's weight stays in the immutable denominator and is
-  never cast>
+  producer votes and an invited Antigravity turn; unavailable or abstaining
+  members cast zero without changing the immutable denominator>
 - **Dissent/unknowns:** <material dissent>
 - **Tie handling:** OpenAI evidence judgment, or one owner question when the
   tied options materially differ in cost, authority, safety, privacy, scope,
@@ -141,3 +144,4 @@ use the commit, pull-request, or `REVIEW_READY` envelope instead.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]] -->

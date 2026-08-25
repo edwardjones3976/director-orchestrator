@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 from __future__ import annotations
 
 import copy
@@ -156,8 +157,26 @@ def _validate(kind: Literal["work", "result", "replay"], document: JsonObject) -
     )
 
 
+def _as_json_object(document: Any, *, label: str) -> JsonObject:
+    """Coerce an untrusted payload to a JSON object or fail the packet contract.
+
+    A provider reply arrives as whatever the transport decoded. A list, string, or
+    `None` is not a schema violation the validator can describe, and `dict()` on
+    such a value raises a bare `TypeError`/`ValueError` that escapes the packet
+    contract and reaches callers as an unclassified error. Normalizing here keeps
+    every malformed payload on the same fail-closed path while leaving genuine
+    schema failures to the validator, which reports the offending location.
+    """
+
+    if not isinstance(document, Mapping):
+        raise PacketContractError(f"{label} must be one JSON object")
+    if any(not isinstance(key, str) for key in document):
+        raise PacketContractError(f"{label} must use string member names")
+    return copy.deepcopy(dict(document))
+
+
 def validate_packet(kind: PacketKind, document: Mapping[str, Any]) -> JsonObject:
-    packet = copy.deepcopy(dict(document))
+    packet = _as_json_object(document, label=f"{kind} packet")
     _enforce_canonical_size(packet, label=f"{kind} packet")
     _validate(kind, packet)
     return packet
@@ -204,7 +223,7 @@ def build_replay_run(
 def verify_replay_run(
     document: Mapping[str, Any], *, expected_digest: str | None = None
 ) -> VerifiedReplayRun:
-    replay = copy.deepcopy(dict(document))
+    replay = _as_json_object(document, label="replay-run document")
     _enforce_canonical_size(replay, label="replay-run document")
     _validate("replay", replay)
 
@@ -285,3 +304,4 @@ def load_replay_run(
         load_json_document(path, max_bytes=max_bytes),
         expected_digest=expected_digest,
     )
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]

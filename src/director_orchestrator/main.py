@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 from __future__ import annotations
@@ -64,6 +65,9 @@ from .oracle_merge import (
     OracleMergeService,
     OracleMergeStore,
 )
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+from .runtime_activation import RuntimeActivation
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 from .store import PrivacyCleanupResume, TaskStore
 from .usage import UsageMonitor
 
@@ -72,6 +76,11 @@ settings = Settings()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 settings.validate_langgraph_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+# Startup fails closed on an enabled-but-unisolated coordinator or gate store.
+# RuntimeActivation re-runs both validations and builds only what is enabled.
+runtime_activation = RuntimeActivation(settings)
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 store = TaskStore(settings.sqlite_path)
 oracle_merge_policy = OracleMergePolicy(settings)
 oracle_merge_store = OracleMergeStore(settings.sqlite_path)
@@ -85,7 +94,12 @@ oracle_github = (
 oracle_merge_service = OracleMergeService(
     oracle_merge_policy, oracle_merge_store, oracle_github
 )
-engine = OrchestrationEngine(settings, store, oracle_merge_service)
+engine = OrchestrationEngine(
+    settings,
+    store,
+    oracle_merge_service,
+    runtime_activation=runtime_activation,
+)
 usage_monitor = UsageMonitor(settings, store)
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 chatgpt_bridge = ChatGPTBridgeService(
@@ -260,6 +274,9 @@ async def lifespan(_: FastAPI):
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+        runtime_activation.close()
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
 
 app = FastAPI(title="Director Orchestrator", version=__version__, lifespan=lifespan)
@@ -293,6 +310,11 @@ def health() -> dict:
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
         "langgraph": settings.langgraph_shadow_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+        # Booleans and one transport identifier only: no path, namespace value,
+        # secret, or allowlist entry is exposed here.
+        **runtime_activation.readiness(),
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
         "oracle_merge": settings.oracle_merge_readiness(),
         "usage_monitor": usage_monitor.health(),
         "privacy_cleanup_pending": store.privacy_cleanup_pending(),
@@ -633,3 +655,4 @@ def complete_run(
     return stored
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]

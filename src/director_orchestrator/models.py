@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | BEGIN]]
@@ -241,6 +242,20 @@ class Assignment(BaseModel):
     allow_draft_pr: bool = False
     estimated_cost_usd: float = Field(default=0, ge=0, le=1_000)
     discussion_phase: DiscussionPhase = DiscussionPhase.WORK
+    # Positions are round zero. Rebuttals use one-based rounds so policy can
+    # validate a complete bounded exchange without interpreting provider prose.
+    discussion_round: int = Field(default=0, ge=0, le=3)
+
+    @model_validator(mode="after")
+    def default_first_rebuttal_round(self) -> Assignment:
+        # Preserve v1 plan compatibility: rebuttals persisted before the explicit
+        # round field existed are first-round turns.
+        if (
+            self.discussion_phase == DiscussionPhase.REBUTTAL
+            and self.discussion_round == 0
+        ):
+            self.discussion_round = 1
+        return self
 
 
 class DebateInitialPosition(BaseModel):
@@ -974,3 +989,4 @@ class ManualRunCompletion(BaseModel):
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:37 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]

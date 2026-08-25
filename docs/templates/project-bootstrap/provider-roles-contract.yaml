@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
@@ -137,9 +138,11 @@ providers:
       - "reviewer_revision_text"
       - "run_session_or_task_identifiers"
     debate:
-      seatable: false
-      reason: "Neither the question, the options, nor peer arguments may cross the closed outbound contract."
-      voting_weight_effect: "Weight stays in the immutable denominator and is never cast."
+      seatable: true
+      may_initiate: false
+      reason: "Seated only by a persisted Director debate assignment, which carries the bounded question, options, and accepted prior contributions on a separate typed contract. Antigravity cannot open, self-route, widen, or autonomously continue a conversation."
+      granted_authority: "none; a seat grants no review, acceptance, merge, deployment, publication, external-write, access, or methodology authority"
+      voting_weight_effect: "Weight is cast only for an invited turn and stays advisory inside the immutable denominator."
 
   perplexity:
     role: "evidence_only_research_specialist"
@@ -237,3 +240,4 @@ project_local_bindings:
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]

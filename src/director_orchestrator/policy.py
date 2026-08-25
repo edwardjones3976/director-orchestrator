@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
@@ -10,7 +12,6 @@ from copy import deepcopy
 from urllib.parse import urlparse
 
 from .antigravity import (
-    DEBATE_UNAVAILABLE_LABEL,
     LANES_FOR_CAPABILITY,
     CAPABILITY_BY_KIND,
     antigravity_contract_labels,
@@ -197,8 +198,8 @@ def antigravity_assignment_errors(assignment: Assignment) -> list[str]:
     a disclosure control, and no disclosure control is attempted on prose anywhere:
     prose is simply never sent.
 
-    Antigravity holds no debate turn. `execution_policy_errors` refuses a plan that
-    seats it in one.
+    Antigravity debate assignments use the separate Director-invited contract in
+    `antigravity.py` and never enter this subordinate-work admission path.
     """
     # The admitted kinds live in CAPABILITY_BY_KIND, which is also what selects the
     # outbound capability. Keeping one table means the lane and the wire cannot drift.
@@ -302,11 +303,13 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
         expected_sequences = set(position_sequences + rebuttal_sequences)
         if set(discussion_assignments) != expected_sequences:
             errors.add("debate assignment lists must exactly match discussion assignments")
-        # Antigravity is absent: a debate turn cannot be formed from the closed
-        # outbound vocabulary, and it is never sent the question, the options, or
-        # the peer arguments. Its configured advisory weight is simply never cast,
-        # which the fixed committee denominator already accounts for.
-        eligible = {ProviderName.CLAUDE, ProviderName.CURSOR}
+        # Antigravity is procedurally equal to Claude and Cursor *after* the
+        # Director has persisted this bounded debate plan. It can never create
+        # one: the invitation is a plan artifact, and `antigravity.py` refuses a
+        # debate turn whose invitation does not match the persisted assignment.
+        # OpenAI remains the synthesizing Director and Perplexity stays
+        # research-only, so neither is seatable here.
+        eligible = {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GEMINI}
         position_providers: set[ProviderName] = set()
         positions = set(position_sequences)
         for sequence in position_sequences:
@@ -316,12 +319,16 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 continue
             if assignment.discussion_phase != DiscussionPhase.POSITION:
                 errors.add(f"assignment {sequence}: debate position must use position phase")
+            if assignment.discussion_round != 0:
+                errors.add(
+                    f"assignment {sequence}: initial position must use discussion round 0"
+                )
             if assignment.agent not in eligible:
                 errors.add(f"assignment {sequence}: provider is not eligible to debate or vote")
             if assignment.agent in position_providers:
                 errors.add(f"assignment {sequence}: each debate provider gets one initial position")
             position_providers.add(assignment.agent)
-            if positions.intersection(assignment.depends_on):
+            if set(discussion_assignments).intersection(assignment.depends_on):
                 errors.add(f"assignment {sequence}: initial positions must remain independent")
         rebuttal_providers: set[ProviderName] = set()
         for sequence in rebuttal_sequences:
@@ -331,6 +338,11 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 continue
             if assignment.discussion_phase != DiscussionPhase.REBUTTAL:
                 errors.add(f"assignment {sequence}: debate rebuttal must use rebuttal phase")
+            if not 1 <= assignment.discussion_round <= debate.max_rebuttal_rounds:
+                errors.add(
+                    f"assignment {sequence}: rebuttal round must be between 1 and "
+                    f"{debate.max_rebuttal_rounds}"
+                )
             if assignment.agent not in position_providers:
                 errors.add(f"assignment {sequence}: rebuttal provider lacks an initial position")
             if assignment.agent in rebuttal_providers:
@@ -339,6 +351,10 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             if not positions.issubset(assignment.depends_on):
                 errors.add(
                     f"assignment {sequence}: rebuttal must depend on every initial position"
+                )
+            if set(rebuttal_sequences).intersection(assignment.depends_on):
+                errors.add(
+                    f"assignment {sequence}: rebuttal cannot depend on another rebuttal"
                 )
         if len(position_providers) < 2:
             errors.add("a debate requires at least two eligible providers")
@@ -357,11 +373,11 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
         if (
-            assignment.agent == ProviderName.GEMINI
-            and assignment.discussion_phase != DiscussionPhase.WORK
+            assignment.discussion_phase == DiscussionPhase.WORK
+            and assignment.discussion_round != 0
         ):
             errors.add(
-                f"assignment {assignment.sequence}: Antigravity {DEBATE_UNAVAILABLE_LABEL}"
+                f"assignment {assignment.sequence}: ordinary work must use discussion round 0"
             )
         if (
             assignment.antigravity_directive is not None
@@ -398,6 +414,34 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
                     "Claude or Cursor implementation assignment that explicitly independently "
                     "verifies and integrates or rejects the artifact"
+                )
+        if (
+            assignment.agent == ProviderName.GEMINI
+            and assignment.discussion_phase != DiscussionPhase.WORK
+        ):
+            # An invited debate turn carries prose, so every authority-bearing and
+            # repository-bearing field must stay unset. Authority is refused by the
+            # fixed denied-authority block on the wire; these are the plan-side
+            # structural denials that cannot be expressed inside the contract.
+            if assignment.kind != AssignmentKind.GENERAL:
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity debate is advisory general work only"
+                )
+            if assignment.repository:
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity debate cannot receive repository context"
+                )
+            if assignment.starting_ref != "main":
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity debate cannot select a starting ref"
+                )
+            if assignment.allow_draft_pr:
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity debate cannot create a draft pull request"
+                )
+            if assignment.public_research_query is not None:
+                errors.add(
+                    f"assignment {assignment.sequence}: Antigravity debate cannot receive a public research query"
                 )
         if assignment.agent == ProviderName.PERPLEXITY:
             if not assignment.requires_approval:
@@ -485,10 +529,29 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
     return sorted(errors)
 
 
-def estimated_plan_cost_usd(plan: DirectorPlan) -> float:
+#: Deterministic floor for one Director acceptance-review call. A plan makes one
+#: review per assignment attempt, so reserving zero under-reserves the envelope by
+#: exactly that many calls and lets a plan pass the budget gate it should fail.
+MINIMUM_OPENAI_REVIEW_COST_USD = 0.01
+
+
+def estimated_plan_cost_usd(
+    plan: DirectorPlan,
+    *,
+    openai_review_cost_usd: float = MINIMUM_OPENAI_REVIEW_COST_USD,
+) -> float:
     """Return the complete prospective cost envelope for one plan generation."""
 
-    estimated_cost = sum(item.estimated_cost_usd for item in plan.assignments)
+    attempt_count = 1 + plan.max_revisions
+    estimated_cost = sum(
+        item.estimated_cost_usd * attempt_count for item in plan.assignments
+    )
+    review_count = len(plan.assignments) * attempt_count
+    # The floor applies even when a caller passes a lower or negative estimate:
+    # this is a reservation, and under-reserving is the failure mode that matters.
+    estimated_cost += review_count * max(
+        MINIMUM_OPENAI_REVIEW_COST_USD, openai_review_cost_usd
+    )
     if plan.debate is not None:
         estimated_cost += plan.debate.estimated_counter_bias_cost_usd
         estimated_cost += plan.debate.estimated_synthesis_cost_usd
@@ -533,7 +596,10 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
     reasons.update(deterministic_approval_reasons(source_text))
     if safe.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
         reasons.add(f"{safe.risk_level.value}-risk plan")
-    estimated_cost = estimated_plan_cost_usd(safe)
+    estimated_cost = estimated_plan_cost_usd(
+        safe,
+        openai_review_cost_usd=settings.openai_review_estimated_cost_usd,
+    )
     if estimated_cost > settings.max_task_budget_usd:
         reasons.add("estimated cost exceeds task budget")
 
@@ -650,3 +716,5 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]

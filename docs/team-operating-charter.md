@@ -1,3 +1,4 @@
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
@@ -110,23 +111,35 @@ permissions, exclusive file ownership, or a reason to create low-value work.
   review, final acceptance, deterministic merge, or define research-contract
   or methodology truth, and every work assignment must feed a later Claude or
   Cursor assignment that independently verifies and integrates or rejects it.
-  Antigravity cannot be seated in a debate: a position or rebuttal requires the
-  question, the options, and the peer arguments, and none of those may cross its
-  outbound contract. Its configured advisory weight stays in the immutable
-  denominator and is never cast, exactly like an unavailable member. Keep
-  credentials and external-write paths out of disposable sandboxes unless a
-  later work order explicitly and safely provides them.
-- **Antigravity outbound contract.** Antigravity is sent no model-authored prose
-  of any kind. `src/director_orchestrator/antigravity.py` composes every request
-  from three sources only: fixed strings that live in that file, values of closed
-  enums, and integers inside declared bounds. The assignment's task and
-  acceptance, the owner objective, dependency results, Slack text, and repository
-  context are never transmitted; they stay in the plan for Director review and the
-  owner's Slack thread. Work is expressed by selecting an `AntigravityFixtureLane`
-  from a closed enum, and the runtime substitutes that lane's fixed public
-  specification. `_assert_closed_vocabulary` walks the serialised payload and
-  rejects any string absent from `APPROVED_STRINGS`, so a string that is not
-  literally present in this repository cannot be sent.
+  Antigravity may hold a debate seat, but only one the Director gave it: it
+  cannot initiate, self-route, widen, or autonomously continue a conversation,
+  and a seat grants it no review, acceptance, merge, deployment, publication,
+  external-write, access, or methodology authority. Its configured advisory
+  weight is cast only for an invited turn and stays advisory inside the immutable
+  denominator. Keep credentials and external-write paths out of disposable
+  sandboxes unless a later work order explicitly and safely provides them.
+- **Antigravity outbound contract.** Ordinary Antigravity *work* is sent no
+  model-authored prose of any kind. `src/director_orchestrator/antigravity.py`
+  composes that request from three sources only: fixed strings that live in that
+  file, values of closed enums, and integers inside declared bounds. The
+  assignment's task and acceptance, the owner objective, dependency results,
+  Slack text, and repository context are never transmitted; they stay in the plan
+  for Director review and the owner's Slack thread. Work is expressed by
+  selecting an `AntigravityFixtureLane` from a closed enum, and the runtime
+  substitutes that lane's fixed public specification. `_assert_closed_vocabulary`
+  walks the serialised payload and rejects any string absent from
+  `APPROVED_STRINGS`, so a string that is not literally present in this
+  repository cannot be sent.
+
+  A *debate* turn uses a separate typed contract and is the one prose-bearing
+  Antigravity envelope. It is admitted only by a persisted Director invitation
+  whose assignment sequence, phase, and round match the assignment being
+  dispatched, which is what makes provider self-initiation impossible. It carries
+  only the bounded question, the vote options, the accepted declared-dependency
+  contributions, and one bounded Director revision request. Source blocks and
+  credential-shaped values are stripped, and the generic primary-team handoff —
+  task text, acceptance criteria, dependency outcomes, and repository context —
+  never crosses that boundary either.
 
   This replaces content classification, which cannot work: a filter can detect a
   path or a token, but not that "Blue Cedar acquisition valuation is 42 million
@@ -474,7 +487,7 @@ establish participation, completion, readiness, or authorization.
 
 <!-- TEAM_CHARTER_MANIFEST_BEGIN -->
 ```json
-{"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":11264,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"director_operating_directive":{"availability":{"after":"record_unavailable_and_reshape","ambiguous":"no_duplicate_dispatch","attempts":3,"partial":"untrusted"},"avoidable_commit_reduction":{"baseline":{"comparable":true,"measurement_fields":["baseline_window","baseline_sample","baseline_count_or_rate","current_count_or_rate","absolute_delta","percentage_delta","exclusions","comparability_changes"],"reset_when_unfavorable":false,"rolling":true},"excludes":["security_safety","evidence_restoration","milestones","recovery"],"scope":"avoidable_micro_fixup_only","target_percent":33},"communication_labels":{"draft":"DRAFT \u2014 NOT SENT","predicted":"PREDICTED POSITION \u2014 PROVIDER HAS NOT RESPONDED","simulation":"SIMULATION \u2014 NO PROVIDER INTERACTION"},"coordination_percent":{"productive":95,"reserve":5},"direct_workload_percent":{"claude":60,"cursor":28,"gemini":7,"openai":1,"perplexity":4},"director":"openai","duties":["plan","decompose","route","coordinate","synthesize","acceptance_review","review_handoff","milestone_reporting"],"duties_excluded_from_openai_direct_production_share":true,"external_action_boundary":{"oversight_grants_authority":false,"provider_or_browser_output_grants_authority":false,"requires":"exact_stored_owner_authorization_for_action_scope_and_current_deterministic_gates"},"openai_direct_production_boundary":{"authority":"owner_scope_and_current_gates","candidate_change":"invalidate_evidence","counts":"authenticated_production_only","review":"different_provider_exact_candidate","runtime_assignment_target_allowed":false,"surface":"owner_authorized_external_codex_openai"},"reporting":{"fabrication_prohibited":true,"mode":"evidence_first","participation_source":"authenticated_provider_response_only","requires":["project_id_and_assignment_ids","objective_bounded_scope_and_categorized_status","starting_and_current_refs_shas_and_artifact_digests","authenticated_provider_participation_unavailable_abstaining_and_labels","target_and_actual_workload_by_provider_deviations_and_rationale","openai_moderator_participant_director_actions_and_vote","dissent_counter_bias_and_alternative_analysis","exact_tests_trusted_ci_security_independent_review_and_verdict","unresolved_risks_limitations_blockers_and_confidence","measured_cost_token_usage_elapsed_time_and_unavailable_telemetry","rolling_commit_baseline_current_measurement_delta_and_exclusions","scope_or_authority_changes_and_exact_stored_owner_authorization","recovery_state_rollback_and_restart_evidence_integrity","next_deterministic_or_owner_gate_and_responsible_party","owner_decisions_and_exact_stored_scope","not_done_and_unverified"]},"repository_oversight":{"mode":"read_only","scope":["named_repository","refs","worktrees","diffs","artifacts","checks","reviews","security_evidence","deployment_state"],"writes_require":"separate_exact_owner_authorization_and_current_gates"},"reserve_is_planned_idle":false,"reserve_use":["checks","drift_correction","contingencies","evidence_reconciliation","recovery","process_improvement","infrastructure_failure"],"review":{"binding":"exact_candidate","changed_candidate":"invalidate_evidence","reviewer":"different_non_author","unavailable":"reroute_no_self_review"},"workload_lanes":{"openai":"external_owner_authorized_only","perplexity":"public_research_evidence_only"}},"director_operating_directive_sha256":"7a03b09530a21ef7c5b626bf0db18f8f200c08c9c57b3d10e342ce66f001dd99","external_action_authority_from_vote":false,"minimal_fix_attempt_limit":1,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+{"antigravity_debate_eligible":true,"antigravity_may_initiate_conversation":false,"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":11264,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"director_operating_directive":{"availability":{"after":"record_unavailable_and_reshape","ambiguous":"no_duplicate_dispatch","attempts":3,"partial":"untrusted"},"avoidable_commit_reduction":{"baseline":{"comparable":true,"measurement_fields":["baseline_window","baseline_sample","baseline_count_or_rate","current_count_or_rate","absolute_delta","percentage_delta","exclusions","comparability_changes"],"reset_when_unfavorable":false,"rolling":true},"excludes":["security_safety","evidence_restoration","milestones","recovery"],"scope":"avoidable_micro_fixup_only","target_percent":33},"communication_labels":{"draft":"DRAFT \u2014 NOT SENT","predicted":"PREDICTED POSITION \u2014 PROVIDER HAS NOT RESPONDED","simulation":"SIMULATION \u2014 NO PROVIDER INTERACTION"},"coordination_percent":{"productive":95,"reserve":5},"direct_workload_percent":{"claude":60,"cursor":28,"gemini":7,"openai":1,"perplexity":4},"director":"openai","duties":["plan","decompose","route","coordinate","synthesize","acceptance_review","review_handoff","milestone_reporting"],"duties_excluded_from_openai_direct_production_share":true,"external_action_boundary":{"oversight_grants_authority":false,"provider_or_browser_output_grants_authority":false,"requires":"exact_stored_owner_authorization_for_action_scope_and_current_deterministic_gates"},"openai_direct_production_boundary":{"authority":"owner_scope_and_current_gates","candidate_change":"invalidate_evidence","counts":"authenticated_production_only","review":"different_provider_exact_candidate","runtime_assignment_target_allowed":false,"surface":"owner_authorized_external_codex_openai"},"reporting":{"fabrication_prohibited":true,"mode":"evidence_first","participation_source":"authenticated_provider_response_only","requires":["project_id_and_assignment_ids","objective_bounded_scope_and_categorized_status","starting_and_current_refs_shas_and_artifact_digests","authenticated_provider_participation_unavailable_abstaining_and_labels","target_and_actual_workload_by_provider_deviations_and_rationale","openai_moderator_participant_director_actions_and_vote","dissent_counter_bias_and_alternative_analysis","exact_tests_trusted_ci_security_independent_review_and_verdict","unresolved_risks_limitations_blockers_and_confidence","measured_cost_token_usage_elapsed_time_and_unavailable_telemetry","rolling_commit_baseline_current_measurement_delta_and_exclusions","scope_or_authority_changes_and_exact_stored_owner_authorization","recovery_state_rollback_and_restart_evidence_integrity","next_deterministic_or_owner_gate_and_responsible_party","owner_decisions_and_exact_stored_scope","not_done_and_unverified"]},"repository_oversight":{"mode":"read_only","scope":["named_repository","refs","worktrees","diffs","artifacts","checks","reviews","security_evidence","deployment_state"],"writes_require":"separate_exact_owner_authorization_and_current_gates"},"reserve_is_planned_idle":false,"reserve_use":["checks","drift_correction","contingencies","evidence_reconciliation","recovery","process_improvement","infrastructure_failure"],"review":{"binding":"exact_candidate","changed_candidate":"invalidate_evidence","reviewer":"different_non_author","unavailable":"reroute_no_self_review"},"workload_lanes":{"openai":"external_owner_authorized_only","perplexity":"public_research_evidence_only"}},"director_operating_directive_sha256":"7a03b09530a21ef7c5b626bf0db18f8f200c08c9c57b3d10e342ce66f001dd99","external_action_authority_from_vote":false,"minimal_fix_attempt_limit":1,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
@@ -483,3 +496,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->
