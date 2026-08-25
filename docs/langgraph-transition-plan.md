@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:09 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
 # LangGraph control-plane transition plan
 
@@ -289,3 +290,4 @@ question. A wrong attestation still fails closed rather than racing: the live
 worker's result write is guarded on `CLAIMED`/`DISPATCHING`, so it loses its
 reservation, its result is refused, and the row stays in reconciliation.
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:09 UTC | END]] -->
