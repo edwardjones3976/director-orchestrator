@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -1008,6 +1009,21 @@ class Settings:
             ),
         }
 
+    def parallel_dispatch_health_readiness(self) -> dict[str, bool]:
+        """Expose only boolean parallel-dispatch readiness on public health."""
+
+        readiness = self.parallel_dispatch_readiness()
+        return {
+            key: bool(readiness[key])
+            for key in (
+                "enabled",
+                "kill_switch_open",
+                "limits_valid",
+                "task_writer_active",
+                "active",
+            )
+        }
+
     def validate_parallel_dispatch_configuration(self) -> None:
         readiness = self.parallel_dispatch_readiness()
         if not self.langgraph_parallel_external_dispatch_enabled or readiness["limits_valid"]:
@@ -1138,3 +1154,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
@@ -386,9 +387,9 @@ def health() -> dict:
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
         # Booleans and one transport identifier only: no path, namespace value,
         # secret, or allowlist entry is exposed here.
-        **runtime_activation.readiness(),
+        **runtime_activation.health_readiness(),
         "parallel_dispatch": {
-            **settings.parallel_dispatch_readiness(),
+            **settings.parallel_dispatch_health_readiness(),
             "ledger_configured": engine.parallel_dispatch is not None,
             "daily_task_budget_configured": daily_task_budget is not None,
         },
@@ -817,3 +818,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

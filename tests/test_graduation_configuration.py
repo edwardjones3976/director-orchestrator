@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 from __future__ import annotations
@@ -96,6 +97,10 @@ class GraduationConfigurationTests(unittest.TestCase):
         self.assertTrue(readiness["active"])
         self.assertEqual(2, readiness["initial_max_concurrency"])
         self.assertEqual(3, readiness["auto_scale_max_concurrency"])
+        health_readiness = settings.parallel_dispatch_health_readiness()
+        self.assertTrue(health_readiness)
+        self.assertTrue(all(isinstance(value, bool) for value in health_readiness.values()))
+        self.assertNotIn("initial_max_concurrency", health_readiness)
 
         closed = replace(settings, langgraph_parallel_kill_switch=True)
         self.assertFalse(closed.parallel_dispatch_readiness()["active"])
@@ -123,3 +128,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
@@ -464,7 +465,14 @@ class CompletionWorkerTests(unittest.TestCase):
 
     def test_tracked_snapshot_excludes_ignored_secret_and_binds_manifest(self):
         (self.repository / ".gitignore").write_text(".env.secret\n", encoding="utf-8")
-        subprocess.run(("git", "add", ".gitignore"), cwd=self.repository, check=True)
+        nested = self.repository / "src" / "nested"
+        nested.mkdir(parents=True)
+        (nested / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+        subprocess.run(
+            ("git", "add", ".gitignore", "src/nested/module.py"),
+            cwd=self.repository,
+            check=True,
+        )
         subprocess.run(("git", "commit", "-q", "-m", "ignore secret"), cwd=self.repository, check=True)
         head = subprocess.check_output(
             ("git", "rev-parse", "HEAD"), cwd=self.repository, text=True
@@ -484,7 +492,11 @@ class CompletionWorkerTests(unittest.TestCase):
                 snapshot_path = snapshot.root
                 self.assertFalse((snapshot.root / ".env.secret").exists())
                 self.assertEqual("fixture\n", (snapshot.root / "fixture.txt").read_text())
-                self.assertEqual(2, snapshot.file_count)
+                self.assertEqual(
+                    "VALUE = 1\n",
+                    (snapshot.root / "src" / "nested" / "module.py").read_text(),
+                )
+                self.assertEqual(3, snapshot.file_count)
                 self.assertRegex(snapshot.manifest_digest, r"^sha256:[0-9a-f]{64}$")
                 self.assertNotEqual(self.repository.resolve(), snapshot.root)
                 self.assertNotIn(self.repository.resolve(), snapshot.root.parents)
@@ -807,3 +819,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

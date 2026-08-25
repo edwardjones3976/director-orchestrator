@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -278,6 +279,31 @@ class ActivationSettingsTests(_IsolatedSettings, unittest.TestCase):
 
 
 class RuntimeActivationTests(_IsolatedSettings, unittest.TestCase):
+    def test_public_health_readiness_has_only_boolean_leaves_and_transport(self):
+        activation = RuntimeActivation(self.settings(langgraph_runtime_enabled=True))
+        self.addCleanup(activation.close)
+
+        surface = activation.health_readiness()
+        leaves: list[tuple[str, object]] = []
+
+        def collect(value: dict[str, object]) -> None:
+            for key, item in value.items():
+                if isinstance(item, dict):
+                    collect(item)
+                else:
+                    leaves.append((key, item))
+
+        collect(surface)
+        self.assertTrue(leaves)
+        for key, value in leaves:
+            if key == "packet_transport":
+                self.assertIsInstance(value, str)
+            else:
+                self.assertIsInstance(value, bool)
+        rendered = repr(surface)
+        self.assertNotIn("worker_reasons", rendered)
+        self.assertNotIn("execution_tiers", surface["completion_gates"])
+
     def test_nothing_is_constructed_while_both_features_are_off(self):
         activation = RuntimeActivation(self.settings())
         self.addCleanup(activation.close)
@@ -554,3 +580,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
@@ -1181,6 +1182,7 @@ class OrchestrationEngine:
             )
             return False
 
+        terminal_progressions: list[tuple[TaskStatus, str]] = []
         for assignment, work, outcome, task_effect_key in completed_packets:
             self._record_packet_effect_outcome(
                 record,
@@ -1194,9 +1196,13 @@ class OrchestrationEngine:
                 ),
             )
             try:
-                activation.packet_result_consumer.consume(
+                progression = activation.packet_result_consumer.consume(
                     record, assignment, work, outcome
                 )
+                if progression.terminal_task_status is not None:
+                    terminal_progressions.append(
+                        (progression.terminal_task_status, record.message)
+                    )
             except Exception as exc:
                 await self._stop_for_owner(
                     record,
@@ -1205,6 +1211,26 @@ class OrchestrationEngine:
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 return False
+        if terminal_progressions:
+            # Every completed provider result remains durably consumed, but a
+            # terminal result packet must stop before aggregate success can
+            # reach the legacy Director acceptance path. Prefer an explicit
+            # owner decision when concurrent results contain mixed terminals.
+            terminal_status, terminal_message = next(
+                (
+                    item
+                    for item in terminal_progressions
+                    if item[0] == TaskStatus.OWNER_DECISION_REQUIRED
+                ),
+                terminal_progressions[0],
+            )
+            record.status = terminal_status
+            record.message = terminal_message
+            self.store.save(record)
+            await self._status_post(
+                record, f"*{record.task_id} — {record.status.value}*\n{record.message}"
+            )
+            return False
         self.store.save(record)
         aggregate = ledger.aggregate(batch_id)
         ledger.observe_and_persist("__deployment__", aggregate)
@@ -5572,3 +5598,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

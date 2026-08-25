@@ -1,7 +1,9 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:40 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import threading
 import unittest
@@ -37,6 +39,7 @@ from director_orchestrator.interactions import (
 )
 from director_orchestrator.models import (
     ClaudeCallback,
+    ClaudeCallbackSideEffectEvidence,
     ManualRunCompletion,
     ProviderName,
     ProviderRun,
@@ -175,6 +178,43 @@ class ClaudeCallbackTests(unittest.TestCase):
         conflicting = callback.model_copy(update={"result": "Different result"})
         with self.assertRaises(CallbackConflict):
             apply_claude_callback(record, conflicting)
+
+    def test_legacy_terminal_callback_replays_only_without_effect_evidence(self):
+        record = self._record()
+        run = record.provider_runs[0]
+        run.status = "completed"
+        run.result = "Legacy terminal result."
+        run.raw = {}
+        callback = ClaudeCallback(
+            run_id=run.run_id,
+            status="completed",
+            result=run.result,
+        )
+
+        self.assertFalse(apply_claude_callback(record, callback))
+        changed = callback.model_copy(update={"result": "Different terminal result."})
+        with self.assertRaisesRegex(CallbackConflict, "different terminal result"):
+            apply_claude_callback(record, changed)
+        effectful = callback.model_copy(
+            update={
+                "side_effect_evidence": ClaudeCallbackSideEffectEvidence(
+                    schema_version="1.0",
+                    task_id=record.task_id,
+                    assignment_id="DIR-CALLBACK-1",
+                    packet_idempotency_key="legacy-packet-key",
+                    authority_snapshot_digest="sha256:" + "a" * 64,
+                    correlation_id=str(run.interaction_id),
+                    repository="example/demo",
+                    starting_ref="main",
+                    provider="claude",
+                    provider_run_id=run.run_id,
+                    result_digest=hashlib.sha256(run.result.encode("utf-8")).hexdigest(),
+                    effects=[],
+                )
+            }
+        )
+        with self.assertRaisesRegex(CallbackConflict, "different terminal result"):
+            apply_claude_callback(record, effectful)
 
     def test_callback_rejects_duplicate_pending_run_id_without_mutation(self):
         record = self._record()
@@ -516,3 +556,4 @@ if __name__ == "__main__":
 
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:40 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

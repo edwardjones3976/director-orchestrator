@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:16 UTC | BEGIN]]
@@ -108,12 +109,19 @@ class RecordingResultConsumer:
 
     def consume(self, record, assignment, work_packet, outcome):
         self.calls += 1
+        packet_status = str(outcome.result_packet["status"])
+        terminal_status = (
+            TaskStatus.BLOCKED if packet_status in {"FAILED", "CANCELLED"} else None
+        )
+        if terminal_status is not None:
+            record.status = terminal_status
+            record.message = f"Packet result stopped as {packet_status}."
         return PacketResultProgression(
-            packet_status="SUCCEEDED",
+            packet_status=packet_status,
             provider_run_recorded=False,
-            requires_director_review=True,
+            requires_director_review=packet_status == "SUCCEEDED",
             requires_revision=False,
-            terminal_task_status=None,
+            terminal_task_status=terminal_status,
         )
 
 
@@ -745,7 +753,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("daily", persisted.message.lower())
         engine.director.plan.assert_not_awaited()
 
-    async def test_two_parallel_members_reserve_send_and_consume_without_stale_write(self):
+    async def test_parallel_terminal_packet_stops_before_director_acceptance(self):
         assignments = [
             Assignment(
                 sequence=1,
@@ -800,6 +808,9 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                 result[field] = copy.deepcopy(work[field])
             result["provider"] = assignment.agent.value
             result["run_reference"] = f"run-{assignment.sequence}"
+            if assignment.sequence == 2:
+                result["status"] = "FAILED"
+                result["blockers"] = ["Provider reported a terminal failure."]
             result["acceptance"] = [
                 {
                     "check": assignment.acceptance[0],
@@ -833,7 +844,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine._publish_delegation = AsyncMock(return_value=True)
         stored, _ = store.create(record)
 
-        self.assertTrue(await engine._dispatch_parallel_packet_batch(stored))
+        self.assertFalse(await engine._dispatch_parallel_packet_batch(stored))
 
         self.assertEqual(1, transports["cursor"].sends)
         self.assertEqual(1, transports["openai"].sends)
@@ -846,6 +857,8 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(2, len(intents))
         self.assertAlmostEqual(0.2, persisted.cumulative_estimated_cost_usd)
+        self.assertEqual(TaskStatus.BLOCKED, persisted.status)
+        self.assertIn("FAILED", persisted.message)
 
     async def test_parallel_restart_republishes_delegation_before_provider_send(self):
         class SimulatedProcessCrash(BaseException):
@@ -991,3 +1004,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:16 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

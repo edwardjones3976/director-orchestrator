@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
@@ -318,6 +319,22 @@ class RuntimeActivation:
             "completion_gates": completion_surface,
         }
 
+    def health_readiness(self) -> dict[str, Any]:
+        """Return the public boolean-only view plus the packet transport ID."""
+
+        def project(surface: dict[str, Any]) -> dict[str, Any]:
+            public: dict[str, Any] = {}
+            for key, value in surface.items():
+                if isinstance(value, bool):
+                    public[key] = value
+                elif key == "packet_transport" and isinstance(value, str):
+                    public[key] = value
+                elif isinstance(value, dict):
+                    public[key] = project(value)
+            return public
+
+        return project(self.readiness())
+
     def single_writer_conflict(self) -> str | None:
         """Return why the legacy engine must not dispatch, or None.
 
@@ -365,3 +382,4 @@ class RuntimeActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
@@ -259,6 +260,8 @@ def _tracked_repository_snapshot(
     _remaining_seconds(deadline)
     tree = _git_bytes(
         repository,
+        # ``-rz`` is the combined spelling of ``-r -z``: recurse through every
+        # tracked directory and keep path records NUL-delimited.
         ("ls-tree", "-rz", "--full-tree", expected_head_sha),
         deadline=deadline,
     )
@@ -1098,3 +1101,4 @@ def _evidence(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 12:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
@@ -101,13 +102,21 @@ def apply_claude_callback(record: TaskRecord, callback: ClaudeCallback) -> bool:
     if run.status != "WAITING_CALLBACK":
         callback_effect_digest = _callback_effect_digest(callback)
         stored_effect_digest = run.raw.get(_CALLBACK_EFFECT_DIGEST_FIELD)
-        if (
+        exact_terminal_result = (
             run.status == callback.status
             and hmac.compare_digest(run.result or "", callback.result)
-            and isinstance(stored_effect_digest, str)
-            and hmac.compare_digest(stored_effect_digest, callback_effect_digest)
-        ):
-            return False
+        )
+        if exact_terminal_result:
+            if isinstance(stored_effect_digest, str) and hmac.compare_digest(
+                stored_effect_digest, callback_effect_digest
+            ):
+                return False
+            # Records persisted before effect-digest binding existed may replay
+            # only an evidence-free terminal callback. Any newly supplied effect
+            # evidence remains a conflict because the legacy record cannot prove
+            # that those effects were part of the accepted callback.
+            if stored_effect_digest is None and callback.side_effect_evidence is None:
+                return False
         raise CallbackConflict("Claude run already has a different terminal result")
     if not run.interaction_id:
         raise CallbackConflict("Claude callback lacks its backend interaction binding")
@@ -268,3 +277,4 @@ def apply_manual_run_completion(
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 12:22 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
