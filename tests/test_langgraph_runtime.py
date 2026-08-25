@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 00:18 UTC | BEGIN]]
 from __future__ import annotations
@@ -6,6 +8,7 @@ import copy
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -148,6 +151,56 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
         self.assertNotEqual(context.writer_token_digest, token.value)
         self.assertEqual(context.allowed_tools, tuple(self.work["allowed_tools"]))
         self.assertEqual(context.allowed_external_effects, ())
+
+    def test_live_dispatch_timeout_returns_and_never_redispatches(self):
+        release = threading.Event()
+
+        class HungAdapter:
+            provider = "claude"
+
+            def __init__(self, result):
+                self.result = copy.deepcopy(result)
+                self.calls = 0
+
+            def dispatch(self, work_packet, *, context):
+                self.calls += 1
+                release.wait(timeout=10)
+                return copy.deepcopy(self.result)
+
+        work = copy.deepcopy(self.work)
+        work["limits"]["timeout_seconds"] = 1
+        adapter = HungAdapter(self.result)
+        token = self._token()
+        started = time.monotonic()
+        try:
+            first = self.runtime.run_packet(
+                work,
+                provider="claude",
+                execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+                adapter=adapter,
+                writer_token=token,
+            )
+            elapsed = time.monotonic() - started
+            second = self.runtime.run_packet(
+                work,
+                provider="claude",
+                execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+                adapter=adapter,
+                writer_token=token,
+            )
+        finally:
+            release.set()
+
+        self.assertLess(elapsed, 2.5)
+        self.assertEqual(first.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED)
+        self.assertEqual(second.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED)
+        self.assertEqual(adapter.calls, 1)
+        with closing(sqlite3.connect(self.ledger_path)) as connection:
+            status = connection.execute(
+                "SELECT status FROM runtime_dispatch_ledger WHERE idempotency_key=?",
+                (work["idempotency_key"],),
+            ).fetchone()[0]
+        self.assertEqual(status, "RECONCILIATION_REQUIRED")
 
     def test_restart_replays_completed_result_without_dispatch(self):
         token = self._token()
@@ -947,3 +1000,5 @@ if __name__ == "__main__":
 
 # [[Codex | GPT-5.6 | 2026-08-25 | 00:18 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

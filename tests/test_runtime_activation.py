@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """Fail-closed activation of the packet coordinator and Completion Gate store."""
 
@@ -11,11 +12,49 @@ from pathlib import Path
 from director_orchestrator.config import Settings
 from director_orchestrator.langgraph_runtime import (
     LangGraphPacketRuntime,
+    PacketBoundaryAdapter,
     RuntimeContractError,
     RuntimeExecutionMode,
     WriterOwnershipToken,
 )
-from director_orchestrator.runtime_activation import RuntimeActivation
+from director_orchestrator.packet_contracts import load_json_document
+from director_orchestrator.runtime_activation import (
+    RuntimeActivation,
+    RuntimeActivationError,
+)
+
+
+WORK_PACKET_EXAMPLE = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / "model-work-packet-v1.example.json"
+)
+
+
+class StubPacketTaskRouter:
+    """Minimal wired router: the three artifacts `run_packet` requires."""
+
+    def __init__(self, *, provider: str = "claude") -> None:
+        self.packet = load_json_document(WORK_PACKET_EXAMPLE)
+        self.token = WriterOwnershipToken.issue(
+            task_id=self.packet["task_id"], owner_id="langgraph-packet-runtime"
+        )
+        self.adapter = PacketBoundaryAdapter(provider, _UnusedTransport())
+
+    def work_packet(self, record, assignment):
+        return self.packet
+
+    def writer_token(self, record):
+        return self.token
+
+    def boundary_adapter(self, provider: str) -> PacketBoundaryAdapter:
+        return self.adapter
+
+
+class _UnusedTransport:
+    def send(self, work_packet_json, *, context):  # pragma: no cover - not dispatched
+        raise AssertionError("activation tests never contact a provider")
 
 
 class _IsolatedSettings:
@@ -206,13 +245,43 @@ class RuntimeActivationTests(_IsolatedSettings, unittest.TestCase):
                 langgraph_runtime_enabled=True,
                 langgraph_runtime_live_dispatch_enabled=True,
                 allow_paid_runs=True,
-            )
+            ),
+            packet_task_router=StubPacketTaskRouter(),
         )
         self.addCleanup(activation.close)
 
         conflict = activation.single_writer_conflict()
         self.assertIsNotNone(conflict)
         self.assertIn("will not dispatch", conflict)
+        self.assertTrue(activation.coordinator_owns_dispatch())
+        self.assertIsNotNone(activation.packet_task_router)
+
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+    def test_live_dispatch_without_a_router_refuses_to_activate(self):
+        # Enabling the live lane with nothing able to convert an intake task into
+        # a work packet would leave no engine executing anything. Legacy ownership
+        # is preserved by refusing the configuration outright.
+        with self.assertRaises(RuntimeActivationError) as caught:
+            RuntimeActivation(
+                self.settings(
+                    langgraph_runtime_enabled=True,
+                    langgraph_runtime_live_dispatch_enabled=True,
+                    allow_paid_runs=True,
+                )
+            )
+        self.assertIn("no packet task router is wired", str(caught.exception))
+
+    def test_a_router_is_not_required_while_live_dispatch_is_off(self):
+        activation = RuntimeActivation(
+            self.settings(langgraph_runtime_enabled=True, allow_paid_runs=True)
+        )
+        self.addCleanup(activation.close)
+
+        self.assertIsNotNone(activation.runtime)
+        self.assertFalse(activation.coordinator_owns_dispatch())
+        # The legacy engine keeps dispatch ownership, so nothing stops.
+        self.assertIsNone(activation.single_writer_conflict())
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 
     def test_an_invalid_enabled_configuration_refuses_to_activate(self):
         with self.assertRaises(ValueError):
@@ -229,7 +298,8 @@ class RuntimeActivationTests(_IsolatedSettings, unittest.TestCase):
                 langgraph_runtime_enabled=True,
                 langgraph_runtime_live_dispatch_enabled=True,
                 allow_paid_runs=True,
-            )
+            ),
+            packet_task_router=StubPacketTaskRouter(),
         )
         self.addCleanup(activation.close)
         runtime = activation.runtime
@@ -266,3 +336,4 @@ class RuntimeActivationTests(_IsolatedSettings, unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

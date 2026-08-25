@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 23:44 UTC | BEGIN]]
 from __future__ import annotations
@@ -9,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -280,6 +283,73 @@ class CompletionGateRuntimeTests(unittest.TestCase):
                     changed, verified_ledger=ledger, context=self.context
                 )
 
+    def test_store_preserves_prior_pass_digest_for_dependent_append_and_replay(self):
+        first_gate = self.ledger["director_gates"][0]
+        dependent_gate = copy.deepcopy(first_gate)
+        dependent_gate["gate_id"] = "director.dependent-contract-test"
+        dependent_gate["order"] = 2
+        dependent_gate["dependencies"] = [
+            {"gate_id": first_gate["gate_id"], "required_status": "PASS"}
+        ]
+        rebind_gate(dependent_gate)
+        self.ledger["director_gates"].append(dependent_gate)
+        rebind_ledger(self.ledger)
+
+        planned = self.planned_predecessor()
+        self.bind_predecessor(planned)
+        self.context = self._context()
+        first_gate = self.ledger["director_gates"][0]
+        dependent_gate = self.ledger["director_gates"][1]
+        first_result = copy.deepcopy(self.result)
+        first_result["ledger_digest"] = self.ledger["ledger_digest"]
+        first_result["gate_definition_digest"] = first_gate["gate_definition_digest"]
+        rebind_result(first_result)
+
+        later_result = copy.deepcopy(first_result)
+        later_result["result_id"] = "RESULT-222222222222"
+        later_result["attempt_id"] = "ATTEMPT-222222222222"
+        later_result["attempt_number"] = 2
+        rebind_result(later_result)
+
+        dependent_result = copy.deepcopy(first_result)
+        dependent_result["result_id"] = "RESULT-333333333333"
+        dependent_result["attempt_id"] = "ATTEMPT-333333333333"
+        dependent_result["gate_id"] = dependent_gate["gate_id"]
+        dependent_result["gate_definition_digest"] = dependent_gate[
+            "gate_definition_digest"
+        ]
+        dependent_result["dependency_results"] = [
+            {
+                "gate_id": first_gate["gate_id"],
+                "status": "PASS",
+                "result_digest": first_result["result_digest"],
+            }
+        ]
+        rebind_result(dependent_result)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = CompletionGateStore(str(Path(temporary) / "completion.sqlite3"))
+            store.append_ledger(planned, context=self.context, runner_registry=self.registry)
+            ledger = store.append_ledger(
+                self.ledger, context=self.context, runner_registry=self.registry
+            )
+            store.append_result(first_result, verified_ledger=ledger, context=self.context)
+            store.append_result(later_result, verified_ledger=ledger, context=self.context)
+            appended = store.append_result(
+                dependent_result, verified_ledger=ledger, context=self.context
+            )
+            replayed = store.append_result(
+                dependent_result, verified_ledger=ledger, context=self.context
+            )
+            status = store.completion_status(ledger, context=self.context)
+
+        self.assertEqual(appended.digest, replayed.digest)
+        self.assertTrue(status["gate_evidence_complete"])
+        self.assertEqual(
+            sorted((first_gate["gate_id"], dependent_gate["gate_id"])),
+            status["passed"],
+        )
+
     def test_runner_is_allowlisted_shell_free_and_isolated(self):
         with tempfile.TemporaryDirectory() as temporary:
             repository = Path(temporary) / "repository"
@@ -315,6 +385,59 @@ class CompletionGateRuntimeTests(unittest.TestCase):
         self.assertEqual(0, observation.exit_code)
         self.assertEqual((), observation.failure_reasons)
         self.assertEqual(observation.before_head_sha, observation.after_head_sha)
+
+    def test_bounded_runner_timeout_terminates_descendant_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "descendant-survived.txt"
+            child = (
+                "import pathlib,sys,time; time.sleep(2); "
+                "pathlib.Path(sys.argv[1]).write_text('alive', encoding='utf-8')"
+            )
+            parent = (
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]]); "
+                "time.sleep(30)"
+            )
+
+            _, timed_out, exceeded, _, _ = self.registry._run_bounded(
+                (sys.executable, "-c", parent, str(marker), child),
+                cwd=Path(temporary),
+                environment=os.environ.copy(),
+                timeout_seconds=1,
+                output_limit_bytes=4096,
+            )
+            time.sleep(2.25)
+
+            self.assertTrue(timed_out)
+            self.assertFalse(exceeded)
+            self.assertFalse(marker.exists())
+
+    def test_bounded_runner_output_overflow_terminates_descendant_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "overflow-descendant-survived.txt"
+            child = (
+                "import pathlib,sys,time; time.sleep(2); "
+                "pathlib.Path(sys.argv[1]).write_text('alive', encoding='utf-8')"
+            )
+            parent = (
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]]); "
+                "sys.stdout.write('x'*65536); sys.stdout.flush(); time.sleep(30)"
+            )
+
+            _, timed_out, exceeded, stdout, stderr = self.registry._run_bounded(
+                (sys.executable, "-c", parent, str(marker), child),
+                cwd=Path(temporary),
+                environment=os.environ.copy(),
+                timeout_seconds=10,
+                output_limit_bytes=128,
+            )
+            time.sleep(2.25)
+
+            self.assertFalse(timed_out)
+            self.assertTrue(exceeded)
+            self.assertLessEqual(len(stdout) + len(stderr), 128)
+            self.assertFalse(marker.exists())
 
     def _proof_repository(self, temporary: str):
         """Build a committed git repository bound to the head-bound ledger."""
@@ -518,3 +641,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 23:44 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

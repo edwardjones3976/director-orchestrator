@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """Deterministic dependency-ready scheduling semantics for one plan.
 
@@ -104,7 +106,13 @@ def dependency_ready_decision(
             "completed set names assignments outside this plan: "
             + ", ".join(str(item) for item in sorted(unknown))
         )
-    deferred_set = {int(item) for item in deferred} & set(by_sequence)
+    deferred_set = {int(item) for item in deferred}
+    unknown_deferred = deferred_set - set(by_sequence)
+    if unknown_deferred:
+        raise SchedulingError(
+            "deferred set names assignments outside this plan: "
+            + ", ".join(str(item) for item in sorted(unknown_deferred))
+        )
 
     ready: list[int] = []
     blocked: dict[int, tuple[int, ...]] = {}
@@ -137,3 +145,5 @@ def dependency_ready_decision(
         next_sequence=ready[0] if ready else None,
     )
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

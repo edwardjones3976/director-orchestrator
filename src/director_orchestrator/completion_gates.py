@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 23:44 UTC | BEGIN]]
 from __future__ import annotations
@@ -8,6 +10,7 @@ import hmac
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import threading
@@ -980,6 +983,36 @@ class RunnerRegistry:
         return completed.stdout.strip()
 
     @staticmethod
+    def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+        """Best-effort, bounded termination of the runner and its descendants."""
+
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ("taskkill", "/PID", str(process.pid), "/T", "/F"),
+                    shell=False,
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+        else:
+            try:
+                # start_new_session=True makes the child's PID its process-group ID,
+                # which remains addressable even if the group leader exits first.
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        if process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+
+    @staticmethod
     def _run_bounded(
         argv: Sequence[str],
         *,
@@ -988,6 +1021,13 @@ class RunnerRegistry:
         timeout_seconds: int,
         output_limit_bytes: int,
     ) -> tuple[int | None, bool, bool, bytes, bytes]:
+        process_group: dict[str, Any]
+        if os.name == "nt":
+            process_group = {
+                "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            }
+        else:
+            process_group = {"start_new_session": True}
         process = subprocess.Popen(
             tuple(argv),
             cwd=cwd,
@@ -996,10 +1036,20 @@ class RunnerRegistry:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            **process_group,
         )
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         lock = threading.Lock()
         output_limit_exceeded = threading.Event()
+        termination_started = threading.Event()
+        termination_lock = threading.Lock()
+
+        def terminate_tree_once() -> None:
+            with termination_lock:
+                if termination_started.is_set():
+                    return
+                termination_started.set()
+            RunnerRegistry._terminate_process_tree(process)
 
         def drain(name: str, stream: Any) -> None:
             try:
@@ -1011,10 +1061,14 @@ class RunnerRegistry:
                         captured = len(buffers["stdout"]) + len(buffers["stderr"])
                         remaining = max(0, output_limit_bytes - captured)
                         buffers[name].extend(chunk[:remaining])
-                        if len(chunk) > remaining:
-                            output_limit_exceeded.set()
-                            process.kill()
-                            return
+                        overflowed = len(chunk) > remaining
+                    # Terminate outside the buffer lock: killing a tree can take
+                    # seconds on Windows, and the sibling drain must stay free to
+                    # reach EOF rather than block behind it.
+                    if overflowed:
+                        output_limit_exceeded.set()
+                        terminate_tree_once()
+                        return
             finally:
                 stream.close()
 
@@ -1029,13 +1083,33 @@ class RunnerRegistry:
             exit_code: int | None = process.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
-            process.kill()
-            process.wait(timeout=5)
+            terminate_tree_once()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired as exc:
+                raise CompletionGateError(
+                    "runner process tree did not terminate after timeout"
+                ) from exc
             exit_code = None
+        # A child can inherit a pipe and outlive a normally exited parent. Give
+        # ordinary drains a short grace period, then close the complete tree so
+        # no descendant can keep proof execution alive or mutate after return.
+        for thread in threads:
+            thread.join(timeout=0.25)
+        if any(thread.is_alive() for thread in threads):
+            terminate_tree_once()
         for thread in threads:
             thread.join(timeout=5)
         if any(thread.is_alive() for thread in threads):
-            process.kill()
+            terminate_tree_once()
+            for stream in (process.stdout, process.stderr):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+            for thread in threads:
+                thread.join(timeout=1)
+        if any(thread.is_alive() for thread in threads):
             raise CompletionGateError("runner output drain did not terminate")
         return (
             exit_code,
@@ -1092,3 +1166,5 @@ class RunnerRegistry:
         return sanitized, categories
 # [[Codex | GPT-5.6 | 2026-08-24 | 23:44 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

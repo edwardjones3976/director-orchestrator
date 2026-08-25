@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 from __future__ import annotations
@@ -46,6 +48,10 @@ class PostSubmitAmbiguityError(ProviderError):
 
 class ProviderDailyLimitExceeded(ProviderError):
     """A durable provider-wide request or estimated-spend ceiling is exhausted."""
+
+
+class ProviderReservationIdentityConflict(ProviderError):
+    """A durable effect key was replayed with contradictory accounting identity."""
 
 
 class ProviderDailySpendLedger:
@@ -118,7 +124,7 @@ class ProviderDailySpendLedger:
             ).fetchone()
             if existing is not None:
                 if existing[0] != utc_day or abs(float(existing[1]) - estimated_cost_usd) > 1e-9:
-                    raise ProviderDailyLimitExceeded(
+                    raise ProviderReservationIdentityConflict(
                         "provider daily reservation identity was reused with different accounting"
                     )
             else:
@@ -942,3 +948,5 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
     }
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

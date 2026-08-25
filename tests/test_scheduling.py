@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """Dependency-ready scheduling semantics, without any parallel external dispatch."""
 
@@ -98,6 +100,10 @@ class DependencyReadySchedulingTests(unittest.TestCase):
         with self.assertRaises(SchedulingError):
             dependency_ready_decision([assignment(1)], completed=[1, 5])
 
+    def test_a_deferred_sequence_outside_the_plan_fails_closed(self):
+        with self.assertRaisesRegex(SchedulingError, "deferred set"):
+            dependency_ready_decision([assignment(1)], completed=[], deferred=[1, 5])
+
     def test_duplicate_declared_dependencies_fail_closed(self):
         with self.assertRaises(SchedulingError):
             dependency_ready_decision(
@@ -108,3 +114,5 @@ class DependencyReadySchedulingTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

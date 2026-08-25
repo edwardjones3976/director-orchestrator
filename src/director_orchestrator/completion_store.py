@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 23:44 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -187,9 +189,10 @@ class CompletionGateStore:
                 "SELECT document_json FROM completion_gate_results WHERE result_id = ?",
                 (document.get("result_id"),),
             ).fetchone()
-            dependencies = self._all_trusted_results(
+            trusted_by_digest = self._all_trusted_results(
                 connection, verified_ledger, context
             )
+            dependencies = self._declared_dependencies(document, trusted_by_digest)
             if existing is not None:
                 stored = self._decode(existing["document_json"])
                 if stored != dict(document):
@@ -220,7 +223,7 @@ class CompletionGateStore:
         ledger: VerifiedGateLedger,
         context: AuthenticatedGateContext,
     ) -> dict[str, VerifiedGateResult]:
-        trusted: dict[str, VerifiedGateResult] = {}
+        trusted_by_digest: dict[str, VerifiedGateResult] = {}
         rows = connection.execute(
             """SELECT document_json FROM completion_gate_results
             WHERE ledger_digest = ? AND status = 'PASS' ORDER BY rowid""",
@@ -232,16 +235,45 @@ class CompletionGateStore:
             for candidate in list(pending):
                 try:
                     verified = validate_gate_result(
-                        ledger, candidate, context=context, dependency_results=trusted,
+                        ledger,
+                        candidate,
+                        context=context,
+                        dependency_results=self._declared_dependencies(
+                            candidate, trusted_by_digest
+                        ),
                     )
                 except CompletionGateError:
                     continue
-                trusted[verified.document["gate_id"]] = verified
+                trusted_by_digest[verified.digest] = verified
                 pending.remove(candidate)
                 changed = True
             if not changed:
                 break
-        return trusted
+        return trusted_by_digest
+
+    @staticmethod
+    def _declared_dependencies(
+        document: Mapping[str, object],
+        trusted_by_digest: Mapping[str, VerifiedGateResult],
+    ) -> dict[str, VerifiedGateResult]:
+        """Resolve the exact prior PASS digests declared by one result."""
+
+        resolved: dict[str, VerifiedGateResult] = {}
+        raw_dependencies = document.get("dependency_results", [])
+        if not isinstance(raw_dependencies, list):
+            return resolved
+        for item in raw_dependencies:
+            if not isinstance(item, dict):
+                continue
+            gate_id = item.get("gate_id")
+            result_digest = item.get("result_digest")
+            if not isinstance(gate_id, str) or not isinstance(result_digest, str):
+                continue
+            trusted = trusted_by_digest.get(result_digest)
+            if trusted is None or trusted.document.get("gate_id") != gate_id:
+                continue
+            resolved[gate_id] = trusted
+        return resolved
 
     def completion_status(
         self,
@@ -255,23 +287,30 @@ class CompletionGateStore:
                 (verified_ledger.digest,),
             ).fetchall()
         verified: list[VerifiedGateResult] = []
-        by_gate: dict[str, VerifiedGateResult] = {}
+        trusted_by_digest: dict[str, VerifiedGateResult] = {}
         pending = [self._decode(row["document_json"]) for row in rows]
         for _ in range(len(pending) + 1):
             changed = False
             for candidate in list(pending):
                 try:
                     item = validate_gate_result(
-                        verified_ledger, candidate, context=context, dependency_results=by_gate,
+                        verified_ledger,
+                        candidate,
+                        context=context,
+                        dependency_results=self._declared_dependencies(
+                            candidate, trusted_by_digest
+                        ),
                     )
                 except CompletionGateError:
                     continue
                 verified.append(item)
                 if item.document["status"] == "PASS":
-                    by_gate[item.document["gate_id"]] = item
+                    trusted_by_digest[item.digest] = item
                 pending.remove(candidate)
                 changed = True
             if not changed:
                 break
         return aggregate_completion_eligibility(verified_ledger, verified)
 # [[Codex | GPT-5.6 | 2026-08-24 | 23:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

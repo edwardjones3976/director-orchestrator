@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 00:13 UTC | BEGIN]]
 """Provider-neutral LangGraph runtime with fail-closed dispatch ownership.
@@ -13,8 +15,10 @@ import copy
 import hashlib
 import hmac
 import json
+import queue
 import secrets
 import sqlite3
+import threading
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -55,6 +59,10 @@ class RuntimeExecutionStatus(StrEnum):
 
 class RuntimeContractError(ValueError):
     """The coordinator rejected an invalid or unauthorized execution request."""
+
+
+class RuntimeDispatchTimeout(TimeoutError):
+    """A live provider dispatch exceeded its authorized wall-clock ceiling."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,6 +601,52 @@ class LangGraphPacketRuntime:
             }
         }
 
+    @staticmethod
+    def _dispatch_with_timeout(
+        adapter: ProviderPacketAdapter,
+        work: Mapping[str, Any],
+        *,
+        context: ProviderAdapterContext,
+    ) -> Mapping[str, Any]:
+        """Bound a synchronous adapter without waiting for a non-cooperative call.
+
+        Python cannot safely stop an arbitrary in-process thread. The daemon owns
+        only the provider call: after timeout it cannot persist a result or change
+        the dispatch ledger. The already-reserved effect remains ambiguous and is
+        moved to reconciliation by ``run_packet``; it is never sent again.
+        """
+
+        completed: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
+
+        def invoke() -> None:
+            try:
+                value: object = adapter.dispatch(
+                    copy.deepcopy(work),
+                    context=context,
+                )
+                completed.put_nowait((True, value))
+            except Exception as exc:
+                completed.put_nowait((False, exc))
+
+        worker = threading.Thread(
+            target=invoke,
+            name=f"director-provider-dispatch-{context.assignment_id}",
+            daemon=True,
+        )
+        worker.start()
+        try:
+            succeeded, value = completed.get(timeout=context.timeout_seconds)
+        except queue.Empty as exc:
+            raise RuntimeDispatchTimeout(
+                "live provider dispatch exceeded its authorized timeout"
+            ) from exc
+        if not succeeded:
+            assert isinstance(value, Exception)
+            raise value
+        if not isinstance(value, Mapping):
+            raise PacketContractError("provider result must be an object")
+        return value
+
     def run_packet(
         self,
         work_packet: Mapping[str, Any],
@@ -647,24 +701,20 @@ class LangGraphPacketRuntime:
             else:
                 assert adapter is not None and writer_token is not None
                 limits = work["limits"]
-                result = adapter.dispatch(
-                    copy.deepcopy(work),
-                    context=ProviderAdapterContext(
-                        task_id=work["task_id"],
-                        assignment_id=work["assignment_id"],
-                        idempotency_key=work["idempotency_key"],
-                        work_packet_digest=document_digest(work),
-                        writer_token_digest=writer_token.digest,
-                        timeout_seconds=int(limits["timeout_seconds"]),
-                        budget_usd=float(limits["budget_usd"]),
-                        max_hops=int(limits["max_hops"]),
-                        max_revisions=int(limits["max_revisions"]),
-                        allowed_tools=tuple(work["allowed_tools"]),
-                        allowed_external_effects=tuple(
-                            work["allowed_external_effects"]
-                        ),
-                    ),
+                context = ProviderAdapterContext(
+                    task_id=work["task_id"],
+                    assignment_id=work["assignment_id"],
+                    idempotency_key=work["idempotency_key"],
+                    work_packet_digest=document_digest(work),
+                    writer_token_digest=writer_token.digest,
+                    timeout_seconds=int(limits["timeout_seconds"]),
+                    budget_usd=float(limits["budget_usd"]),
+                    max_hops=int(limits["max_hops"]),
+                    max_revisions=int(limits["max_revisions"]),
+                    allowed_tools=tuple(work["allowed_tools"]),
+                    allowed_external_effects=tuple(work["allowed_external_effects"]),
                 )
+                result = self._dispatch_with_timeout(adapter, work, context=context)
             return self._persist_result(
                 work,
                 result,
@@ -958,3 +1008,5 @@ class LangGraphPacketRuntime:
 
 # [[Codex | GPT-5.6 | 2026-08-25 | 00:13 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

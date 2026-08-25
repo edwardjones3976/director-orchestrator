@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """Fail-closed activation for the packet coordinator and Completion Gate store.
 
@@ -21,22 +22,60 @@ A missing or invalid configuration is a startup failure, not a silent downgrade:
 an operator who believes the coordinator is running must not get a process that
 quietly kept the legacy engine as the writer, and an operator who believes it is
 off must not get one that dispatches.
+
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+Live dispatch additionally requires a wired ``PacketTaskRouter``. Turning the
+live flags on without one would surrender legacy dispatch ownership to a
+coordinator that has no way to convert an intake task into a work packet, which
+leaves no engine executing anything. That configuration is therefore refused at
+startup: legacy ownership is preserved and the failure is explicit, rather than
+every pending assignment silently stopping for an owner decision.
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 """
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Protocol
 
 from .completion_gates import RunnerRegistry, completion_runtime_readiness
 from .completion_store import CompletionGateStore
 from .config import Settings
-from .langgraph_runtime import LangGraphPacketRuntime
+from .langgraph_runtime import (
+    LangGraphPacketRuntime,
+    PacketBoundaryAdapter,
+    WriterOwnershipToken,
+)
 
 
 class RuntimeActivationError(RuntimeError):
     """An enabled component could not be built, so the process must not start."""
+
+
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+class PacketTaskRouter(Protocol):
+    """Translates one authorized Director assignment into the v1 packet lane.
+
+    The router holds no dispatch, merge, approval, or budget authority. It only
+    produces the three artifacts ``LangGraphPacketRuntime.run_packet`` requires:
+    a work packet carrying its pinned authority snapshot, the task writer token,
+    and the v1 boundary adapter for the assigned provider. Every reservation,
+    dispatch, and ledger transition still belongs to the coordinator.
+
+    A router that cannot produce any one of them raises, and the caller fails
+    closed rather than falling back to the legacy writer.
+    """
+
+    def work_packet(self, record: Any, assignment: Any) -> Mapping[str, Any]:
+        """Return the `model-work-packet-v1` document for this assignment."""
+
+    def writer_token(self, record: Any) -> WriterOwnershipToken:
+        """Return the single side-effect writer token bound to this task."""
+
+    def boundary_adapter(self, provider: str) -> PacketBoundaryAdapter:
+        """Return the enforced v1 packet boundary for one provider."""
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 
 
 class RuntimeActivation:
@@ -47,9 +86,13 @@ class RuntimeActivation:
         settings: Settings,
         *,
         runner_registry: RunnerRegistry | None = None,
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+        packet_task_router: PacketTaskRouter | None = None,
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
     ) -> None:
         self.settings = settings
         self._runner_registry = runner_registry
+        self._packet_task_router = packet_task_router
         self._connection: sqlite3.Connection | None = None
         self.runtime: LangGraphPacketRuntime | None = None
         self.completion_store: CompletionGateStore | None = None
@@ -58,6 +101,20 @@ class RuntimeActivation:
         # import time rather than at the first dispatch.
         settings.validate_langgraph_runtime_configuration()
         settings.validate_completion_gate_configuration()
+
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+        if (
+            settings.langgraph_runtime_readiness()["live_provider_dispatch"]
+            and packet_task_router is None
+        ):
+            raise RuntimeActivationError(
+                "live provider dispatch is enabled but no packet task router is "
+                "wired, so no engine could execute an intake task. Wire a packet "
+                "task router before enabling live dispatch, or disable "
+                "LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED so the legacy engine "
+                "keeps dispatch ownership."
+            )
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 
         if settings.langgraph_runtime_readiness()["runtime_active"]:
             self.runtime = self._build_runtime()
@@ -107,6 +164,19 @@ class RuntimeActivation:
     def runner_registry(self) -> RunnerRegistry | None:
         return self._runner_registry
 
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+    @property
+    def packet_task_router(self) -> PacketTaskRouter | None:
+        return self._packet_task_router
+
+    def coordinator_owns_dispatch(self) -> bool:
+        """True when the coordinator, not the legacy engine, owns live dispatch."""
+
+        if self.runtime is None:
+            return False
+        return bool(self.runtime.readiness().live_provider_dispatch)
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+
     def readiness(self) -> dict[str, Any]:
         """One honest surface for `/health`; it never claims provider health."""
 
@@ -150,12 +220,29 @@ class RuntimeActivation:
         Exactly one engine may own provider dispatch and external side effects for
         a task. When the packet coordinator holds live dispatch authority, the
         legacy engine surrenders it rather than racing for the same effect keys.
+
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+        Surrender is not the end of the story: the caller routes the assignment
+        through the coordinator instead. The router-less branch below cannot be
+        reached by a process that started normally, because ``__init__`` refuses
+        that configuration outright; it exists so a directly constructed
+        activation still fails closed instead of handing a live lane back to the
+        legacy writer.
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
         """
 
-        if self.runtime is None:
+        if not self.coordinator_owns_dispatch():
             return None
-        if not self.runtime.readiness().live_provider_dispatch:
-            return None
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+        if self._packet_task_router is None:
+            return (
+                "The LangGraph packet coordinator holds live provider dispatch "
+                "authority for this deployment but no packet task router is wired, "
+                "so no engine can execute this assignment. Wire a packet task "
+                "router or disable LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED to "
+                "return dispatch authority to the legacy engine."
+            )
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
         return (
             "The LangGraph packet coordinator holds live provider dispatch "
             "authority for this deployment, so the legacy engine will not dispatch. "
@@ -169,3 +256,4 @@ class RuntimeActivation:
             self._connection = None
         self.runtime = None
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

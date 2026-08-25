@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 from __future__ import annotations
@@ -24,6 +26,7 @@ from director_orchestrator.policy import (
 from director_orchestrator.providers import (
     ProviderDailyLimitExceeded,
     ProviderDailySpendLedger,
+    ProviderReservationIdentityConflict,
 )
 
 
@@ -229,8 +232,40 @@ class ProviderDailySpendLedgerTests(unittest.TestCase):
                     now=now,
                 )
 
+    def test_effect_key_accounting_mismatch_is_an_integrity_conflict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
+            effect_key = hashlib.sha256(b"stable-effect").hexdigest()
+            first_day = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
+            ledger.reserve(
+                provider=ProviderName.GEMINI,
+                effect_key=effect_key,
+                estimated_cost_usd=0.25,
+                request_limit=2,
+                budget_usd=1.0,
+                now=first_day,
+            )
+
+            for changed_cost, changed_day in (
+                (0.50, first_day),
+                (0.25, datetime(2026, 8, 25, 12, tzinfo=timezone.utc)),
+            ):
+                with self.subTest(cost=changed_cost, day=changed_day.date()):
+                    with self.assertRaises(ProviderReservationIdentityConflict) as caught:
+                        ledger.reserve(
+                            provider=ProviderName.GEMINI,
+                            effect_key=effect_key,
+                            estimated_cost_usd=changed_cost,
+                            request_limit=2,
+                            budget_usd=1.0,
+                            now=changed_day,
+                        )
+                    self.assertNotIsInstance(caught.exception, ProviderDailyLimitExceeded)
+
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]

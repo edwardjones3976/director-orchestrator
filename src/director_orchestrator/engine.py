@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 02:01 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
@@ -102,6 +104,7 @@ from .providers import (
     ProviderDailyLimitExceeded,
     ProviderDailySpendLedger,
     ProviderError,
+    ProviderReservationIdentityConflict,
     ProviderRun,
     provider_registry,
 )
@@ -109,6 +112,10 @@ from .review_handoff import (
     bind_review_handoff,
     reconstruct_review_handoff,
     transitive_dependency_sequences,
+)
+from .langgraph_runtime import (
+    RuntimeExecutionMode,
+    RuntimeExecutionStatus,
 )
 from .scheduling import SchedulingError, dependency_ready_decision
 from .store import PrivacyCleanupPending, StaleTaskWrite, TaskStore
@@ -281,14 +288,118 @@ class OrchestrationEngine:
         self.runtime_activation = runtime_activation
         self._task_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
-    def _single_writer_conflict(self) -> str | None:
-        """Report why this engine must not dispatch, or None when it may."""
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+    async def _stop_for_owner(
+        self, record: TaskRecord, message: str, *, error: str | None = None
+    ) -> None:
+        record.status = TaskStatus.OWNER_DECISION_REQUIRED
+        record.message = message[:2_000]
+        if error is not None:
+            record.error = error[:2_000]
+        self.store.save(record)
+        await self._status_post(
+            record,
+            f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.message}",
+        )
 
-        if self.runtime_activation is None:
+    async def _route_live_dispatch(
+        self, record: TaskRecord, assignment: Assignment
+    ) -> bool | None:
+        """Execute one assignment through the packet coordinator, or decline.
+
+        Returns ``None`` when this engine keeps dispatch ownership and should run
+        its own lane. Otherwise the coordinator owns the lane and the return value
+        is this assignment's `_execute_assignment` result.
+
+        Dual writers are prohibited, so the legacy lane never runs once the
+        coordinator owns dispatch. But surrendering ownership to a coordinator
+        that cannot execute the task would strand it, so ownership is only
+        surrendered *into an actual execution*: the assignment is converted to a
+        v1 work packet and run through `LangGraphPacketRuntime.run_packet`, which
+        owns reservation, dispatch, and idempotency. If the packet, its authority
+        snapshot, or the v1 boundary adapter is unavailable, this stops explicitly
+        with the missing authority named rather than dispatching from a lane the
+        deployment says it does not own.
+
+        The coordinator holds no acceptance authority, so even a completed result
+        packet stops for owner acceptance instead of advancing the plan.
+        """
+
+        activation = self.runtime_activation
+        if activation is None:
             return None
-        return self.runtime_activation.single_writer_conflict()
-    # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+        conflict = activation.single_writer_conflict()
+        if conflict is None:
+            return None
+        runtime = activation.runtime
+        router = activation.packet_task_router
+        if runtime is None or router is None:
+            await self._stop_for_owner(record, conflict)
+            return False
+        try:
+            work_packet = router.work_packet(record, assignment)
+            writer_token = router.writer_token(record)
+            adapter = router.boundary_adapter(assignment.agent.value)
+        except Exception as exc:
+            await self._stop_for_owner(
+                record,
+                "The packet coordinator owns dispatch for this deployment but the "
+                f"work packet, authority snapshot, or v1 boundary adapter for "
+                f"assignment {assignment.sequence} is unavailable, so nothing was "
+                "dispatched.",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        try:
+            outcome = await asyncio.to_thread(
+                runtime.run_packet,
+                work_packet,
+                provider=assignment.agent.value,
+                execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+                adapter=adapter,
+                writer_token=writer_token,
+            )
+        except Exception as exc:
+            # `run_packet` refuses an unauthorized or unresolved execution before
+            # contacting a provider. A refusal is never retried here and never
+            # falls back to the legacy lane.
+            await self._stop_for_owner(
+                record,
+                "The packet coordinator refused to execute assignment "
+                f"{assignment.sequence}; no duplicate dispatch was attempted.",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        if outcome.status in {
+            RuntimeExecutionStatus.COMPLETED,
+            RuntimeExecutionStatus.REPLAYED,
+        }:
+            await self._stop_for_owner(
+                record,
+                f"The packet coordinator executed assignment {assignment.sequence} "
+                f"through `{assignment.agent.value}` and recorded a validated result "
+                f"packet ({outcome.result_packet_digest}). Owner acceptance is "
+                "required because the coordinator holds no acceptance authority.",
+            )
+            return False
+        if outcome.status == RuntimeExecutionStatus.REJECTED:
+            record.status = TaskStatus.BLOCKED
+            record.message = (
+                f"The packet coordinator rejected assignment {assignment.sequence}: "
+                f"{outcome.reason}"
+            )[:2_000]
+            self.store.save(record)
+            await self._status_post(
+                record, f"*{record.task_id} — BLOCKED*\n{record.message}"
+            )
+            return False
+        await self._stop_for_owner(
+            record,
+            f"The packet coordinator could not resolve assignment "
+            f"{assignment.sequence}: {outcome.reason}",
+        )
+        return False
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 
     @staticmethod
     def _provider_transport(provider: ProviderName) -> ProviderTransport:
@@ -3658,19 +3769,18 @@ class OrchestrationEngine:
             return await self._finalize_debate(record, assignment)
 
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
-        # Dual writers are prohibited. This check precedes credential readiness so
-        # an activated coordinator stops the legacy engine before it can reserve an
+        # Dual writers are prohibited. This precedes credential readiness so an
+        # activated coordinator takes the lane before this engine can reserve an
         # external effect key, not after.
-        writer_conflict = self._single_writer_conflict()
-        if writer_conflict is not None:
-            record.status = TaskStatus.OWNER_DECISION_REQUIRED
-            record.message = writer_conflict[:2_000]
-            self.store.save(record)
-            await self._status_post(
-                record,
-                f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.message}",
-            )
-            return False
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
+        # Ownership is surrendered into an actual packet execution rather than into
+        # nothing: `_route_live_dispatch` runs the assignment through the
+        # coordinator, and fails closed with the missing authority named when it
+        # cannot.
+        routed = await self._route_live_dispatch(record, assignment)
+        if routed is not None:
+            return routed
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
         readiness = self.settings.readiness()
@@ -3718,6 +3828,24 @@ class OrchestrationEngine:
                     assignment,
                     effect_key=effect_key,
                 )
+            except ProviderReservationIdentityConflict as exc:
+                # A reservation identity mismatch is evidence of durable
+                # accounting corruption or key reuse, not a retryable provider
+                # refusal. Preserve the unresolved intent and require an owner
+                # decision; recording failed_pre_submit would incorrectly allow
+                # a later plan generation to mint a different paid effect key.
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    "Provider spend reservation identity conflict; paid dispatch "
+                    "remains stopped pending owner reconciliation."
+                )
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(
+                    record,
+                    f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.message}",
+                )
+                return False
             except ProviderDailyLimitExceeded as exc:
                 record_provider_effect_observation(
                     record,
@@ -3988,6 +4116,19 @@ class OrchestrationEngine:
                     assignment,
                     effect_key=revision_effect_key,
                 )
+            except ProviderReservationIdentityConflict as exc:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    "Provider spend reservation identity conflict; paid revision "
+                    "remains stopped pending owner reconciliation."
+                )
+                record.error = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(
+                    record,
+                    f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.message}",
+                )
+                return False
             except ProviderDailyLimitExceeded as exc:
                 record_provider_effect_observation(
                     record,
@@ -4329,3 +4470,5 @@ class OrchestrationEngine:
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 02:01 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
