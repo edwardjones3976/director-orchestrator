@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
 # Provider Setup Matrix
 
@@ -121,19 +122,28 @@ requires a later Claude or Cursor assignment that directly depends on it and
 carries the runtime-bound wording to independently reproduce the artifact and
 integrate only the verified portions or reject it.
 
-Dispatch prefixes every artifact with an explicit non-authoritative notice and
-sends only the assignment's own bounded task and acceptance checks: the
-upstream handoff context is primary-team work product and is withheld. A
-revision re-issues that same bounded assignment rather than untrusted reviewer
-revision text, and fails closed when the prior sandbox `environment_id` is
-absent instead of provisioning a fresh sandbox. Preview routing selects
-Antigravity only for an explicit boilerplate, scaffolding, low-level,
-mechanical, or alternate-ideation request; Claude remains the default.
+Ordinary Antigravity work dispatch sends no model-authored prose. The
+assignment's task, acceptance checks, upstream handoff, owner objective, Slack
+text, dependency results, and repository context remain in Director state and
+never cross the Antigravity work boundary. Instead, the adapter selects one
+repository-owned fixture specification using a closed lane enum plus bounded
+enum and integer parameters; its closed-vocabulary validator rejects any other
+outbound string.
+A revision reuses that same fixed work contract and the prior sandbox
+`environment_id`, failing closed rather than transmitting reviewer prose or
+provisioning an unrelated sandbox. Preview routing selects Antigravity only for
+an explicit boilerplate, scaffolding, low-level, mechanical, or
+alternate-ideation request; Claude remains the default.
 
-Antigravity remains eligible for one bounded debate position and one rebuttal
-at its configured advisory weight. Those are governed by the debate policy,
-carry no authority, and are the only Antigravity assignments outside the
-subordinate work lane.
+Debate is the deliberate, narrow prose-bearing exception—not an ordinary work
+packet. Antigravity may return an independent position and bounded rebuttal only
+after the Director persists and dispatches a matching invitation. The separate
+typed debate contract carries only the sanitized question, vote options,
+accepted declared-dependency contributions, and any bounded Director revision
+request. Antigravity cannot initiate, self-route, widen, or autonomously
+continue a discussion. Its configured advisory weight remains advisory, and a
+debate seat grants no review, acceptance, merge, deployment, publication,
+external-write, access, or methodology authority.
 
 ## Gemini Interactions API contract
 
@@ -218,3 +228,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart
 - Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:28 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | BEGIN]]
@@ -458,6 +459,31 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("different-provider exact-candidate review", readme)
         self.assertIn("different-provider exact-candidate review", report)
 
+    def test_antigravity_work_and_debate_boundaries_are_synchronized(self):
+        root = Path(__file__).resolve().parents[1]
+        charter = (root / "docs" / "team-operating-charter.md").read_text(
+            encoding="utf-8"
+        )
+        setup = (root / "docs" / "provider-setup.md").read_text(encoding="utf-8")
+        prompt = (root / "prompts" / "director-system.md").read_text(
+            encoding="utf-8"
+        )
+
+        for surface in (charter, setup, prompt):
+            self.assertIn("cannot initiate", surface)
+
+        self.assertIn("Ordinary Antigravity *work*", charter)
+        self.assertIn("Ordinary Antigravity work dispatch", setup)
+        self.assertIn("Ordinary Antigravity work", prompt)
+        self.assertIn("separate typed contract", charter)
+        self.assertIn("typed debate contract", setup)
+        self.assertIn("separate typed debate contract", prompt)
+        self.assertNotIn("Antigravity cannot debate", prompt)
+        self.assertNotIn(
+            "sends only the assignment's own bounded task and acceptance checks",
+            setup,
+        )
+
     def test_minimal_fix_policy_is_present_across_authoritative_surfaces(self):
         root = Path(__file__).resolve().parents[1]
         surfaces = [
@@ -862,3 +888,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:28 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]]
