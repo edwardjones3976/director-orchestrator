@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:14 UTC | BEGIN]]
@@ -101,15 +102,14 @@ class CompletionWorkerRuntimeTests(unittest.TestCase):
                 completion_gate_worker_store_path=str(self.root / "gates.sqlite3")
             ).validate_completion_gate_configuration()
 
-    def test_unverified_host_broker_fails_activation_closed(self):
+    def test_unverified_host_broker_fails_configuration_closed(self):
         broker = self.root / "broker.exe"
         broker.write_bytes(b"fixture")
         settings = self.settings(completion_gate_host_broker_path=str(broker))
-        settings.validate_completion_gate_configuration()
         with self.assertRaisesRegex(
-            RuntimeActivationError, "worker tiers could not be activated"
+            ValueError, "audited host tier is not activatable"
         ):
-            RuntimeActivation(settings)
+            settings.validate_completion_gate_configuration()
 
     def test_sanitizer_retains_no_provider_or_process_prose(self):
         sanitizer = ClosedVocabularyWorkerSanitizer()
@@ -131,3 +131,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

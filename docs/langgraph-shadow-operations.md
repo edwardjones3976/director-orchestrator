@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:39 UTC | BEGIN]] -->
 **[[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]**
 
@@ -148,8 +149,9 @@ disposable-container worker tiers.
 The worker executor and append-only worker store are implemented and exposed to
 the internal runtime. There is no unrestricted shell, public command endpoint,
 automatic project-completion authority, or automatic merge/deployment authority.
-The host tier requires a separately installed exact-fingerprint low-privilege
-broker. The container tier requires an exact image digest, no network, non-root
+The host tier remains fail-closed because the Director cannot yet independently
+verify the broker's low-privilege identity, network policy, resource limits, and
+read-only repository handle. The container tier requires an exact image digest, no network, non-root
 identity, read-only root and repository, no capabilities, no-new-privileges, and
 bounded resources. Do not mount a host Docker socket into the Director to make
 this appear ready.
@@ -214,3 +216,4 @@ or they may be disabled separately for a complete LangGraph rollback.
 
 **[[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]**
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:39 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]] -->
@@ -73,8 +74,8 @@ isolated store:
 | `COMPLETION_GATE_RESULT_MAX_AGE_SECONDS` | Result freshness ceiling (1–2592000) |
 | `COMPLETION_GATE_WORKERS_ENABLED` | Constructs the explicitly selected worker tiers; defaults off |
 | `COMPLETION_GATE_WORKER_STORE_PATH` | Append-only worker reservations/events; must be distinct from every other database |
-| `COMPLETION_GATE_EXECUTION_TIERS` | Comma-separated `host`, `container`, or both |
-| `COMPLETION_GATE_HOST_BROKER_PATH` | Existing absolute path to the separately installed audited low-privilege broker when `host` is selected |
+| `COMPLETION_GATE_EXECUTION_TIERS` | `container` for the currently activatable production worker; defaults to `container` |
+| `COMPLETION_GATE_HOST_BROKER_PATH` | Reserved for the audited-host tier, which remains fail-closed until its OS controls can be independently verified |
 | `COMPLETION_GATE_CONTAINER_RUNTIME_PATH` | Existing absolute path to the container runtime executable when `container` is selected |
 | `COMPLETION_GATE_CONTAINER_IMAGE` | Immutable `name@sha256:<64 lowercase hex>` image required by the container tier |
 
@@ -392,11 +393,13 @@ the privacy boundary.
 
 For a containerized Director, do not mount the host Docker socket or a writable
 host control surface merely to satisfy worker readiness; that would expand the
-orchestrator's privilege boundary. Activate both tiers from a dedicated local
-Director service account that can reach the audited broker and container runtime,
-or keep `COMPLETION_GATE_WORKERS_ENABLED=false` until a separately authenticated
-worker service is deployed. Health reports the latter state as not constructed,
-never as a silent fallback.
+orchestrator's privilege boundary. Activate the container tier from a dedicated
+local Director service account that can reach the container runtime, or keep
+`COMPLETION_GATE_WORKERS_ENABLED=false` until a separately authenticated worker
+service is deployed. The audited-host tier is intentionally not activatable until
+the Director can independently verify its low-privilege identity, network policy,
+resource limits, and read-only repository handle. Health reports disabled workers
+as not constructed, never as a silent fallback.
 
 An authenticated registry may register fixed profiles for:
 
@@ -496,3 +499,4 @@ an execution or external effect.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]] -->

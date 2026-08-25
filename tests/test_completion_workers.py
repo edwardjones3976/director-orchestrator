@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
@@ -275,6 +276,12 @@ class CompletionWorkerTests(unittest.TestCase):
         executor.execute(self.request())
         with self.assertRaises(WorkerIdentityConflict):
             executor.execute(self.request(assignment_id="DIR-TEST-2"))
+
+    def test_job_id_reuse_with_a_new_idempotency_key_is_a_typed_conflict(self):
+        executor = self.executor()
+        executor.execute(self.request())
+        with self.assertRaisesRegex(WorkerIdentityConflict, "job id"):
+            executor.execute(self.request(idempotency_key="different-key"))
 
     def test_backend_exception_requires_reconciliation_and_never_redispatches(self):
         backend = RecordingBackend(WorkerTier.AUDITED_HOST, raise_error=True)
@@ -719,3 +726,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

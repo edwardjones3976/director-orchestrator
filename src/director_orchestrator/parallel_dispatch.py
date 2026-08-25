@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | BEGIN]]
@@ -142,6 +143,10 @@ def _surface(value: str) -> str:
     normalized = value.strip().replace("\\", "/").strip("/")
     if not normalized or not _SAFE_SURFACE.fullmatch(normalized):
         raise ParallelDispatchError("write surfaces must be safe repository-relative paths")
+    if any(component in {".", ".."} for component in normalized.split("/")):
+        raise ParallelDispatchError(
+            "write surfaces must not contain relative traversal components"
+        )
     return normalized.casefold()
 
 
@@ -859,13 +864,11 @@ class DailyTaskBudgetLedger:
                 (task_id,),
             ).fetchone()
             if existing is not None:
-                if (
-                    str(existing[0]) != utc_day
-                    or abs(float(existing[1]) - task_budget_usd) > 1e-9
-                ):
-                    raise ParallelDispatchIntegrityError(
-                        "paid task identity was reused with different accounting"
-                    )
+                # A task owns one conservative reservation for its entire
+                # lifetime.  Resuming after midnight or after an operator
+                # changes a configured ceiling must reuse that original
+                # reservation rather than charging a second UTC day or
+                # permanently failing the task.
                 return float(existing[1])
             reserved = float(
                 connection.execute(
@@ -893,3 +896,4 @@ class DailyTaskBudgetLedger:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

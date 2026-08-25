@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """Provider-neutral, deterministic merge eligibility from authenticated evidence.
 
@@ -248,6 +249,12 @@ def evaluate_merge_eligibility(
     )
     if not security:
         reasons.append("security_review_missing")
+    elif {
+        review.authenticated_principal for review in security
+    }.issubset(
+        {review.authenticated_principal for review in independent}
+    ):
+        reasons.append("security_reviewer_not_distinct")
 
     reasons.extend(_check_reasons(bundle, policy))
 
@@ -275,3 +282,4 @@ def evaluate_merge_eligibility(
         "authorizes_project_completion": False,
     }
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

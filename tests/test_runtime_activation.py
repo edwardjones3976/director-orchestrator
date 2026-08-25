@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
@@ -239,6 +240,7 @@ class ActivationSettingsTests(_IsolatedSettings, unittest.TestCase):
         readiness = self.settings(
             completion_gates_enabled=True,
             completion_gate_isolated_proof_enabled=True,
+            completion_gate_container_image="python:3.12-slim@sha256:" + "a" * 64,
         ).completion_gate_readiness()
 
         self.assertTrue(readiness["evidence_recording_active"])
@@ -551,3 +553,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

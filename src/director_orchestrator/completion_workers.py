@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
@@ -552,6 +553,15 @@ class CompletionWorkerStore:
                 (request.idempotency_key,),
             ).fetchone()
             if row is None:
+                job_row = connection.execute(
+                    "SELECT idempotency_key,request_digest FROM completion_worker_jobs "
+                    "WHERE job_id=?",
+                    (request.job_id,),
+                ).fetchone()
+                if job_row is not None:
+                    raise WorkerIdentityConflict(
+                        "worker job id is bound to different immutable work"
+                    )
                 connection.execute(
                     "INSERT INTO completion_worker_jobs(job_id,idempotency_key,request_digest,status) "
                     "VALUES (?, ?, ?, 'CLAIMED')",
@@ -885,3 +895,4 @@ class CompletionWorkerExecutor:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

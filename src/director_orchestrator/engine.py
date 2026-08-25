@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
@@ -893,6 +894,7 @@ class OrchestrationEngine:
                 "batch without redispatching."
             )
             self.store.save(record)
+            await self._status_post(record, record.message)
             return False
         if any(
             member_states[item.effect_key]
@@ -902,6 +904,7 @@ class OrchestrationEngine:
             record.status = TaskStatus.BLOCKED
             record.message = "A recovered parallel provider dispatch failed."
             self.store.save(record)
+            await self._status_post(record, record.message)
             return False
 
         dispatchable: list[
@@ -1219,6 +1222,7 @@ class OrchestrationEngine:
                 "silently rerouted through a different writer."
             )
             self.store.save(record)
+            await self._status_post(record, record.message)
             return False
         if any(
             item.state in {MemberState.RESERVED, MemberState.DISPATCHING}
@@ -5555,3 +5559,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

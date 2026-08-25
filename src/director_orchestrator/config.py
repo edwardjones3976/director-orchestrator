@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
@@ -234,7 +235,7 @@ class Settings:
         default_factory=lambda: os.getenv("REPOSITORY_SNAPSHOT_ROOT", "").strip()
     )
     completion_gate_execution_tiers: tuple[str, ...] = field(
-        default_factory=lambda: _csv("COMPLETION_GATE_EXECUTION_TIERS", "host")
+        default_factory=lambda: _csv("COMPLETION_GATE_EXECUTION_TIERS", "container")
     )
     completion_gate_container_image: str = field(
         default_factory=lambda: os.getenv("COMPLETION_GATE_CONTAINER_IMAGE", "").strip()
@@ -852,7 +853,7 @@ class Settings:
                 and self.completion_gate_isolated_proof_enabled
                 and execution_configuration_valid
                 and worker_store_isolated
-                and (not host_required or host_broker_configured)
+                and not host_required
                 and (
                     not container_runtime_required
                     or container_runtime_configured
@@ -958,6 +959,11 @@ class Settings:
             ]:
                 problems.append(
                     "COMPLETION_GATE_HOST_BROKER_PATH must name an existing absolute file"
+                )
+            if "host" in self.completion_gate_execution_tiers:
+                problems.append(
+                    "the audited host tier is not activatable until its OS controls "
+                    "can be independently verified; select container only"
                 )
             if "container" in self.completion_gate_execution_tiers and not readiness[
                 "container_runtime_configured"
@@ -1131,3 +1137,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

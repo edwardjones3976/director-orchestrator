@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | BEGIN]]
@@ -154,6 +155,20 @@ class ParallelDispatchPolicyTests(unittest.TestCase):
         self.assertEqual("dependency_incomplete", decision.blocked[3])
         self.assertEqual("provider_cooldown", decision.blocked[4])
         self.assertEqual("prospective_budget", decision.blocked[5])
+
+    def test_write_surfaces_reject_relative_traversal_components(self):
+        with self.assertRaisesRegex(ParallelDispatchError, "traversal"):
+            plan_dispatch_batch(
+                task_id="DIR-TRAVERSAL",
+                ordinal=1,
+                candidates=[
+                    candidate(1, surfaces=("a/../b",)),
+                    candidate(2, provider="cursor", surfaces=("b",)),
+                ],
+                completed_sequences=(),
+                available_budget_usd=1.0,
+                policy=enabled_policy(),
+            )
 
     def test_dynamic_cap_scales_after_ten_clean_batches_and_fails_back_to_one(self):
         policy = enabled_policy()
@@ -534,6 +549,39 @@ class ParallelDispatchLedgerTests(unittest.TestCase):
 
 
 class DailyTaskBudgetLedgerTests(unittest.TestCase):
+    def test_resumed_task_reuses_original_reservation_across_days_and_config_changes(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = str(Path(root) / "daily.sqlite3")
+            ledger = DailyTaskBudgetLedger(path)
+            first_day = datetime(2026, 8, 25, 23, 59, tzinfo=timezone.utc)
+            self.assertEqual(
+                1.0,
+                ledger.reserve(
+                    task_id="DIR-CROSS-DAY",
+                    task_budget_usd=1.0,
+                    daily_budget_usd=5.0,
+                    now=first_day,
+                ),
+            )
+            self.assertEqual(
+                1.0,
+                DailyTaskBudgetLedger(path).reserve(
+                    task_id="DIR-CROSS-DAY",
+                    task_budget_usd=2.0,
+                    daily_budget_usd=6.0,
+                    now=first_day + timedelta(minutes=2),
+                ),
+            )
+            self.assertEqual(
+                2.0,
+                ledger.reserve(
+                    task_id="DIR-NEXT-DAY",
+                    task_budget_usd=2.0,
+                    daily_budget_usd=6.0,
+                    now=first_day + timedelta(minutes=2),
+                ),
+            )
+
     def test_full_task_allowances_enforce_the_daily_stop_across_restart(self):
         with tempfile.TemporaryDirectory() as root:
             path = str(Path(root) / "daily.sqlite3")
@@ -615,3 +663,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
