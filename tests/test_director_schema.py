@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -479,8 +480,15 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             / "project-bootstrap"
             / "project-profile.yaml"
         ).read_text(encoding="utf-8")
+        workstream = (
+            root
+            / "docs"
+            / "templates"
+            / "project-bootstrap"
+            / "workstream-plan.md"
+        ).read_text(encoding="utf-8")
 
-        for surface in (charter, setup, prompt, protocol):
+        for surface in (charter, setup, prompt, protocol, workstream):
             self.assertIn("cannot initiate", surface)
 
         self.assertIn("Ordinary Antigravity *work*", charter)
@@ -494,6 +502,10 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("never POSITION/REBUTTAL", profile)
         self.assertIn("matching persisted", profile)
         self.assertIn("may not initiate", profile)
+        self.assertNotIn("Claude and Cursor only", workstream)
+        self.assertNotIn("Antigravity cannot be seated", workstream)
+        self.assertNotIn("never cast", workstream)
+        self.assertIn("matching persisted", workstream)
         self.assertNotIn(
             "sends only the assignment's own bounded task and acceptance checks",
             setup,
@@ -905,3 +917,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]]
