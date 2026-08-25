@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:36 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
@@ -13,6 +14,8 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
+
+import httpx
 
 import director_orchestrator.main as director_main
 from director_orchestrator.callbacks import CallbackConflict, apply_claude_callback
@@ -34,7 +37,7 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.packet_contracts import canonical_json_bytes
+from director_orchestrator.packet_contracts import canonical_json_bytes, validate_packet
 from director_orchestrator.packet_routing import DirectorPacketTaskRouter, PacketRoutingError
 from director_orchestrator.packet_transports import (
     GitHubRepositoryEffectReadback,
@@ -79,10 +82,10 @@ class FakeGitHubEffectVerifier:
         )
         self.error = error
         self.delay_seconds = delay_seconds
-        self.calls: list[tuple[str, str, str, int | None]] = []
+        self.calls: list[tuple[str, str, str, str, int | None]] = []
 
-    async def readback(self, repository, *, starting_ref, branch, pull_number):
-        self.calls.append((repository, starting_ref, branch, pull_number))
+    async def readback(self, repository, *, starting_ref, base_ref, branch, pull_number):
+        self.calls.append((repository, starting_ref, base_ref, branch, pull_number))
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         if self.error is not None:
@@ -215,6 +218,72 @@ class LocalGitAuthoritySnapshotTests(unittest.TestCase):
                 )
 
 
+class GitHubReadOnlyRepositoryEffectVerifierTests(unittest.TestCase):
+    def test_readback_resolves_the_authorized_base_ref_independently(self) -> None:
+        requested_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_paths.append(request.url.path)
+            payloads = {
+                "/repos/example/demo/git/ref/heads/main": {
+                    "object": {"sha": COMMIT}
+                },
+                "/repos/example/demo/git/ref/heads/codex/focused": {
+                    "object": {"sha": HEAD}
+                },
+                f"/repos/example/demo/compare/{COMMIT}...{HEAD}": {
+                    "status": "ahead",
+                    "base_commit": {"sha": COMMIT},
+                    "merge_base_commit": {"sha": COMMIT},
+                    "commits": [{"sha": HEAD}],
+                },
+                "/repos/example/demo/pulls/123": {
+                    "state": "open",
+                    "draft": True,
+                    "merged": False,
+                    "head": {
+                        "ref": "codex/focused",
+                        "sha": HEAD,
+                        "repo": {"full_name": "example/demo"},
+                    },
+                    "base": {
+                        "ref": "main",
+                        "sha": COMMIT,
+                        "repo": {"full_name": "example/demo"},
+                    },
+                },
+            }
+            return httpx.Response(200, json=payloads[request.url.path])
+
+        verifier = GitHubReadOnlyRepositoryEffectVerifier(
+            token="configured-secret",
+            api_base="https://api.github.test",
+            transport=httpx.MockTransport(handler),
+        )
+        observed = asyncio.run(
+            verifier.readback(
+                "example/demo",
+                starting_ref=COMMIT,
+                base_ref="main",
+                branch="codex/focused",
+                pull_number=123,
+            )
+        )
+
+        self.assertEqual("main", observed.base_ref)
+        self.assertEqual(COMMIT, observed.base_sha)
+        self.assertTrue(observed.base_is_ancestor)
+        self.assertEqual(
+            [
+                "/repos/example/demo/git/ref/heads/main",
+                "/repos/example/demo/git/ref/heads/codex/focused",
+                f"/repos/example/demo/compare/{COMMIT}...{HEAD}",
+                "/repos/example/demo/pulls/123",
+            ],
+            requested_paths,
+        )
+
+
 class LegacyProviderPacketTransportTests(unittest.TestCase):
     @staticmethod
     def _context(record, packet) -> ProviderAdapterContext:
@@ -322,6 +391,24 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
         self.assertEqual(result["acceptance"][0]["status"], "NOT_RUN")
         self.assertEqual(provider.assignment.starting_ref, COMMIT)
         json.dumps(result)
+
+    def test_legacy_v1_read_only_handoff_remains_compatible(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            _, packet = self._packet(root, store, ProviderName.CURSOR)
+
+        legacy_read_only = dict(packet)
+        legacy_read_only.pop("authority_base_ref")
+        legacy_read_only["allowed_external_effects"] = []
+        validated = validate_packet("work", legacy_read_only)
+
+        handoff = LegacyProviderPacketTransport._provider_handoff(validated)
+
+        self.assertIn("DIRECTOR_WORK_PACKET_V1_JSON=", handoff)
+        legacy_write = dict(validated)
+        legacy_write["allowed_external_effects"] = ["WRITE_ISOLATED_BRANCH"]
+        with self.assertRaisesRegex(ValueError, "base-ref authority"):
+            LegacyProviderPacketTransport._provider_handoff(legacy_write)
 
     def test_unverified_write_effects_stop_for_reconciliation(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -470,6 +557,10 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
         self.assertEqual("SUCCEEDED", result["status"])
         self.assertEqual(effects, result["side_effects"])
         self.assertEqual([], result["requested_decisions"])
+        self.assertEqual(
+            [("example/demo", COMMIT, "main", "codex/focused", 123)],
+            transport.github_effect_verifier.calls,
+        )
 
     def test_async_authenticated_readback_verifies_completed_repository_effects(
         self,
@@ -583,6 +674,11 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
             ),
             "pull base ref": replace(
                 FakeGitHubEffectVerifier().value, pull_base_ref="release"
+            ),
+            "paired wrong base refs": replace(
+                FakeGitHubEffectVerifier().value,
+                base_ref="release",
+                pull_base_ref="release",
             ),
             "pull base SHA": replace(
                 FakeGitHubEffectVerifier().value, pull_base_sha="d" * 40
@@ -1125,3 +1221,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]

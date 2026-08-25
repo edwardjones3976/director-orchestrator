@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:15 UTC | BEGIN]]
@@ -28,7 +29,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -154,11 +155,27 @@ class PacketBoundaryAdapter:
         *,
         context: ProviderAdapterContext,
     ) -> Mapping[str, Any]:
+        return self._dispatch_with_submission_signal(
+            work_packet,
+            context=context,
+            on_submit=lambda: None,
+        )
+
+    def _dispatch_with_submission_signal(
+        self,
+        work_packet: Mapping[str, Any],
+        *,
+        context: ProviderAdapterContext,
+        on_submit: Callable[[], None],
+    ) -> Mapping[str, Any]:
+        """Signal only after outbound validation and immediately before submit."""
+
         work = validate_packet("work", work_packet)
         if not _secure_equal(document_digest(work), context.work_packet_digest):
             raise PacketContractError(
                 "work packet digest does not match the authorized dispatch context"
             )
+        on_submit()
         raw = self._transport.send(canonical_json_bytes(work), context=context)
         result = validate_packet("result", raw)
         # Linkage is verified here as well as in the coordinator so an invalid
@@ -712,6 +729,7 @@ class LangGraphPacketRuntime:
         work: Mapping[str, Any],
         *,
         context: ProviderAdapterContext,
+        submission_started: threading.Event,
     ) -> Mapping[str, Any]:
         """Bound a synchronous adapter without waiting for a non-cooperative call.
 
@@ -725,10 +743,21 @@ class LangGraphPacketRuntime:
 
         def invoke() -> None:
             try:
-                value: object = adapter.dispatch(
-                    copy.deepcopy(work),
-                    context=context,
-                )
+                if isinstance(adapter, PacketBoundaryAdapter):
+                    value: object = adapter._dispatch_with_submission_signal(
+                        copy.deepcopy(work),
+                        context=context,
+                        on_submit=submission_started.set,
+                    )
+                else:
+                    # Direct adapters exist only for isolated compatibility tests.
+                    # They have no separately visible transport seam, so invoking
+                    # them is the earliest safe point to classify submission.
+                    submission_started.set()
+                    value = adapter.dispatch(
+                        copy.deepcopy(work),
+                        context=context,
+                    )
                 completed.put_nowait((True, value))
             except Exception as exc:
                 completed.put_nowait((False, exc))
@@ -799,6 +828,8 @@ class LangGraphPacketRuntime:
         if prior is not None:
             return prior
 
+        submission_started = threading.Event()
+
         def execute_packet() -> dict[str, str]:
             if execution_mode == RuntimeExecutionMode.OFFLINE_REPLAY:
                 assert offline_result_packet is not None
@@ -819,7 +850,12 @@ class LangGraphPacketRuntime:
                     allowed_tools=tuple(work["allowed_tools"]),
                     allowed_external_effects=tuple(work["allowed_external_effects"]),
                 )
-                result = self._dispatch_with_timeout(adapter, work, context=context)
+                result = self._dispatch_with_timeout(
+                    adapter,
+                    work,
+                    context=context,
+                    submission_started=submission_started,
+                )
             return self._persist_result(
                 work,
                 result,
@@ -850,39 +886,35 @@ class LangGraphPacketRuntime:
                 graph_input,
                 config=self._checkpoint_config(work["idempotency_key"]),
             )
-        except (PacketContractError, RuntimeContractError, ValueError) as exc:
-            self._mark_status(
-                work["idempotency_key"], "REJECTED", type(exc).__name__
-            )
-            return RuntimeExecutionOutcome(
-                RuntimeExecutionStatus.REJECTED,
-                "provider result or runtime evidence failed closed validation",
-            )
         except Exception as exc:
             row = self._ledger_row(work["idempotency_key"])
             if row is not None and row[9] == "COMPLETED":
                 return self._completed_outcome(
                     row, replayed=False, work=work, provider=provider
                 )
+            post_submit_live_failure = (
+                execution_mode == RuntimeExecutionMode.LIVE_SAFE
+                and submission_started.is_set()
+            )
             self._mark_status(
                 work["idempotency_key"],
                 (
-                    "REJECTED"
-                    if execution_mode == RuntimeExecutionMode.OFFLINE_REPLAY
-                    else "RECONCILIATION_REQUIRED"
+                    "RECONCILIATION_REQUIRED"
+                    if post_submit_live_failure
+                    else "REJECTED"
                 ),
                 type(exc).__name__,
             )
             return RuntimeExecutionOutcome(
                 (
-                    RuntimeExecutionStatus.REJECTED
-                    if execution_mode == RuntimeExecutionMode.OFFLINE_REPLAY
-                    else RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+                    RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+                    if post_submit_live_failure
+                    else RuntimeExecutionStatus.REJECTED
                 ),
                 (
-                    "offline replay failed closed"
-                    if execution_mode == RuntimeExecutionMode.OFFLINE_REPLAY
-                    else "provider dispatch is ambiguous; reconcile it without resending"
+                    "provider dispatch is ambiguous; reconcile it without resending"
+                    if post_submit_live_failure
+                    else "provider result or runtime evidence failed closed validation"
                 ),
             )
 
@@ -1118,3 +1150,4 @@ class LangGraphPacketRuntime:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:15 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]

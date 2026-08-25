@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
@@ -403,7 +404,7 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
             connection.close()
         self.assertEqual(count, 0)
 
-    def test_invalid_result_is_terminal_and_not_resent(self):
+    def test_invalid_live_result_is_reconciled_once_and_never_resent(self):
         token = self._token()
         invalid = copy.deepcopy(self.result)
         invalid["assignment_id"] = "DIFFERENT-ASSIGNMENT"
@@ -422,11 +423,62 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
             adapter=adapter,
             writer_token=token,
         )
-        self.assertEqual(first.status, RuntimeExecutionStatus.REJECTED)
-        self.assertEqual(second.status, RuntimeExecutionStatus.REJECTED)
+        self.assertEqual(first.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED)
+        self.assertEqual(second.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED)
         self.assertEqual(adapter.calls, 1)
 
-    def test_missing_acceptance_disposition_is_rejected(self):
+        conflicting = copy.deepcopy(self.result)
+        conflicting["correlation"]["correlation_id"] = "corr-stale-readback"
+        with self.assertRaises(PacketContractError):
+            self.runtime.reconcile_result(
+                self.work,
+                conflicting,
+                provider="claude",
+                writer_token=token,
+            )
+        with closing(sqlite3.connect(self.ledger_path)) as connection:
+            status = connection.execute(
+                "SELECT status FROM runtime_dispatch_ledger WHERE idempotency_key=?",
+                (self.work["idempotency_key"],),
+            ).fetchone()[0]
+        self.assertEqual(status, "RECONCILIATION_REQUIRED")
+
+        self.connection.close()
+        restarted_connection = sqlite3.connect(
+            self.checkpoint_path, check_same_thread=False
+        )
+        self.connection = restarted_connection
+        restarted = LangGraphPacketRuntime(
+            SqliteSaver(restarted_connection),
+            ledger_database_path=str(self.ledger_path),
+            legacy_database_path=str(self.legacy_path),
+            checkpoint_namespace="test-runtime-v1",
+            runtime_active=True,
+            allow_live_provider_dispatch=True,
+        )
+        restart_adapter = FakeAdapter(self.result)
+        restart_outcome = restarted.run_packet(
+            self.work,
+            provider="claude",
+            execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+            adapter=restart_adapter,
+            writer_token=token,
+        )
+        self.assertEqual(
+            restart_outcome.status,
+            RuntimeExecutionStatus.OWNER_DECISION_REQUIRED,
+        )
+        self.assertEqual(restart_adapter.calls, 0)
+
+        reconciled = restarted.reconcile_result(
+            self.work,
+            self.result,
+            provider="claude",
+            writer_token=token,
+        )
+        self.assertEqual(reconciled.status, RuntimeExecutionStatus.COMPLETED)
+
+    def test_missing_live_acceptance_disposition_requires_reconciliation(self):
         token = self._token()
         invalid = copy.deepcopy(self.result)
         invalid["acceptance"] = invalid["acceptance"][:1]
@@ -438,10 +490,12 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
             adapter=adapter,
             writer_token=token,
         )
-        self.assertEqual(outcome.status, RuntimeExecutionStatus.REJECTED)
+        self.assertEqual(
+            outcome.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+        )
         self.assertEqual(adapter.calls, 1)
 
-    def test_unallowed_reported_side_effect_is_rejected(self):
+    def test_unallowed_live_side_effect_requires_reconciliation(self):
         token = self._token()
         invalid = copy.deepcopy(self.result)
         invalid["side_effects"] = [
@@ -460,9 +514,11 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
             adapter=FakeAdapter(invalid),
             writer_token=token,
         )
-        self.assertEqual(outcome.status, RuntimeExecutionStatus.REJECTED)
+        self.assertEqual(
+            outcome.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+        )
 
-    def test_reported_cost_cannot_exceed_packet_budget(self):
+    def test_over_budget_live_result_requires_reconciliation(self):
         token = self._token()
         invalid = copy.deepcopy(self.result)
         invalid["usage"]["cost_usd"] = self.work["limits"]["budget_usd"] + 0.01
@@ -473,7 +529,9 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
             adapter=FakeAdapter(invalid),
             writer_token=token,
         )
-        self.assertEqual(outcome.status, RuntimeExecutionStatus.REJECTED)
+        self.assertEqual(
+            outcome.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+        )
 
     def test_concurrent_runtime_sees_one_durable_dispatch_claim(self):
         token = self._token()
@@ -1051,7 +1109,7 @@ class StrandedDispatchRecoveryTests(_RuntimeFixture, unittest.TestCase):
 
 
 class TransportPayloadTests(_RuntimeFixture, unittest.TestCase):
-    def test_a_non_object_provider_reply_fails_the_packet_contract(self):
+    def test_a_non_object_live_reply_requires_reconciliation(self):
         token = self._token()
 
         class NonObjectAdapter:
@@ -1070,10 +1128,11 @@ class TransportPayloadTests(_RuntimeFixture, unittest.TestCase):
             writer_token=token,
         )
 
-        # A decoded list is not a schema failure the validator can describe, but it
-        # still has to land on the same fail-closed path rather than escaping as an
-        # unclassified error.
-        self.assertEqual(outcome.status, RuntimeExecutionStatus.REJECTED)
+        # A decoded list may arrive only after submission, so it remains ambiguous
+        # and reconcilable instead of becoming an unclassified terminal rejection.
+        self.assertEqual(
+            outcome.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+        )
 
 
 if __name__ == "__main__":
@@ -1084,3 +1143,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]

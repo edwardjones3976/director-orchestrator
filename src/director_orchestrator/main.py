@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
@@ -79,7 +80,7 @@ from .oracle_merge import (
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from .runtime_activation import RuntimeActivation
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
-from .store import PrivacyCleanupResume, TaskStore
+from .store import PrivacyCleanupResume, SlackIntakeReplayConflict, TaskStore
 from .usage import UsageMonitor
 from .packet_results import DirectorPacketResultConsumer
 from .packet_routing import DirectorPacketTaskRouter
@@ -490,9 +491,10 @@ def intake(
     ),
 ) -> TaskRecord:
     intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
+    replay_identity: tuple[str, str] | None = None
     if settings.allow_paid_runs:
         try:
-            verify_slack_intake_attestation(
+            replay_identity = verify_slack_intake_attestation(
                 settings.slack_gateway_secret,
                 settings.shared_secret,
                 payload,
@@ -512,7 +514,18 @@ def intake(
         intake=payload,
         intake_authentication=intake_authentication,
     )
-    stored, created = store.create(record)
+    try:
+        stored, created = (
+            store.create_signed_slack_intake(
+                record,
+                nonce_digest=replay_identity[0],
+                payload_digest=replay_identity[1],
+            )
+            if replay_identity is not None
+            else store.create(record)
+        )
+    except SlackIntakeReplayConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
         background.add_task(engine.run, stored.task_id)
     return stored
@@ -803,3 +816,4 @@ def complete_run(
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]

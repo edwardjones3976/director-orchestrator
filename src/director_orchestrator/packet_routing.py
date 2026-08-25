@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 """Production-safe conversion from Director assignments to v1 work packets.
@@ -79,6 +80,16 @@ class DirectorPacketTaskRouter:
         return hashlib.sha256(
             canonical_json_bytes(assignment.model_dump(mode="json"))
         ).hexdigest()
+
+    @staticmethod
+    def _authority_base_ref(assignment: Assignment) -> str:
+        """Preserve the owner-approved ref independently from its resolved SHA."""
+
+        value = assignment.starting_ref.strip()
+        normalized = value.removeprefix("refs/heads/").removeprefix("origin/")
+        if not normalized:
+            raise PacketRoutingError("assignment starting ref is empty after normalization")
+        return normalized
 
     @staticmethod
     def _dependency_digest(record: TaskRecord, sequence: int) -> str:
@@ -182,6 +193,10 @@ class DirectorPacketTaskRouter:
             # Provider work starts from the authenticated immutable snapshot,
             # never from the mutable branch name that was used to resolve it.
             "starting_ref": exact_starting_ref,
+            # Optional in the v1 schema so previously recorded v1 documents remain
+            # readable. Production routing always emits it, and repository-effect
+            # readback fails closed when this independent ref authority is absent.
+            "authority_base_ref": self._authority_base_ref(assignment),
             "objective": objective,
             "non_goals": list(self._PROHIBITED_ACTIONS),
             "authority_snapshot": snapshot,
@@ -249,9 +264,10 @@ class DirectorPacketTaskRouter:
             "assignment_id": self._assignment_id(record, assignment),
             "idempotency_key": self.idempotency_key(record, assignment),
             "repository": assignment.repository,
+            "authority_base_ref": self._authority_base_ref(assignment),
         }
         for field, value in expected.items():
-            if validated[field] != value:
+            if validated.get(field) != value:
                 raise PacketRoutingError(f"bound work packet {field} changed")
         expected_dependencies = [
             {
@@ -287,3 +303,4 @@ class DirectorPacketTaskRouter:
         return adapter
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 from __future__ import annotations
@@ -93,6 +94,8 @@ class PacketTaskRoutingTests(unittest.TestCase):
         packet = self.router.work_packet(self.record, self.assignment)
 
         self.assertEqual(packet["assignment_id"], "DIR-ROUTER-1")
+        self.assertEqual(packet["starting_ref"], COMMIT_SHA)
+        self.assertEqual(packet["authority_base_ref"], "main")
         self.assertEqual(packet["authority_snapshot"][0]["commit_sha"], COMMIT_SHA)
         self.assertEqual(packet["limits"]["max_revisions"], 2)
         self.assertEqual(packet["allowed_external_effects"], [
@@ -115,6 +118,21 @@ class PacketTaskRoutingTests(unittest.TestCase):
 
         self.assertEqual(first.digest, restarted.digest)
         self.assertNotEqual(first.digest, self.router.writer_token(other).digest)
+
+    def test_router_normalizes_and_revalidates_owner_approved_base_ref(self) -> None:
+        assignment = self.assignment.model_copy(
+            update={"starting_ref": "refs/heads/main"}
+        )
+        self.record.plan.assignments[0] = assignment
+        packet = self.router.work_packet(self.record, assignment)
+
+        self.assertEqual(packet["authority_base_ref"], "main")
+        self.router.validate_bound_packet(self.record, assignment, packet)
+
+        stale = dict(packet)
+        stale["authority_base_ref"] = "release"
+        with self.assertRaisesRegex(PacketRoutingError, "authority_base_ref changed"):
+            self.router.validate_bound_packet(self.record, assignment, stale)
 
     def test_router_refuses_unaccepted_dependency_and_unconfigured_adapter(self) -> None:
         dependent = self.assignment.model_copy(update={"depends_on": [2]})
@@ -244,3 +262,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]

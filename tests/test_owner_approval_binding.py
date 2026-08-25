@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
@@ -3058,6 +3059,154 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
             self.assertEqual([], self._budget_rows(database))
             run.assert_awaited_once_with(first.json()["task_id"])
 
+    def test_signed_event_replay_with_fresh_nonce_reuses_original_task_after_restart(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            test_settings = self._settings()
+            payload = self._payload("evt-signed-restart")
+            first_headers = self._signed_headers(payload, test_settings)
+            second_headers = {
+                "Authorization": "Bearer test-secret",
+                **build_slack_intake_attestation(
+                    test_settings.slack_gateway_secret,
+                    test_settings.shared_secret,
+                    SlackIntake.model_validate(payload),
+                    nonce="R" * 32,
+                ),
+            }
+            run = AsyncMock(return_value=None)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", TaskStore(database)),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                first = client.post(
+                    "/v1/intake", headers=first_headers, json=payload
+                )
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", TaskStore(database)),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                replay = client.post(
+                    "/v1/intake", headers=second_headers, json=payload
+                )
+
+            self.assertEqual([202, 202], [first.status_code, replay.status_code])
+            self.assertEqual(first.json()["task_id"], replay.json()["task_id"])
+            run.assert_awaited_once_with(first.json()["task_id"])
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    1, connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+                )
+                self.assertEqual(
+                    2,
+                    connection.execute(
+                        "SELECT COUNT(*) FROM slack_intake_claims"
+                    ).fetchone()[0],
+                )
+
+    def test_signed_event_or_nonce_conflicting_reuse_fails_closed(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            test_settings = self._settings()
+            run = AsyncMock(return_value=None)
+            original = self._payload("evt-signed-conflict")
+            original_headers = self._signed_headers(original, test_settings)
+            changed = {**original, "text": original["text"] + " changed"}
+            changed_headers = self._signed_headers(changed, test_settings)
+            reused_nonce = self._payload("evt-other-source")
+            reused_nonce_headers = self._signed_headers(reused_nonce, test_settings)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                first = client.post(
+                    "/v1/intake", headers=original_headers, json=original
+                )
+                source_conflict = client.post(
+                    "/v1/intake", headers=changed_headers, json=changed
+                )
+                nonce_conflict = client.post(
+                    "/v1/intake", headers=reused_nonce_headers, json=reused_nonce
+                )
+
+            self.assertEqual(202, first.status_code)
+            self.assertEqual(409, source_conflict.status_code)
+            self.assertEqual(409, nonce_conflict.status_code)
+            run.assert_awaited_once_with(first.json()["task_id"])
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    1, connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+                )
+
+    def test_concurrent_signed_claims_create_exactly_one_task(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            TaskStore(database)
+            payload = SlackIntake.model_validate(
+                self._payload("evt-signed-concurrent")
+            )
+            test_settings = self._settings()
+            headers = build_slack_intake_attestation(
+                test_settings.slack_gateway_secret,
+                test_settings.shared_secret,
+                payload,
+                nonce="C" * 32,
+            )
+            nonce_digest, payload_digest = verify_slack_intake_attestation(
+                test_settings.slack_gateway_secret,
+                test_settings.shared_secret,
+                payload,
+                expected_owner_user_id=test_settings.slack_owner_user_id,
+                expected_channel_id=test_settings.slack_channel_id,
+                issued_at=headers[SLACK_INTAKE_ISSUED_AT_HEADER],
+                nonce=headers[SLACK_INTAKE_NONCE_HEADER],
+                signature=headers[SLACK_INTAKE_SIGNATURE_HEADER],
+            )
+            start = threading.Barrier(2)
+
+            def claim(task_id: str):
+                task_store = TaskStore(database)
+                candidate = TaskRecord(
+                    task_id=task_id,
+                    status=TaskStatus.QUEUED,
+                    intake=payload.model_copy(deep=True),
+                    intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                )
+                start.wait(timeout=5)
+                return task_store.create_signed_slack_intake(
+                    candidate,
+                    nonce_digest=nonce_digest,
+                    payload_digest=payload_digest,
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                outcomes = list(
+                    executor.map(claim, ("DIR-RACE-ONE", "DIR-RACE-TWO"))
+                )
+
+            self.assertEqual(1, sum(created for _, created in outcomes))
+            self.assertEqual(1, len({stored.task_id for stored, _ in outcomes}))
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    1, connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+                )
+                self.assertEqual(
+                    1,
+                    connection.execute(
+                        "SELECT COUNT(*) FROM slack_intake_claims"
+                    ).fetchone()[0],
+                )
+
     def test_slack_forward_signs_exact_payload_before_direct_or_n8n_delivery(self):
         import director_orchestrator.config as config_module
         import slack_bolt
@@ -3743,3 +3892,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:41 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]

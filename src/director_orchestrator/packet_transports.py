@@ -1,7 +1,9 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:31 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 """Production packet transports for the primary repository providers.
 
@@ -114,6 +116,7 @@ class GitHubRepositoryEffectVerifier(Protocol):
         repository: str,
         *,
         starting_ref: str,
+        base_ref: str,
         branch: str,
         pull_number: int | None,
     ) -> GitHubRepositoryEffectReadback: ...
@@ -217,11 +220,14 @@ class GitHubReadOnlyRepositoryEffectVerifier:
         repository: str,
         *,
         starting_ref: str,
+        base_ref: str,
         branch: str,
         pull_number: int | None,
     ) -> GitHubRepositoryEffectReadback:
         if not repository or not _GIT_SHA.fullmatch(starting_ref):
             raise ValueError("GitHub readback requires an exact repository base SHA")
+        if not base_ref or not _SAFE_BRANCH.fullmatch(base_ref):
+            raise ValueError("GitHub readback base ref is malformed")
         if not branch or not _SAFE_BRANCH.fullmatch(branch):
             raise ValueError("GitHub readback branch is malformed")
         if pull_number is not None and (type(pull_number) is not int or pull_number < 1):
@@ -238,6 +244,17 @@ class GitHubReadOnlyRepositoryEffectVerifier:
             },
         ) as client:
             authorization = await self._authorization(client)
+            base_ref_payload = await self._get(
+                client,
+                f"/repos/{repository}/git/ref/heads/{quote(base_ref, safe='')}",
+                authorization,
+            )
+            base_ref_object = self._required_mapping(
+                base_ref_payload.get("object"), "base_ref.object"
+            )
+            base_sha = self._required_string(
+                base_ref_object.get("sha"), "base_ref.object.sha"
+            )
             ref_payload = await self._get(
                 client,
                 f"/repos/{repository}/git/ref/heads/{quote(branch, safe='')}",
@@ -305,12 +322,8 @@ class GitHubReadOnlyRepositoryEffectVerifier:
             )
             return GitHubRepositoryEffectReadback(
                 repository=repository,
-                base_ref=(
-                    self._required_string(pull_base.get("ref"), "pull.base.ref")
-                    if pull_base is not None
-                    else starting_ref
-                ),
-                base_sha=starting_ref,
+                base_ref=base_ref,
+                base_sha=base_sha,
                 branch=branch,
                 head_sha=head_sha,
                 compare_base_sha=compare_base_sha,
@@ -583,6 +596,13 @@ class LegacyProviderPacketTransport:
         encoded = canonical_json_bytes(packet)
         repository = str(packet["repository"])
         starting_ref = str(packet["starting_ref"])
+        authority_base_ref = packet.get("authority_base_ref")
+        if packet["allowed_external_effects"] and (
+            not isinstance(authority_base_ref, str) or not authority_base_ref
+        ):
+            raise ValueError(
+                "repository effects require independent packet base-ref authority"
+            )
         effect_contract = {
             "schema_version": "1.0",
             "raw_field": "side_effect_evidence",
@@ -762,8 +782,12 @@ class LegacyProviderPacketTransport:
             return "A completed draft pull request lacks its exact branch candidate."
 
         repository = self._canonical_repository(str(packet["repository"]))
-        raw_starting_ref = str(packet["starting_ref"])
-        starting_ref = self._canonical_ref(raw_starting_ref)
+        raw_authority_base_ref = packet.get("authority_base_ref")
+        if not isinstance(raw_authority_base_ref, str) or not raw_authority_base_ref:
+            return "Packet repository effects lack independent base-ref authority."
+        expected_base_ref = self._canonical_ref(raw_authority_base_ref)
+        if not expected_base_ref:
+            return "Packet repository-effects base-ref authority is malformed."
         branch_target = str(branches[0]["target"])
         branch_prefix = f"{str(packet['repository']).strip().removesuffix('.git')}@{packet['starting_ref']}:"
         if not branch_target.startswith(branch_prefix):
@@ -790,6 +814,7 @@ class LegacyProviderPacketTransport:
                 self.github_effect_verifier.readback(
                     repository,
                     starting_ref=expected_base_sha,
+                    base_ref=expected_base_ref,
                     branch=branch,
                     pull_number=pull_number,
                 ),
@@ -804,10 +829,7 @@ class LegacyProviderPacketTransport:
             return "Independent GitHub repository-effect verification returned malformed evidence."
         if (
             self._canonical_repository(observed.repository) != repository
-            or (
-                not _GIT_SHA.fullmatch(raw_starting_ref)
-                and self._canonical_ref(observed.base_ref) != starting_ref
-            )
+            or self._canonical_ref(observed.base_ref) != expected_base_ref
             or not hmac.compare_digest(observed.base_sha, expected_base_sha)
             or observed.branch != branch
             or not _GIT_SHA.fullmatch(observed.head_sha)
@@ -835,7 +857,8 @@ class LegacyProviderPacketTransport:
             or not hmac.compare_digest(observed.pull_head_sha, observed.head_sha)
             or self._canonical_repository(observed.pull_base_repository or "")
             != repository
-            or observed.pull_base_ref != observed.base_ref
+            or self._canonical_ref(observed.pull_base_ref or "")
+            != expected_base_ref
             or observed.pull_base_sha is None
             or not hmac.compare_digest(observed.pull_base_sha, expected_base_sha)
         ):
@@ -1110,3 +1133,5 @@ def build_primary_packet_adapters(
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:37 UTC | END]]

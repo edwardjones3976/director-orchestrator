@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
@@ -143,7 +144,7 @@ def verify_slack_intake_attestation(
     nonce: str | None,
     signature: str | None,
     now: int | None = None,
-) -> None:
+) -> tuple[str, str]:
     """Fail closed unless the Slack gateway attested this owner intake exactly."""
 
     if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
@@ -181,6 +182,10 @@ def verify_slack_intake_attestation(
     ).hexdigest()
     if not hmac.compare_digest(signature, expected_signature):
         raise StaleApproval("Slack intake attestation signature is invalid")
+    return (
+        _canonical_digest({"nonce": nonce}),
+        _canonical_digest(intake.model_dump(mode="json")),
+    )
 
 
 def pending_assignment(record: TaskRecord) -> Assignment | None:
@@ -1384,3 +1389,4 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
