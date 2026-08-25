@@ -1,9 +1,12 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 from __future__ import annotations
 
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -114,7 +117,7 @@ class UppercutDeploymentContractTests(unittest.TestCase):
             "only ok/prompted evidence is acceptable",
             self.script,
         )
-        self.assertIn('$completionVerifiedProviders = @("claude")', self.script)
+        self.assertIn("Get-CompletionVerifiedProviders", self.script)
         self.assertIn(
             "requires authenticated terminal callback evidence",
             self.script,
@@ -125,6 +128,28 @@ class UppercutDeploymentContractTests(unittest.TestCase):
             ),
             3,
         )
+
+    def test_mixed_case_long_table_requires_claude_completion_evidence(self):
+        shell = shutil.which("pwsh") or shutil.which("pwsh.exe")
+        if shell is None:
+            self.skipTest("PowerShell 7 is unavailable in this environment")
+        start = self.script.index("function Get-CompletionVerifiedProviders")
+        end = self.script.index("function Assert-CoolingProviderEvidence", start)
+        function_source = self.script[start:end]
+        probe = (
+            function_source
+            + "\n$result = @(Get-CompletionVerifiedProviders -ProfileName 'Long-Table')"
+            + "\nWrite-Output ($result.Count.ToString() + '|' + [string]$result[0])"
+        )
+        completed = subprocess.run(
+            [shell, "-NoProfile", "-NonInteractive", "-Command", "-"],
+            input=probe,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("1|claude", completed.stdout.strip())
 
     def test_usage_cooldown_evidence_fails_closed_for_error_and_skipped(self):
         cooling_fn = self.script[
@@ -446,3 +471,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]

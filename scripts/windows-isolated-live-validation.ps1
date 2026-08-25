@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
@@ -344,6 +345,15 @@ function Assert-UsageProviderPartition {
     }
 }
 
+function Get-CompletionVerifiedProviders {
+    param([Parameter(Mandatory = $true)][string]$ProfileName)
+
+    if ($ProfileName -ieq "long-table") {
+        return @("claude")
+    }
+    return @()
+}
+
 function Assert-CoolingProviderEvidence {
     param(
         [Parameter(Mandatory = $true)][string[]]$Providers,
@@ -675,10 +685,9 @@ try {
         -CoolingDownProviders $accepted.cooling_down_providers
     $scheduledProviders = @($partition.ScheduledProviders)
     $coolingProviders = @($partition.CoolingDownProviders)
-    $completionVerifiedProviders = @()
-    if ($ProfileName -ceq "long-table") {
-        $completionVerifiedProviders = @("claude")
-    }
+    $completionVerifiedProviders = @(
+        Get-CompletionVerifiedProviders -ProfileName $ProfileName
+    )
 
     if ($runStatus -ceq "not_due") {
         Write-Host (
@@ -856,3 +865,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
