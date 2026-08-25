@@ -22,7 +22,11 @@ from director_orchestrator.langgraph_runtime import (
     RuntimeExecutionStatus,
     WriterOwnershipToken,
 )
-from director_orchestrator.packet_contracts import document_digest, load_json_document
+from director_orchestrator.packet_contracts import (
+    PacketContractError,
+    document_digest,
+    load_json_document,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -625,6 +629,291 @@ class StrandedClaimRecoveryTests(_RuntimeFixture, unittest.TestCase):
         )
         self.assertEqual(resumed.status, RuntimeExecutionStatus.COMPLETED)
         self.assertEqual(self._ledger_status(key), "COMPLETED")
+
+
+# [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | BEGIN]]
+class StrandedDispatchRecoveryTests(_RuntimeFixture, unittest.TestCase):
+    """A hard kill after the atomic DISPATCHING reservation must not strand work.
+
+    `run_packet` only reaches `RECONCILIATION_REQUIRED` through its exception
+    handler. A SIGKILL, power loss, or container eviction between the committed
+    `DISPATCHING` reservation and that handler leaves a durable `DISPATCHING` row
+    that no other edge accepts.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.token = self._token()
+
+    def _hard_killed_dispatch(self, adapter: FakeAdapter) -> str:
+        """Leave the exact row a hard kill would leave, using the real reserve path.
+
+        The row is written by `_reserve` itself, so every binding (task, assignment,
+        provider, execution mode, packet digest, authority digest, writer digest) is
+        the production one; only the exception handler's later write is undone.
+        """
+
+        key = self.work["idempotency_key"]
+        self.runtime.run_packet(
+            self.work,
+            provider="claude",
+            execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+            adapter=adapter,
+            writer_token=self.token,
+        )
+        self.assertEqual(self._ledger_status(key), "RECONCILIATION_REQUIRED")
+        with closing(sqlite3.connect(self.ledger_path)) as connection:
+            connection.execute(
+                "UPDATE runtime_dispatch_ledger SET status='DISPATCHING', "
+                "error_code=NULL WHERE idempotency_key=?",
+                (key,),
+            )
+            connection.commit()
+        self.assertEqual(self._ledger_status(key), "DISPATCHING")
+        return key
+
+    def _recover(self, **overrides):
+        arguments = {
+            "provider": "claude",
+            "writer_token": self.token,
+            "dispatch_process_confirmed_stopped": True,
+        }
+        arguments.update(overrides)
+        packet = arguments.pop("work_packet", self.work)
+        return self.runtime.recover_stranded_dispatch(packet, **arguments)
+
+    def test_a_hard_killed_dispatching_row_is_stranded_by_every_other_edge(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        self._hard_killed_dispatch(adapter)
+
+        # `run_packet` refuses to resend rather than duplicating a paid dispatch.
+        stuck = self.runtime.run_packet(
+            self.work,
+            provider="claude",
+            execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+            adapter=adapter,
+            writer_token=self.token,
+        )
+        self.assertEqual(stuck.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED)
+        # The legacy claim edge only accepts CLAIMED.
+        with self.assertRaisesRegex(RuntimeContractError, "recoverable legacy claim"):
+            self.runtime.open_reconciliation(
+                self.work, provider="claude", writer_token=self.token
+            )
+        # Reconciliation only accepts RECONCILIATION_REQUIRED.
+        with self.assertRaisesRegex(RuntimeContractError, "awaiting reconciliation"):
+            self.runtime.reconcile_result(
+                self.work, self.result, provider="claude", writer_token=self.token
+            )
+        self.assertEqual(adapter.calls, 1)
+
+    def test_recovery_reopens_reconciliation_without_any_further_dispatch(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        key = self._hard_killed_dispatch(adapter)
+
+        recovered = self._recover()
+
+        self.assertEqual(
+            recovered.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+        )
+        self.assertIsNone(recovered.result_packet)
+        self.assertEqual(self._ledger_status(key), "RECONCILIATION_REQUIRED")
+        # Recovery infers nothing about the provider: no result is recorded.
+        with closing(sqlite3.connect(self.ledger_path)) as connection:
+            row = connection.execute(
+                "SELECT result_packet_json, result_packet_digest, error_code "
+                "FROM runtime_dispatch_ledger WHERE idempotency_key=?",
+                (key,),
+            ).fetchone()
+        self.assertIsNone(row[0])
+        self.assertIsNone(row[1])
+        self.assertEqual(row[2], "StrandedDispatchRecovered")
+
+        reconciled = self.runtime.reconcile_result(
+            self.work, self.result, provider="claude", writer_token=self.token
+        )
+        self.assertEqual(reconciled.status, RuntimeExecutionStatus.COMPLETED)
+        # One dispatch before the kill; recovery and reconciliation add none.
+        self.assertEqual(adapter.calls, 1)
+
+    def test_recovery_still_requires_authenticated_readback_evidence(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        key = self._hard_killed_dispatch(adapter)
+        self._recover()
+
+        unlinked = copy.deepcopy(self.result)
+        unlinked["correlation"]["correlation_id"] = "corr-SOMETHING-ELSE"
+        with self.assertRaises(PacketContractError):
+            self.runtime.reconcile_result(
+                self.work, unlinked, provider="claude", writer_token=self.token
+            )
+
+        foreign_provider = copy.deepcopy(self.result)
+        foreign_provider["provider"] = "openai"
+        with self.assertRaises(PacketContractError):
+            self.runtime.reconcile_result(
+                self.work, foreign_provider, provider="claude", writer_token=self.token
+            )
+
+        # Recovery widened nothing: the row still holds no result.
+        self.assertEqual(self._ledger_status(key), "RECONCILIATION_REQUIRED")
+        self.assertEqual(adapter.calls, 1)
+
+    def test_recovery_requires_an_explicit_attestation(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        key = self._hard_killed_dispatch(adapter)
+
+        # The default is deliberately unusable: a caller cannot recover by accident.
+        with self.assertRaisesRegex(RuntimeContractError, "explicit attestation"):
+            self.runtime.recover_stranded_dispatch(
+                self.work, provider="claude", writer_token=self.token
+            )
+        with self.assertRaisesRegex(RuntimeContractError, "explicit attestation"):
+            self._recover(dispatch_process_confirmed_stopped=False)
+        self.assertEqual(self._ledger_status(key), "DISPATCHING")
+
+    def test_recovery_fails_closed_on_a_wrong_writer(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        key = self._hard_killed_dispatch(adapter)
+
+        foreign = WriterOwnershipToken.issue(
+            task_id=self.work["task_id"], owner_id="someone-else"
+        )
+        with self.assertRaisesRegex(RuntimeContractError, "writer ownership"):
+            self._recover(writer_token=foreign)
+
+        forged = WriterOwnershipToken(
+            task_id=self.token.task_id, owner_id=self.token.owner_id, value="forged"
+        )
+        with self.assertRaisesRegex(RuntimeContractError, "writer ownership"):
+            self._recover(writer_token=forged)
+
+        other_task = WriterOwnershipToken.issue(
+            task_id="DIR-OTHER-TASK", owner_id=self.token.owner_id
+        )
+        with self.assertRaisesRegex(RuntimeContractError, "task writer token"):
+            self._recover(writer_token=other_task)
+
+        self.assertEqual(self._ledger_status(key), "DISPATCHING")
+
+    def test_recovery_fails_closed_on_wrong_packet_or_provider_bindings(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        key = self._hard_killed_dispatch(adapter)
+
+        with self.assertRaisesRegex(RuntimeContractError, "different execution"):
+            self._recover(provider="openai")
+
+        mutated = copy.deepcopy(self.work)
+        mutated["objective"] = "A different objective under the same idempotency key."
+        with self.assertRaisesRegex(RuntimeContractError, "different execution"):
+            self._recover(work_packet=mutated)
+
+        unknown_key = copy.deepcopy(self.work)
+        unknown_key["idempotency_key"] = "DIR-EXAMPLE:1:never-dispatched"
+        with self.assertRaisesRegex(RuntimeContractError, "no dispatch exists"):
+            self._recover(work_packet=unknown_key)
+
+        self.assertEqual(self._ledger_status(key), "DISPATCHING")
+
+    def test_recovery_refuses_terminal_and_legacy_states(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        key = self._hard_killed_dispatch(adapter)
+
+        for status, expected in (
+            ("REJECTED", "recoverable live dispatch"),
+            ("CLAIMED", "recoverable live dispatch"),
+        ):
+            with closing(sqlite3.connect(self.ledger_path)) as connection:
+                connection.execute(
+                    "UPDATE runtime_dispatch_ledger SET status=? WHERE idempotency_key=?",
+                    (status, key),
+                )
+                connection.commit()
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(RuntimeContractError, expected):
+                    self._recover()
+                self.assertEqual(self._ledger_status(key), status)
+        self.assertEqual(adapter.calls, 1)
+
+    def test_recovery_of_a_completed_dispatch_replays_instead_of_transitioning(self):
+        adapter = FakeAdapter(self.result)
+        completed = self.runtime.run_packet(
+            self.work,
+            provider="claude",
+            execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+            adapter=adapter,
+            writer_token=self.token,
+        )
+        self.assertEqual(completed.status, RuntimeExecutionStatus.COMPLETED)
+
+        replayed = self._recover()
+
+        self.assertEqual(replayed.status, RuntimeExecutionStatus.REPLAYED)
+        self.assertEqual(
+            replayed.result_packet_digest, completed.result_packet_digest
+        )
+        self.assertEqual(
+            self._ledger_status(self.work["idempotency_key"]), "COMPLETED"
+        )
+        self.assertEqual(adapter.calls, 1)
+
+    def test_replayed_recovery_is_idempotent(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        key = self._hard_killed_dispatch(adapter)
+
+        first = self._recover()
+        second = self._recover()
+        third = self._recover()
+
+        self.assertEqual(first.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED)
+        for repeat in (second, third):
+            self.assertEqual(
+                repeat.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+            )
+            self.assertEqual(repeat.reason, "dispatch is already awaiting reconciliation")
+        self.assertEqual(self._ledger_status(key), "RECONCILIATION_REQUIRED")
+        self.assertEqual(adapter.calls, 1)
+
+    def test_concurrent_recovery_transitions_the_row_exactly_once(self):
+        adapter = FakeAdapter(self.result, failure=TimeoutError("unknown state"))
+        key = self._hard_killed_dispatch(adapter)
+
+        workers = 6
+        start = threading.Barrier(workers)
+        outcomes: list[Any] = [None] * workers
+        errors: list[BaseException] = []
+
+        def recover(index: int) -> None:
+            try:
+                start.wait(timeout=30)
+                outcomes[index] = self._recover()
+            except BaseException as exc:  # noqa: BLE001 - reported, not swallowed
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=recover, args=(index,)) for index in range(workers)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(self._ledger_status(key), "RECONCILIATION_REQUIRED")
+        transitioned = [
+            outcome
+            for outcome in outcomes
+            if outcome is not None
+            and outcome.reason.startswith("stranded dispatch moved to reconciliation")
+        ]
+        self.assertEqual(len(transitioned), 1)
+        for outcome in outcomes:
+            self.assertIsNotNone(outcome)
+            self.assertEqual(
+                outcome.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+            )
+        self.assertEqual(adapter.calls, 1)
+# [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]]
 
 
 class TransportPayloadTests(_RuntimeFixture, unittest.TestCase):

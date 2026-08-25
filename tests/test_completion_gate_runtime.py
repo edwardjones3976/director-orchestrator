@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import os
 import sqlite3
 import subprocess
 import sys
@@ -397,6 +399,104 @@ class CompletionGateRuntimeTests(unittest.TestCase):
                             enabled=True,
                             isolated_proof_enabled=True,
                         )
+
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | BEGIN]]
+    def _script_repository(self, temporary: str):
+        """A committed repository whose gate is bound to a repository-owned script."""
+
+        repository = Path(temporary) / "repository"
+        repository.mkdir()
+        subprocess.run(("git", "init", "-q"), cwd=repository, check=True)
+        subprocess.run(
+            ("git", "config", "user.email", "completion@example.invalid"),
+            cwd=repository, check=True,
+        )
+        subprocess.run(
+            ("git", "config", "user.name", "Completion Gate Test"),
+            cwd=repository, check=True,
+        )
+        (repository / "scripts").mkdir()
+        script = repository / "scripts" / "check_completion.py"
+        script.write_bytes(b"print('OK')\n")
+        subprocess.run(("git", "add", "-A"), cwd=repository, check=True)
+        subprocess.run(("git", "commit", "-q", "-m", "script"), cwd=repository, check=True)
+
+        definition = RunnerDefinition.build(
+            "repository_owned_script",
+            sys.executable,
+            (self.profile,),
+            maximum_timeout_seconds=300,
+        )
+        self.registry = RunnerRegistry((definition,))
+        head = self._git_head(repository)
+        blob_sha = subprocess.check_output(
+            ("git", "rev-parse", "HEAD:scripts/check_completion.py"),
+            cwd=repository, text=True,
+        ).strip()
+        approval_digest = "sha256:" + "a" * 64
+
+        gate = self.ledger["director_gates"][0]
+        gate["runner_id"] = "repository_owned_script"
+        gate["runner_definition_digest"] = definition.definition_digest
+        gate["script_binding"] = {
+            "path": "scripts/check_completion.py",
+            "blob_sha": blob_sha,
+            "content_digest": "sha256:" + hashlib.sha256(script.read_bytes()).hexdigest(),
+            "bound_head_sha": head,
+            "approval_digest": approval_digest,
+        }
+        self.ledger["runner_registry_digest"] = self.registry.registry_digest
+        self.ledger["expected_head_sha"] = head
+        rebind_ledger(self.ledger)
+
+        planned = self.planned_predecessor()
+        self.bind_predecessor(planned)
+        self.context = self._context()
+        verified = validate_gate_ledger(
+            self.ledger,
+            context=self.context,
+            predecessor=planned,
+            runner_registry=self.registry,
+        )
+        return repository, script, verified, frozenset({approval_digest})
+
+    def test_a_hardlinked_repository_script_is_rejected(self):
+        """A second name for the script's inode is refused before execution.
+
+        A hard link has no distinguishable path component, so the containment walk
+        cannot see it: the Git blob, the content digest, and the resolved path all
+        still match. Only the link count distinguishes a repository-owned script
+        from one whose bytes an alias outside the repository can still replace.
+        """
+
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, script, verified, approvals = self._script_repository(temporary)
+
+            def execute():
+                return self.registry.execute(
+                    verified,
+                    "director.contract-tests",
+                    repository_root=repository,
+                    enabled=True,
+                    isolated_proof_enabled=True,
+                    authenticated_script_approval_digests=approvals,
+                )
+
+            # Negative control: the identical gate passes while the script has one
+            # name, so the rejection below is caused by the hard link alone.
+            self.assertEqual("PASS", execute().status)
+
+            alias = Path(temporary) / "outside-alias.py"
+            try:
+                os.link(script, alias)
+            except (OSError, NotImplementedError, AttributeError) as exc:
+                self.skipTest(f"this platform cannot create hard links: {exc}")
+            if script.lstat().st_nlink < 2:
+                self.skipTest("this platform does not report hard-link counts")
+
+            with self.assertRaisesRegex(CompletionGateError, "hard link"):
+                execute()
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]]
 
     def test_aggregate_rejects_planned_or_partial_evidence(self):
         planned = self.planned_predecessor()

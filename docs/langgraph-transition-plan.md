@@ -255,3 +255,37 @@ bytes, then validates the raw reply against `model-result-packet-v1` and re-chec
 work/result linkage before anything can reach the dispatch ledger. The v1 packet
 contract is therefore the live boundary in both directions, not a convention.
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->
+
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | BEGIN]] -->
+### Recovering a stranded dispatch
+
+A live dispatch reserves its idempotency key as `DISPATCHING` in one committed
+transaction, and `run_packet` only moves it to `RECONCILIATION_REQUIRED` from its
+exception handler. A hard kill — SIGKILL, power loss, container eviction — can land
+between the two and leave a durable `DISPATCHING` row that no ordinary edge accepts:
+`run_packet` refuses to resend it, `open_reconciliation` accepts only a legacy
+`CLAIMED` row, and `reconcile_result` accepts only `RECONCILIATION_REQUIRED`.
+
+`LangGraphPacketRuntime.recover_stranded_dispatch` is the bounded recovery edge for
+that one case. It performs exactly one transition, `DISPATCHING` to
+`RECONCILIATION_REQUIRED`, and nothing else.
+
+| Property | Behaviour |
+| --- | --- |
+| Explicit | Requires `dispatch_process_confirmed_stopped=True`; the default refuses |
+| Bound | Requires the task writer token and the exact packet, provider, and idempotency-key bindings already recorded in the ledger |
+| Fail-closed | `CLAIMED`, `REJECTED`, a wrong writer, or a mismatched binding raises; the row is left untouched |
+| Idempotent | A repeat call reports that the dispatch is already awaiting reconciliation |
+| Concurrency-safe | `BEGIN IMMEDIATE` plus a status-guarded update, so concurrent callers transition the row once |
+| Never infers completion | Contacts no provider, resends nothing, and records no result |
+
+Recovery does not decide what the provider did. The owner must still bind
+authenticated readback evidence through `reconcile_result`, which remains the only
+path that can write a result packet.
+
+The attestation is required because a `DISPATCHING` row is indistinguishable from a
+dispatch still in flight in another worker, and the ledger cannot settle that
+question. A wrong attestation still fails closed rather than racing: the live
+worker's result write is guarded on `CLAIMED`/`DISPATCHING`, so it loses its
+reservation, its result is refused, and the row stays in reconciliation.
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]] -->

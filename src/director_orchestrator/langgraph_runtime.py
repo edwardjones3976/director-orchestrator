@@ -481,13 +481,19 @@ class LangGraphPacketRuntime:
                     return None
                 return RuntimeExecutionOutcome(
                     RuntimeExecutionStatus.OWNER_DECISION_REQUIRED,
-                    "dispatch state is unresolved; reconcile it instead of sending a duplicate",
+                    "dispatch state is unresolved; open reconciliation "
+                    "(open_reconciliation for a legacy CLAIMED row, "
+                    "recover_stranded_dispatch for a hard-killed DISPATCHING row) and "
+                    "bind a provider readback instead of sending a duplicate",
                 )
             # Live dispatch claims the key directly as DISPATCHING in this one
             # transaction. A separate CLAIMED -> DISPATCHING step would leave a
             # window where a crash strands the key in a state no retry and no
-            # reconciliation could resolve. Offline replay keeps CLAIMED because
-            # it contacts nothing and is safe to resume.
+            # reconciliation could resolve. A hard kill after this commit can still
+            # strand DISPATCHING before `run_packet` reaches its exception handler;
+            # `recover_stranded_dispatch` is the explicit, attested edge for that.
+            # Offline replay keeps CLAIMED because it contacts nothing and is safe
+            # to resume.
             initial_status = (
                 "DISPATCHING"
                 if execution_mode == RuntimeExecutionMode.LIVE_SAFE
@@ -789,9 +795,11 @@ class LangGraphPacketRuntime:
                     "dispatch is already awaiting reconciliation",
                 )
             if row[9] != "CLAIMED":
-                # DISPATCHING may still be in flight in another worker, and
-                # REJECTED is terminal. Neither is recoverable by this edge.
-                raise RuntimeContractError("dispatch is not a recoverable claim")
+                # REJECTED is terminal. DISPATCHING is indistinguishable from a
+                # dispatch still in flight in another worker, so it is recoverable
+                # only through `recover_stranded_dispatch`, which requires the
+                # caller to attest that the dispatching process has stopped.
+                raise RuntimeContractError("dispatch is not a recoverable legacy claim")
             connection.execute(
                 "UPDATE runtime_dispatch_ledger SET status='RECONCILIATION_REQUIRED', "
                 "error_code=? WHERE idempotency_key=? AND status='CLAIMED'",
@@ -801,6 +809,97 @@ class LangGraphPacketRuntime:
             RuntimeExecutionStatus.OWNER_DECISION_REQUIRED,
             "stranded claim moved to reconciliation; bind a provider readback without resending",
         )
+
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | BEGIN]]
+    def recover_stranded_dispatch(
+        self,
+        work_packet: Mapping[str, Any],
+        *,
+        provider: str,
+        writer_token: WriterOwnershipToken,
+        dispatch_process_confirmed_stopped: bool = False,
+    ) -> RuntimeExecutionOutcome:
+        """Move one hard-killed `DISPATCHING` row into reconciliation. Never redispatches.
+
+        `run_packet` marks an ambiguous live dispatch `RECONCILIATION_REQUIRED` from
+        its exception handler, but a hard process kill — SIGKILL, power loss,
+        container eviction — can land between the atomic `DISPATCHING` reservation in
+        `_reserve` and that handler ever running. The surviving row is then
+        unresolvable by every other edge: `_reserve` refuses to resend it,
+        `open_reconciliation` only accepts a legacy `CLAIMED` row, and
+        `reconcile_result` only accepts `RECONCILIATION_REQUIRED`.
+
+        This is the bounded recovery edge for exactly that case. It performs one
+        transition — `DISPATCHING` to `RECONCILIATION_REQUIRED` — and nothing else.
+        It contacts no provider, resends no packet, writes no result, and infers
+        nothing about whether the provider ran: the owner must still bind
+        authenticated readback evidence through `reconcile_result`, which is the only
+        path that can record a result.
+
+        A `DISPATCHING` row is indistinguishable from a dispatch still in flight in
+        another worker, and that distinction is not derivable from the ledger, so the
+        caller must attest to it explicitly. A wrong attestation still fails closed
+        rather than racing: the live worker's `_persist_result` update is guarded on
+        `CLAIMED`/`DISPATCHING`, so it loses its reservation, its result is refused,
+        and the row stays in reconciliation awaiting authenticated evidence.
+        """
+
+        if not dispatch_process_confirmed_stopped:
+            raise RuntimeContractError(
+                "stranded-dispatch recovery requires an explicit attestation that the "
+                "dispatching process has stopped"
+            )
+        work = validate_packet("work", work_packet)
+        if writer_token.task_id != work["task_id"]:
+            raise RuntimeContractError("recovery requires the task writer token")
+        with self._transaction() as connection:
+            # BEGIN IMMEDIATE, so the read and the guarded update below are one
+            # serialized writer; a concurrent recovery either precedes this whole
+            # block or observes RECONCILIATION_REQUIRED and transitions nothing.
+            self._assert_writer(connection, writer_token)
+            row = connection.execute(
+                "SELECT task_id, assignment_id, provider, execution_mode, "
+                "work_packet_digest, authority_snapshot_digest, writer_token_digest, "
+                "result_packet_json, result_packet_digest, status, error_code "
+                "FROM runtime_dispatch_ledger WHERE idempotency_key=?",
+                (work["idempotency_key"],),
+            ).fetchone()
+            if row is None:
+                raise RuntimeContractError("no dispatch exists to recover")
+            self._validate_existing_row(
+                row,
+                work=work,
+                provider=provider,
+                execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+                writer_token_digest=writer_token.digest,
+            )
+            if row[9] == "COMPLETED":
+                return self._completed_outcome(
+                    row, replayed=True, work=work, provider=provider
+                )
+            if row[9] == "RECONCILIATION_REQUIRED":
+                return RuntimeExecutionOutcome(
+                    RuntimeExecutionStatus.OWNER_DECISION_REQUIRED,
+                    "dispatch is already awaiting reconciliation",
+                )
+            if row[9] != "DISPATCHING":
+                # CLAIMED belongs to `open_reconciliation`; REJECTED is terminal.
+                raise RuntimeContractError("dispatch is not a recoverable live dispatch")
+            cursor = connection.execute(
+                "UPDATE runtime_dispatch_ledger SET status='RECONCILIATION_REQUIRED', "
+                "error_code=? WHERE idempotency_key=? AND status='DISPATCHING'",
+                ("StrandedDispatchRecovered", work["idempotency_key"]),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeContractError(
+                    "stranded dispatch lost its durable reservation"
+                )
+        return RuntimeExecutionOutcome(
+            RuntimeExecutionStatus.OWNER_DECISION_REQUIRED,
+            "stranded dispatch moved to reconciliation; bind a provider readback "
+            "without resending",
+        )
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]]
 
     def reconcile_result(
         self,
