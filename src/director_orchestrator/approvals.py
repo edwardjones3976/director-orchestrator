@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | BEGIN]]
@@ -871,8 +872,8 @@ def verify_slack_gateway_proof(
     channel_id: str,
     path: str,
     now: int | None = None,
-) -> tuple[str, int]:
-    """Verify transport provenance and return the durable nonce claim."""
+) -> tuple[str, str, int]:
+    """Verify transport provenance and return the bound decision and nonce claim."""
 
     proof = approval.slack_gateway_proof
     if proof is None or len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
@@ -902,7 +903,12 @@ def verify_slack_gateway_proof(
     nonce_digest = _canonical_digest(
         {"task_id": record.task_id, "nonce": proof.nonce}
     )
-    return nonce_digest, proof.issued_at + _SLACK_GATEWAY_PROOF_TTL_SECONDS
+    decision_kind, _ = _slack_gateway_decision(record)
+    return (
+        decision_kind,
+        nonce_digest,
+        proof.issued_at + _SLACK_GATEWAY_PROOF_TTL_SECONDS,
+    )
 
 
 def record_oracle_recovery(
@@ -1364,3 +1370,4 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]

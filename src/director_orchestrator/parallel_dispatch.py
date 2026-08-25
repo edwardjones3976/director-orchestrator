@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | BEGIN]]
 """Deterministic policy and durable ledger primitives for bounded dispatch batches.
 
@@ -565,8 +566,12 @@ class ParallelDispatchLedger:
             active = int(
                 connection.execute(
                     """SELECT COUNT(*) FROM parallel_dispatch_members
-                    WHERE provider = ? AND state = ?""",
-                    (member["provider"], MemberState.DISPATCHING.value),
+                    WHERE provider = ? AND state IN (?, ?)""",
+                    (
+                        member["provider"],
+                        MemberState.DISPATCHING.value,
+                        MemberState.AMBIGUOUS.value,
+                    ),
                 ).fetchone()[0]
             )
             if active >= provider_limit:
@@ -798,3 +803,4 @@ class DailyTaskBudgetLedger:
             )
             return reserved + task_budget_usd
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]

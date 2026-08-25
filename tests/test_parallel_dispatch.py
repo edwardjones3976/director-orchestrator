@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -321,6 +322,44 @@ class ParallelDispatchLedgerTests(unittest.TestCase):
             )
         )
 
+    def test_ambiguous_dispatch_holds_provider_slot_until_reconciled(self):
+        first = plan_dispatch_batch(
+            task_id="DIR-AMBIGUOUS-A",
+            ordinal=1,
+            candidates=[candidate(21, provider="claude")],
+            completed_sequences=(),
+            available_budget_usd=1.0,
+            policy=enabled_policy(),
+        ).batch
+        second = plan_dispatch_batch(
+            task_id="DIR-AMBIGUOUS-B",
+            ordinal=1,
+            candidates=[candidate(22, provider="claude")],
+            completed_sequences=(),
+            available_budget_usd=1.0,
+            policy=enabled_policy(),
+        ).batch
+        self.ledger.reserve(first)
+        self.ledger.reserve(second)
+        first_key = first.members[0].effect_key
+        second_key = second.members[0].effect_key
+
+        self.assertTrue(self.ledger.claim(first.batch_id, first_key, provider_limit=1))
+        self.ledger.record(first.batch_id, first_key, MemberState.AMBIGUOUS)
+        self.assertFalse(
+            self.ledger.claim(second.batch_id, second_key, provider_limit=1)
+        )
+
+        self.ledger.reconcile(
+            first.batch_id,
+            first_key,
+            succeeded=False,
+            detail="authenticated terminal readback confirmed failure",
+        )
+        self.assertTrue(
+            self.ledger.claim(second.batch_id, second_key, provider_limit=1)
+        )
+
 
 class DailyTaskBudgetLedgerTests(unittest.TestCase):
     def test_full_task_allowances_enforce_the_daily_stop_across_restart(self):
@@ -402,3 +441,4 @@ class DailyTaskBudgetLedgerTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]

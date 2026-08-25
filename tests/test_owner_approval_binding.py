@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:10 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | BEGIN]]
@@ -3213,6 +3214,59 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
             self.assertEqual(TaskStatus.QUEUED, restarted.status)
             run.assert_awaited_once_with(record.task_id)
 
+    def test_failed_retry_proof_cannot_be_consumed_as_paid_rearm(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            record = _record(owner_approved=True, approved=[1])
+            record.task_id = "DIR-FAILED-DRY-RETRY"
+            record.status = TaskStatus.FAILED
+            record.error = "Provider failed before dispatch"
+            record.intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
+            original_plan = record.plan.model_dump(mode="json")
+            task_store.create(record)
+            current, version = task_store.get_versioned(record.task_id)
+            test_settings = replace(
+                self._settings(),
+                slack_owner_user_id="U0B9UJ86D27",
+            )
+            retry_approval = _retry_approval(
+                current,
+                note="Retry the exact failed pre-dispatch assignment",
+            ).model_copy(update={"source": OwnerApprovalSource.SLACK_COMMAND})
+            approval = _signed_slack_approval(
+                current,
+                version,
+                retry_approval,
+                secret=test_settings.slack_gateway_secret,
+                shared_secret=test_settings.shared_secret,
+                channel_id=test_settings.slack_channel_id,
+            )
+            run = AsyncMock(return_value=None)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                response = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json=approval.model_dump(mode="json"),
+                )
+
+            self.assertEqual(200, response.status_code)
+            stored = task_store.get(record.task_id)
+            self.assertEqual(TaskStatus.QUEUED, stored.status)
+            self.assertEqual(
+                IntakeAuthentication.BEARER_DRY_RUN,
+                stored.intake_authentication,
+            )
+            self.assertEqual(original_plan, stored.plan.model_dump(mode="json"))
+            self.assertIsNone(stored.error)
+            run.assert_awaited_once_with(record.task_id)
+
     def test_many_bearer_dry_run_records_cannot_exhaust_paid_task_budget(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             database = str(Path(directory) / "director.sqlite3")
@@ -3603,3 +3657,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]

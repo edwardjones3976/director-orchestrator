@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
@@ -112,6 +113,17 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertIn(
             "only ok/prompted evidence is acceptable",
             self.script,
+        )
+        self.assertIn('$completionVerifiedProviders = @("claude")', self.script)
+        self.assertIn(
+            "requires authenticated terminal callback evidence",
+            self.script,
+        )
+        self.assertGreaterEqual(
+            self.script.count(
+                "-CompletionVerifiedProviders $completionVerifiedProviders"
+            ),
+            3,
         )
 
     def test_usage_cooldown_evidence_fails_closed_for_error_and_skipped(self):
@@ -433,3 +445,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]

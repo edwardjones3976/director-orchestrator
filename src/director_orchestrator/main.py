@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -527,20 +528,17 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
     current, expected_version = versioned
     gateway_nonce_digest: str | None = None
     gateway_nonce_expires_at: int | None = None
+    verified_decision_kind: str | None = None
     is_paid_rearm = False
     if approval.source in {
         OwnerApprovalSource.SLACK_BUTTON,
         OwnerApprovalSource.SLACK_COMMAND,
     }:
-        is_paid_rearm = (
-            current.intake_authentication
-            != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
-        )
-        if is_paid_rearm and approval.source != OwnerApprovalSource.SLACK_COMMAND:
-            raise StaleApproval(
-                "Paid rearm requires a fresh authenticated Slack command"
-            )
-        gateway_nonce_digest, gateway_nonce_expires_at = verify_slack_gateway_proof(
+        (
+            verified_decision_kind,
+            gateway_nonce_digest,
+            gateway_nonce_expires_at,
+        ) = verify_slack_gateway_proof(
             settings.slack_gateway_secret,
             settings.shared_secret,
             current,
@@ -549,6 +547,11 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
             channel_id=settings.slack_channel_id,
             path=f"/v1/tasks/{task_id}/approve",
         )
+        is_paid_rearm = verified_decision_kind == "paid_rearm"
+        if is_paid_rearm and approval.source != OwnerApprovalSource.SLACK_COMMAND:
+            raise StaleApproval(
+                "Paid rearm requires a fresh authenticated Slack command"
+            )
     elif approval.slack_gateway_proof is not None:
         raise StaleApproval("Slack gateway proof cannot authorize an API request")
     elif current.status == TaskStatus.FAILED:
@@ -776,3 +779,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]

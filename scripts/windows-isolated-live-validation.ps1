@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
@@ -348,7 +349,8 @@ function Assert-CoolingProviderEvidence {
         [Parameter(Mandatory = $true)][string[]]$Providers,
         [Parameter(Mandatory = $true)]$LatestRecords,
         [Parameter(Mandatory = $true)][DateTimeOffset]$Now,
-        [int]$CooldownWindowMinutes = 15
+        [int]$CooldownWindowMinutes = 15,
+        [string[]]$CompletionVerifiedProviders = @()
     )
 
     $accepted = @()
@@ -365,6 +367,9 @@ function Assert-CoolingProviderEvidence {
         if ($status -notin @("ok", "prompted")) {
             throw "Cooling provider $provider latest status is '$status'; only ok/prompted evidence is acceptable."
         }
+        if ($provider -in $CompletionVerifiedProviders -and $status -cne "ok") {
+            throw "Cooling provider $provider requires authenticated terminal callback evidence; status '$status' is not completion-verified."
+        }
         $checkedAt = [DateTimeOffset]::Parse([string]$record.checked_at)
         $age = $Now - $checkedAt
         if ($age -lt [TimeSpan]::Zero -or $age -ge [TimeSpan]::FromMinutes($CooldownWindowMinutes)) {
@@ -380,7 +385,8 @@ function Assert-ScheduledCycleEvidence {
         [Parameter(Mandatory = $true)][string[]]$Providers,
         [Parameter(Mandatory = $true)][string]$CycleId,
         [Parameter(Mandatory = $true)]$Records,
-        [Parameter(Mandatory = $true)][DateTimeOffset]$StartedAt
+        [Parameter(Mandatory = $true)][DateTimeOffset]$StartedAt,
+        [string[]]$CompletionVerifiedProviders = @()
     )
 
     $matched = @($Records | Where-Object {
@@ -401,6 +407,9 @@ function Assert-ScheduledCycleEvidence {
         $status = [string]$record.status
         if ($status -notin @("ok", "prompted")) {
             throw "Scheduled provider $provider status is '$status'; only ok/prompted evidence is acceptable."
+        }
+        if ($provider -in $CompletionVerifiedProviders -and $status -cne "ok") {
+            throw "Scheduled provider $provider requires authenticated terminal callback evidence; status '$status' is not completion-verified."
         }
         $accepted += $record
     }
@@ -666,6 +675,10 @@ try {
         -CoolingDownProviders $accepted.cooling_down_providers
     $scheduledProviders = @($partition.ScheduledProviders)
     $coolingProviders = @($partition.CoolingDownProviders)
+    $completionVerifiedProviders = @()
+    if ($ProfileName -ceq "long-table") {
+        $completionVerifiedProviders = @("claude")
+    }
 
     if ($runStatus -ceq "not_due") {
         Write-Host (
@@ -676,7 +689,8 @@ try {
         $evidence = Assert-CoolingProviderEvidence `
             -Providers $coolingProviders `
             -LatestRecords $latest `
-            -Now ([DateTimeOffset]::UtcNow)
+            -Now ([DateTimeOffset]::UtcNow) `
+            -CompletionVerifiedProviders $completionVerifiedProviders
         $evidence | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
         Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $true
         if ($ApiOnly) {
@@ -747,11 +761,13 @@ try {
         -Providers $scheduledProviders `
         -CycleId $cycleId `
         -Records $latest `
-        -StartedAt $startedAt
+        -StartedAt $startedAt `
+        -CompletionVerifiedProviders $completionVerifiedProviders
     $coolingEvidence = Assert-CoolingProviderEvidence `
         -Providers $coolingProviders `
         -LatestRecords $latest `
-        -Now ([DateTimeOffset]::UtcNow)
+        -Now ([DateTimeOffset]::UtcNow) `
+        -CompletionVerifiedProviders $completionVerifiedProviders
     $allEvidence = @($scheduledEvidence + $coolingEvidence)
     $allEvidence | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
 
@@ -839,3 +855,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
