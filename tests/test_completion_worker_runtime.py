@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
@@ -66,6 +67,7 @@ class CompletionWorkerRuntimeTests(unittest.TestCase):
 
         container = runtime.worker_registry.resolve("container.python_compileall.src-tests")
         self.assertNotIn("-c", container.fixed_argv)
+        self.assertEqual(("python", "-I", "-m", "compileall"), container.fixed_argv[:4])
         with self.assertRaises(CompletionWorkerError):
             runtime.worker_registry.resolve("host.python_unittest.discover-tests")
         with self.assertRaises(CompletionWorkerError):
@@ -132,3 +134,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
@@ -359,6 +360,44 @@ class CompletionWorkerTests(unittest.TestCase):
             Path(os.environ["SYSTEMROOT"], "System32") if os.name == "nt" else Path("/")
         )
         self.assertEqual(expected_cwd, backend._trusted_cwd())
+
+    def test_container_compileall_cannot_load_repository_startup_modules(self):
+        backend = DisposableContainerWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        isolated_compileall = DisposableContainerSpec.build(
+            spec_id="container.compile",
+            runner_id="python_compileall",
+            registry_digest=DIGEST_A,
+            runner_definition_digest=DIGEST_B,
+            parameter_profile_id="compile-src",
+            parameter_profile_digest=DIGEST_C,
+            image="registry.example/director-worker@sha256:" + "e" * 64,
+            fixed_argv=("python", "-I", "-m", "compileall", "-q", "src", "tests"),
+        )
+        request = self.request(
+            worker_spec_id=isolated_compileall.spec_id,
+            worker_spec_digest=isolated_compileall.spec_digest,
+        )
+        with _tracked_repository_snapshot(
+            self.repository, self.head, deadline=time.monotonic() + 30
+        ) as snapshot:
+            command = backend.command(isolated_compileall, request, snapshot)
+        self.assertNotIn("PYTHONPATH=/workspace/src", command)
+        self.assertEqual(
+            isolated_compileall.fixed_argv,
+            command[-len(isolated_compileall.fixed_argv):],
+        )
+
+        unsafe_compileall = replace(
+            isolated_compileall,
+            fixed_argv=("python", "-m", "compileall", "-q", "src", "tests"),
+        )
+        with _tracked_repository_snapshot(
+            self.repository, self.head, deadline=time.monotonic() + 30
+        ) as snapshot:
+            with self.assertRaisesRegex(CompletionWorkerError, "isolated Python"):
+                backend.command(unsafe_compileall, request, snapshot)
 
     def test_host_contract_supplies_pythonpath_and_uses_neutral_cwd(self):
         backend = AuditedHostWorkerBackend(
@@ -727,3 +766,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]

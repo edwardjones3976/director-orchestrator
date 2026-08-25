@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
@@ -726,6 +727,17 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
             raise CompletionWorkerError("repository path cannot be encoded safely for a mount")
         name = _container_name(request.job_id)
         limits = spec.limits
+        if spec.runner_id == "python_compileall" and tuple(spec.fixed_argv[1:4]) != (
+            "-I",
+            "-m",
+            "compileall",
+        ):
+            raise CompletionWorkerError(
+                "container compileall must use isolated Python startup"
+            )
+        repository_environment: tuple[str, ...] = ()
+        if spec.runner_id != "python_compileall":
+            repository_environment = ("--env", "PYTHONPATH=/workspace/src")
         return (
             self.binding.path,
             "run",
@@ -755,8 +767,7 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
             f"type=bind,src={snapshot_root},dst=/workspace,readonly",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,nodev,size=67108864",
-            "--env",
-            "PYTHONPATH=/workspace/src",
+            *repository_environment,
             "--env",
             "PYTHONPYCACHEPREFIX=/tmp/pycache",
             spec.image,
@@ -955,7 +966,6 @@ def _verified_container_controls(
         ("--user", spec.run_as_user),
         ("--workdir", spec.working_directory),
         ("--mount", f"type=bind,src={snapshot.root},dst=/workspace,readonly"),
-        ("--env", "PYTHONPATH=/workspace/src"),
         ("--env", "PYTHONPYCACHEPREFIX=/tmp/pycache"),
     )
     if not all(flag in command for flag in required_flags):
@@ -965,6 +975,13 @@ def _verified_container_controls(
     image_index = command.index(spec.image)
     if tuple(command[image_index + 1 :]) != spec.fixed_argv:
         raise CompletionWorkerError("container worker command binding changed")
+    if spec.runner_id == "python_compileall":
+        if _command_pair(command, "--env", "PYTHONPATH=/workspace/src"):
+            raise CompletionWorkerError("container compileall import path is not isolated")
+        if tuple(spec.fixed_argv[1:4]) != ("-I", "-m", "compileall"):
+            raise CompletionWorkerError("container compileall startup is not isolated")
+    elif not _command_pair(command, "--env", "PYTHONPATH=/workspace/src"):
+        raise CompletionWorkerError("container worker controls are incomplete")
     return WorkerBackendCapabilities(
         tier=WorkerTier.DISPOSABLE_CONTAINER,
         low_privilege_identity=spec.run_as_user not in {"0", "0:0", "root"},
@@ -1050,3 +1067,4 @@ def _evidence(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]
