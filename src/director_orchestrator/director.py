@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | BEGIN]]
@@ -101,7 +102,7 @@ class OpenAIDirector:
         readiness = self.settings.readiness()
         available_specialists = [
             name
-            for name in ("claude", "cursor", "gemini", "perplexity")
+            for name in ("claude", "cursor", "gemini", "grok", "perplexity")
             if readiness.get(name, False)
         ]
         request = {
@@ -129,9 +130,9 @@ class OpenAIDirector:
                 "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases.",
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
                 "Use estimated_cost_usd and max_task_budget_usd for the deterministic budget gate. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
-                "Treat OpenAI, Claude, and Cursor as the primary team.",
+                "Treat OpenAI, Claude, Cursor, and Grok as the primary team. Grok is the Cursor-family peer and shares Cursor's full task-eligibility profile.",
                 "Use Claude as the primary coding and general workhorse when configured.",
-                "Treat Cursor as a full-spectrum primary repository partner with a 90 percent capability-parity target relative to Claude and OpenAI Codex. Route low through critical work to Cursor by fit, independence, capacity, and evidence needs; do not reserve it only for overflow or second passes.",
+                "Treat Cursor as a full-spectrum primary repository partner with 100 percent task-capability parity relative to Claude and OpenAI Codex. Route low through critical work to Cursor by fit, independence, capacity, and evidence needs; do not reserve it only for overflow or second passes.",
                 "Cursor may handle research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership. It still cannot replace OpenAI acceptance, mandatory Codex Security, or an independent reviewer for its own work.",
                 "Use Gemini Antigravity only as a subordinate supplemental specialist for explicit boilerplate, scaffolding, low-level mechanical implementation, or alternate ideation. Its output is non-authoritative evidence: it cannot create a draft pull request, perform exact-SHA review, final acceptance, or deterministic merge, or define contract or methodology truth. Never route generic prototype, browser, visual, core methodology, temporal eligibility, evaluation, provenance, or acceptance work to it by keyword alone.",
                 "Every Antigravity work assignment must be followed by a Claude or Cursor work assignment that directly depends on it and independently verifies and integrates or rejects the artifact. The runtime binds that integration wording deterministically.",
@@ -139,6 +140,7 @@ class OpenAIDirector:
                 "Antigravity cannot initiate, self-route, widen, or autonomously continue a conversation. Once you invite it through a persisted debate assignment it is equally eligible to receive the bounded question, the vote options, the accepted declared-dependency contributions, and one bounded revision request, and to respond, rebut, ask a focused follow-up, or abstain at its configured advisory weight. Its debate assignments must use kind general, discussion_round 0 for a position and 1 for a rebuttal, and must leave repository, starting_ref, allow_draft_pr, public_research_query, and antigravity_directive unset. A debate seat grants no review, acceptance, merge, deployment, publication, external-write, access, or methodology authority.",
                 "Set kind on every assignment. Gemini work assignments permit only boilerplate, scaffolding, low_level_implementation, or abstract_ideation; Perplexity uses research; exact-SHA reviewers use exact_sha_review; use implementation or general otherwise.",
                 "Use Perplexity only as a supplemental specialist when its distinct public-source research and sourcing strengths materially help.",
+                "Treat Grok as a primary Cursor-family teammate with the same task-eligibility and advisory weight as Cursor. The Responses API contact is synchronous and tool-free; repository execution must use the separately authenticated Grok Build or Grok Bot surface in the named worktree. Transport limitations do not reduce Grok's team role, and no provider may accept its own exact candidate.",
                 "For medium, high, or critical complexity, prefer a bounded evidence-backed debate among available committee members before synthesis. Weighted voting is advisory only and cannot change authority or deterministic gates.",
                 "A debate is a first-class runtime feature. For medium, high, or critical work, emit a debate whenever at least two of Claude, Cursor, and Antigravity are configured and the hop/budget limits permit it. Create independent position assignments using discussion_phase=position and discussion_round=0, then exactly one rebuttal assignment per participant using discussion_phase=rebuttal and discussion_round=1. Populate debate.position_assignments and debate.rebuttal_assignments exactly; each rebuttal must depend on every position and on no other rebuttal. Perplexity may supply a prior public evidence assignment but can never be a debate participant or voter.",
                 "Count a producer's advisory vote at full configured weight while keeping that producer ineligible to review or accept its own work. Abstentions and unavailable members cast zero weight and never change the fixed configured denominator.",
@@ -346,3 +348,4 @@ class OpenAIDirector:
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

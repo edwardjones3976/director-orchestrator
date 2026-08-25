@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:55 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | BEGIN]]
@@ -704,7 +705,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 name: member["voting_power"]
                 for name, member in self.charter["committee"]["members"].items()
             },
-            {"antigravity": 1.0, "cursor": 1.5, "openai": 2.0, "claude": 2.5},
+            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.0, "claude": 2.5},
         )
         review = self.directive["review"]
         self.assertEqual(review["reviewer"], "different_non_author")
@@ -726,7 +727,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
     def test_explicit_planning_payload_ceiling_remains_bounded(self):
         payload = canonical_team_charter_json().encode("utf-8")
-        self.assertEqual(TEAM_CHARTER_MAX_BYTES, 11_264)
+        self.assertEqual(TEAM_CHARTER_MAX_BYTES, 12_512)
         self.assertLessEqual(len(payload), TEAM_CHARTER_MAX_BYTES)
         self.assertGreater(TEAM_CHARTER_MAX_BYTES - len(payload), 256)
 
@@ -1771,3 +1772,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:36 UTC | END]]

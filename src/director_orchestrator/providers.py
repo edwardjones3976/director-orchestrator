@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -63,7 +64,7 @@ class ProviderDailySpendLedger:
     """
 
     _EFFECT_KEY = re.compile(r"^[0-9a-f]{64}$")
-    _SUPPORTED = {ProviderName.GEMINI, ProviderName.PERPLEXITY}
+    _SUPPORTED = {ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY}
 
     def __init__(self, sqlite_path: str):
         self.path = sqlite_path
@@ -107,7 +108,9 @@ class ProviderDailySpendLedger:
         now: datetime | None = None,
     ) -> tuple[int, float]:
         if provider not in self._SUPPORTED:
-            raise ValueError("daily assignment spend applies only to Gemini and Perplexity")
+            raise ValueError(
+                "daily assignment spend applies only to Gemini, Grok, and Perplexity"
+            )
         if not self._EFFECT_KEY.fullmatch(effect_key):
             raise ValueError("provider spend reservation requires a canonical effect key")
         if request_limit < 1 or budget_usd <= 0 or estimated_cost_usd < 0:
@@ -814,6 +817,155 @@ class GeminiAdapter(ProviderAdapter):
             ) from exc
 
 
+class GrokAdapter(ProviderAdapter):
+    """xAI Responses API contact for the primary Grok teammate."""
+
+    name = ProviderName.GROK
+
+    def __init__(self, settings: Settings):
+        super().__init__(settings)
+        self._catalog_verified = False
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.settings.grok_api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _require_profile(self, assignment: Assignment | None = None) -> None:
+        failed = [
+            name
+            for name, ready in self.settings.grok_primary_readiness().items()
+            if not ready
+        ]
+        if failed:
+            raise ProviderError(
+                "Grok primary API contact is not ready: "
+                + ", ".join(failed)
+            )
+        if assignment is None:
+            return
+        if assignment.allow_draft_pr:
+            raise ProviderError("Grok cannot create branches or draft pull requests")
+        if assignment.public_research_query is not None:
+            raise ProviderError("Grok has no web-grounded research lane")
+        if assignment.estimated_cost_usd > self.settings.grok_daily_budget_usd:
+            raise ProviderError(
+                "Grok assignment estimate exceeds the configured daily budget ceiling"
+            )
+
+    @staticmethod
+    def _output_text(payload: dict[str, Any]) -> str | None:
+        if isinstance(payload.get("output_text"), str):
+            return payload["output_text"]
+        chunks: list[str] = []
+        for item in payload.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content", []):
+                if isinstance(content, dict) and isinstance(content.get("text"), str):
+                    chunks.append(content["text"])
+        return "".join(chunks) or None
+
+    def _run(self, payload: dict[str, Any]) -> ProviderRun:
+        if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
+            raise ProviderError("Grok response did not include a valid response ID")
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["id"],
+            status=payload.get("status", "completed"),
+            result=self._output_text(payload),
+            raw=payload,
+        )
+
+    async def _ensure_model_allowed(self, client: httpx.AsyncClient) -> None:
+        if self._catalog_verified:
+            return
+        response = await client.get(
+            f"{self.settings.grok_api_base}/models", headers=self.headers
+        )
+        response.raise_for_status()
+        payload = response.json()
+        models = {
+            item.get("id")
+            for item in payload.get("data", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if self.settings.grok_model not in models:
+            raise ProviderError(
+                "Configured Grok model is unavailable to the authenticated xAI key"
+            )
+        self._catalog_verified = True
+
+    def _input(
+        self,
+        assignment: Assignment,
+        context: str,
+        *,
+        revision_prompt: str | None = None,
+    ) -> str:
+        packet: dict[str, Any] = {
+            "role": "primary_cursor_family_teammate",
+            "task": assignment.task,
+            "acceptance": assignment.acceptance,
+            "context": context[: self.settings.grok_max_context_chars],
+            "constraints": [
+                "Complete the bounded assignment with concise evidence and an explicit result.",
+                "Do not browse, call tools, write repositories, create branches or pull requests, merge, deploy, publish, purchase, or change access.",
+                "Do not claim an external action that this API contact did not perform.",
+            ],
+        }
+        if revision_prompt is not None:
+            packet["revision_request"] = revision_prompt[:8_000]
+        return json.dumps(packet, ensure_ascii=True, separators=(",", ":"))
+
+    async def _submit(self, input_text: str) -> ProviderRun:
+        body = {
+            "model": self.settings.grok_model,
+            "input": input_text,
+            "max_output_tokens": self.settings.grok_max_output_tokens,
+            "tools": [],
+            "store": False,
+        }
+        async with httpx.AsyncClient(timeout=self.settings.grok_timeout_seconds) as client:
+            await self._ensure_model_allowed(client)
+            response = await client.post(
+                f"{self.settings.grok_api_base}/responses",
+                headers=self.headers,
+                json=body,
+            )
+            response.raise_for_status()
+        return self._run(response.json())
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        self._require_profile(assignment)
+        return await self._submit(self._input(assignment, context))
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        raise ProviderError("Grok Responses API calls are synchronous and cannot be polled")
+
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
+        del run
+        if assignment is None or context is None:
+            raise ProviderError("Grok revision requires the bound assignment and context")
+        self._require_profile(assignment)
+        return await self._submit(
+            self._input(assignment, context, revision_prompt=prompt)
+        )
+
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        self._require_profile()
+        return await self._submit(prompt)
+
+
 class PerplexityAdapter(ProviderAdapter):
     name = ProviderName.PERPLEXITY
 
@@ -944,9 +1096,11 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
         ProviderName.CURSOR: CursorAdapter(settings),
         ProviderName.CLAUDE: ClaudeAdapter(settings),
         ProviderName.GEMINI: GeminiAdapter(settings),
+        ProviderName.GROK: GrokAdapter(settings),
         ProviderName.PERPLEXITY: PerplexityAdapter(settings),
     }
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

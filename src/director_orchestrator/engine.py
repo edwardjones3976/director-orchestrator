@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
@@ -169,6 +170,7 @@ _STANDING_PROVIDER_ROLES = {
     ProviderName.CLAUDE: "Chief Programmer",
     ProviderName.CURSOR: "Project Secretary",
     ProviderName.GEMINI: "Specialist and Backup Programmer",
+    ProviderName.GROK: "Cursor-Family Primary Teammate",
     ProviderName.PERPLEXITY: "Research Programmers",
     ProviderName.OWNER: "Owner",
 }
@@ -1279,6 +1281,7 @@ class OrchestrationEngine:
             ProviderName.CLAUDE: ProviderTransport.CLAUDE_ROUTINE,
             ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
             ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
+            ProviderName.GROK: ProviderTransport.XAI_RESPONSES_API,
             ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
         }.get(provider, ProviderTransport.DIRECTOR_BACKEND)
 
@@ -3605,7 +3608,11 @@ class OrchestrationEngine:
         valid_discussion_sequences = set(
             debate.position_assignments + debate.rebuttal_assignments
         )
-        eligible_participants = {ProviderName.CLAUDE, ProviderName.CURSOR}
+        eligible_participants = {
+            ProviderName.CLAUDE,
+            ProviderName.CURSOR,
+            ProviderName.GROK,
+        }
         latest_by_provider: dict[ProviderName, CollaborationTurn] = {}
         for turn in record.collaboration_turns:
             if turn.provider == ProviderName.OPENAI or turn.phase not in {
@@ -4202,6 +4209,9 @@ class OrchestrationEngine:
         if assignment.agent == ProviderName.GEMINI:
             request_limit = self.settings.gemini_daily_request_limit
             budget_usd = self.settings.gemini_daily_budget_usd
+        elif assignment.agent == ProviderName.GROK:
+            request_limit = self.settings.grok_daily_request_limit
+            budget_usd = self.settings.grok_daily_budget_usd
         elif assignment.agent == ProviderName.PERPLEXITY:
             request_limit = self.settings.perplexity_daily_request_limit
             budget_usd = self.settings.perplexity_daily_budget_usd
@@ -5599,3 +5609,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

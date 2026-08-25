@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -44,7 +45,14 @@ TERMINAL_STATUSES = {
     "prompted",
 }
 SUCCESS_STATUSES = {"FINISHED", "completed", "prompted"}
-SUPPORTED_PROVIDERS = {"openai", "cursor", "claude", "gemini", "perplexity"}
+SUPPORTED_PROVIDERS = {
+    "openai",
+    "cursor",
+    "claude",
+    "gemini",
+    "grok",
+    "perplexity",
+}
 MINIMUM_INTERVAL = timedelta(minutes=15)
 MINIMUM_INTERVAL_MINUTES = 15
 
@@ -192,6 +200,9 @@ class UsageMonitor:
         if provider == "gemini":
             request_limit = self.settings.gemini_daily_request_limit
             budget_usd = self.settings.gemini_daily_budget_usd
+        elif provider == "grok":
+            request_limit = self.settings.grok_daily_request_limit
+            budget_usd = self.settings.grok_daily_budget_usd
         elif provider == "perplexity":
             request_limit = self.settings.perplexity_daily_request_limit
             budget_usd = self.settings.perplexity_daily_budget_usd
@@ -208,7 +219,7 @@ class UsageMonitor:
         }
 
     def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
-        if provider not in {"gemini", "perplexity"}:
+        if provider not in {"gemini", "grok", "perplexity"}:
             return None
         accounting = self._daily_accounting(provider, now)
         request_limit = accounting["daily_request_limit"]
@@ -225,7 +236,7 @@ class UsageMonitor:
     def _supplemental_remaining_requests(
         self, provider: str, now: datetime
     ) -> int | None:
-        if provider not in {"gemini", "perplexity"}:
+        if provider not in {"gemini", "grok", "perplexity"}:
             return None
         accounting = self._daily_accounting(provider, now)
         request_limit = accounting["daily_request_limit"]
@@ -596,3 +607,4 @@ class UsageMonitor:
             "latest": latest,
         }
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

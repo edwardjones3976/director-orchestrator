@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
@@ -241,8 +242,8 @@ def _is_antigravity_consumer(assignment: Assignment) -> bool:
 
 def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]:
     errors: set[str] = set()
-    if tuple(settings.primary_team) != ("openai", "claude", "cursor"):
-        errors.add("primary team must be exactly openai, claude, cursor")
+    if tuple(settings.primary_team) != ("openai", "claude", "cursor", "grok"):
+        errors.add("primary team must be exactly openai, claude, cursor, grok")
     allowed_projects = {item.strip().lower() for item in settings.project_allowlist}
     project = plan.project.strip().lower()
     if not allowed_projects:
@@ -309,7 +310,12 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
         # debate turn whose invitation does not match the persisted assignment.
         # OpenAI remains the synthesizing Director and Perplexity stays
         # research-only, so neither is seatable here.
-        eligible = {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GEMINI}
+        eligible = {
+            ProviderName.CLAUDE,
+            ProviderName.CURSOR,
+            ProviderName.GEMINI,
+            ProviderName.GROK,
+        }
         position_providers: set[ProviderName] = set()
         positions = set(position_sequences)
         for sequence in position_sequences:
@@ -442,6 +448,15 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             if assignment.public_research_query is not None:
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity debate cannot receive a public research query"
+                )
+        if assignment.agent == ProviderName.GROK:
+            if assignment.allow_draft_pr:
+                errors.add(
+                    f"assignment {assignment.sequence}: Grok cannot create branches or draft pull requests"
+                )
+            if assignment.public_research_query is not None:
+                errors.add(
+                    f"assignment {assignment.sequence}: Grok has no web-grounded research lane"
                 )
         if assignment.agent == ProviderName.PERPLEXITY:
             if not assignment.requires_approval:
@@ -718,3 +733,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
@@ -300,6 +301,9 @@ class Settings:
     langgraph_parallel_gemini_cap: int = field(
         default_factory=lambda: _int("LANGGRAPH_PARALLEL_GEMINI_CAP", 1)
     )
+    langgraph_parallel_grok_cap: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PARALLEL_GROK_CAP", 1)
+    )
     langgraph_parallel_perplexity_cap: int = field(
         default_factory=lambda: _int("LANGGRAPH_PARALLEL_PERPLEXITY_CAP", 1)
     )
@@ -360,7 +364,9 @@ class Settings:
         "USAGE_CHECK_PROVIDERS", "openai,claude,cursor"
     )
 
-    primary_team: tuple[str, ...] = _csv("PRIMARY_TEAM", "openai,claude,cursor")
+    primary_team: tuple[str, ...] = _csv(
+        "PRIMARY_TEAM", "openai,claude,cursor,grok"
+    )
     primary_workhorse: str = os.getenv("PRIMARY_WORKHORSE", "claude").strip().lower()
     claude_account_context: str = os.getenv("CLAUDE_ACCOUNT_CONTEXT", "Claude Pro 20x")
     openai_account_context: str = os.getenv(
@@ -463,6 +469,20 @@ class Settings:
         "GEMINI_ALLOW_PRIMARY_AUTHORITY", False
     )
 
+    grok_enabled: bool = _bool("GROK_ENABLED", False)
+    grok_api_key: str = os.getenv("XAI_API_KEY", "")
+    grok_api_base: str = os.getenv("GROK_API_BASE", "https://api.x.ai/v1").rstrip("/")
+    grok_model: str = os.getenv("GROK_MODEL", "grok-4.6").strip()
+    grok_mode: str = os.getenv("GROK_MODE", "cursor_family_primary").strip().lower()
+    grok_timeout_seconds: int = _int("GROK_TIMEOUT_SECONDS", 180)
+    grok_max_output_tokens: int = _int("GROK_MAX_OUTPUT_TOKENS", 4_096)
+    grok_max_context_chars: int = _int("GROK_MAX_CONTEXT_CHARS", 30_000)
+    grok_daily_budget_usd: float = _float("GROK_DAILY_BUDGET_USD", 2.0)
+    grok_daily_request_limit: int = _int("GROK_DAILY_REQUEST_LIMIT", 50)
+    grok_allow_tools: bool = _bool("GROK_ALLOW_TOOLS", False)
+    grok_allow_repository_write: bool = _bool("GROK_ALLOW_REPOSITORY_WRITE", False)
+    grok_allow_review_verdict: bool = _bool("GROK_ALLOW_REVIEW_VERDICT", True)
+
     perplexity_enabled: bool = _bool("PERPLEXITY_ENABLED", False)
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
     perplexity_api_base: str = os.getenv("PERPLEXITY_API_BASE", "https://api.perplexity.ai")
@@ -520,6 +540,25 @@ class Settings:
             "review_verdict_disabled": not self.perplexity_allow_review_verdict,
         }
 
+    def grok_primary_readiness(self) -> dict[str, bool]:
+        return {
+            "enabled": self.grok_enabled,
+            "credential_configured": bool(self.grok_api_key),
+            "official_api_endpoint": self.grok_api_base == "https://api.x.ai/v1",
+            "model_configured": bool(self.grok_model)
+            and "/" not in self.grok_model
+            and not any(character.isspace() for character in self.grok_model),
+            "cursor_family_primary_mode": self.grok_mode == "cursor_family_primary",
+            "timeout_valid": 1 <= self.grok_timeout_seconds <= 1_800,
+            "output_limit_valid": 16 <= self.grok_max_output_tokens <= 32_768,
+            "context_limit_valid": 1_000 <= self.grok_max_context_chars <= 200_000,
+            "budget_valid": 0 < self.grok_daily_budget_usd <= 1_000,
+            "daily_request_limit_valid": 1 <= self.grok_daily_request_limit <= 100_000,
+            "tools_disabled": not self.grok_allow_tools,
+            "repository_write_disabled": not self.grok_allow_repository_write,
+            "review_verdict_enabled": self.grok_allow_review_verdict,
+        }
+
     def readiness(self) -> dict[str, bool]:
         slack_gateway_ready = bool(
             len(self.slack_gateway_secret) >= 32
@@ -540,6 +579,7 @@ class Settings:
             "cursor": bool(self.cursor_api_key),
             "claude": bool(self.claude_routine_url and self.claude_routine_token),
             "gemini": all(self.gemini_supplemental_readiness().values()),
+            "grok": all(self.grok_primary_readiness().values()),
             "perplexity": all(self.perplexity_research_readiness().values()),
         }
 
@@ -550,6 +590,7 @@ class Settings:
             "cursor": readiness["cursor"],
             "claude": readiness["claude"],
             "gemini": readiness["gemini"],
+            "grok": readiness["grok"],
             "perplexity": readiness["perplexity"],
         }
 
@@ -1040,6 +1081,7 @@ class Settings:
             "claude": self.langgraph_parallel_claude_cap,
             "cursor": self.langgraph_parallel_cursor_cap,
             "gemini": self.langgraph_parallel_gemini_cap,
+            "grok": self.langgraph_parallel_grok_cap,
             "perplexity": self.langgraph_parallel_perplexity_cap,
         }
     # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
@@ -1104,7 +1146,7 @@ class Settings:
                 "team": "primary",
                 "priority": "primary_full_spectrum_repository_partner",
                 "account_context": self.other_provider_account_context,
-                "capability_parity_target": 0.9,
+                "capability_parity_target": 1.0,
                 "eligible_complexity": ["low", "medium", "high", "critical"],
                 "strengths": [
                     "research and evidence verification",
@@ -1140,6 +1182,41 @@ class Settings:
                     "repository, starting_ref, allow_draft_pr, and public_research_query must stay unset",
                 ],
             },
+            "grok": {
+                "team": "primary",
+                "family": "cursor",
+                "priority": "primary_cursor_family_repository_partner",
+                "account_context": self.other_provider_account_context,
+                "capability_parity_target": 1.0,
+                "eligible_complexity": ["low", "medium", "high", "critical"],
+                "eligible_responsibilities": [
+                    "research",
+                    "evidence_verification",
+                    "programming",
+                    "deep_reasoning",
+                    "innovation",
+                    "development",
+                    "quality_assurance",
+                    "leadership",
+                ],
+                "strengths": [
+                    "full-spectrum repository implementation",
+                    "independent technical reasoning and planning",
+                    "architecture, reliability, and security-adjacent analysis",
+                    "cross-platform quality assurance and exact-candidate review",
+                    "technical leadership and coordination",
+                ],
+                "separation_of_duties": [
+                    "cannot independently accept or merge its own candidate",
+                    "cannot replace OpenAI's in-process Director acceptance role",
+                    "external writes still require the assigned execution surface and current deterministic gates",
+                ],
+                "current_transport_constraints": [
+                    "the in-process Responses API contact is synchronous and tool-free",
+                    "repository execution uses the separately authenticated Grok Build or Grok Bot contact",
+                    "the configured API model must appear in the authenticated xAI model catalog before the first paid request in each process",
+                ],
+            },
             "perplexity": {
                 "team": "supplemental",
                 "priority": "optional_current_research_specialist",
@@ -1155,3 +1232,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]]
@@ -13,7 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-TEAM_CHARTER_MAX_BYTES = 11_264
+TEAM_CHARTER_MAX_BYTES = 12_512
 
 
 _TEAM_OPERATING_CHARTER: dict[str, Any] = {
@@ -55,7 +56,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     "role_profiles": {
         "cursor": {
             "team": "primary",
-            "capability_parity_target": 0.9,
+            "capability_parity_target": 1.0,
             "comparison_peers": ["claude", "openai_codex"],
             "eligible_complexity": ["low", "medium", "high", "critical"],
             "eligible_responsibilities": [
@@ -82,9 +83,43 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "Cursor cannot perform OpenAI's Director acceptance role.",
                 "Cursor does not replace mandatory Codex Security.",
                 "Cursor cannot review or approve its own work.",
-                "Parity expands no access, credential, merge, deployment, or publication authority.",
+                "Capability parity does not bypass assignment scope or deterministic gates.",
             ],
-        }
+        },
+        "grok": {
+            "team": "primary",
+            "family": "cursor",
+            "capability_parity_target": 1.0,
+            "comparison_peers": ["claude", "openai_codex", "cursor"],
+            "eligible_complexity": ["low", "medium", "high", "critical"],
+            "eligible_responsibilities": [
+                "research",
+                "evidence_verification",
+                "programming",
+                "deep_reasoning",
+                "innovation",
+                "development",
+                "quality_assurance",
+                "leadership",
+            ],
+            "elevated_work": [
+                "architecture",
+                "complex implementation",
+                "reliability and recovery",
+                "security remediation",
+                "independent exact-SHA review",
+                "cross-platform QA",
+                "technical coordination",
+            ],
+            "routing_rule": "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.",
+            "transport_rule": "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact.",
+            "non_substitution_rules": [
+                "Grok cannot perform OpenAI's Director acceptance role.",
+                "Grok does not replace mandatory Codex Security.",
+                "Grok cannot review or approve its own work.",
+                "Capability parity does not bypass assignment scope or deterministic gates.",
+            ],
+        },
     },
     "director_operating_directive": {
         "director": "openai",
@@ -214,6 +249,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "members": {
             "antigravity": {"provider": "gemini", "voting_power": 1.0},
             "cursor": {"voting_power": 1.5},
+            "grok": {"provider": "xai", "voting_power": 1.5},
             "openai": {"voting_power": 2.0},
             "claude": {"voting_power": 2.5},
         },
@@ -221,7 +257,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             # Antigravity is seatable only by Director invitation. It cannot open,
             # self-route, or autonomously continue a conversation, and a seat grants
             # it no review, acceptance, merge, deployment, or methodology authority.
-            "seatable_members": ["antigravity", "claude", "cursor", "openai"],
+            "seatable_members": ["antigravity", "claude", "cursor", "grok", "openai"],
             "recommended_for_complexity": ["medium", "high", "critical"],
             "procedure": [
                 "Solicit independent positions before participants see one another's conclusions when practical.",
@@ -232,9 +268,9 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "voting": {
             "mode": "advisory",
             "decision_rule": "prefer the option with the highest declared weighted support",
-            "configured_weight_total": 7.0,
+            "configured_weight_total": 8.5,
             "denominator_rule": (
-                "The configured 7.0 total is immutable. Abstentions and unavailability cast zero "
+                "The configured 8.5 total is immutable. Abstentions and unavailability cast zero "
                 "weight and never change weights, thresholds, or the denominator."
             ),
             "rules": [
@@ -298,7 +334,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "mode": "owner_gated_provider_ui_transport",
         "primary": "chrome",
         "fallback": "microsoft_edge",
-        "eligible_providers": ["claude", "cursor", "gemini"],
+        "eligible_providers": ["claude", "cursor", "gemini", "grok"],
         "owner_authorizable_actions": [
             "slack_post",
             "eligible_merge",
@@ -422,6 +458,10 @@ def team_charter_manifest() -> dict[str, Any]:
         "cursor_capability_parity_target": charter["role_profiles"]["cursor"][
             "capability_parity_target"
         ],
+        "grok_capability_parity_target": charter["role_profiles"]["grok"][
+            "capability_parity_target"
+        ],
+        "grok_family": charter["role_profiles"]["grok"]["family"],
         "availability_attempt_limit": charter["availability_policy"][
             "nonresponse_attempt_limit"
         ],
@@ -553,3 +593,4 @@ def tally_advisory_votes(
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]

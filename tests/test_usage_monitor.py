@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 from __future__ import annotations
 
 import tempfile
@@ -83,6 +84,24 @@ class SuccessfulPerplexityProbe:
         raise AssertionError("Terminal usage checks must not be polled")
 
 
+class SuccessfulGrokProbe:
+    def __init__(self):
+        self.calls = 0
+
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        self.calls += 1
+        return ProviderRun(
+            provider=ProviderName.GROK,
+            run_id="grok-usage-1",
+            status="completed",
+            result="STATUS=OK; MODEL=grok-4.6; QUOTA=UNAVAILABLE",
+            raw={"usage": {"input_tokens": 14, "output_tokens": 6}},
+        )
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        raise AssertionError("Terminal usage checks must not be polled")
+
+
 class UsageNormalizationTests(unittest.TestCase):
     def test_normalizes_google_style_usage_metadata(self):
         raw, input_tokens, output_tokens, total_tokens = normalize_usage(
@@ -115,6 +134,33 @@ class UsageNormalizationTests(unittest.TestCase):
 
 
 class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_grok_is_a_bounded_supported_usage_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = SuccessfulGrokProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("grok",),
+                grok_enabled=True,
+                grok_api_key="test-xai",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                slack_bot_token="",
+            )
+            monitor = UsageMonitor(
+                settings, store, adapters={ProviderName.GROK: adapter}
+            )
+
+            records = await monitor.run_once(force=True)
+
+            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(records[0].provider, "grok")
+            self.assertEqual(records[0].status, UsageCheckStatus.OK)
+            self.assertEqual(records[0].total_tokens, 20)
+            self.assertEqual(monitor.health()["unsupported_providers"], [])
+
     async def test_quota_failure_attempts_and_freshness_are_visible_without_provider_text(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
@@ -731,3 +777,4 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from director_orchestrator.providers import (
     ClaudeAdapter,
     CursorAdapter,
     GeminiAdapter,
+    GrokAdapter,
     PerplexityAdapter,
     PostSubmitAmbiguityError,
     ProviderError,
@@ -764,6 +766,98 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.code, "http_429")
 
+    async def test_grok_dispatch_verifies_model_catalog_and_uses_no_tools(self):
+        settings = replace(
+            Settings(),
+            grok_enabled=True,
+            grok_api_key="test-xai",
+            grok_model="grok-4.6",
+            grok_max_context_chars=1_000,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.GROK,
+            task="Critique this bounded implementation plan",
+            acceptance=["Return risks and one recommendation"],
+            estimated_cost_usd=0.25,
+        )
+        RecordingAsyncClient.responses = [
+            {"data": [{"id": "grok-4.6"}]},
+            {
+                "id": "resp-grok-1",
+                "status": "completed",
+                "output_text": "Two risks and one recommendation.",
+                "usage": {"input_tokens": 20, "output_tokens": 8},
+            },
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            run = await GrokAdapter(settings).dispatch(assignment, "bounded context")
+
+        self.assertEqual([call["method"] for call in RecordingAsyncClient.calls], ["GET", "POST"])
+        self.assertEqual(RecordingAsyncClient.calls[0]["url"], "https://api.x.ai/v1/models")
+        request = RecordingAsyncClient.calls[1]
+        self.assertEqual(request["url"], "https://api.x.ai/v1/responses")
+        self.assertEqual(request["json"]["model"], "grok-4.6")
+        self.assertEqual(request["json"]["tools"], [])
+        self.assertFalse(request["json"]["store"])
+        packet = json.loads(request["json"]["input"])
+        self.assertEqual(packet["role"], "primary_cursor_family_teammate")
+        self.assertEqual(packet["context"], "bounded context")
+        self.assertEqual(run.provider, ProviderName.GROK)
+        self.assertEqual(run.status, "completed")
+
+    async def test_grok_rejects_unlisted_model_before_paid_request(self):
+        settings = replace(
+            Settings(),
+            grok_enabled=True,
+            grok_api_key="test-xai",
+            grok_model="grok-4.6",
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.GROK,
+            task="Critique a plan",
+            acceptance=["Return findings"],
+        )
+        RecordingAsyncClient.responses = [{"data": [{"id": "another-model"}]}]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaisesRegex(ProviderError, "unavailable to the authenticated xAI key"):
+                await GrokAdapter(settings).dispatch(assignment, "context")
+
+        self.assertEqual(len(RecordingAsyncClient.calls), 1)
+        self.assertEqual(RecordingAsyncClient.calls[0]["method"], "GET")
+
+    async def test_grok_profile_and_authority_fail_closed_without_http(self):
+        base = replace(
+            Settings(),
+            grok_enabled=True,
+            grok_api_key="test-xai",
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.GROK,
+            task="Review",
+            acceptance=["Return findings"],
+        )
+        unsafe_settings = (
+            replace(base, grok_api_base="https://example.test/v1"),
+            replace(base, grok_allow_tools=True),
+            replace(base, grok_allow_repository_write=True),
+            replace(base, grok_allow_review_verdict=False),
+        )
+
+        for settings in unsafe_settings:
+            with self.subTest(settings=settings):
+                with self.assertRaises(ProviderError):
+                    await GrokAdapter(settings).dispatch(assignment, "context")
+        with self.assertRaisesRegex(ProviderError, "cannot create branches"):
+            await GrokAdapter(base).dispatch(
+                assignment.model_copy(update={"allow_draft_pr": True}), "context"
+            )
+        self.assertEqual(RecordingAsyncClient.calls, [])
+
     async def test_perplexity_usage_check_uses_synchronous_agent_contract(self):
         settings = replace(
             Settings(),
@@ -1009,3 +1103,4 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

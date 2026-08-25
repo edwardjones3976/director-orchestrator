@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:17 UTC | BEGIN]]
@@ -82,6 +83,7 @@ class ProviderTransport(StrEnum):
     CLAUDE_CALLBACK = "claude_callback"
     CURSOR_AGENTS_API = "cursor_agents_api"
     GEMINI_INTERACTIONS_API = "gemini_interactions_api"
+    XAI_RESPONSES_API = "xai_responses_api"
     PERPLEXITY_API = "perplexity_api"
     SLACK = "slack"
     MANUAL_OWNER = "manual_owner"
@@ -633,3 +635,4 @@ def require_verified_result(
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:17 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
@@ -2579,7 +2580,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 captured_votes.extend(votes)
                 self.assertTrue(material_risk)
                 return AdvisoryVoteTally(
-                    configured_weight_total=7.0,
+                    configured_weight_total=8.5,
                     cast_weight_total=6.0,
                     option_weights={"A": 3.0, "B": 3.0},
                     abstaining=[],
@@ -2689,7 +2690,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 captured_votes.extend(votes)
                 self.assertFalse(material_risk)
                 return AdvisoryVoteTally(
-                    configured_weight_total=7.0,
+                    configured_weight_total=8.5,
                     cast_weight_total=6.0,
                     option_weights={"A": 3.0, "B": 3.0},
                     abstaining=[],
@@ -2712,7 +2713,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 persisted.debate_tally,
                 {
-                    "configured_weight_total": 7.0,
+                    "configured_weight_total": 8.5,
                     "cast_weight_total": 6.0,
                     "option_weights": {"A": 3.0, "B": 3.0},
                     "abstaining": [],
@@ -2787,3 +2788,4 @@ if __name__ == "__main__":
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -327,17 +328,24 @@ class PolicyTests(unittest.TestCase):
             primary_team=("openai", "claude", "gemini"),
         )
         self.assertIn(
-            "primary team must be exactly openai, claude, cursor",
+            "primary team must be exactly openai, claude, cursor, grok",
             execution_policy_errors(self.antigravity_plan(), settings),
         )
 
-    def test_primary_team_is_openai_claude_cursor(self):
-        self.assertEqual(self.settings.primary_team, ("openai", "claude", "cursor"))
+    def test_primary_team_is_openai_claude_cursor_grok(self):
+        self.assertEqual(self.settings.primary_team, ("openai", "claude", "cursor", "grok"))
         strategy = self.settings.provider_strategy()
         self.assertTrue(all(strategy[name]["team"] == "primary" for name in self.settings.primary_team))
         self.assertEqual(strategy["gemini"]["team"], "supplemental")
+        self.assertEqual(strategy["grok"]["team"], "primary")
+        self.assertEqual(
+            strategy["grok"]["priority"],
+            "primary_cursor_family_repository_partner",
+        )
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
-        self.assertEqual(strategy["cursor"]["capability_parity_target"], 0.9)
+        self.assertEqual(strategy["cursor"]["capability_parity_target"], 1.0)
+        self.assertEqual(strategy["grok"]["capability_parity_target"], 1.0)
+        self.assertEqual(strategy["grok"]["family"], "cursor")
         self.assertEqual(strategy["cursor"]["eligible_complexity"], ["low", "medium", "high", "critical"])
         self.assertEqual(strategy["cursor"]["priority"], "primary_full_spectrum_repository_partner")
         self.assertIn("technical leadership and coordination", strategy["cursor"]["strengths"])
@@ -352,6 +360,55 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(unsafe.readiness()["perplexity"])
         self.assertFalse(
             unsafe.perplexity_research_readiness()["review_verdict_disabled"]
+        )
+
+    def test_grok_readiness_requires_the_complete_bounded_profile(self):
+        key_only = replace(self.settings, grok_api_key="test-xai")
+        ready = replace(key_only, grok_enabled=True)
+        unsafe = replace(ready, grok_allow_tools=True)
+
+        self.assertFalse(key_only.readiness()["grok"])
+        self.assertTrue(ready.readiness()["grok"])
+        self.assertFalse(unsafe.readiness()["grok"])
+        self.assertFalse(unsafe.grok_primary_readiness()["tools_disabled"])
+
+    def test_grok_api_transport_rejects_unsupported_external_effects(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        plan = DirectorPlan(
+            project="demo",
+            normalized_outcome="Bounded Grok critique",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.GROK,
+                    task="Review the plan",
+                    acceptance=["Return findings"],
+                    repository="example/demo",
+                    allow_draft_pr=True,
+                    public_research_query="Browse current sources",
+                    kind=AssignmentKind.EXACT_SHA_REVIEW,
+                    discussion_phase=DiscussionPhase.POSITION,
+                )
+            ],
+            final_acceptance=["Findings recorded"],
+        )
+
+        errors = execution_policy_errors(plan, settings)
+        self.assertIn("assignment 1: Grok cannot create branches or draft pull requests", errors)
+        self.assertIn("assignment 1: Grok has no web-grounded research lane", errors)
+        self.assertNotIn("assignment 1: Grok is not an advisory-voting participant", errors)
+        self.assertNotIn(
+            "assignment 1: Grok cannot issue an authoritative exact-SHA review verdict",
+            errors,
         )
 
     def test_perplexity_assignments_cannot_receive_repository_or_non_research_authority(self):
@@ -614,3 +671,4 @@ class StoreTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
