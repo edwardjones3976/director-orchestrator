@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]]
@@ -94,7 +95,7 @@ team:
     responsibilities: ["framing", "routing", "synthesis", "acceptance"]
   lanes:
     - id: "<lane-id>"
-      provider: "<claude | cursor | gemini_antigravity | perplexity | other>"
+      provider: "<claude | cursor | grok | gemini_antigravity | perplexity | other>"
       role: "<producer | researcher | verifier | reviewer | operator>"
       workflow_skill: "<catalog skill name or none>"
       responsibilities:
@@ -181,3 +182,4 @@ next:
 # [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]

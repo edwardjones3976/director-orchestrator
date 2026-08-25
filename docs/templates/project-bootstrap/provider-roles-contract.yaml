@@ -121,8 +121,8 @@ providers:
     # Sandbox output is never complete on its own.
     mandatory_downstream_verification:
       required: true
-      assignee: "claude_or_cursor"
-      rule: "Every Antigravity work assignment must feed a later Claude or Cursor assignment that independently verifies and integrates or rejects it."
+      assignee: "claude_cursor_or_grok"
+      rule: "Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
       planner_rule: "A plan that routes work to Antigravity without that later verifying assignment is incomplete."
     outbound_work_packet:
       permitted_value_kinds:

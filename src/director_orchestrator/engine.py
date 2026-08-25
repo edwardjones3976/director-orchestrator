@@ -3612,6 +3612,7 @@ class OrchestrationEngine:
             ProviderName.CLAUDE,
             ProviderName.CURSOR,
             ProviderName.GROK,
+            ProviderName.GEMINI,
         }
         latest_by_provider: dict[ProviderName, CollaborationTurn] = {}
         for turn in record.collaboration_turns:

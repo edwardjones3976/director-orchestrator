@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 # Edge Oracle isolated operations
 
 Edge Oracle is a research-only sports-market intelligence lane inside
@@ -52,7 +53,7 @@ and HMAC-sign the final artifact only after matching the stored task, assignment
 provider, repository, base ref, review run, and the exact base/head SHAs embedded in the
 assignment. Provider JSON must use `artifact_type=edge_oracle_exact_sha_review/v1`, set
 `reviewer_provider` to the actual provider, and omit `signature`; model-authored JSON alone
-has no merge authority. The reviewer may be Claude or Cursor, but it must not be the
+has no merge authority. The reviewer may be Claude, Cursor, or Grok, but it must not be the
 implementation provider. OpenAI acceptance runs before the deterministic merge service.
 The review assignment must depend on exactly one accepted implementation outcome; the
 stored transitive dependency closure, rather than a model assertion, establishes every
@@ -109,7 +110,7 @@ same rule, preventing ambiguous paid work from being duplicated by recovery or g
 Owner-supplied manual recovery text remains operational evidence only and cannot authorize an
 exact-SHA review handoff or merge.
 
-An immutable Claude or Cursor review artifact must validate as
+An immutable Claude, Cursor, or Grok review artifact must validate as
 `OracleReviewArtifact`. A secret-free shape is available in
 `docs/oracle-review-artifact.example.json`. When rollout gates are separately accepted:
 
@@ -288,3 +289,4 @@ shadow decisions, and an owner-reviewed documentation canary. A serious-safety r
 not overridable by a model. Existing Director rules still prohibit an agent from merging
 its own PR; production deployment, credential installation, permission expansion, and
 live merge activation require their separately recorded owner gate.
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->

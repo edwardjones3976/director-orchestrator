@@ -736,6 +736,7 @@ class ReviewHandoffTests(unittest.TestCase):
     ACTORS = {
         "cursor": frozenset({"cursor-agent"}),
         "claude": frozenset({"claude-agent"}),
+        "grok": frozenset({"grok-agent"}),
         "gemini": frozenset({"gemini-agent"}),
     }
 

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:36 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
@@ -44,6 +45,7 @@ from director_orchestrator.packet_transports import (
     GitHubReadOnlyRepositoryEffectVerifier,
     LegacyProviderPacketTransport,
     LocalGitAuthoritySnapshotResolver,
+    build_primary_packet_adapters,
 )
 from director_orchestrator.store import TaskStore
 
@@ -285,6 +287,18 @@ class GitHubReadOnlyRepositoryEffectVerifierTests(unittest.TestCase):
 
 
 class LegacyProviderPacketTransportTests(unittest.TestCase):
+    def test_primary_packet_builder_registers_grok(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            adapter = type("GrokTestAdapter", (), {"name": ProviderName.GROK})()
+            adapters = build_primary_packet_adapters(
+                {ProviderName.GROK: adapter},
+                task_store=store,
+                poll_seconds=1,
+            )
+
+        self.assertEqual(set(adapters), {"grok"})
+
     @staticmethod
     def _context(record, packet) -> ProviderAdapterContext:
         return ProviderAdapterContext(
@@ -1222,3 +1236,4 @@ if __name__ == "__main__":
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]

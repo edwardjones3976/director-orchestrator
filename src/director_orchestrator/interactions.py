@@ -58,6 +58,7 @@ class InteractionProvider(StrEnum):
     OPENAI = "openai"
     CLAUDE = "claude"
     CURSOR = "cursor"
+    GROK = "grok"
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
 

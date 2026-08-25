@@ -406,19 +406,23 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 later
                 for later in plan.assignments
                 if later.sequence > assignment.sequence
-                and later.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+                and later.agent in {
+                    ProviderName.CLAUDE,
+                    ProviderName.CURSOR,
+                    ProviderName.GROK,
+                }
                 and later.discussion_phase == DiscussionPhase.WORK
                 and assignment.sequence in later.depends_on
             ]
             if not consumers:
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
-                    "Claude or Cursor integration assignment with a direct dependency"
+                    "Claude, Cursor, or Grok integration assignment with a direct dependency"
                 )
             elif not any(_is_antigravity_consumer(item) for item in consumers):
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
-                    "Claude or Cursor implementation assignment that explicitly independently "
+                    "Claude, Cursor, or Grok implementation assignment that explicitly independently "
                     "verifies and integrates or rejects the artifact"
                 )
         if (
@@ -450,10 +454,6 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                     f"assignment {assignment.sequence}: Antigravity debate cannot receive a public research query"
                 )
         if assignment.agent == ProviderName.GROK:
-            if assignment.allow_draft_pr:
-                errors.add(
-                    f"assignment {assignment.sequence}: Grok cannot create branches or draft pull requests"
-                )
             if assignment.public_research_query is not None:
                 errors.add(
                     f"assignment {assignment.sequence}: Grok has no web-grounded research lane"
@@ -500,12 +500,16 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 candidate
                 for candidate in plan.assignments
                 if candidate.depends_on == [assignment.sequence]
-                and candidate.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+                and candidate.agent in {
+                    ProviderName.CLAUDE,
+                    ProviderName.CURSOR,
+                    ProviderName.GROK,
+                }
                 and candidate.agent != assignment.agent
             ]
             if len(reviewers) != 1:
                 errors.add(
-                    f"assignment {assignment.sequence}: draft PR work requires exactly one pre-budgeted independent Claude or Cursor review"
+                    f"assignment {assignment.sequence}: draft PR work requires exactly one pre-budgeted independent Claude, Cursor, or Grok review"
                 )
             elif reviewers[0].allow_draft_pr:
                 errors.add(

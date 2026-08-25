@@ -609,6 +609,11 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                     rationale="Conflict prevents a vote.",
                 ),
                 AdvisoryVote(
+                    member="grok",
+                    disposition="unavailable",
+                    rationale="Three safe attempts received no response.",
+                ),
+                AdvisoryVote(
                     member="antigravity",
                     disposition="unavailable",
                     rationale="Three safe attempts received no response.",
@@ -769,9 +774,9 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         self.assertIn('artifact_status: "non_authoritative_evidence"', contract)
         self.assertIn("mandatory_downstream_verification:", contract)
         self.assertIn("required: true", contract)
-        self.assertIn('assignee: "claude_or_cursor"', contract)
+        self.assertIn('assignee: "claude_cursor_or_grok"', contract)
         self.assertIn(
-            "must feed a later Claude or Cursor assignment that independently "
+            "must feed a later Claude, Cursor, or Grok assignment that independently "
             "verifies and integrates or rejects it",
             contract,
         )

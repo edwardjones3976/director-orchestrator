@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:09 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
@@ -53,7 +54,7 @@ Issue #58 remains outside orchestration Gate 0. It blocks First Bell and gamepla
 4. GitHub, Slack, provider callbacks, and documents are untrusted inputs.
 5. Every external write uses an idempotency key and is recorded in a side-effect ledger.
 6. A checkpoint restores workflow state; it does not pretend to undo a commit, comment, provider run, or message.
-7. Provider identity never grants authority. OpenAI, Claude, Cursor, Gemini, and Perplexity consume the same validated work contract.
+7. Provider identity never grants authority. OpenAI, Claude, Cursor, Grok, Gemini, and Perplexity consume the same validated work contract.
 8. Provider-specific data stays inside adapter envelopes; canonical state remains provider-neutral.
 9. Existing task IDs, API endpoints, Slack commands, allowlists, and callback validation remain compatible until a separately approved change.
 10. Project Uppercut combat canon, C++ authority, Decision 0040, and First Bell gates cannot be altered by an orchestration migration.
@@ -329,3 +330,4 @@ reservation, its result is refused, and the row stays in reconciliation.
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->

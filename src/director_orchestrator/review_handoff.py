@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:10 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
@@ -164,7 +165,8 @@ def bind_review_handoff(
         assignment
         for assignment in record.plan.assignments
         if assignment.depends_on == [producer_assignment.sequence]
-        and assignment.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+        and assignment.agent
+        in {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK}
         and assignment.agent != producer_assignment.agent
     ]
     if len(reviewers) != 1:
@@ -507,3 +509,4 @@ def reconstruct_review_handoff(
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:10 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]

@@ -229,6 +229,7 @@ class DirectorPacketResultConsumer:
                     {
                         ProviderName.CURSOR: "FINISHED",
                         ProviderName.CLAUDE: "completed",
+                        ProviderName.GROK: "completed",
                         ProviderName.GEMINI: "completed",
                         ProviderName.PERPLEXITY: "completed",
                         ProviderName.OPENAI: "completed",

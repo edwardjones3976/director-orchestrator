@@ -257,14 +257,14 @@ class PolicyTests(unittest.TestCase):
         orphaned = self.antigravity_plan()
         orphaned.assignments = orphaned.assignments[:1]
         self.assertIn(
-            "assignment 1: Antigravity output requires a later Claude or Cursor "
+            "assignment 1: Antigravity output requires a later Claude, Cursor, or Grok "
             "integration assignment with a direct dependency",
             execution_policy_errors(orphaned, settings),
         )
 
         unverified = self.antigravity_plan(task="Use the Antigravity artifact as-is")
         self.assertIn(
-            "assignment 1: Antigravity output requires a later Claude or Cursor "
+            "assignment 1: Antigravity output requires a later Claude, Cursor, or Grok "
             "implementation assignment that explicitly independently verifies and "
             "integrates or rejects the artifact",
             execution_policy_errors(unverified, settings),
@@ -372,7 +372,7 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(unsafe.readiness()["grok"])
         self.assertFalse(unsafe.grok_primary_readiness()["tools_disabled"])
 
-    def test_grok_api_transport_rejects_unsupported_external_effects(self):
+    def test_grok_policy_preserves_review_and_research_boundaries(self):
         settings = replace(
             self.settings,
             project_allowlist=("demo",),
@@ -403,8 +403,8 @@ class PolicyTests(unittest.TestCase):
         )
 
         errors = execution_policy_errors(plan, settings)
-        self.assertIn("assignment 1: Grok cannot create branches or draft pull requests", errors)
         self.assertIn("assignment 1: Grok has no web-grounded research lane", errors)
+        self.assertNotIn("assignment 1: Grok cannot create branches or draft pull requests", errors)
         self.assertNotIn("assignment 1: Grok is not an advisory-voting participant", errors)
         self.assertNotIn(
             "assignment 1: Grok cannot issue an authoritative exact-SHA review verdict",

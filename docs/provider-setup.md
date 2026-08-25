@@ -157,7 +157,7 @@ Deterministic policy admits an Antigravity work assignment only when its
 `abstract_ideation`, its task names that subordinate scope explicitly, it
 requests no review, acceptance, merge, contract, or methodology authority, and
 it does not create a draft pull request. Every admitted work assignment also
-requires a later Claude or Cursor assignment that directly depends on it and
+requires a later Claude, Cursor, or Grok assignment that directly depends on it and
 carries the runtime-bound wording to independently reproduce the artifact and
 integrate only the verified portions or reject it.
 

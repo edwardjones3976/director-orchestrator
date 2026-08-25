@@ -350,6 +350,9 @@ class Settings:
     oracle_automerge_cursor_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_CURSOR_ACTORS", ""
     )
+    oracle_automerge_grok_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_GROK_ACTORS", ""
+    )
     oracle_automerge_gemini_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_GEMINI_ACTORS", ""
     )
@@ -361,7 +364,7 @@ class Settings:
     usage_check_timeout_seconds: int = _int("USAGE_CHECK_TIMEOUT_SECONDS", 300)
     usage_check_max_output_tokens: int = _int("USAGE_CHECK_MAX_OUTPUT_TOKENS", 96)
     usage_check_providers: tuple[str, ...] = _csv(
-        "USAGE_CHECK_PROVIDERS", "openai,claude,cursor"
+        "USAGE_CHECK_PROVIDERS", "openai,claude,cursor,grok"
     )
 
     primary_team: tuple[str, ...] = _csv(
@@ -1117,6 +1120,7 @@ class Settings:
         return {
             "claude": frozenset(item.lower() for item in self.oracle_automerge_claude_actors),
             "cursor": frozenset(item.lower() for item in self.oracle_automerge_cursor_actors),
+            "grok": frozenset(item.lower() for item in self.oracle_automerge_grok_actors),
             "gemini": frozenset(item.lower() for item in self.oracle_automerge_gemini_actors),
         }
 
@@ -1171,7 +1175,7 @@ class Settings:
                 ],
                 "constraints": [
                     "supplemental only; never a primary-team substitute",
-                    "work assignments must feed a later Claude or Cursor integration assignment",
+                    "work assignments must feed a later Claude, Cursor, or Grok integration assignment",
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
                     "cannot initiate, self-route, widen, or autonomously continue a conversation",

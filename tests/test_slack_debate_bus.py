@@ -2567,8 +2567,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 turn.interaction_id = interaction_id
                 turn.verified_interaction_event_digest = verified.event_digest
                 turn.provider_result_digest = canonical_content_digest(provider_result)
-                if turn.provider in {ProviderName.CLAUDE, ProviderName.CURSOR}:
-                    bind_reviewed_contribution(task, turn)
+                bind_reviewed_contribution(task, turn)
             store.create(task)
             engine = OrchestrationEngine(settings, store)
             director = DebateDirector()
@@ -2605,7 +2604,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(stopped.debate_tally["authorizes_external_action"])
             self.assertEqual(
                 [vote.member for vote in captured_votes],
-                ["claude", "cursor", "openai"],
+                ["claude", "cursor", "antigravity", "openai"],
             )
             self.assertIsNone(stopped.debate_tie_judgment)
             self.assertEqual(getattr(director, "tie_judgment_calls", 0), 0)

@@ -1,8 +1,9 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 # Model interoperability contract
 
 **Status:** Owner-accepted v1 documentation/schema authority, effective when PR #18 merges; adapter conformance remains unaccepted
-**Applies to:** OpenAI, Claude, Cursor, Gemini, Perplexity, and future adapters
+**Applies to:** OpenAI, Claude, Cursor, Grok, Gemini, Perplexity, and future adapters
 
 ## Acceptance boundary
 
@@ -118,3 +119,4 @@ Offline replay fixtures bind one validated work packet to its validated result p
 
 A self-contained digest detects accidental or unsynchronized modification; it is not a signature and grants no authority. Acceptance, dispatch, external writes, and merge decisions remain governed by deterministic policy and separately trusted evidence.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->

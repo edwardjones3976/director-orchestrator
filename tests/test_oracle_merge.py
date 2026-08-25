@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -134,6 +135,7 @@ class OracleMergeGateTests(unittest.TestCase):
             oracle_automerge_review_secret=REVIEW_SECRET,
             oracle_automerge_claude_actors=("claude-agent",),
             oracle_automerge_cursor_actors=("cursor-agent",),
+            oracle_automerge_grok_actors=("grok-agent",),
             oracle_automerge_gemini_actors=("gemini-agent",),
         )
 
@@ -687,6 +689,19 @@ class OracleMergeGateTests(unittest.TestCase):
             review_run_id="cursor-review-1",
         )
         snapshot = self.snapshot(author_login="claude-agent")
+
+        result = self.service(FakeGitHub(snapshot)).process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+
+    def test_grok_can_independently_accept_cursor_implementation(self):
+        artifact = self.artifact(
+            implementation_provider="cursor",
+            implementation_actor="cursor-agent",
+            reviewer_provider="grok",
+            review_run_id="grok-review-1",
+        )
+        snapshot = self.snapshot(author_login="cursor-agent")
 
         result = self.service(FakeGitHub(snapshot)).process(artifact)
 
@@ -1931,3 +1946,4 @@ class OracleMergeGateTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]

@@ -504,7 +504,7 @@ class AdvisoryVote(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    member: Literal["antigravity", "cursor", "openai", "claude"]
+    member: Literal["antigravity", "cursor", "grok", "openai", "claude"]
     disposition: Literal["vote", "abstain", "unavailable"]
     option: str | None = Field(default=None, min_length=1, max_length=255)
     rationale: str = Field(min_length=1, max_length=2_000)
