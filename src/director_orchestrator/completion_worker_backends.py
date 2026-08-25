@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
@@ -727,17 +728,26 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
             raise CompletionWorkerError("repository path cannot be encoded safely for a mount")
         name = _container_name(request.job_id)
         limits = spec.limits
-        if spec.runner_id == "python_compileall" and tuple(spec.fixed_argv[1:4]) != (
+        isolated_compileall = (
+            "python",
             "-I",
+            "-X",
+            "pycache_prefix=/tmp/pycache",
             "-m",
             "compileall",
+        )
+        if (
+            spec.runner_id == "python_compileall"
+            and tuple(spec.fixed_argv[:6]) != isolated_compileall
         ):
             raise CompletionWorkerError(
                 "container compileall must use isolated Python startup"
             )
         repository_environment: tuple[str, ...] = ()
+        pycache_environment: tuple[str, ...] = ()
         if spec.runner_id != "python_compileall":
             repository_environment = ("--env", "PYTHONPATH=/workspace/src")
+            pycache_environment = ("--env", "PYTHONPYCACHEPREFIX=/tmp/pycache")
         return (
             self.binding.path,
             "run",
@@ -768,8 +778,7 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,nodev,size=67108864",
             *repository_environment,
-            "--env",
-            "PYTHONPYCACHEPREFIX=/tmp/pycache",
+            *pycache_environment,
             spec.image,
             *spec.fixed_argv,
         )
@@ -966,7 +975,6 @@ def _verified_container_controls(
         ("--user", spec.run_as_user),
         ("--workdir", spec.working_directory),
         ("--mount", f"type=bind,src={snapshot.root},dst=/workspace,readonly"),
-        ("--env", "PYTHONPYCACHEPREFIX=/tmp/pycache"),
     )
     if not all(flag in command for flag in required_flags):
         raise CompletionWorkerError("container worker controls are incomplete")
@@ -976,11 +984,32 @@ def _verified_container_controls(
     if tuple(command[image_index + 1 :]) != spec.fixed_argv:
         raise CompletionWorkerError("container worker command binding changed")
     if spec.runner_id == "python_compileall":
-        if _command_pair(command, "--env", "PYTHONPATH=/workspace/src"):
+        injected_environment = tuple(
+            command[index + 1]
+            for index, value in enumerate(command[:-1])
+            if value == "--env"
+        )
+        if any(
+            value.startswith(("PYTHONPATH=", "PYTHONPYCACHEPREFIX="))
+            for value in injected_environment
+        ):
             raise CompletionWorkerError("container compileall import path is not isolated")
-        if tuple(spec.fixed_argv[1:4]) != ("-I", "-m", "compileall"):
+        if tuple(spec.fixed_argv[:6]) != (
+            "python",
+            "-I",
+            "-X",
+            "pycache_prefix=/tmp/pycache",
+            "-m",
+            "compileall",
+        ):
             raise CompletionWorkerError("container compileall startup is not isolated")
-    elif not _command_pair(command, "--env", "PYTHONPATH=/workspace/src"):
+    elif not all(
+        _command_pair(command, "--env", value)
+        for value in (
+            "PYTHONPATH=/workspace/src",
+            "PYTHONPYCACHEPREFIX=/tmp/pycache",
+        )
+    ):
         raise CompletionWorkerError("container worker controls are incomplete")
     return WorkerBackendCapabilities(
         tier=WorkerTier.DISPOSABLE_CONTAINER,
@@ -1068,3 +1097,4 @@ def _evidence(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | END]]

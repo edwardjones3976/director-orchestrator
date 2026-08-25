@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
@@ -373,7 +374,10 @@ class CompletionWorkerTests(unittest.TestCase):
             parameter_profile_id="compile-src",
             parameter_profile_digest=DIGEST_C,
             image="registry.example/director-worker@sha256:" + "e" * 64,
-            fixed_argv=("python", "-I", "-m", "compileall", "-q", "src", "tests"),
+            fixed_argv=(
+                "python", "-I", "-X", "pycache_prefix=/tmp/pycache",
+                "-m", "compileall", "-q", "src", "tests",
+            ),
         )
         request = self.request(
             worker_spec_id=isolated_compileall.spec_id,
@@ -384,6 +388,7 @@ class CompletionWorkerTests(unittest.TestCase):
         ) as snapshot:
             command = backend.command(isolated_compileall, request, snapshot)
         self.assertNotIn("PYTHONPATH=/workspace/src", command)
+        self.assertNotIn("PYTHONPYCACHEPREFIX=/tmp/pycache", command)
         self.assertEqual(
             isolated_compileall.fixed_argv,
             command[-len(isolated_compileall.fixed_argv):],
@@ -398,6 +403,40 @@ class CompletionWorkerTests(unittest.TestCase):
         ) as snapshot:
             with self.assertRaisesRegex(CompletionWorkerError, "isolated Python"):
                 backend.command(unsafe_compileall, request, snapshot)
+
+    def test_isolated_compileall_uses_external_pycache_without_loading_shadow(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "src"
+            pycache = root / "cache"
+            marker = root / "shadow-executed.txt"
+            source.mkdir()
+            (source / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+            shadow = f"from pathlib import Path\nPath({str(marker)!r}).write_text('unsafe')\n"
+            (source / "compileall.py").write_text(shadow, encoding="utf-8")
+            (source / "sitecustomize.py").write_text(shadow, encoding="utf-8")
+
+            result = subprocess.run(
+                (
+                    sys.executable,
+                    "-I",
+                    "-X",
+                    f"pycache_prefix={pycache}",
+                    "-m",
+                    "compileall",
+                    "-q",
+                    "src",
+                ),
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertFalse(marker.exists())
+            self.assertFalse(any(source.rglob("__pycache__")))
+            self.assertTrue(any(pycache.rglob("*.pyc")))
 
     def test_host_contract_supplies_pythonpath_and_uses_neutral_cwd(self):
         backend = AuditedHostWorkerBackend(
@@ -767,3 +806,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | END]]

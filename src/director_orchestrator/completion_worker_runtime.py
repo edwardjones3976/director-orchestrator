@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:09 UTC | BEGIN]]
@@ -155,9 +156,15 @@ def _worker_specs(
                     parameter_profile_id=profile_id,
                     parameter_profile_digest=profile.digest,
                     image=settings.completion_gate_container_image,
-                    # -I loads the stdlib compileall module before any tracked
-                    # repository path can participate in Python startup.
-                    fixed_argv=("python", "-I", *profile.argv),
+                    # -I loads stdlib before tracked paths participate in startup;
+                    # -X keeps bytecode writes on the disposable tmpfs.
+                    fixed_argv=(
+                        "python",
+                        "-I",
+                        "-X",
+                        "pycache_prefix=/tmp/pycache",
+                        *profile.argv,
+                    ),
                     limits=limits,
                 )
             )
@@ -204,3 +211,4 @@ def build_completion_worker_runtime(settings: Settings) -> CompletionWorkerRunti
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | END]]
