@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
@@ -217,10 +218,10 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "claude": {"voting_power": 2.5},
         },
         "debate": {
-            # Antigravity keeps its weight in the immutable denominator and simply
-            # never casts it: a position needs the question, the options, and the
-            # peer arguments, none of which may cross its closed outbound contract.
-            "seatable_members": ["claude", "cursor", "openai"],
+            # Antigravity is seatable only by Director invitation. It cannot open,
+            # self-route, or autonomously continue a conversation, and a seat grants
+            # it no review, acceptance, merge, deployment, or methodology authority.
+            "seatable_members": ["antigravity", "claude", "cursor", "openai"],
             "recommended_for_complexity": ["medium", "high", "critical"],
             "procedure": [
                 "Solicit independent positions before participants see one another's conclusions when practical.",
@@ -413,6 +414,11 @@ def team_charter_manifest() -> dict[str, Any]:
         "configured_weight_total": charter["committee"]["voting"][
             "configured_weight_total"
         ],
+        "antigravity_debate_eligible": "antigravity"
+        in charter["committee"]["debate"]["seatable_members"],
+        # A seat is always Director-invited. Antigravity can never open, self-route,
+        # widen, or autonomously continue a conversation.
+        "antigravity_may_initiate_conversation": False,
         "cursor_capability_parity_target": charter["role_profiles"]["cursor"][
             "capability_parity_target"
         ],
@@ -546,3 +552,4 @@ def tally_advisory_votes(
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]

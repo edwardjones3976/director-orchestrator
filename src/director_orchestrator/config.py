@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
@@ -88,6 +89,52 @@ def _default_langgraph_checkpoint_namespace() -> str:
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 
 
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+def _sibling_database_path(suffix: str) -> str:
+    """Derive a distinct sibling database beside the legacy task store."""
+
+    legacy_path = os.getenv("SQLITE_PATH", "/data/director.sqlite3").strip()
+    base, extension = os.path.splitext(legacy_path)
+    return f"{base}.{suffix}{extension or '.sqlite3'}"
+
+
+def _default_langgraph_runtime_checkpoint_path() -> str:
+    return _sibling_database_path("langgraph-runtime")
+
+
+def _default_langgraph_runtime_ledger_path() -> str:
+    return _sibling_database_path("langgraph-runtime-ledger")
+
+
+def _default_completion_gate_store_path() -> str:
+    return _sibling_database_path("completion-gates")
+
+
+def _default_langgraph_runtime_namespace() -> str:
+    profile = os.getenv("APP_ENV", "local").strip().lower() or "local"
+    safe_profile = "-".join(part for part in profile.replace("_", "-").split("-") if part)
+    return f"director-{safe_profile}-runtime-v1"
+
+
+def _pairwise_isolated(paths: tuple[str, ...]) -> bool:
+    """Every configured store must be a distinct file from every other one.
+
+    Fails closed on an empty entry, on spelling collisions, and on hard/soft
+    links that resolve to one inode, because a shared database would let a
+    second writer observe or overwrite the coordinator's durable evidence.
+    """
+
+    candidates = [item.strip() for item in paths]
+    if any(not item for item in candidates):
+        return False
+    for index, left in enumerate(candidates):
+        for right in candidates[index + 1 :]:
+            if not _paths_are_isolated(left, right):
+                return False
+    return True
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = os.getenv("APP_ENV", "local")
@@ -119,6 +166,55 @@ class Settings:
         ).strip()
     )
     # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+    # Runtime activation is a second, stricter switch than the shadow lane. Both
+    # default off: an operator must opt in explicitly, and live provider dispatch
+    # needs its own flag on top of that.
+    langgraph_runtime_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_RUNTIME_ENABLED", False)
+    )
+    langgraph_runtime_live_dispatch_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED", False)
+    )
+    langgraph_runtime_checkpoint_path: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_RUNTIME_CHECKPOINT_PATH",
+            _default_langgraph_runtime_checkpoint_path(),
+        ).strip()
+    )
+    langgraph_runtime_ledger_path: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_RUNTIME_LEDGER_PATH", _default_langgraph_runtime_ledger_path()
+        ).strip()
+    )
+    langgraph_runtime_checkpoint_namespace: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_RUNTIME_CHECKPOINT_NAMESPACE",
+            _default_langgraph_runtime_namespace(),
+        ).strip()
+    )
+    langgraph_runtime_writer_owner_id: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_RUNTIME_WRITER_OWNER_ID", "langgraph-packet-runtime"
+        ).strip()
+    )
+    completion_gates_enabled: bool = field(
+        default_factory=lambda: _bool("COMPLETION_GATES_ENABLED", False)
+    )
+    completion_gate_isolated_proof_enabled: bool = field(
+        default_factory=lambda: _bool(
+            "COMPLETION_GATE_ISOLATED_PROOF_ENABLED", False
+        )
+    )
+    completion_gate_store_path: str = field(
+        default_factory=lambda: os.getenv(
+            "COMPLETION_GATE_STORE_PATH", _default_completion_gate_store_path()
+        ).strip()
+    )
+    completion_gate_result_max_age_seconds: int = field(
+        default_factory=lambda: _int("COMPLETION_GATE_RESULT_MAX_AGE_SECONDS", 86_400)
+    )
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
     project_allowlist: tuple[str, ...] = _csv("PROJECT_ALLOWLIST", "")
     repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
     allowed_starting_refs: tuple[str, ...] = _csv_exact("ALLOWED_STARTING_REFS", "main")
@@ -229,8 +325,12 @@ class Settings:
     openai_plan_estimated_cost_usd: float = _float(
         "OPENAI_PLAN_ESTIMATED_COST_USD", 0.0
     )
-    openai_review_estimated_cost_usd: float = _float(
-        "OPENAI_REVIEW_ESTIMATED_COST_USD", 0.0
+    # Every accepted or revised assignment costs one Director review call, so a
+    # zero reservation under-reserves the plan envelope by exactly the number of
+    # reviews the plan will make. The floor is enforced in `policy.py` as well, so
+    # a misconfigured deployment cannot reserve nothing.
+    openai_review_estimated_cost_usd: float = _positive_float(
+        "OPENAI_REVIEW_ESTIMATED_COST_USD", 0.01
     )
     openai_debate_turn_estimated_cost_usd: float = _positive_float(
         "OPENAI_DEBATE_TURN_ESTIMATED_COST_USD", 0.05
@@ -441,8 +541,13 @@ class Settings:
                 and claim_isolated
                 and namespace_configured
             ),
-            "runtime_active": False,
-            "legacy_sole_writer": True,
+            # The shadow lane itself never writes. These two now report the
+            # separately gated packet coordinator so `/health` cannot claim the
+            # legacy engine is the sole writer once that coordinator is active.
+            "runtime_active": self.langgraph_runtime_readiness()["runtime_active"],
+            "legacy_sole_writer": not self.langgraph_runtime_readiness()[
+                "live_provider_dispatch"
+            ],
         }
 
     def validate_langgraph_configuration(self) -> None:
@@ -471,6 +576,163 @@ class Settings:
             problems.append("LANGGRAPH_CHECKPOINT_NAMESPACE must be configured")
         raise ValueError("Invalid enabled LangGraph configuration: " + "; ".join(problems))
     # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
+
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+    def _runtime_store_paths(self) -> tuple[str, ...]:
+        """Every durable store the activated runtime must not share."""
+
+        return (
+            self.sqlite_path,
+            self.langgraph_checkpoint_path,
+            langgraph_resume_claim_path(self.langgraph_checkpoint_path),
+            self.langgraph_runtime_checkpoint_path,
+            self.langgraph_runtime_ledger_path,
+        )
+
+    def langgraph_runtime_readiness(self) -> dict[str, bool]:
+        """Report whether the packet coordinator may own one dispatch lane.
+
+        `runtime_active` is the only claim that turns the coordinator on, and it
+        requires a valid isolated configuration. `live_provider_dispatch` is a
+        strictly narrower claim: it additionally requires its own flag, paid
+        execution, and a configured execution profile, so an operator cannot reach
+        a provider by enabling the coordinator alone.
+        """
+
+        checkpoint_configured = bool(self.langgraph_runtime_checkpoint_path.strip())
+        ledger_configured = bool(self.langgraph_runtime_ledger_path.strip())
+        namespace_configured = bool(
+            self.langgraph_runtime_checkpoint_namespace.strip()
+        )
+        writer_owner_configured = bool(self.langgraph_runtime_writer_owner_id.strip())
+        namespaces_isolated = namespace_configured and (
+            self.langgraph_runtime_checkpoint_namespace.strip()
+            != self.langgraph_checkpoint_namespace.strip()
+        )
+        stores_isolated = (
+            checkpoint_configured
+            and ledger_configured
+            and _pairwise_isolated(self._runtime_store_paths())
+        )
+        configuration_valid = (
+            checkpoint_configured
+            and ledger_configured
+            and namespace_configured
+            and namespaces_isolated
+            and writer_owner_configured
+            and stores_isolated
+        )
+        runtime_active = self.langgraph_runtime_enabled and configuration_valid
+        execution_profile_ready = all(self.execution_profile_readiness().values())
+        return {
+            "runtime_enabled": self.langgraph_runtime_enabled,
+            "live_dispatch_enabled": self.langgraph_runtime_live_dispatch_enabled,
+            "paid_execution_enabled": self.allow_paid_runs,
+            "checkpoint_path_configured": checkpoint_configured,
+            "ledger_path_configured": ledger_configured,
+            "checkpoint_namespace_configured": namespace_configured,
+            "checkpoint_namespace_isolated": namespaces_isolated,
+            "writer_owner_configured": writer_owner_configured,
+            "stores_isolated": stores_isolated,
+            "single_writer_token_required": True,
+            "packet_validation_required": True,
+            "configuration_valid": configuration_valid,
+            "runtime_active": runtime_active,
+            "live_provider_dispatch": (
+                runtime_active
+                and self.langgraph_runtime_live_dispatch_enabled
+                and self.allow_paid_runs
+                and execution_profile_ready
+            ),
+        }
+
+    def validate_langgraph_runtime_configuration(self) -> None:
+        """Fail startup closed when an enabled coordinator is not isolated."""
+
+        if not self.langgraph_runtime_enabled:
+            return
+        readiness = self.langgraph_runtime_readiness()
+        if readiness["configuration_valid"]:
+            return
+        problems: list[str] = []
+        if not readiness["checkpoint_path_configured"]:
+            problems.append("LANGGRAPH_RUNTIME_CHECKPOINT_PATH must be configured")
+        if not readiness["ledger_path_configured"]:
+            problems.append("LANGGRAPH_RUNTIME_LEDGER_PATH must be configured")
+        if not readiness["checkpoint_namespace_configured"]:
+            problems.append("LANGGRAPH_RUNTIME_CHECKPOINT_NAMESPACE must be configured")
+        elif not readiness["checkpoint_namespace_isolated"]:
+            problems.append(
+                "LANGGRAPH_RUNTIME_CHECKPOINT_NAMESPACE must differ from the shadow namespace"
+            )
+        if not readiness["writer_owner_configured"]:
+            problems.append("LANGGRAPH_RUNTIME_WRITER_OWNER_ID must be configured")
+        if not readiness["stores_isolated"]:
+            problems.append(
+                "runtime checkpoint, runtime ledger, shadow checkpoint, shadow resume "
+                "claim, and SQLITE_PATH databases must all be distinct files"
+            )
+        raise ValueError(
+            "Invalid enabled LangGraph runtime configuration: " + "; ".join(problems)
+        )
+
+    def completion_gate_readiness(self) -> dict[str, bool]:
+        """Report Completion Gate evidence readiness without claiming authority.
+
+        `completion_authority` is permanently false here. Gate evidence proves that
+        required checks passed at one exact head; it never authorizes acceptance,
+        merge, deployment, or project completion on its own.
+        """
+
+        store_configured = bool(self.completion_gate_store_path.strip())
+        store_isolated = store_configured and _pairwise_isolated(
+            (self.completion_gate_store_path, *self._runtime_store_paths())
+        )
+        freshness_valid = 1 <= self.completion_gate_result_max_age_seconds <= 2_592_000
+        configuration_valid = (
+            not self.completion_gates_enabled
+            or (store_configured and store_isolated and freshness_valid)
+        )
+        return {
+            "enabled": self.completion_gates_enabled,
+            "isolated_proof_enabled": self.completion_gate_isolated_proof_enabled,
+            "store_configured": store_configured,
+            "store_isolated": store_isolated,
+            "result_freshness_valid": freshness_valid,
+            "configuration_valid": configuration_valid,
+            "evidence_recording_active": (
+                self.completion_gates_enabled and configuration_valid
+            ),
+            "execution_active": (
+                self.completion_gates_enabled
+                and self.completion_gate_isolated_proof_enabled
+                and configuration_valid
+            ),
+            "completion_authority": False,
+        }
+
+    def validate_completion_gate_configuration(self) -> None:
+        """Fail startup closed when enabled gate evidence is not isolated."""
+
+        readiness = self.completion_gate_readiness()
+        if readiness["configuration_valid"]:
+            return
+        problems: list[str] = []
+        if not readiness["store_configured"]:
+            problems.append("COMPLETION_GATE_STORE_PATH must be configured")
+        elif not readiness["store_isolated"]:
+            problems.append(
+                "COMPLETION_GATE_STORE_PATH must differ from SQLITE_PATH and every "
+                "LangGraph shadow or runtime database"
+            )
+        if not readiness["result_freshness_valid"]:
+            problems.append(
+                "COMPLETION_GATE_RESULT_MAX_AGE_SECONDS must be between 1 and 2592000"
+            )
+        raise ValueError(
+            "Invalid enabled Completion Gate configuration: " + "; ".join(problems)
+        )
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
     def oracle_merge_readiness(self) -> dict[str, bool]:
         app_parts = (
@@ -560,11 +822,12 @@ class Settings:
                     "work assignments must feed a later Claude or Cursor integration assignment",
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
-                    "advisory debate votes stay non-authoritative at the configured weight",
-                    "receives no prose at all: no task, acceptance, objective, dependency result, Slack text, or repository context",
+                    "cannot initiate, self-route, widen, or autonomously continue a conversation",
+                    "after a persisted Director invitation, may exchange bounded debate questions, options, accepted prior contributions, and one bounded Director revision request",
+                    "debate and advisory votes stay non-authoritative at the configured weight",
+                    "ordinary work receives no prose: no task, acceptance, objective, dependency result, Slack text, or repository context",
                     "dispatch is driven by antigravity_directive, a closed fixture lane plus bounded numeric controls",
                     "repository, starting_ref, allow_draft_pr, and public_research_query must stay unset",
-                    "cannot be seated in a debate; its advisory weight stays in the denominator and is never cast",
                 ],
             },
             "perplexity": {
@@ -576,3 +839,4 @@ class Settings:
         }
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]

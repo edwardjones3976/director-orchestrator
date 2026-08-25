@@ -1,3 +1,4 @@
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
 # LangGraph control-plane transition plan
 
 **Status:** Gate 0 accepted; documentation/schema authority proposed for merge; runtime transition not started
@@ -214,3 +215,43 @@ Rollback never deletes evidence or rewrites Git history.
 - **Project Uppercut team:** validates that migration cannot change combat canon or evidence meaning.
 
 No model may approve its own implementation or merge its own migration PR.
+
+## Runtime activation switches
+
+The packet coordinator (`langgraph_runtime.LangGraphPacketRuntime`) is now
+constructible from configuration by `runtime_activation.RuntimeActivation`, but it
+remains off by default and cannot reach a provider without every switch below.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `LANGGRAPH_RUNTIME_ENABLED` | off | Activates the coordinator as an internal coordinator |
+| `LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED` | off | Additionally permits live provider dispatch |
+| `ALLOW_PAID_RUNS` | off | Required as well before any live dispatch |
+| `LANGGRAPH_RUNTIME_CHECKPOINT_PATH` | sibling of `SQLITE_PATH` | Coordinator checkpoints |
+| `LANGGRAPH_RUNTIME_LEDGER_PATH` | sibling of `SQLITE_PATH` | Dispatch ledger and writer ownership |
+| `LANGGRAPH_RUNTIME_CHECKPOINT_NAMESPACE` | `director-<env>-runtime-v1` | Must differ from the shadow namespace |
+| `LANGGRAPH_RUNTIME_WRITER_OWNER_ID` | `langgraph-packet-runtime` | Writer ownership identity |
+
+Live dispatch additionally requires a configured execution profile
+(`PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`, and
+`CLAUDE_CALLBACK_SECRET`). Startup fails closed when the coordinator is enabled and
+the runtime checkpoint, runtime ledger, shadow checkpoint, shadow resume-claim, and
+`SQLITE_PATH` databases are not all distinct files.
+
+### Single writer
+
+Exactly one engine may own provider dispatch and external side effects for a task.
+When the coordinator holds live dispatch authority, the legacy engine surrenders it:
+`OrchestrationEngine` stops at `OWNER_DECISION_REQUIRED` *before* reserving an
+external effect key rather than racing for the same key. `/health` reflects this —
+`langgraph.legacy_sole_writer` becomes false once live dispatch is active.
+
+### Adapter boundary
+
+An activated coordinator sets `require_packet_boundary_adapter`, so live dispatch
+only accepts `langgraph_runtime.PacketBoundaryAdapter`. That adapter revalidates the
+work packet against `model-work-packet-v1` and hands the transport canonical RFC 8785
+bytes, then validates the raw reply against `model-result-packet-v1` and re-checks
+work/result linkage before anything can reach the dispatch ledger. The v1 packet
+contract is therefore the live boundary in both directions, not a convention.
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->

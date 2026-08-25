@@ -1,3 +1,5 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | BEGIN]]
@@ -24,6 +26,9 @@ import re
 import time
 from collections import defaultdict
 from datetime import datetime
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+from typing import TYPE_CHECKING
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
@@ -94,6 +99,8 @@ from .policy import (
 )
 from .providers import (
     PostSubmitAmbiguityError,
+    ProviderDailyLimitExceeded,
+    ProviderDailySpendLedger,
     ProviderError,
     ProviderRun,
     provider_registry,
@@ -103,8 +110,14 @@ from .review_handoff import (
     reconstruct_review_handoff,
     transitive_dependency_sequences,
 )
+from .scheduling import SchedulingError, dependency_ready_decision
 from .store import PrivacyCleanupPending, StaleTaskWrite, TaskStore
 from .team_charter import AdvisoryVote, tally_advisory_votes
+
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance only
+    from .runtime_activation import RuntimeActivation
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
 
 _POST_SUBMIT_AMBIGUITY_ERRORS = (
@@ -245,14 +258,37 @@ class OrchestrationEngine:
         settings: Settings,
         store: TaskStore,
         oracle_merge_service: OracleMergeService | None = None,
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+        runtime_activation: "RuntimeActivation | None" = None,
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
     ):
         self.settings = settings
         self.store = store
         self.oracle_merge_service = oracle_merge_service
         self.director = OpenAIDirector(settings)
         self.providers = provider_registry(settings)
+        # The daily spend ledger is durable, so it exists only when a durable task
+        # store does. Callers that pass no store (narrow in-process unit tests of
+        # poll/wait behavior) get no ledger, and
+        # `_reserve_provider_daily_spend` then refuses metered providers outright
+        # rather than letting an unmetered dispatch through.
+        self.provider_spend = (
+            ProviderDailySpendLedger(store.path) if store is not None else None
+        )
         self.notifier = SlackNotifier(settings)
+        # When the packet coordinator owns live dispatch, this engine surrenders
+        # it rather than racing for the same external effect keys.
+        self.runtime_activation = runtime_activation
         self._task_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+    def _single_writer_conflict(self) -> str | None:
+        """Report why this engine must not dispatch, or None when it may."""
+
+        if self.runtime_activation is None:
+            return None
+        return self.runtime_activation.single_writer_conflict()
+    # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
     @staticmethod
     def _provider_transport(provider: ProviderName) -> ProviderTransport:
@@ -738,7 +774,12 @@ class OrchestrationEngine:
                 await self._status_post(record, f"*{task_id} — BLOCKED*\n{record.message}")
                 return
             if plan_installed:
-                prospective_cost = estimated_plan_cost_usd(record.plan)
+                prospective_cost = estimated_plan_cost_usd(
+                    record.plan,
+                    openai_review_cost_usd=(
+                        self.settings.openai_review_estimated_cost_usd
+                    ),
+                )
                 if (
                     record.cumulative_estimated_cost_usd + prospective_cost
                     > self.settings.max_task_budget_usd
@@ -1020,6 +1061,65 @@ class OrchestrationEngine:
                 if outcome.assignment_sequence in dependency_set
             ],
         }
+        if (
+            record.plan
+            and record.plan.debate
+            and assignment.discussion_phase != DiscussionPhase.WORK
+        ):
+            # The invitation is a persisted Director artifact. A provider cannot
+            # forge or widen it: `antigravity.py` rejects any debate envelope whose
+            # invitation does not match this exact assignment's sequence, phase,
+            # and round, which is what makes provider self-initiation impossible.
+            debate = record.plan.debate
+            assignments_by_sequence = {
+                item.sequence: item for item in record.plan.assignments
+            }
+            payload["debate_invitation"] = {
+                "invited_by": "openai_director",
+                "provider_may_initiate": False,
+                "assignment_sequence": assignment.sequence,
+                "discussion_phase": assignment.discussion_phase.value,
+                "discussion_round": assignment.discussion_round,
+                "max_rebuttal_rounds": debate.max_rebuttal_rounds,
+                "question": debate.question,
+                "vote_options": list(debate.vote_options),
+                "material_risk": debate.material_risk,
+                "required_prior_contribution_sequences": [
+                    sequence
+                    for sequence in assignment.depends_on
+                    if sequence in assignments_by_sequence
+                    and assignments_by_sequence[sequence].discussion_phase
+                    != DiscussionPhase.WORK
+                ],
+            }
+            payload["prior_debate_turns"] = [
+                {
+                    "assignment_sequence": turn.assignment_sequence,
+                    "discussion_round": assignments_by_sequence[
+                        turn.assignment_sequence
+                    ].discussion_round,
+                    "provider": turn.provider.value,
+                    "phase": turn.phase,
+                    "position": turn.position[:2_000],
+                    "evidence": [item[:1_000] for item in turn.evidence[:10]],
+                    "contradictions": [
+                        item[:1_000] for item in turn.contradictions[:10]
+                    ],
+                    "confidence": turn.confidence,
+                    "vote_option": turn.vote_option,
+                    "abstain": turn.abstain,
+                    "verified_interaction_event_digest": (
+                        turn.verified_interaction_event_digest
+                    ),
+                    "provider_result_digest": turn.provider_result_digest,
+                }
+                for turn in record.collaboration_turns
+                if turn.assignment_sequence in dependency_set
+                and turn.assignment_sequence in assignments_by_sequence
+                and turn.phase in {"position", "rebuttal"}
+                and turn.verified_interaction_event_digest is not None
+                and turn.provider_result_digest is not None
+            ][-12:]
         return json.dumps(payload, ensure_ascii=False)
 
     def _record_outcome(
@@ -2910,6 +3010,66 @@ class OrchestrationEngine:
             record.plan.max_hops * (1 + record.plan.max_revisions),
         )
 
+    def _reserve_provider_daily_spend(
+        self,
+        assignment: Assignment,
+        *,
+        effect_key: str,
+    ) -> None:
+        """Reserve one supplemental-provider request before paid submission."""
+
+        if assignment.agent == ProviderName.GEMINI:
+            request_limit = self.settings.gemini_daily_request_limit
+            budget_usd = self.settings.gemini_daily_budget_usd
+        elif assignment.agent == ProviderName.PERPLEXITY:
+            request_limit = self.settings.perplexity_daily_request_limit
+            budget_usd = self.settings.perplexity_daily_budget_usd
+        else:
+            return
+        if self.provider_spend is None:
+            # A metered provider without a durable ledger cannot be accounted for,
+            # and an unaccounted paid dispatch is exactly what the ledger exists to
+            # prevent. Refuse instead of silently skipping the reservation.
+            raise ProviderDailyLimitExceeded(
+                f"{assignment.agent.value} requires a durable daily spend ledger"
+            )
+        self.provider_spend.reserve(
+            provider=assignment.agent,
+            effect_key=effect_key,
+            estimated_cost_usd=assignment.estimated_cost_usd,
+            request_limit=request_limit,
+            budget_usd=budget_usd,
+        )
+
+    async def _stop_for_perplexity_refinement(
+        self,
+        record: TaskRecord,
+        assignment: Assignment,
+        decision: ReviewDecision,
+    ) -> bool:
+        """Require a fresh owner-bound public query instead of leaking review prose."""
+
+        owner_question = (
+            "Perplexity research needs refinement. Provide a new bounded public "
+            "research query for a replacement assignment. The Director's private "
+            "review feedback will not be sent to Perplexity."
+        )
+        record.review = decision.model_copy(
+            update={
+                "verdict": ReviewVerdict.OWNER,
+                "owner_question": owner_question,
+                "summary": owner_question,
+            }
+        )
+        record.status = TaskStatus.OWNER_DECISION_REQUIRED
+        record.message = owner_question
+        self.store.save(record)
+        await self._status_post(
+            record,
+            f"*{record.task_id} — OWNER DECISION REQUIRED*\n{owner_question}",
+        )
+        return False
+
     @staticmethod
     def _provider_run_count(record: TaskRecord) -> int:
         return len(record.provider_run_history) + len(record.provider_runs)
@@ -2953,7 +3113,10 @@ class OrchestrationEngine:
             and item.outcome == "failed_pre_submit"
         }
         unresolved_intents = [
-            item for item in unresolved_intents if item.effect_key not in failed_keys
+            item
+            for item in unresolved_intents
+            if item.effect_key not in failed_keys
+            and (phase == "dispatch" or item.attempt > record.revision_count)
         ]
         if unresolved_intents:
             if any(
@@ -3376,12 +3539,33 @@ class OrchestrationEngine:
         # exact current plan before any Slack, provider, or review-side effect.
         if not self._verified_plan_or_stop(record):
             return False
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+        # Readiness comes from the deterministic scheduler so deferral propagates
+        # transitively through the declared graph. Dispatch itself stays strictly
+        # sequential: the scheduler never authorizes concurrent external calls.
         completed_sequences = {
             outcome.assignment_sequence for outcome in record.assignment_outcomes
         }
-        missing_dependencies = sorted(set(assignment.depends_on) - completed_sequences)
+        try:
+            schedule = dependency_ready_decision(
+                record.plan.assignments if record.plan else [],
+                completed=completed_sequences,
+                deferred=record.deferred_assignments,
+            )
+        except SchedulingError as exc:
+            record.status = TaskStatus.BLOCKED
+            record.message = str(exc)[:2_000]
+            self.store.save(record)
+            await self._status_post(
+                record, f"*{record.task_id} — BLOCKED*\n{record.message}"
+            )
+            return False
+        missing_dependencies = list(schedule.missing_dependencies(assignment.sequence))
         if missing_dependencies:
-            if set(missing_dependencies).intersection(record.deferred_assignments):
+            # `schedule.deferred` is the transitive closure of the recorded
+            # deferrals, so a dependant of a deferred dependant is also deferred
+            # rather than reported as a hard block.
+            if set(missing_dependencies).intersection(schedule.deferred):
                 if assignment.sequence not in record.deferred_assignments:
                     record.deferred_assignments.append(assignment.sequence)
                 impact = (
@@ -3403,6 +3587,7 @@ class OrchestrationEngine:
             self.store.save(record)
             await self._status_post(record, f"*{record.task_id} — BLOCKED*\n{record.message}")
             return False
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
         accepted_outcome = next(
             (
@@ -3472,6 +3657,22 @@ class OrchestrationEngine:
                 return False
             return await self._finalize_debate(record, assignment)
 
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+        # Dual writers are prohibited. This check precedes credential readiness so
+        # an activated coordinator stops the legacy engine before it can reserve an
+        # external effect key, not after.
+        writer_conflict = self._single_writer_conflict()
+        if writer_conflict is not None:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = writer_conflict[:2_000]
+            self.store.save(record)
+            await self._status_post(
+                record,
+                f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.message}",
+            )
+            return False
+        # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+
         readiness = self.settings.readiness()
         if not readiness.get(assignment.agent.value, False):
             record.status = TaskStatus.BLOCKED
@@ -3512,6 +3713,26 @@ class OrchestrationEngine:
             if reservation is None:
                 return False
             record, effect_key = reservation
+            try:
+                self._reserve_provider_daily_spend(
+                    assignment,
+                    effect_key=effect_key,
+                )
+            except ProviderDailyLimitExceeded as exc:
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=effect_key,
+                    phase="dispatch",
+                    outcome="failed_pre_submit",
+                )
+                record.status = TaskStatus.BLOCKED
+                record.message = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(
+                    record, f"*{record.task_id} — BLOCKED*\n{record.message}"
+                )
+                return False
             interaction_id = self._begin_provider_interaction(
                 record,
                 assignment,
@@ -3740,7 +3961,14 @@ class OrchestrationEngine:
             ):
                 return False
             return await self._finalize_debate(record, assignment)
-        if decision.verdict == ReviewVerdict.REVISE and record.revision_count < record.plan.max_revisions:
+        while (
+            decision.verdict == ReviewVerdict.REVISE
+            and record.revision_count < record.plan.max_revisions
+        ):
+            if assignment.agent == ProviderName.PERPLEXITY:
+                return await self._stop_for_perplexity_refinement(
+                    record, assignment, decision
+                )
             try:
                 reservation = self._reserve_effect_intent(
                     record, assignment, phase="revision"
@@ -3755,6 +3983,26 @@ class OrchestrationEngine:
             if reservation is None:
                 return False
             record, revision_effect_key = reservation
+            try:
+                self._reserve_provider_daily_spend(
+                    assignment,
+                    effect_key=revision_effect_key,
+                )
+            except ProviderDailyLimitExceeded as exc:
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=revision_effect_key,
+                    phase="revision",
+                    outcome="failed_pre_submit",
+                )
+                record.status = TaskStatus.BLOCKED
+                record.message = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(
+                    record, f"*{record.task_id} — BLOCKED*\n{record.message}"
+                )
+                return False
             revision_interaction_id = self._begin_provider_interaction(
                 record,
                 assignment,
@@ -4079,3 +4327,5 @@ class OrchestrationEngine:
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | END]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]

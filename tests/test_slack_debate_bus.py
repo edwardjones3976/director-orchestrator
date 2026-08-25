@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | BEGIN]]
@@ -66,6 +67,7 @@ from director_orchestrator.models import (
     TieRubricCriterion,
 )
 from director_orchestrator.policy import (
+    MINIMUM_OPENAI_REVIEW_COST_USD,
     debate_tie_is_material,
     debate_tie_materiality_reasons,
     enforce_plan,
@@ -397,7 +399,13 @@ class DebatePolicyTests(unittest.TestCase):
         self.assertEqual(guarded.debate.estimated_counter_bias_cost_usd, 0.20)
         self.assertEqual(guarded.debate.estimated_synthesis_cost_usd, 0.35)
         self.assertEqual(guarded.debate.estimated_tie_judgment_cost_usd, 0.20)
-        self.assertAlmostEqual(estimated_plan_cost_usd(guarded), 0.75)
+        # 0.20 counter-bias + 0.35 synthesis + 0.20 tie judgment, plus the review
+        # floor for each of the four debate assignments (4 x 0.01). Reserving zero
+        # for those reviews would under-reserve the envelope by exactly four calls.
+        self.assertAlmostEqual(
+            estimated_plan_cost_usd(guarded),
+            0.75 + 4 * MINIMUM_OPENAI_REVIEW_COST_USD,
+        )
         self.assertIn("estimated cost exceeds task budget", guarded.approval_reasons)
 
     def test_runtime_reservation_applies_floor_to_legacy_zero_estimates(self):
@@ -1348,7 +1356,11 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             blocked = store.get(task.task_id)
             self.assertEqual(blocked.status, TaskStatus.BLOCKED)
             self.assertIn("Cumulative task budget blocks", blocked.message)
-            self.assertIn("new plan $0.55", blocked.message)
+            # [[Codex | GPT-5.6 | 2026-08-25 | 00:44 UTC | BEGIN]]
+            # The positive review floor reserves four acceptance passes here:
+            # two assignments times the initial pass plus one possible revision.
+            self.assertIn("new plan $0.59", blocked.message)
+            # [[Codex | GPT-5.6 | 2026-08-25 | 00:44 UTC | END]]
             self.assertAlmostEqual(blocked.cumulative_estimated_cost_usd, 0.10)
 
     def test_slack_relay_redacts_credentials_and_raw_source_without_unrelated_content_scanning(self):
@@ -2758,3 +2770,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:25 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | END]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]

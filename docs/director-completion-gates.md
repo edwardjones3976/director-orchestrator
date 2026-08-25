@@ -1,9 +1,11 @@
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:50 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]] -->
 # Director Completion Gates
 
-**Status:** Contract-only candidate; no runtime implementation or authority
+**Status:** Default-off isolated-proof runtime foundation; no completion authority
 **Schema authority:** `director-gate-ledger/v1` and `director-gate-result/v1`
 **Frozen starting point:** `21c4c70ad4bb1135e82d7b69df9866a1634f3546`
 
@@ -18,9 +20,54 @@ review, Codex Security, trusted CI, and deterministic merge policy. It never gra
 assignment, provider-selection, budget, repository, approval, review, merge,
 deployment, LangGraph, provider-dispatch, or external-write authority.
 
-This first increment adds documentation, schemas, examples, and offline contract
-tests only. It does not add a runner, feature flag, provider prompt, hook, service,
-database, deployment setting, or production execution path.
+The runtime foundation adds deterministic semantic validation, an append-only
+SQLite evidence store, a fixed-argument runner registry, bounded `shell=False`
+execution, aggregate gate-evidence reporting, and a small fail-closed readiness
+surface. Execution still requires both explicit runtime and isolated-proof
+enablement and accepts only `ISOLATED_PROOF_LANE` ledgers. It is not wired to
+provider dispatch, external writes, merge, deployment, or project-completion
+authority.
+
+## Two different authorities
+
+Aggregate `gate_evidence_complete` means only that every current required gate has
+authenticated `PASS` evidence at the current exact head.
+
+`assignment_acceptance_authorized` is an **assignment-scoped** claim. It is true
+only when gate evidence is complete *and* at least one required gate carries
+`INDEPENDENT_REVIEWER` evidence from a principal who is not a material author.
+That is the strongest statement one assignment ledger can make about itself.
+
+`project_completion_authorized` is always false in the per-ledger aggregate.
+Project completion spans multiple assignments and depends on authorities the gate
+store does not hold. `aggregate_project_completion_eligibility` answers that
+question separately and fails closed unless every declared assignment reached
+assignment acceptance **and** every one of these is supplied as authenticated
+evidence by the caller:
+
+- `independent_exact_sha_acceptance`
+- `codex_security`
+- `trusted_ci`
+- `deterministic_merge_policy`
+- `deployment_or_product_acceptance_when_applicable`
+
+Assignment acceptance never widens into project completion. `merge_eligibility`
+re-checks this and refuses any evidence bundle that claims otherwise.
+
+## Configuration
+
+Both switches default off and both fail startup closed when enabled without an
+isolated store:
+
+| Setting | Effect |
+| --- | --- |
+| `COMPLETION_GATES_ENABLED` | Records durable gate evidence |
+| `COMPLETION_GATE_ISOLATED_PROOF_ENABLED` | Additionally permits runner execution |
+| `COMPLETION_GATE_STORE_PATH` | Must be a distinct file from `SQLITE_PATH` and every LangGraph shadow or runtime database |
+| `COMPLETION_GATE_RESULT_MAX_AGE_SECONDS` | Result freshness ceiling (1–2592000) |
+
+`/health` reports these as booleans under `completion_gates`, including a
+permanently false `completion_authority`.
 
 ## Applicability
 
@@ -42,10 +89,10 @@ unchanged. Completion Gates are companion documents:
 - `director-gate-ledger/v1`: Director-issued immutable gate definitions.
 - `director-gate-result/v1`: one immutable observation attempt for one gate.
 
-Once a later increment implements persistence, authoritative instances must live
-in an append-only, Director-controlled evidence store outside the repository,
-canonical task tables, and LangGraph checkpoint storage. That store does not
-exist in this increment. Checked repository examples prove only the contract.
+Authoritative runtime instances live in a separate append-only,
+Director-controlled SQLite evidence store, outside canonical task tables,
+repository fixtures, and LangGraph checkpoint storage. Checked repository examples
+still prove only the contract; they never become authoritative store records.
 
 ## Immutable ledger lifecycle
 
@@ -93,7 +140,7 @@ digest changes when any gate, ordering, requiredness, path, runner binding,
 dependency, abandonment rule, author, or expected head changes.
 
 Every applicable ledger must contain at least one `REQUIRED` Director gate. An
-empty required set is never vacuous success; a later aggregator must fail closed
+empty required set is never vacuous success; the runtime aggregator fails closed
 unless schema validation and semantic binding establish that invariant.
 
 ## Gate kinds
@@ -105,9 +152,10 @@ digest, a pre-registered parameter-profile ID and digest, a repository-relative
 working directory, expected exit code, structured output matcher, timeout, output
 ceiling, risk classification, dependencies, and abandonment policy.
 
-There is no raw command, shell string, or free-form argument array. A future runner
-must resolve the exact argument vector from the runner/parameter-profile registry,
-reject interpreter-control flags and unregistered options, and use `shell=False`.
+There is no raw command, shell string, or free-form argument array. The isolated
+runner resolves the exact argument vector from an authenticated
+runner/parameter-profile registry, rejects unknown bindings, and uses
+`shell=False` with a minimal inherited environment.
 
 `repository_owned_script` additionally binds a repository-relative path and
 exact Git blob SHA. Changing that script requires a new ledger and fresh approval.
@@ -226,8 +274,8 @@ booleans never substitute for those comparisons.
 ## Schema validity is not completion eligibility
 
 Every result declares `director-gate-result-semantic-binding/v1`, but that value is
-not self-authenticating. Before any runtime activation, the deterministic binding
-increment must load the authenticated current ledger and prove all of the following:
+not self-authenticating. The deterministic validator loads the authenticated
+current ledger and proves all of the following before append or aggregation:
 
 - task, assignment, work packet, authority snapshot, repository, ledger series,
   ledger ID/revision/digest, gate ID/type/definition digest, and expected/executed
@@ -247,8 +295,8 @@ increment must load the authenticated current ledger and prove all of the follow
 
 A schema-valid document that has not passed that validator is untrusted data and
 cannot contribute to completion, review, security, CI, merge, deployment, dispatch,
-or any other authority decision. PR 1 deliberately implements no such consumer;
-the validator is a hard prerequisite for the separately reviewed binding increment.
+or any other authority decision. The append-only store accepts only validator
+output bound to separately authenticated readback context.
 The reference assertions require evaluator roles and sanitization-record digests
 from an authenticated Director-controlled readback supplied separately from the
 result document. The result's role list, scan booleans, and record digest are
@@ -257,9 +305,9 @@ Manual artifact-binding digests are likewise recomputed and must appear in a
 separately supplied authenticated readback. `exact_artifact_verified` cannot make
 an otherwise unbound review authoritative.
 
-## Future runner boundary
+## Isolated runner boundary
 
-A later, separately reviewed runner may initially register:
+An authenticated registry may register fixed profiles for:
 
 - `python_unittest`
 - `python_compileall`
@@ -274,17 +322,17 @@ A later, separately reviewed runner may initially register:
 
 `github_trusted_ci` and `manual_review` remain non-runnable gate kinds.
 
-The future runtime must reject unknown runners, shell strings, parameter-profile or
-interpreter-option injection,
+The isolated runtime rejects unknown runners, shell strings, parameter-profile or
+argument injection,
 directory escape, symlink/hard-link escape, wrong repository/worktree/SHA,
 credential inheritance, unbounded execution/output/regex, stale evidence, and
 non-atomic writeback. Sanitized process execution is not a complete sandbox;
 containers or disposable environments are required when stronger isolation is
 needed.
 
-## Semantic checks deferred from JSON Schema
+## Semantic checks enforced beyond JSON Schema
 
-The next models/binding increment must enforce:
+The deterministic validator and store enforce:
 
 - unique gate IDs and order values;
 - dependency existence, ordering, and acyclicity;
@@ -296,24 +344,28 @@ The next models/binding increment must enforce:
 - repository realpath, symlink and hard-link containment;
 - result freshness and atomic evidence persistence.
 
-Canonical repository identities and repository-relative paths already reject dot
+Canonical repository identities and repository-relative paths reject dot
 components, `.git`, Windows device/alternate-stream syntax, absolute paths,
-backslashes, repeated separators, and trailing separators. The future runtime must
-still prove Git-tree membership and realpath, symlink, and hard-link containment
-before every run.
+backslashes, repeated separators, and trailing separators. Runtime execution also
+proves the current Git head and realpath containment. Repository-owned scripts
+add exact Git-blob/content binding plus symlink/hard-link rejection.
 
 The hardened runner, provider handoff, Slack status, pilots, and promotion metrics
 remain later independently reviewable increments.
 
 ## Default-off and rollback rule
 
-No Completion Gate executes until a later feature flag ships default-off and a
-named assignment explicitly enables an isolated proof lane. No global Unlazy
+No Completion Gate executes unless both runtime and isolated-proof enablement are
+explicitly supplied for a named `ISOLATED_PROOF_LANE` assignment. Defaults remain
+off. No global Unlazy
 installation, Claude Stop hook, ambient shell execution, production credential,
 external write, deployment, or LangGraph writer connection is authorized here.
 
-Removing these new documents and tests fully rolls back this contract-only
-increment without affecting runtime state.
+Disabling either proof flag stops execution without deleting immutable evidence.
+Removing the isolated runtime modules and their separate SQLite database rolls the
+foundation back without changing canonical task or LangGraph state.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:50 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->

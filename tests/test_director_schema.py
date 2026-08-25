@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:28 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]]
@@ -127,9 +128,13 @@ class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
 
         await director.review(record, "Claude supplied bounded evidence.")
 
+        # [[Codex | GPT-5.6 | 2026-08-25 | 00:44 UTC | BEGIN]]
+        # $1.00 of assignments/debate plus one $0.01 acceptance review for
+        # each of the two assignments.
         self.assertAlmostEqual(
-            director.captured["plan_context"]["estimated_total_cost_usd"], 1.0
+            director.captured["plan_context"]["estimated_total_cost_usd"], 1.02
         )
+        # [[Codex | GPT-5.6 | 2026-08-25 | 00:44 UTC | END]]
 
     async def test_intermediate_review_excludes_future_final_acceptance(self):
         class CapturingDirector(OpenAIDirector):
@@ -189,7 +194,12 @@ class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(director.captured["final_acceptance"], [])
         self.assertIn("Do not require future assignments", director.captured["instruction"])
         self.assertIn("do not reject or escalate", director.captured["instruction"])
-        self.assertEqual(director.captured["plan_context"]["estimated_total_cost_usd"], 0)
+        # [[Codex | GPT-5.6 | 2026-08-25 | 00:44 UTC | BEGIN]]
+        # Two assignments with one possible revision reserve four review calls.
+        self.assertEqual(
+            director.captured["plan_context"]["estimated_total_cost_usd"], 0.04
+        )
+        # [[Codex | GPT-5.6 | 2026-08-25 | 00:44 UTC | END]]
         self.assertEqual(
             director.captured["plan_context"]["configured_max_task_budget_usd"],
             director.settings.max_task_budget_usd,
@@ -666,7 +676,10 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         ):
             with self.subTest(prose=prose):
                 self.assertIn(f'- "{prose}"', contract)
-        self.assertIn("seatable: false", contract)
+        # Antigravity may hold an invited debate seat, but it can never create
+        # one and the seat carries no authority.
+        self.assertIn("seatable: true", contract)
+        self.assertIn("may_initiate: false", contract)
 
     def test_contract_mirrors_the_runtime_antigravity_denied_authorities(self):
         contract = self.contract()
@@ -848,3 +861,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:28 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
