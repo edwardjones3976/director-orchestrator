@@ -332,7 +332,12 @@ class CompletionWorkerTests(unittest.TestCase):
         )
         command = backend.command(self.host, self.request())
         self.assertIn("--env", command)
-        self.assertIn(f"PYTHONPATH={self.repository / 'src'}", command)
+        pythonpath = next(
+            item.removeprefix("PYTHONPATH=")
+            for item in command
+            if item.startswith("PYTHONPATH=")
+        )
+        self.assertEqual((self.repository / "src").resolve(), Path(pythonpath).resolve())
         expected_cwd = (
             Path(os.environ["SYSTEMROOT"], "System32") if os.name == "nt" else Path("/")
         )
