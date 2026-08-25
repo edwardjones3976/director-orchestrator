@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -210,13 +211,17 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
 
     @property
     def capabilities(self) -> WorkerBackendCapabilities:
+        # The orchestrator can authenticate this broker executable and bind its
+        # argv, but it cannot observe the broker's child token, network policy,
+        # resource limits, or repository handle.  Until an OS-backed verifier is
+        # wired, do not advertise controls that only the broker could assert.
         return WorkerBackendCapabilities(
             tier=WorkerTier.AUDITED_HOST,
-            low_privilege_identity=True,
-            network_isolation=True,
-            resource_limits=True,
+            low_privilege_identity=False,
+            network_isolation=False,
+            resource_limits=False,
             process_tree_termination=True,
-            read_only_repository=True,
+            read_only_repository=False,
             disposable_filesystem=False,
         )
 
@@ -260,6 +265,17 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
         before_head, before_clean = _repository_state(root)
         command = self.command(spec, request)
         controls = _verified_host_controls(command, spec, request)
+        if not all(
+            (
+                controls.low_privilege_identity,
+                controls.network_isolation,
+                controls.resource_limits,
+                controls.read_only_repository,
+            )
+        ):
+            raise CompletionWorkerError(
+                "audited host isolation lacks orchestrator-verifiable OS evidence"
+            )
         result = self._execute_argv(
             command,
             cwd=self._trusted_cwd(),
@@ -499,11 +515,11 @@ def _verified_host_controls(
         raise CompletionWorkerError("audited host worker command binding changed")
     return WorkerBackendCapabilities(
         tier=WorkerTier.AUDITED_HOST,
-        low_privilege_identity=True,
-        network_isolation=True,
-        resource_limits=True,
+        low_privilege_identity=False,
+        network_isolation=False,
+        resource_limits=False,
         process_tree_termination=True,
-        read_only_repository=True,
+        read_only_repository=False,
         disposable_filesystem=False,
     )
 
@@ -614,3 +630,4 @@ def _evidence(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]

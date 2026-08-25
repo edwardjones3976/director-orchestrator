@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:10 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
@@ -102,6 +103,7 @@ def _record(*, owner_approved: bool = False, index: int = 0, approved: list[int]
     record = TaskRecord(
         task_id="DIR-BIND",
         status=TaskStatus.OWNER_DECISION_REQUIRED,
+        intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
         intake=SlackIntake(
             source_event_id="evt-bind",
             channel_id="C123",
@@ -3658,3 +3660,4 @@ if __name__ == "__main__":
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:22 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:48 UTC | BEGIN]]
@@ -55,6 +56,7 @@ from director_orchestrator.models import (
     AssignmentKind,
     DirectorPlan,
     DiscussionPhase,
+    IntakeAuthentication,
     ProviderName,
     ProviderRun,
     RiskLevel,
@@ -975,6 +977,7 @@ class GenericFailureTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-AG-SINK",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-sink",
                     channel_id="C1",
@@ -1086,3 +1089,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:48 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | END]]

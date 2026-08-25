@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:58 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -329,7 +333,7 @@ class OrchestrationEngine:
 
     def _reserve_packet_effect(
         self, record: TaskRecord, assignment: Assignment
-    ) -> tuple[TaskRecord, str]:
+    ) -> tuple[TaskRecord, str, bool]:
         """Bind packet dispatch to the canonical task budget/effect ledger."""
 
         expected_version = record._store_version
@@ -337,9 +341,10 @@ class OrchestrationEngine:
             raise StaleApproval("Packet dispatch requires a persisted task snapshot")
         assignment_digest = assignment_approval_digest(assignment)
         reserved_key: str | None = None
+        reserved_here = False
 
         def reserve(current: TaskRecord) -> None:
-            nonlocal reserved_key
+            nonlocal reserved_key, reserved_here
             self._require_verified_plan_materialization(current)
             if current.plan_generation != record.plan_generation or current.plan is None:
                 raise EffectAlreadyClaimed(
@@ -401,6 +406,7 @@ class OrchestrationEngine:
                 phase="dispatch",
                 max_task_budget_usd=self.settings.max_task_budget_usd,
             )
+            reserved_here = True
             current.status = TaskStatus.RUNNING
 
         stored = self.store.mutate_if_version(record.task_id, expected_version, reserve)
@@ -408,7 +414,7 @@ class OrchestrationEngine:
             raise EffectAlreadyClaimed(
                 "Another worker changed packet dispatch authority"
             )
-        return stored, reserved_key
+        return stored, reserved_key, reserved_here
 
     @staticmethod
     def _record_packet_effect_outcome(
@@ -498,7 +504,11 @@ class OrchestrationEngine:
             )
             return False
         try:
-            reserved_record, task_effect_key = self._reserve_packet_effect(
+            (
+                reserved_record,
+                task_effect_key,
+                task_effect_reserved_here,
+            ) = self._reserve_packet_effect(
                 record, assignment
             )
             for field_name in type(record).model_fields:
@@ -551,6 +561,24 @@ class OrchestrationEngine:
             self.store.save(record)
             await self._status_post(
                 record, f"*{record.task_id} — BLOCKED*\n{record.message}"
+            )
+            return False
+        if not await self._publish_delegation(record, assignment):
+            self._record_packet_effect_outcome(
+                record,
+                assignment,
+                effect_key=task_effect_key,
+                outcome="failed_pre_submit",
+            )
+            return False
+        published_record = record
+        record = self._revalidated_plan_after_publication(published_record)
+        if record is None:
+            self._close_failed_pre_submit_after_publication(
+                published_record,
+                assignment,
+                effect_key=task_effect_key,
+                reserved_by_caller=task_effect_reserved_here,
             )
             return False
         try:
@@ -876,7 +904,11 @@ class OrchestrationEngine:
                 continue
             assignment, work, adapter, token = routed[member.sequence]
             try:
-                stored, task_effect_key = self._reserve_packet_effect(
+                (
+                    stored,
+                    task_effect_key,
+                    task_effect_reserved_here,
+                ) = self._reserve_packet_effect(
                     record, assignment
                 )
                 for field_name in type(record).model_fields:
@@ -903,11 +935,6 @@ class OrchestrationEngine:
                 )
                 return False
             if state == MemberState.RESERVED:
-                if not await self._publish_delegation(record, assignment):
-                    ledger.cancel_unstarted(
-                        batch_id, reason="delegation_not_published"
-                    )
-                    return False
                 if not ledger.claim(
                     batch_id,
                     member.effect_key,
@@ -946,6 +973,56 @@ class OrchestrationEngine:
                         detail=type(exc).__name__,
                     )
                 continue
+            if state == MemberState.DISPATCHING:
+                if not await self._publish_delegation(record, assignment):
+                    self._record_packet_effect_outcome(
+                        record,
+                        assignment,
+                        effect_key=task_effect_key,
+                        outcome="failed_pre_submit",
+                    )
+                    ledger.record(
+                        batch_id,
+                        member.effect_key,
+                        MemberState.FAILED,
+                        detail="delegation_not_published",
+                    )
+                    ledger.cancel_unstarted(
+                        batch_id, reason="delegation_not_published"
+                    )
+                    return False
+                published_record = record
+                revalidated = self._revalidated_plan_after_publication(
+                    published_record
+                )
+                if revalidated is None:
+                    closed_pre_submit = (
+                        self._close_failed_pre_submit_after_publication(
+                            published_record,
+                            assignment,
+                            effect_key=task_effect_key,
+                            reserved_by_caller=task_effect_reserved_here,
+                        )
+                    )
+                    ledger.record(
+                        batch_id,
+                        member.effect_key,
+                        (
+                            MemberState.FAILED
+                            if closed_pre_submit
+                            else MemberState.AMBIGUOUS
+                        ),
+                        detail=(
+                            "plan_materialization_changed_pre_submit"
+                            if closed_pre_submit
+                            else "plan_materialization_changed_ambiguous"
+                        ),
+                    )
+                    ledger.cancel_unstarted(
+                        batch_id, reason="plan_materialization_changed"
+                    )
+                    return False
+                record = revalidated
             dispatchable.append(
                 (
                     member,
@@ -1675,6 +1752,10 @@ class OrchestrationEngine:
                         record, f"*{task_id} — BLOCKED*\n{record.message}"
                     )
                     return
+                # Planning completion must be durable before the first provider
+                # reservation. Slack publication is an optional side effect, not
+                # a persistence mechanism for authenticated plan authority.
+                self.store.save(record)
             if record.plan.owner_question or (record.plan.approval_required and not record.owner_approved):
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = record.plan.owner_question or "; ".join(record.plan.approval_reasons)
@@ -1733,8 +1814,6 @@ class OrchestrationEngine:
                             else None
                         ),
                     )
-                    return
-                if not await self._publish_delegation(record, assignment):
                     return
                 accepted = await self._execute_assignment(record, assignment)
                 record = self.store.get(task_id) or record
@@ -2246,6 +2325,140 @@ class OrchestrationEngine:
             self._stop_for_unverified_plan(record, exc)
             return False
         return True
+
+    def _revalidated_plan_after_publication(
+        self, record: TaskRecord
+    ) -> TaskRecord | None:
+        """Rebind provider authority to the exact persisted post-Slack snapshot.
+
+        Collaboration publication can await network I/O and save task state. A
+        second worker may advance the task between that save and provider I/O,
+        so validating the caller's in-memory object would leave a TOCTOU window.
+        Require the store to remain at the exact publication version, validate
+        the persisted materialization, and return that fresh snapshot.
+        """
+
+        published_version = record._store_version
+        current = self.store.get(record.task_id)
+        try:
+            if (
+                published_version is None
+                or current is None
+                or current._store_version != published_version
+            ):
+                raise CommunicationEvidenceFailure(
+                    "task state changed after collaboration publication"
+                )
+            self._require_verified_plan_materialization(current)
+        except CommunicationEvidenceFailure as exc:
+            if current is not None:
+                self._stop_for_unverified_plan(current, exc)
+            return None
+        return current
+
+    def _close_failed_pre_submit_after_publication(
+        self,
+        published_record: TaskRecord,
+        assignment: Assignment,
+        *,
+        effect_key: str,
+        reserved_by_caller: bool = True,
+    ) -> bool:
+        """Close only a provably unsubmitted effect after publication drift.
+
+        A failed post-Slack version rebind does not by itself prove that the
+        reserved provider effect is safe to release. Re-read the durable task,
+        bind the exact plan generation, assignment, provider intent, and effect
+        key, and require the absence of every persisted call indicator. The
+        final observation is appended under the same record-version CAS, so a
+        concurrent provider-attempt record wins and leaves the intent ambiguous.
+        """
+
+        if not reserved_by_caller:
+            return False
+        current = self.store.get(published_record.task_id)
+        if current is None or current._store_version is None:
+            return False
+        expected_version = current._store_version
+        expected_generation = published_record.plan_generation
+        expected_assignment_digest = assignment_approval_digest(assignment)
+
+        def close(fresh: TaskRecord) -> None:
+            self._require_verified_plan_materialization(fresh)
+            if fresh.plan_generation != expected_generation or fresh.plan is None:
+                raise CommunicationEvidenceFailure(
+                    "provider effect plan generation changed after publication"
+                )
+            planned = [
+                item
+                for item in fresh.plan.assignments
+                if item.sequence == assignment.sequence
+            ]
+            if len(planned) != 1:
+                raise CommunicationEvidenceFailure(
+                    "provider effect assignment changed after publication"
+                )
+            effective = self._effective_assignment(fresh, planned[0])
+            if (
+                effective.agent != assignment.agent
+                or assignment_approval_digest(effective)
+                != expected_assignment_digest
+            ):
+                raise CommunicationEvidenceFailure(
+                    "provider effect assignment authority changed after publication"
+                )
+            intents = [
+                item
+                for item in fresh.task_effect_ledger
+                if item.effect_key == effect_key
+                and item.kind == "provider_intent"
+                and item.phase == "dispatch"
+                and item.plan_generation == expected_generation
+                and item.assignment_sequence == assignment.sequence
+                and item.assignment_digest == expected_assignment_digest
+                and item.provider == assignment.agent
+            ]
+            if len(intents) != 1:
+                raise CommunicationEvidenceFailure(
+                    "provider effect binding changed after publication"
+                )
+            if any(
+                item.effect_key == effect_key
+                and item.kind == "provider_observation"
+                for item in fresh.task_effect_ledger
+            ):
+                raise CommunicationEvidenceFailure(
+                    "provider effect already has an outcome after publication"
+                )
+            if any(
+                run.assignment_sequence == assignment.sequence
+                for run in fresh.provider_runs
+            ) or any(
+                event.effect_key == effect_key
+                for event in fresh.provider_interaction_ledger
+            ):
+                raise CommunicationEvidenceFailure(
+                    "provider call evidence exists after publication"
+                )
+            record_provider_effect_observation(
+                fresh,
+                effective,
+                effect_key=effect_key,
+                phase="dispatch",
+                outcome="failed_pre_submit",
+            )
+
+        try:
+            return (
+                self.store.mutate_if_version(
+                    published_record.task_id,
+                    expected_version,
+                    close,
+                )
+                is not None
+            )
+        except (CommunicationEvidenceFailure, StaleApproval, ValueError):
+            return False
 
     def _reserve_director_effect(
         self,
@@ -4484,6 +4697,27 @@ class OrchestrationEngine:
             None,
         )
         if accepted_outcome is not None:
+            if not await self._publish_delegation(record, assignment):
+                return False
+            record = self._revalidated_plan_after_publication(record)
+            if record is None:
+                return False
+            accepted_outcome = next(
+                (
+                    outcome
+                    for outcome in record.assignment_outcomes
+                    if outcome.assignment_sequence == assignment.sequence
+                ),
+                None,
+            )
+            if accepted_outcome is None:
+                self._stop_for_unverified_plan(
+                    record,
+                    CommunicationEvidenceFailure(
+                        "accepted outcome changed after collaboration publication"
+                    ),
+                )
+                return False
             run = next(
                 (
                     item
@@ -4574,6 +4808,11 @@ class OrchestrationEngine:
         ]
         if existing_runs:
             run = existing_runs[-1]
+            if not await self._publish_delegation(record, assignment):
+                return False
+            record = self._revalidated_plan_after_publication(record)
+            if record is None:
+                return False
         else:
             if unresolved_ambiguous_dispatch(record, assignment) is not None:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -4634,6 +4873,25 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(
                     record, f"*{record.task_id} — BLOCKED*\n{record.message}"
+                )
+                return False
+            if not await self._publish_delegation(record, assignment):
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=effect_key,
+                    phase="dispatch",
+                    outcome="failed_pre_submit",
+                )
+                self.store.save(record)
+                return False
+            published_record = record
+            record = self._revalidated_plan_after_publication(published_record)
+            if record is None:
+                self._close_failed_pre_submit_after_publication(
+                    published_record,
+                    assignment,
+                    effect_key=effect_key,
                 )
                 return False
             interaction_id = self._begin_provider_interaction(
@@ -5250,3 +5508,7 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:58 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]

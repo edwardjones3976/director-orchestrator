@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -14,6 +16,7 @@ adapter fails closed explicitly instead of falling back to the legacy writer.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -22,7 +25,7 @@ from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
@@ -44,6 +47,8 @@ from director_orchestrator.models import (
 from director_orchestrator.packet_results import PacketResultProgression
 from director_orchestrator.packet_contracts import load_json_document
 from director_orchestrator.packet_contracts import document_digest
+from director_orchestrator.parallel_dispatch import MemberState
+from director_orchestrator.providers import ProviderDailyLimitExceeded
 from director_orchestrator.runtime_activation import RuntimeActivation
 from director_orchestrator.store import TaskStore
 from tests.plan_binding_helpers import seed_production_plan_materialization
@@ -234,6 +239,24 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
             ).fetchone()
         return None if row is None else str(row[0])
 
+    def test_task_record_authentication_default_fails_closed(self):
+        record = TaskRecord(
+            task_id="DIR-DEFAULT-AUTH",
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id="evt-default-auth",
+                channel_id="C123",
+                thread_ts="123.45",
+                user_id="U123",
+                text="DIRECTOR verify fail-closed authentication",
+            ),
+        )
+
+        self.assertEqual(
+            IntakeAuthentication.BEARER_DRY_RUN,
+            record.intake_authentication,
+        )
+
     async def test_the_coordinator_executes_the_assignment_it_takes_ownership_of(
         self,
     ) -> None:
@@ -323,6 +346,78 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self._ledger_status())
         self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, persisted.status)
         self.assertIn("budget/effect ledger", persisted.message)
+
+    async def test_packet_daily_budget_failure_precedes_slack_delegation(self):
+        transport = RecordingTransport(self.result)
+        router = StubPacketTaskRouter(
+            self.work, PacketBoundaryAdapter("claude", transport)
+        )
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        engine._reserve_provider_daily_spend = MagicMock(
+            side_effect=ProviderDailyLimitExceeded("daily provider budget exhausted")
+        )
+        engine._publish_delegation = AsyncMock(return_value=True)
+        record, assignment = self._record()
+        store.create(record)
+
+        self.assertFalse(await engine._execute_assignment(record, assignment))
+
+        engine._publish_delegation.assert_not_awaited()
+        self.assertEqual(0, transport.sends)
+
+    async def test_legacy_daily_budget_failure_precedes_slack_delegation(self):
+        settings = self._settings(
+            claude_routine_url="https://claude.invalid/fire",
+            claude_routine_token="test-token",
+        )
+        engine, store = self._engine(settings, None)
+        adapter = AsyncMock()
+        engine.providers[ProviderName.CLAUDE] = adapter
+        engine._reserve_provider_daily_spend = MagicMock(
+            side_effect=ProviderDailyLimitExceeded("daily provider budget exhausted")
+        )
+        engine._publish_delegation = AsyncMock(return_value=True)
+        record, assignment = self._record()
+        store.create(record)
+
+        self.assertFalse(await engine._execute_assignment(record, assignment))
+
+        engine._publish_delegation.assert_not_awaited()
+        adapter.dispatch.assert_not_awaited()
+
+    async def test_parallel_daily_budget_failure_precedes_slack_delegation(self):
+        transport = RecordingTransport(self.result)
+        router = StubPacketTaskRouter(
+            self.work, PacketBoundaryAdapter("claude", transport)
+        )
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            langgraph_parallel_external_dispatch_enabled=True,
+            langgraph_parallel_kill_switch=False,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        engine._reserve_provider_daily_spend = MagicMock(
+            side_effect=ProviderDailyLimitExceeded("daily provider budget exhausted")
+        )
+        engine._publish_delegation = AsyncMock(return_value=True)
+        record, _ = self._record()
+        stored, _ = store.create(record)
+
+        await engine._dispatch_parallel_packet_batch(stored)
+
+        engine._publish_delegation.assert_not_awaited()
+        self.assertEqual(0, transport.sends)
 
     async def test_legacy_ownership_is_preserved_while_live_dispatch_is_off(
         self,
@@ -628,6 +723,140 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(intents))
         self.assertAlmostEqual(0.2, persisted.cumulative_estimated_cost_usd)
 
+    async def test_parallel_restart_republishes_delegation_before_provider_send(self):
+        class SimulatedProcessCrash(BaseException):
+            pass
+
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="Recover one interrupted delegation",
+            acceptance=["Delegation precedes the recovered provider send"],
+            repository="example/demo",
+            estimated_cost_usd=0.1,
+        )
+        record, _ = self._record()
+        record.plan.assignments = [assignment]
+        record.plan.max_hops = 2
+        record.task_effect_ledger = []
+        record.provider_interaction_ledger = []
+        record.plan_interaction_id = None
+        record.plan_generation = 0
+        seed_production_plan_materialization(record)
+
+        work = copy.deepcopy(self.work)
+        work["assignment_id"] = f"{record.task_id}-{assignment.sequence}"
+        work["objective"] = assignment.task
+        work["acceptance_checks"] = list(assignment.acceptance)
+        work["idempotency_key"] = (
+            f"{record.task_id}:{record.plan_generation}:{assignment.sequence}:"
+            + ("b" * 64)
+        )
+        work["correlation"]["correlation_id"] = (
+            f"{record.task_id}:generation-{record.plan_generation}:"
+            f"assignment-{assignment.sequence}"
+        )
+        result = copy.deepcopy(self.result)
+        for field in (
+            "task_id",
+            "assignment_id",
+            "idempotency_key",
+            "authority_snapshot_digest",
+            "correlation",
+        ):
+            result[field] = copy.deepcopy(work[field])
+        result["provider"] = assignment.agent.value
+        result["run_reference"] = "run-recovered-delegation"
+        result["acceptance"] = [
+            {
+                "check": assignment.acceptance[0],
+                "status": "NOT_RUN",
+                "evidence": "Director review remains required.",
+            }
+        ]
+        transport = RecordingTransport(result)
+        router = MultiPacketTaskRouter(
+            {assignment.sequence: work},
+            {
+                assignment.agent.value: PacketBoundaryAdapter(
+                    assignment.agent.value, transport
+                )
+            },
+        )
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            langgraph_parallel_external_dispatch_enabled=True,
+            langgraph_parallel_kill_switch=False,
+            slack_bot_token="test-slack-token",
+            max_task_budget_usd=1.0,
+            max_daily_provider_budget_usd=5.0,
+        )
+        first_activation = RuntimeActivation(
+            settings,
+            packet_task_router=router,
+            packet_result_consumer=RecordingResultConsumer(),
+        )
+        self.addCleanup(first_activation.close)
+        first_engine, first_store = self._engine(settings, first_activation)
+        first_engine.notifier.post = AsyncMock(return_value="1700000000.000001")
+        publish_delegation = first_engine._publish_delegation
+
+        async def publish_then_crash(current, current_assignment):
+            self.assertTrue(
+                await publish_delegation(current, current_assignment)
+            )
+            raise SimulatedProcessCrash("crash after durable Slack delivery")
+
+        first_engine._publish_delegation = publish_then_crash
+        stored, _ = first_store.create(record)
+
+        with self.assertRaises(SimulatedProcessCrash):
+            await first_engine._dispatch_parallel_packet_batch(stored)
+
+        self.assertEqual(0, transport.sends)
+        self.assertEqual(2, first_engine.notifier.post.await_count)
+        recovered_batch = first_engine.parallel_dispatch.find_latest_batch(
+            record.task_id,
+            (hashlib.sha256(work["idempotency_key"].encode("utf-8")).hexdigest(),),
+        )
+        self.assertIsNotNone(recovered_batch)
+        self.assertEqual(
+            MemberState.DISPATCHING,
+            recovered_batch.members[0].state,
+        )
+
+        restarted_consumer = RecordingResultConsumer()
+        restarted_activation = RuntimeActivation(
+            settings,
+            packet_task_router=router,
+            packet_result_consumer=restarted_consumer,
+        )
+        self.addCleanup(restarted_activation.close)
+        restarted_engine, restarted_store = self._engine(
+            settings, restarted_activation
+        )
+        restarted_engine.notifier = first_engine.notifier
+        restarted_publish = restarted_engine._publish_delegation
+        restarted_engine._publish_delegation = AsyncMock(
+            wraps=restarted_publish
+        )
+        restarted_record = restarted_store.get(record.task_id)
+
+        self.assertTrue(
+            await restarted_engine._dispatch_parallel_packet_batch(restarted_record)
+        )
+
+        restarted_engine._publish_delegation.assert_awaited_once()
+        self.assertEqual(2, restarted_engine.notifier.post.await_count)
+        self.assertEqual(1, transport.sends)
+        self.assertEqual(1, restarted_consumer.calls)
+        completed_batch = restarted_engine.parallel_dispatch.aggregate(
+            recovered_batch.batch_id
+        )
+        self.assertEqual(MemberState.SUCCEEDED, completed_batch.members[0].state)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -635,3 +864,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 11:58 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:16 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
@@ -348,6 +349,23 @@ class CompletionWorkerTests(unittest.TestCase):
         self.assertEqual(expected_cwd, backend._trusted_cwd())
         self.assertNotEqual(self.repository.resolve(), backend._trusted_cwd())
 
+    def test_host_backend_fails_closed_without_orchestrator_verified_controls(self):
+        backend = AuditedHostWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        self.assertFalse(backend.capabilities.low_privilege_identity)
+        self.assertFalse(backend.capabilities.network_isolation)
+        self.assertFalse(backend.capabilities.resource_limits)
+        self.assertFalse(backend.capabilities.read_only_repository)
+        backend._execute_argv = Mock()
+
+        with self.assertRaisesRegex(
+            CompletionWorkerError, "orchestrator-verifiable OS evidence"
+        ):
+            backend.execute(self.host, self.request(), lease_token="lease")
+
+        backend._execute_argv.assert_not_called()
+
     def test_worker_git_probes_use_explicit_repository_from_neutral_cwd(self):
         head_result = Mock(returncode=0, stdout=self.head + "\n")
         status_result = Mock(returncode=0, stdout="")
@@ -481,3 +499,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]

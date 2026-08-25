@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | BEGIN]]
@@ -51,6 +52,7 @@ from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
     DirectorPlan,
+    IntakeAuthentication,
     OracleRecoveryApproval,
     ProviderName,
     ProviderRun,
@@ -336,6 +338,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-LATE-PLAN-OBSERVER",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-late-plan-observer",
                     channel_id="C1",
@@ -539,6 +542,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-PLAN-RACE",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-plan-race",
                     channel_id="C1",
@@ -626,6 +630,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-DIRECTOR-LEDGER",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-director-ledger",
                     channel_id="C1",
@@ -684,6 +689,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-DIRECTOR-AMBIGUOUS",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-director-ambiguous",
                     channel_id="C1",
@@ -876,6 +882,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-CURSOR-MERGE",
                 status=TaskStatus.RUNNING,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-cursor-merge",
                     channel_id="C123",
@@ -1077,6 +1084,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     record = TaskRecord(
                         task_id="DIR-MANUAL-HANDOFF",
                         status=TaskStatus.RUNNING,
+                        intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                         intake=SlackIntake(
                             source_event_id="evt-manual-handoff",
                             channel_id="C123",
@@ -1215,6 +1223,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-REVISION",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-revision",
                     channel_id="C123",
@@ -1308,6 +1317,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-AMBIGUOUS-REVISION",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-ambiguous-revision",
                     channel_id="C123",
@@ -1435,6 +1445,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-REVISION-EACH",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-revision-each",
                     channel_id="C123",
@@ -1485,6 +1496,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-BLOCKED",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-blocked",
                     channel_id="C123",
@@ -1570,6 +1582,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-RESUME",
                 status=TaskStatus.RUNNING,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=intake,
                 plan=plan,
                 provider_runs=[
@@ -1654,6 +1667,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                         else "DIR-DURABLE-REVIEW-EXACT"
                     ),
                     status=TaskStatus.RUNNING,
+                    intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                     intake=SlackIntake(
                         source_event_id=(
                             "evt-durable-review-changed"
@@ -1872,6 +1886,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-HANDOFF",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=intake,
                 plan=plan,
                 approved_assignments=[2],
@@ -1986,6 +2001,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-TWO-REVISIONS",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-two-revisions",
                     channel_id="C123",
@@ -2059,6 +2075,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             record = TaskRecord(
                 task_id="DIR-PERPLEXITY-REFINEMENT",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-perplexity-refinement",
                     channel_id="C123",
@@ -2115,4 +2132,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:54 UTC | END]]
 

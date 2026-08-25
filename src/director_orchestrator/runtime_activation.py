@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -38,6 +39,8 @@ every pending assignment silently stopping for an owner decision.
 from __future__ import annotations
 
 import sqlite3
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
@@ -58,6 +61,41 @@ from .packet_results import DirectorPacketResultConsumer
 
 class RuntimeActivationError(RuntimeError):
     """An enabled component could not be built, so the process must not start."""
+
+
+def _build_serialized_sqlite_saver(
+    saver_type: type[Any], connection: sqlite3.Connection
+) -> Any:
+    """Add an orchestrator-owned lock around every checkpointer cursor.
+
+    ``run_packet`` may execute concurrently in two or three ``asyncio.to_thread``
+    workers.  A single SQLite connection remains the durable checkpoint owner,
+    but no two threads may operate a cursor or perform lazy setup on it at the
+    same time.  The lock deliberately covers only checkpointer database work,
+    not the surrounding graph invocation or provider call, so bounded external
+    dispatch can still overlap.
+
+    The pinned LangGraph saver currently carries an implementation lock of its
+    own.  This separate lock is an activation-layer invariant rather than an
+    assumption about that dependency's private implementation.
+    """
+
+    class _OrchestratorSerializedSqliteSaver(saver_type):
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            super().__init__(conn)
+            self._orchestrator_operation_lock = threading.RLock()
+
+        def setup(self) -> None:
+            with self._orchestrator_operation_lock:
+                super().setup()
+
+        @contextmanager
+        def cursor(self, transaction: bool = True):
+            with self._orchestrator_operation_lock:
+                with super().cursor(transaction=transaction) as cursor:
+                    yield cursor
+
+    return _OrchestratorSerializedSqliteSaver(connection)
 
 
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -159,7 +197,7 @@ class RuntimeActivation:
         connection = sqlite3.connect(checkpoint_path, check_same_thread=False)
         try:
             runtime = LangGraphPacketRuntime(
-                SqliteSaver(connection),
+                _build_serialized_sqlite_saver(SqliteSaver, connection),
                 ledger_database_path=self.settings.langgraph_runtime_ledger_path,
                 legacy_database_path=self.settings.sqlite_path,
                 checkpoint_namespace=(
@@ -326,3 +364,4 @@ class RuntimeActivation:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]

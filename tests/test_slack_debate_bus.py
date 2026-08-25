@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | BEGIN]]
@@ -53,6 +54,7 @@ from director_orchestrator.models import (
     CollaborationTurn,
     DirectorPlan,
     DiscussionPhase,
+    IntakeAuthentication,
     MaterialDecisionDimension,
     ProviderName,
     ProviderRun,
@@ -865,6 +867,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-GENERATED-DEBATE-BINDING",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-generated-debate-binding",
                     channel_id="C-ORACLE",
@@ -935,6 +938,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-MUTATED-DEBATE-BINDING",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-mutated-debate-binding",
                     channel_id="C-ORACLE",
@@ -990,6 +994,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-MUTATED-WORK-BEFORE-SLACK",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-mutated-work-before-slack",
                     channel_id="C-ORACLE",
@@ -1060,6 +1065,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-CAS-PLAN-REBIND",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-cas-plan-rebind",
                     channel_id="C-ORACLE",
@@ -1152,6 +1158,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-RELOAD-SECOND-ASSIGNMENT",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-reload-second-assignment",
                     channel_id="C-ORACLE",
@@ -1243,6 +1250,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-REVIEW-PLAN-REBIND",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-review-plan-rebind",
                     channel_id="C-ORACLE",
@@ -1337,6 +1345,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-DEBATE-PROSPECTIVE-BUDGET",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-debate-prospective-budget",
                     channel_id="C-ORACLE",
@@ -1420,6 +1429,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-BUILD",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-build",
                     channel_id="C-ORACLE",
@@ -1532,6 +1542,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-MISSING-PLAN-EVIDENCE",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-missing-plan-evidence",
                     channel_id="C1",
@@ -1615,6 +1626,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-DRY-RUN-CANNOT-GO-LIVE",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-dry-run-cannot-go-live",
                     channel_id="C1",
@@ -2122,6 +2134,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-SLACK-RECOVERY",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-slack-recovery",
                     channel_id="C1",
@@ -2209,6 +2222,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-DEBATE",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-debate",
                     channel_id="C-ORACLE",
@@ -2455,6 +2469,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-MISSING-POSITION-FIELDS",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-missing-position-fields",
                     channel_id="C1",
@@ -2771,3 +2786,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:40 UTC | END]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]

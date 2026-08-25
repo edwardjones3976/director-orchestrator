@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | BEGIN]]
 from __future__ import annotations
@@ -17,6 +18,7 @@ from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
     Assignment,
     DirectorPlan,
+    IntakeAuthentication,
     ProviderName,
     ProviderRun,
     ReviewDecision,
@@ -165,6 +167,7 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
         record = TaskRecord(
             task_id="DIR-SCOPE",
             status=TaskStatus.QUEUED,
+            intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
             intake=SlackIntake(
                 source_event_id="evt-scope",
                 channel_id="C123",
@@ -219,3 +222,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | END]]

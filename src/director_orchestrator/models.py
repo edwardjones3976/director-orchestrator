@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
@@ -774,11 +775,10 @@ class TaskRecord(BaseModel):
     task_id: str
     status: TaskStatus
     intake: SlackIntake
-    # Production intake always supplies this value explicitly. The constructor
-    # default preserves trusted internal/test fixtures; TaskStore injects the
-    # fail-closed bearer class when persisted legacy JSON omits the field.
+    # Missing authentication authority always fails closed. Production Slack
+    # intake must explicitly install its authenticated gateway attestation.
     intake_authentication: IntakeAuthentication = (
-        IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+        IntakeAuthentication.BEARER_DRY_RUN
     )
     plan: DirectorPlan | None = None
     # Monotonically increases whenever the engine installs a newly generated
@@ -1041,3 +1041,4 @@ class ManualRunCompletion(BaseModel):
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | END]]

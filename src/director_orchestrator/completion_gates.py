@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -41,6 +42,119 @@ _MAX_DOCUMENT_BYTES = 1_048_576
 #: Windows FILE_ATTRIBUTE_REPARSE_POINT. Junctions and mount points set this
 #: without being symbolic links, so `S_ISLNK` alone does not detect them.
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+_SAFE_PYTHON_X_OPTIONS = frozenset(
+    {
+        "context_aware_warnings",
+        "cpu_count",
+        "dev",
+        "disable_remote_debug",
+        "faulthandler",
+        "frozen_modules",
+        "gil",
+        "importtime",
+        "int_max_str_digits",
+        "no_debug_ranges",
+        "perf",
+        "perf_jit",
+        "pycache_prefix",
+        "showrefcount",
+        "thread_inherit_context",
+        "tlbc",
+        "tracemalloc",
+        "utf8",
+        "warn_default_encoding",
+    }
+)
+
+
+def _legacy_python_code_execution_option(
+    argv: Sequence[str],
+    *,
+    authenticated_script: Path | None = None,
+) -> str | None:
+    """Return the first Python code-loading option unsafe outside a worker.
+
+    CPython accepts split, compact, and clustered spellings (for example
+    ``-m x``, ``-mx``, and ``-Bmx``). The legacy runner has no independently
+    verified low-privilege or network boundary, so module, command-string, and
+    unsafe or unknown implementation-specific ``-X`` hooks must graduate through
+    an isolated worker instead. For an exact-bound repository script, inspection
+    ends only at that authenticated script; later values are script arguments.
+    """
+
+    def is_authenticated_script(argument: str) -> bool:
+        if authenticated_script is None:
+            return False
+        try:
+            return os.path.samefile(argument, authenticated_script)
+        except (OSError, ValueError):
+            return False
+
+    def unsafe_x_option(value: str, spelling: str) -> str | None:
+        name = value.split("=", 1)[0]
+        if name not in _SAFE_PYTHON_X_OPTIONS:
+            return spelling
+        return None
+
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
+        if authenticated_script is not None and is_authenticated_script(argument):
+            return None
+        if argument == "--":
+            if authenticated_script is not None:
+                if index + 1 >= len(argv) or not is_authenticated_script(argv[index + 1]):
+                    raise CompletionGateError(
+                        "repository script runner argv does not bind authenticated script"
+                    )
+            return None
+        if not argument.startswith("-") or argument == "-":
+            if authenticated_script is not None:
+                raise CompletionGateError(
+                    "repository script runner argv does not bind authenticated script"
+                )
+            return None
+        if argument.startswith("--"):
+            if argument == "--check-hash-based-pycs":
+                index += 1
+            index += 1
+            continue
+
+        cluster = argument[1:]
+        cluster_index = 0
+        while cluster_index < len(cluster):
+            option = cluster[cluster_index]
+            if option in {"m", "c"}:
+                return argument
+            if option == "X":
+                inline_value = cluster[cluster_index + 1:]
+                if inline_value:
+                    rejected = unsafe_x_option(inline_value, argument)
+                    if rejected is not None:
+                        return rejected
+                    break
+                if index + 1 >= len(argv):
+                    return argument
+                rejected = unsafe_x_option(argv[index + 1], argument)
+                if rejected is not None:
+                    return rejected
+                index += 1
+                break
+            # -W consumes the remainder of this token or the following token.
+            if option == "W":
+                if cluster_index + 1 == len(cluster):
+                    index += 1
+                break
+            cluster_index += 1
+        index += 1
+
+    if authenticated_script is not None:
+        raise CompletionGateError(
+            "repository script runner argv does not bind authenticated script"
+        )
+    return None
 
 
 class CompletionGateError(ValueError):
@@ -811,17 +925,22 @@ class RunnerRegistry:
         before_status = self._git_status(root)
         if before_status:
             raise CompletionGateError("runner requires a clean repository worktree")
+        authenticated_script = None
         if gate["runner_id"] == "repository_owned_script":
-            self._verify_repository_script(
+            authenticated_script = self._verify_repository_script(
                 root,
                 gate,
                 expected_head_sha=ledger["expected_head_sha"],
                 authenticated_script_approval_digests=authenticated_script_approval_digests,
             )
 
-        if "-m" in profile.argv:
+        unsafe_python_option = _legacy_python_code_execution_option(
+            profile.argv,
+            authenticated_script=authenticated_script,
+        )
+        if unsafe_python_option is not None:
             raise CompletionGateError(
-                "Python module runners require the isolated completion worker boundary"
+                "Python code-loading options require the isolated completion worker boundary"
             )
         argv = (definition.executable, *profile.argv)
         safe_environment = {
@@ -1153,7 +1272,7 @@ class RunnerRegistry:
         *,
         expected_head_sha: str,
         authenticated_script_approval_digests: frozenset[str],
-    ) -> None:
+    ) -> Path:
         binding = gate.get("script_binding")
         if not isinstance(binding, dict):
             raise CompletionGateError("repository script lacks an exact binding")
@@ -1172,6 +1291,7 @@ class RunnerRegistry:
         content_digest = "sha256:" + hashlib.sha256(script.read_bytes()).hexdigest()
         if content_digest != binding["content_digest"]:
             raise CompletionGateError("repository script content digest mismatch")
+        return script
 
     @staticmethod
     def _sanitize(value: str) -> tuple[str, set[str]]:
@@ -1189,3 +1309,4 @@ class RunnerRegistry:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]

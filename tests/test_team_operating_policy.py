@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:55 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
@@ -49,6 +50,7 @@ from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
     DirectorPlan,
+    IntakeAuthentication,
     ProviderName,
     ProviderContactAttempt,
     ProviderRun,
@@ -433,6 +435,7 @@ class PlanMaterializationAccountingTests(unittest.IsolatedAsyncioTestCase):
         return TaskRecord(
             task_id=task_id,
             status=TaskStatus.QUEUED,
+            intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
             intake=SlackIntake(
                 source_event_id=f"evt-{task_id}",
                 channel_id="C1",
@@ -1371,6 +1374,7 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-NONRESPONSE",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-nonresponse",
                     channel_id="C1",
@@ -1479,6 +1483,7 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                 task = TaskRecord(
                     task_id=f"DIR-AMBIGUOUS-{label.upper()}",
                     status=TaskStatus.QUEUED,
+                    intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                     intake=SlackIntake(
                         source_event_id=f"evt-ambiguous-{label}",
                         channel_id="C1",
@@ -1550,6 +1555,7 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
             task = TaskRecord(
                 task_id="DIR-PREDISPATCH-ERROR",
                 status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 intake=SlackIntake(
                     source_event_id="evt-predispatch-error",
                     channel_id="C1",
@@ -1764,3 +1770,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:11 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:55 UTC | END]]

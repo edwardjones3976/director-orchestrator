@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:14 UTC | BEGIN]]
 from __future__ import annotations
@@ -13,7 +14,10 @@ from director_orchestrator.completion_worker_runtime import (
 )
 from director_orchestrator.completion_workers import CompletionWorkerError
 from director_orchestrator.config import Settings
-from director_orchestrator.runtime_activation import RuntimeActivation
+from director_orchestrator.runtime_activation import (
+    RuntimeActivation,
+    RuntimeActivationError,
+)
 
 
 class CompletionWorkerRuntimeTests(unittest.TestCase):
@@ -43,8 +47,10 @@ class CompletionWorkerRuntimeTests(unittest.TestCase):
         fields.update(overrides)
         return replace(Settings(), **fields)
 
-    def test_both_explicit_tiers_construct_with_an_isolated_store(self):
-        activation = RuntimeActivation(self.settings())
+    def test_verified_container_tier_constructs_with_an_isolated_store(self):
+        activation = RuntimeActivation(
+            self.settings(completion_gate_execution_tiers=("container",))
+        )
         self.addCleanup(activation.close)
 
         runtime = activation.completion_worker_runtime
@@ -53,21 +59,19 @@ class CompletionWorkerRuntimeTests(unittest.TestCase):
         readiness = activation.readiness()["completion_gates"]
         self.assertTrue(readiness["worker_executor_constructed"])
         self.assertTrue(readiness["worker_execution_ready"])
-        self.assertTrue(readiness["worker_tiers_ready"]["audited_host"])
         self.assertTrue(readiness["worker_tiers_ready"]["disposable_container"])
         self.assertFalse(readiness["completion_authority"])
         self.assertTrue((self.root / "workers.sqlite3").is_file())
 
-        host = runtime.worker_registry.resolve("host.python_unittest.discover-tests")
         container = runtime.worker_registry.resolve("container.python_compileall.src-tests")
-        self.assertNotIn("-c", host.fixed_argv)
         self.assertNotIn("-c", container.fixed_argv)
+        with self.assertRaises(CompletionWorkerError):
+            runtime.worker_registry.resolve("host.python_unittest.discover-tests")
         with self.assertRaises(CompletionWorkerError):
             runtime.worker_registry.resolve("container.python_unittest.discover-tests")
         with self.assertRaises(CompletionWorkerError):
             runtime.worker_registry.resolve("container.pip_check.environment")
         self.assertRegex(container.image, r"@sha256:[0-9a-f]{64}$")
-        self.assertEqual("none", host.network_mode)
         self.assertEqual("none", container.network_mode)
         self.assertTrue(container.repository_read_only)
         self.assertTrue(container.drop_all_capabilities)
@@ -97,20 +101,14 @@ class CompletionWorkerRuntimeTests(unittest.TestCase):
                 completion_gate_worker_store_path=str(self.root / "gates.sqlite3")
             ).validate_completion_gate_configuration()
 
-    def test_backend_path_disappearance_fails_the_next_activation(self):
+    def test_unverified_host_broker_fails_activation_closed(self):
         broker = self.root / "broker.exe"
         broker.write_bytes(b"fixture")
         settings = self.settings(completion_gate_host_broker_path=str(broker))
-        # The file can be authenticated but the remaining configured runtime is
-        # still separately bound. Construction itself is safe and does not run it.
-        activation = RuntimeActivation(settings)
-        self.addCleanup(activation.close)
-        self.assertTrue(
-            activation.readiness()["completion_gates"]["worker_execution_ready"]
-        )
-
-        broker.unlink()
-        with self.assertRaises(ValueError):
+        settings.validate_completion_gate_configuration()
+        with self.assertRaisesRegex(
+            RuntimeActivationError, "worker tiers could not be activated"
+        ):
             RuntimeActivation(settings)
 
     def test_sanitizer_retains_no_provider_or_process_prose(self):
@@ -132,3 +130,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
