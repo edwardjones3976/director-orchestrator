@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:50 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | BEGIN]] -->
@@ -307,6 +308,13 @@ an otherwise unbound review authoritative.
 
 ## Isolated runner boundary
 
+Structured host execution is permitted only through this allowlisted isolated
+proof boundary. It is a temporary foundation for evidence-producing completion
+gates, not unrestricted shell authority. Free-form commands, shell strings,
+ambient host environments, unbounded output, and unregistered runners remain
+prohibited; any broader runner requires a separate independently accepted
+graduation gate.
+
 An authenticated registry may register fixed profiles for:
 
 - `python_unittest`
@@ -369,3 +377,4 @@ foundation back without changing canonical task or LangGraph state.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:50 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 # Model interoperability contract
 
 **Status:** Owner-accepted v1 documentation/schema authority, effective when PR #18 merges; adapter conformance remains unaccepted
@@ -60,7 +61,11 @@ Adapters translate provider-native states into this vocabulary. Unknown states f
 3. Upstream content is wrapped as untrusted data.
 4. Agents do not address each other through uncontrolled chat loops.
 5. Questions return as a structured blocker or decision request.
-6. Parallel work is allowed only when dependency analysis marks the assignments independent.
+6. Parallel local analysis and read-only work are allowed only when dependency
+   analysis marks the assignments independent. Parallel external provider
+   dispatch additionally requires its separately accepted LangGraph graduation
+   gate, bounded concurrency, idempotency, budgets, cancellation, recovery,
+   deterministic aggregation, and an active kill switch.
 7. The orchestrator records which canon snapshot each agent saw.
 8. Later canon changes invalidate or rebase affected queued assignments.
 9. Results never silently mutate the work packet.
@@ -112,3 +117,4 @@ Offline replay fixtures bind one validated work packet to its validated result p
 `director_orchestrator.packet_contracts` writes and loads these documents symmetrically. It canonicalizes JSON with RFC 8785, records SHA-256 digests for both packets and the replay envelope, rejects duplicate keys and documents over 1 MiB, verifies task/assignment/idempotency/authority/correlation linkage, and can compare the envelope against an independently trusted digest. The `replay_run_digest` is calculated over the canonical envelope with that field omitted, avoiding a self-referential hash.
 
 A self-contained digest detects accidental or unsynchronized modification; it is not a signature and grants no authority. Acceptance, dispatch, external writes, and merge decisions remain governed by deterministic policy and separately trusted evidence.
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
