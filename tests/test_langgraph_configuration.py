@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 """Default-on and isolation contracts for the LangGraph proof lanes."""
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
@@ -216,6 +217,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
             "local": ROOT / ".env.example",
             "uppercut": ROOT / ".env.uppercut.example",
             "oracle": ROOT / ".env.edge-oracle.example",
+            "long-table": ROOT / ".env.long-table.example",
         }
         checkpoint_paths: set[str] = set()
         namespaces: set[str] = set()
@@ -273,3 +275,4 @@ class LangGraphConfigurationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]

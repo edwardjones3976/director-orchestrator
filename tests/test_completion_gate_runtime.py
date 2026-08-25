@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -15,6 +17,7 @@ import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from director_orchestrator.completion_gates import (
     AuthenticatedGateContext,
@@ -30,6 +33,7 @@ from director_orchestrator.completion_gates import (
 )
 from director_orchestrator.completion_store import CompletionGateStore
 from director_orchestrator.packet_contracts import load_json_document
+from director_orchestrator.process_isolation import trusted_neutral_cwd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -351,6 +355,21 @@ class CompletionGateRuntimeTests(unittest.TestCase):
         )
 
     def test_runner_is_allowlisted_shell_free_and_isolated(self):
+        self.profile = ParameterProfile.build(
+            "python-version", ("--version",)
+        )
+        self.definition = RunnerDefinition.build(
+            "python_unittest",
+            sys.executable,
+            (self.profile,),
+            maximum_timeout_seconds=300,
+        )
+        self.registry = RunnerRegistry((self.definition,))
+        self._single_runnable_gate()
+        gate = self.ledger["director_gates"][0]
+        gate["parameter_profile_id"] = self.profile.profile_id
+        gate["expected_output"]["value"] = "Python"
+        rebind_ledger(self.ledger)
         with tempfile.TemporaryDirectory() as temporary:
             repository = Path(temporary) / "repository"
             repository.mkdir()
@@ -374,17 +393,151 @@ class CompletionGateRuntimeTests(unittest.TestCase):
                 self.registry.execute(
                     verified, "director.contract-tests", repository_root=repository
                 )
-            observation = self.registry.execute(
-                verified,
-                "director.contract-tests",
-                repository_root=repository,
-                enabled=True,
-                isolated_proof_enabled=True,
-            )
+            with patch.object(
+                self.registry, "_run_bounded", wraps=self.registry._run_bounded
+            ) as bounded:
+                observation = self.registry.execute(
+                    verified,
+                    "director.contract-tests",
+                    repository_root=repository,
+                    enabled=True,
+                    isolated_proof_enabled=True,
+                )
         self.assertEqual("PASS", observation.status)
         self.assertEqual(0, observation.exit_code)
         self.assertEqual((), observation.failure_reasons)
         self.assertEqual(observation.before_head_sha, observation.after_head_sha)
+        self.assertEqual(trusted_neutral_cwd(), bounded.call_args.kwargs["cwd"])
+
+    def test_module_runner_cannot_execute_repository_search_path_shadow(self):
+        self.profile = ParameterProfile.build(
+            "repository-shadow", ("-m", "compileall", "-q", ".")
+        )
+        self.definition = RunnerDefinition.build(
+            "python_unittest", sys.executable, (self.profile,),
+            maximum_timeout_seconds=300,
+        )
+        self.registry = RunnerRegistry((self.definition,))
+        self._single_runnable_gate()
+        gate = self.ledger["director_gates"][0]
+        gate["parameter_profile_id"] = self.profile.profile_id
+        rebind_gate(gate)
+        rebind_ledger(self.ledger)
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, _ = self._proof_repository(temporary)
+            marker = Path(temporary) / "repository-module-executed.txt"
+            (repository / "compileall.py").write_text(
+                f"from pathlib import Path\nPath({str(marker)!r}).write_text('unsafe')\n",
+                encoding="utf-8",
+            )
+            subprocess.run(("git", "add", "compileall.py"), cwd=repository, check=True)
+            subprocess.run(
+                ("git", "commit", "-q", "-m", "shadow"), cwd=repository, check=True
+            )
+            self.ledger["expected_head_sha"] = self._git_head(repository)
+            planned = self.planned_predecessor()
+            self.bind_predecessor(planned)
+            verified = validate_gate_ledger(
+                self.ledger,
+                context=self._context(),
+                predecessor=planned,
+                runner_registry=self.registry,
+            )
+
+            with self.assertRaisesRegex(CompletionGateError, "isolated completion worker"):
+                self.registry.execute(
+                    verified,
+                    "director.contract-tests",
+                    repository_root=repository,
+                    enabled=True,
+                    isolated_proof_enabled=True,
+                )
+            self.assertFalse(marker.exists())
+
+    def test_legacy_runner_rejects_all_python_code_loading_option_forms(self):
+        option_forms = (
+            ("-m", "compileall"),
+            ("-mcompileall",),
+            ("-c", "print('unsafe')"),
+            ("-cprint('unsafe')",),
+            ("-Bcprint('unsafe')",),
+            ("-Bmcompileall",),
+            ("-X", "presite=unsafe_module"),
+            ("-Xpresite=unsafe_module",),
+            ("-BXpresite=unsafe_module",),
+            ("-Xdev", "-c", "print('unsafe')"),
+            ("-XDev", "--version"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, _ = self._proof_repository(temporary)
+            for ordinal, argv in enumerate(option_forms):
+                with self.subTest(argv=argv):
+                    profile = ParameterProfile.build(f"unsafe-{ordinal}", argv)
+                    definition = RunnerDefinition.build(
+                        "python_unittest",
+                        sys.executable,
+                        (profile,),
+                        maximum_timeout_seconds=300,
+                    )
+                    registry = RunnerRegistry((definition,))
+                    ledger = copy.deepcopy(self.ledger)
+                    gate = ledger["director_gates"][0]
+                    gate["runner_definition_digest"] = definition.definition_digest
+                    gate["parameter_profile_id"] = profile.profile_id
+                    gate["parameter_profile_digest"] = profile.digest
+                    ledger["runner_registry_digest"] = registry.registry_digest
+                    ledger["expected_head_sha"] = self._git_head(repository)
+                    rebind_ledger(ledger)
+                    planned = copy.deepcopy(ledger)
+                    planned["ledger_id"] = planned["ledger_id"].replace("-r2", "-r1")
+                    planned["ledger_revision"] = 1
+                    planned["ledger_state"] = "PLANNED"
+                    planned["predecessor_ledger_digest"] = None
+                    planned["expected_head_sha"] = None
+                    planned["candidate_result_digest"] = None
+                    planned["material_authors"] = []
+                    rebind_ledger(planned)
+                    ledger["predecessor_ledger_digest"] = planned["ledger_digest"]
+                    rebind_ledger(ledger)
+                    verified = validate_gate_ledger(
+                        ledger,
+                        context=self._context(),
+                        predecessor=planned,
+                        runner_registry=registry,
+                    )
+                    with patch.object(
+                        registry, "_run_bounded", wraps=registry._run_bounded
+                    ) as bounded:
+                        with self.assertRaisesRegex(
+                            CompletionGateError, "isolated completion worker"
+                        ):
+                            registry.execute(
+                                verified,
+                                "director.contract-tests",
+                                repository_root=repository,
+                                enabled=True,
+                                isolated_proof_enabled=True,
+                            )
+                    bounded.assert_not_called()
+
+    def test_git_probe_uses_explicit_repository_from_neutral_cwd(self):
+        expected_head = "a" * 40
+        completed = type(
+            "Completed", (), {"returncode": 0, "stdout": expected_head + "\n"}
+        )()
+        repository = Path("C:/untrusted-repository")
+        with patch(
+            "director_orchestrator.completion_gates.subprocess.run",
+            return_value=completed,
+        ) as run:
+            observed = RunnerRegistry._git_head(repository)
+
+        self.assertEqual(expected_head, observed)
+        self.assertEqual(
+            ("git", "-C", str(repository), "rev-parse", "HEAD"),
+            run.call_args.args[0],
+        )
+        self.assertEqual(trusted_neutral_cwd(), run.call_args.kwargs["cwd"])
 
     def test_bounded_runner_timeout_terminates_descendant_tree(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -524,7 +677,12 @@ class CompletionGateRuntimeTests(unittest.TestCase):
                         )
 
     # [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | BEGIN]]
-    def _script_repository(self, temporary: str):
+    def _script_repository(
+        self,
+        temporary: str,
+        *script_arguments: str,
+        interpreter_arguments: tuple[str, ...] = ("-B",),
+    ):
         """A committed repository whose gate is bound to a repository-owned script."""
 
         repository = Path(temporary) / "repository"
@@ -544,10 +702,14 @@ class CompletionGateRuntimeTests(unittest.TestCase):
         subprocess.run(("git", "add", "-A"), cwd=repository, check=True)
         subprocess.run(("git", "commit", "-q", "-m", "script"), cwd=repository, check=True)
 
+        script_profile = ParameterProfile.build(
+            "repository-script",
+            (*interpreter_arguments, str(script), *script_arguments),
+        )
         definition = RunnerDefinition.build(
             "repository_owned_script",
             sys.executable,
-            (self.profile,),
+            (script_profile,),
             maximum_timeout_seconds=300,
         )
         self.registry = RunnerRegistry((definition,))
@@ -561,6 +723,8 @@ class CompletionGateRuntimeTests(unittest.TestCase):
         gate = self.ledger["director_gates"][0]
         gate["runner_id"] = "repository_owned_script"
         gate["runner_definition_digest"] = definition.definition_digest
+        gate["parameter_profile_id"] = script_profile.profile_id
+        gate["parameter_profile_digest"] = script_profile.digest
         gate["script_binding"] = {
             "path": "scripts/check_completion.py",
             "blob_sha": blob_sha,
@@ -582,6 +746,57 @@ class CompletionGateRuntimeTests(unittest.TestCase):
             runner_registry=self.registry,
         )
         return repository, script, verified, frozenset({approval_digest})
+
+    def test_safe_x_options_remain_available_to_legacy_runner(self):
+        for ordinal, argv in enumerate((
+            ("-X", "utf8", "--version"),
+            ("-Xdev", "--version"),
+        )):
+            with self.subTest(argv=argv), tempfile.TemporaryDirectory() as temporary:
+                self.profile = ParameterProfile.build(f"safe-x-{ordinal}", argv)
+                self.definition = RunnerDefinition.build(
+                    "python_unittest", sys.executable, (self.profile,),
+                    maximum_timeout_seconds=300,
+                )
+                self.registry = RunnerRegistry((self.definition,))
+                self._single_runnable_gate()
+                gate = self.ledger["director_gates"][0]
+                gate["runner_definition_digest"] = self.definition.definition_digest
+                gate["parameter_profile_id"] = self.profile.profile_id
+                gate["parameter_profile_digest"] = self.profile.digest
+                gate["expected_output"]["value"] = "Python"
+                self.ledger["runner_registry_digest"] = self.registry.registry_digest
+                rebind_ledger(self.ledger)
+                repository, verified = self._proof_repository(temporary)
+                observation = self.registry.execute(
+                    verified,
+                    "director.contract-tests",
+                    repository_root=repository,
+                    enabled=True,
+                    isolated_proof_enabled=True,
+                )
+                self.assertEqual("PASS", observation.status)
+
+    def test_exact_bound_script_arguments_are_not_interpreter_options(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, _, verified, approvals = self._script_repository(
+                temporary,
+                "-c",
+                "configuration",
+                "-m",
+                "mode",
+                "-Xpresite=script-value",
+                interpreter_arguments=("-Xdev",),
+            )
+            observation = self.registry.execute(
+                verified,
+                "director.contract-tests",
+                repository_root=repository,
+                enabled=True,
+                isolated_proof_enabled=True,
+                authenticated_script_approval_digests=approvals,
+            )
+            self.assertEqual("PASS", observation.status)
 
     def test_a_hardlinked_repository_script_is_rejected(self):
         """A second name for the script's inode is refused before execution.
@@ -643,3 +858,5 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]

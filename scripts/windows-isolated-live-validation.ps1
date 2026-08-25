@@ -1,8 +1,14 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("project-uppercut", "edge-oracle")]
+    [ValidateSet("project-uppercut", "edge-oracle", "long-table")]
     [string]$ProfileName,
     [switch]$ApiOnly,
     [switch]$EnablePaidRuns,
@@ -14,6 +20,8 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $originalLocation = Get-Location
+$profilePath = $null
+$composeProject = $null
 $composeEnvironmentNames = @(
     "DIRECTOR_ENV_FILE", "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT",
     "N8N_HOST_PORT", "APP_ENV", "LOG_LEVEL", "TZ", "ORCHESTRATOR_BASE_URL",
@@ -65,6 +73,21 @@ $profiles = @{
         ALLOWED_STARTING_REFS = "main"
         MAX_AGENT_HOPS = "8"
         MAX_TASK_BUDGET_USD = "3.00"
+    }
+    "long-table" = [ordered]@{
+        DisplayName = "The Long Table"
+        ProfilePath = ".env.long-table"
+        ProfileTemplate = ".env.long-table.example"
+        APP_ENV = "long-table"
+        DIRECTOR_COMPOSE_PROJECT_NAME = "long-table-director"
+        DIRECTOR_HOST_PORT = "38080"
+        N8N_HOST_PORT = "35678"
+        SQLITE_PATH = "/data/long-table.sqlite3"
+        PROJECT_ALLOWLIST = "long-table"
+        REPOSITORY_ALLOWLIST = "edwardjones3976/long-table-bid-whist"
+        ALLOWED_STARTING_REFS = "main"
+        MAX_AGENT_HOPS = "6"
+        MAX_TASK_BUDGET_USD = "1.00"
     }
 }
 
@@ -123,12 +146,29 @@ function Write-Utf8NoBom {
 function Write-ProfileSwitches {
     param(
         [Parameter(Mandatory = $true)][bool]$PaidRuns,
-        [Parameter(Mandatory = $true)][bool]$UsageChecks
+        [Parameter(Mandatory = $true)][bool]$UsageChecks,
+        [bool]$RuntimeGraduation = $false
     )
 
     $text = Get-Content -LiteralPath $profilePath -Raw
     $text = Set-DotEnvValue -Text $text -Name "ALLOW_PAID_RUNS" -Value $(if ($PaidRuns) { "true" } else { "false" })
     $text = Set-DotEnvValue -Text $text -Name "USAGE_CHECK_ENABLED" -Value $(if ($UsageChecks) { "true" } else { "false" })
+    if ($ProfileName -eq "long-table") {
+        if ($RuntimeGraduation -and -not $PaidRuns) {
+            throw "Long Table runtime graduation cannot open while paid execution is closed."
+        }
+        # The Long Table is the only graduated API-only canary. One operation
+        # opens or closes the paid gate, the single-writer runtime, and bounded
+        # parallel dispatch together so rollback cannot leave a partial writer.
+        $enabled = $(if ($RuntimeGraduation) { "true" } else { "false" })
+        $text = Set-DotEnvValue -Text $text -Name "LANGGRAPH_RUNTIME_ENABLED" -Value $enabled
+        $text = Set-DotEnvValue -Text $text -Name "LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED" -Value $enabled
+        $text = Set-DotEnvValue -Text $text -Name "LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED" -Value $enabled
+        $text = Set-DotEnvValue -Text $text -Name "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED" -Value $enabled
+        $text = Set-DotEnvValue -Text $text -Name "LANGGRAPH_PARALLEL_KILL_SWITCH" -Value $(if ($RuntimeGraduation) { "false" } else { "true" })
+        # Completion workers have their own evidence and sandbox prerequisites.
+        # Paid activation must never silently turn either worker tier on.
+    }
     Write-Utf8NoBom -Path $profilePath -Text $text
     $text = $null
 }
@@ -180,6 +220,16 @@ function Assert-ProfileIdentity {
         [string]$Values["ORACLE_AUTOMERGE_KILL_SWITCH"] -cne "true") {
         throw "$profilePath did not stage the Oracle merge gate closed."
     }
+    if ($ProfileName -eq "long-table") {
+        if ([string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"] -cne "C:/Users/edwar/.director-snapshots/long-table-main" -or
+            [string]$Values["REPOSITORY_SNAPSHOT_ROOT"] -cne "/repository") {
+            throw "$profilePath has an unexpected Long Table repository snapshot boundary."
+        }
+        if ([string]$Values["MAX_TASK_BUDGET_USD"] -cne "1.00" -or
+            [string]$Values["MAX_DAILY_PROVIDER_BUDGET_USD"] -cne "5.00") {
+            throw "$profilePath has an unexpected Long Table paid-use budget."
+        }
+    }
     if ($ProfileName -eq "edge-oracle") {
         $oracleIdentity = [ordered]@{
             ORACLE_AUTOMERGE_PROJECT = "edge-oracle"
@@ -205,10 +255,11 @@ function Assert-NoProfileCollisions {
         "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT", "N8N_HOST_PORT", "SQLITE_PATH",
         "ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N_ENCRYPTION_KEY",
         "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_REVIEW_SECRET", "SLACK_GATEWAY_SECRET",
+        "LANGGRAPH_RUNTIME_WRITER_SECRET",
         "ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64",
         "SLACK_DIRECTOR_CHANNEL_ID", "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"
     )
-    foreach ($otherPath in @(".env", ".env.uppercut", ".env.edge-oracle")) {
+    foreach ($otherPath in @(".env", ".env.uppercut", ".env.edge-oracle", ".env.long-table")) {
         if ($otherPath -eq $profilePath -or -not (Test-Path -LiteralPath $otherPath -PathType Leaf)) { continue }
         $other = Read-DotEnv -Path $otherPath
         foreach ($name in $identityNames) {
@@ -295,12 +346,22 @@ function Assert-UsageProviderPartition {
     }
 }
 
+function Get-CompletionVerifiedProviders {
+    param([Parameter(Mandatory = $true)][string]$ProfileName)
+
+    if ($ProfileName -ieq "long-table") {
+        return @("claude")
+    }
+    return @()
+}
+
 function Assert-CoolingProviderEvidence {
     param(
         [Parameter(Mandatory = $true)][string[]]$Providers,
         [Parameter(Mandatory = $true)]$LatestRecords,
         [Parameter(Mandatory = $true)][DateTimeOffset]$Now,
-        [int]$CooldownWindowMinutes = 15
+        [int]$CooldownWindowMinutes = 15,
+        [string[]]$CompletionVerifiedProviders = @()
     )
 
     $accepted = @()
@@ -317,6 +378,9 @@ function Assert-CoolingProviderEvidence {
         if ($status -notin @("ok", "prompted")) {
             throw "Cooling provider $provider latest status is '$status'; only ok/prompted evidence is acceptable."
         }
+        if ($provider -in $CompletionVerifiedProviders -and $status -cne "ok") {
+            throw "Cooling provider $provider requires authenticated terminal callback evidence; status '$status' is not completion-verified."
+        }
         $checkedAt = [DateTimeOffset]::Parse([string]$record.checked_at)
         $age = $Now - $checkedAt
         if ($age -lt [TimeSpan]::Zero -or $age -ge [TimeSpan]::FromMinutes($CooldownWindowMinutes)) {
@@ -332,7 +396,8 @@ function Assert-ScheduledCycleEvidence {
         [Parameter(Mandatory = $true)][string[]]$Providers,
         [Parameter(Mandatory = $true)][string]$CycleId,
         [Parameter(Mandatory = $true)]$Records,
-        [Parameter(Mandatory = $true)][DateTimeOffset]$StartedAt
+        [Parameter(Mandatory = $true)][DateTimeOffset]$StartedAt,
+        [string[]]$CompletionVerifiedProviders = @()
     )
 
     $matched = @($Records | Where-Object {
@@ -354,6 +419,9 @@ function Assert-ScheduledCycleEvidence {
         if ($status -notin @("ok", "prompted")) {
             throw "Scheduled provider $provider status is '$status'; only ok/prompted evidence is acceptable."
         }
+        if ($provider -in $CompletionVerifiedProviders -and $status -cne "ok") {
+            throw "Scheduled provider $provider requires authenticated terminal callback evidence; status '$status' is not completion-verified."
+        }
         $accepted += $record
     }
     return $accepted
@@ -362,11 +430,74 @@ function Assert-ScheduledCycleEvidence {
 if ($EnablePaidRuns -and $SkipProviderChecks) {
     throw "-SkipProviderChecks cannot be combined with -EnablePaidRuns. Provider readiness is a required paid-run gate."
 }
-if ($ApiOnly -and $EnablePaidRuns) {
-    throw "-ApiOnly cannot be combined with -EnablePaidRuns. API-only activation keeps paid execution closed."
+if ($ApiOnly -and $EnablePaidRuns -and $ProfileName -ne "long-table") {
+    throw "-ApiOnly can combine with -EnablePaidRuns only for the dedicated Long Table canary."
 }
-if ($ApiOnly -and $ProfileName -ne "edge-oracle") {
-    throw "-ApiOnly is currently limited to the Edge Oracle recovery profile."
+
+function ConvertTo-StrictBoolean {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if ($Value -is [bool]) { return [bool]$Value }
+    $text = [string]$Value
+    if ($text -ceq "true") { return $true }
+    if ($text -ceq "false") { return $false }
+    throw "$Name must be the exact boolean true or false."
+}
+
+function Assert-LongTableGraduationReady {
+    param(
+        [Parameter(Mandatory = $true)]$Health,
+        [Parameter(Mandatory = $true)][hashtable]$Values
+    )
+
+    if ($ProfileName -ne "long-table") { return }
+    $writerActive = ConvertTo-StrictBoolean -Value $Health.langgraph_runtime.task_writer_active -Name "langgraph_runtime.task_writer_active"
+    $parallelActive = ConvertTo-StrictBoolean -Value $Health.parallel_dispatch.active -Name "parallel_dispatch.active"
+    if (-not $writerActive -or -not $parallelActive) {
+        throw "Long Table paid activation did not establish the LangGraph task writer and bounded parallel dispatch."
+    }
+    $workerActive = ConvertTo-StrictBoolean -Value $Health.completion_gates.worker_execution_active -Name "completion_gates.worker_execution_active"
+    $isolatedProofEnabled = ConvertTo-StrictBoolean -Value $Values["COMPLETION_GATE_ISOLATED_PROOF_ENABLED"] -Name "COMPLETION_GATE_ISOLATED_PROOF_ENABLED"
+    if ($workerActive -and -not $isolatedProofEnabled) {
+        throw "Long Table paid activation unexpectedly enabled completion workers."
+    }
+}
+
+function Assert-LongTableSnapshot {
+    param([Parameter(Mandatory = $true)][hashtable]$Values)
+
+    if ($ProfileName -ne "long-table") { return }
+    $snapshotPath = [string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"]
+    if (-not (Test-Path -LiteralPath $snapshotPath -PathType Container)) {
+        throw "The configured Long Table repository snapshot is unavailable. No service was started."
+    }
+    $inside = @(& git -C $snapshotPath rev-parse --is-inside-work-tree 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $inside.Count -ne 1 -or [string]$inside[0] -cne "true") {
+        throw "The configured Long Table snapshot is not a Git worktree. No service was started."
+    }
+    $origin = [string](@(& git -C $snapshotPath remote get-url origin 2>$null) | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0 -or
+        $origin -notmatch '^(?:https://github\.com/|git@github\.com:)edwardjones3976/long-table-bid-whist(?:\.git)?$') {
+        throw "The configured Long Table snapshot has an unexpected origin. No service was started."
+    }
+    $dirty = @(& git -C $snapshotPath status --porcelain --untracked-files=all 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) {
+        throw "The configured Long Table snapshot has tracked changes or could not be inspected. No service was started."
+    }
+    $head = [string](@(& git -C $snapshotPath rev-parse HEAD 2>$null) | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
+        throw "The configured Long Table snapshot has no exact commit. No service was started."
+    }
+    $remoteHead = [string](@(& git -C $snapshotPath rev-parse origin/main 2>$null) | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0 -or $remoteHead -notmatch '^[0-9a-f]{40}$' -or $head -cne $remoteHead) {
+        throw "The configured Long Table snapshot is not at the locally verified origin/main commit. No service was started."
+    }
+}
+if ($ApiOnly -and $ProfileName -notin @("edge-oracle", "long-table")) {
+    throw "-ApiOnly is limited to the Edge Oracle recovery and Long Table canary profiles."
 }
 
 if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
@@ -384,7 +515,7 @@ $profileText = Get-Content -LiteralPath $profilePath -Raw
 if ($profileText -notmatch '(?m)^SLACK_GATEWAY_SECRET=') {
     $profileText = $profileText.TrimEnd() + "`r`nSLACK_GATEWAY_SECRET=REPLACE_WITH_DISTINCT_RANDOM_SECRET`r`n"
 }
-foreach ($name in @("ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N_ENCRYPTION_KEY", "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_REVIEW_SECRET", "SLACK_GATEWAY_SECRET")) {
+foreach ($name in @("ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N_ENCRYPTION_KEY", "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_REVIEW_SECRET", "SLACK_GATEWAY_SECRET", "LANGGRAPH_RUNTIME_WRITER_SECRET")) {
     if ($profileText -match "(?m)^$([Regex]::Escape($name))=REPLACE_WITH_(?:DISTINCT_)?RANDOM_SECRET\s*$") {
         $profileText = Set-DotEnvValue -Text $profileText -Name $name -Value (New-RandomSecret)
     }
@@ -423,6 +554,15 @@ $identity = [ordered]@{
     ORACLE_AUTOMERGE_ENABLED = "false"
     ORACLE_AUTOMERGE_KILL_SWITCH = "true"
 }
+if ($ProfileName -eq "long-table") {
+    # Every invocation stages all runtime writers closed before validation.
+    # Only the explicit paid path reopens them after provider checks.
+    $identity["LANGGRAPH_RUNTIME_ENABLED"] = "false"
+    $identity["LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED"] = "false"
+    $identity["LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED"] = "false"
+    $identity["LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED"] = "false"
+    $identity["LANGGRAPH_PARALLEL_KILL_SWITCH"] = "true"
+}
 foreach ($entry in $identity.GetEnumerator()) {
     $profileText = Set-DotEnvValue -Text $profileText -Name $entry.Key -Value $entry.Value
 }
@@ -432,6 +572,7 @@ $profileText = $null
 
 $values = Read-DotEnv -Path $profilePath
 Assert-ProfileIdentity -Values $values
+Assert-LongTableSnapshot -Values $values
 Assert-NoProfileCollisions -TargetValues $values
 $requiredConfiguration = @(
     "ORCHESTRATOR_SHARED_SECRET", "OPENAI_API_KEY", "CLAUDE_ROUTINE_URL",
@@ -447,6 +588,18 @@ if (-not $ApiOnly) {
 Assert-Configured -Values $values -Names $requiredConfiguration
 if ($ProfileName -eq "edge-oracle") {
     Assert-Configured -Values $values -Names @("ORACLE_AUTOMERGE_REVIEW_SECRET")
+}
+if ($ProfileName -eq "long-table") {
+    Assert-Configured -Values $values -Names @("LANGGRAPH_RUNTIME_WRITER_SECRET")
+    $secretNames = @(
+        "ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N_ENCRYPTION_KEY",
+        "N8N_POSTGRES_PASSWORD", "ORACLE_AUTOMERGE_REVIEW_SECRET", "SLACK_GATEWAY_SECRET",
+        "LANGGRAPH_RUNTIME_WRITER_SECRET"
+    )
+    $secretValues = @($secretNames | ForEach-Object { [string]$values[$_] })
+    if (@($secretValues | Sort-Object -Unique).Count -ne $secretValues.Count) {
+        throw "$profilePath reuses a Long Table internal secret. No service was started."
+    }
 }
 
 $composeProject = [string]$values["DIRECTOR_COMPOSE_PROJECT_NAME"]
@@ -502,7 +655,9 @@ if (-not $EnablePaidRuns) {
     return
 }
 
-Write-ProfileSwitches -PaidRuns $true -UsageChecks $true
+# Provider probes require the paid gate, but the live writer and parallel gate
+# remain closed until that evidence succeeds.
+Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $false
 $values = Read-DotEnv -Path $profilePath
 $headers = @{ Authorization = "Bearer $($values['ORCHESTRATOR_SHARED_SECRET'])" }
 $baseUrl = "http://127.0.0.1:${hostPort}"
@@ -524,6 +679,9 @@ try {
         -CoolingDownProviders $accepted.cooling_down_providers
     $scheduledProviders = @($partition.ScheduledProviders)
     $coolingProviders = @($partition.CoolingDownProviders)
+    $completionVerifiedProviders = @(
+        Get-CompletionVerifiedProviders -ProfileName $ProfileName
+    )
 
     if ($runStatus -ceq "not_due") {
         Write-Host (
@@ -534,10 +692,21 @@ try {
         $evidence = Assert-CoolingProviderEvidence `
             -Providers $coolingProviders `
             -LatestRecords $latest `
-            -Now ([DateTimeOffset]::UtcNow)
+            -Now ([DateTimeOffset]::UtcNow) `
+            -CompletionVerifiedProviders $completionVerifiedProviders
         $evidence | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
-        docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
+        Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $true
+        if ($ApiOnly) {
+            docker compose --project-name $composeProject --env-file $profilePath stop slackbot n8n n8n-db
+            if ($LASTEXITCODE -ne 0) { throw "Unable to stop optional services after cooldown verification." }
+            docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans --force-recreate orchestrator
+        }
+        else {
+            docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans --force-recreate
+        }
         if ($LASTEXITCODE -ne 0) { throw "Cooldown evidence accepted, but the complete isolated stack did not start." }
+        $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
+        Assert-LongTableGraduationReady -Health $health -Values $values
         Write-Host "LIVE VALIDATION PASSED. Paid execution is enabled only for the isolated $displayName deployment."
         return
     }
@@ -595,22 +764,34 @@ try {
         -Providers $scheduledProviders `
         -CycleId $cycleId `
         -Records $latest `
-        -StartedAt $startedAt
+        -StartedAt $startedAt `
+        -CompletionVerifiedProviders $completionVerifiedProviders
     $coolingEvidence = Assert-CoolingProviderEvidence `
         -Providers $coolingProviders `
         -LatestRecords $latest `
-        -Now ([DateTimeOffset]::UtcNow)
+        -Now ([DateTimeOffset]::UtcNow) `
+        -CompletionVerifiedProviders $completionVerifiedProviders
     $allEvidence = @($scheduledEvidence + $coolingEvidence)
     $allEvidence | Sort-Object provider | Select-Object provider, status, total_tokens, checked_at | Format-Table -AutoSize
 
-    docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
+    Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $true
+    if ($ApiOnly) {
+        docker compose --project-name $composeProject --env-file $profilePath stop slackbot n8n n8n-db
+        if ($LASTEXITCODE -ne 0) { throw "Unable to stop optional services after provider checks." }
+        docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans --force-recreate orchestrator
+    }
+    else {
+        docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans --force-recreate
+    }
     if ($LASTEXITCODE -ne 0) { throw "Provider checks passed, but the complete isolated stack did not start." }
+    $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
+    Assert-LongTableGraduationReady -Health $health -Values $values
 }
 catch {
     $failure = $_
     $rollbackErrors = New-Object System.Collections.Generic.List[string]
     $switchesClosed = $true
-    try { Write-ProfileSwitches -PaidRuns $false -UsageChecks $false }
+    try { Write-ProfileSwitches -PaidRuns $false -UsageChecks $false -RuntimeGraduation $false }
     catch {
         $switchesClosed = $false
         $rollbackErrors.Add("profile switches could not be closed")
@@ -637,6 +818,30 @@ catch {
 
 Write-Host "LIVE VALIDATION PASSED. Paid execution is enabled only for the isolated $displayName deployment."
 }
+catch {
+    $outerFailure = $_
+    if ($ProfileName -eq "long-table") {
+        $outerRollbackErrors = New-Object System.Collections.Generic.List[string]
+        if ($null -ne $profilePath -and (Test-Path -LiteralPath $profilePath)) {
+            try {
+                Write-ProfileSwitches -PaidRuns $false -UsageChecks $false -RuntimeGraduation $false
+            }
+            catch {
+                $outerRollbackErrors.Add("the Long Table profile switches could not be closed")
+            }
+        }
+        if ($null -ne $composeProject -and $composeProject) {
+            docker compose --project-name $composeProject --env-file $profilePath stop orchestrator slackbot | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $outerRollbackErrors.Add("the previously running Long Table writers could not be stopped")
+            }
+        }
+        if ($outerRollbackErrors.Count -gt 0) {
+            throw "Activation failed: $($outerFailure.Exception.Message). Early fail-closed rollback was incomplete: $($outerRollbackErrors -join '; ')."
+        }
+    }
+    throw $outerFailure
+}
 finally {
     Set-Location $originalLocation
     foreach ($name in $composeEnvironmentNames) {
@@ -650,3 +855,9 @@ finally {
     }
 }
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]

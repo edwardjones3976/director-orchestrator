@@ -1,11 +1,12 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:09 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
 # LangGraph control-plane transition plan
 
-**Status:** Gate 0 accepted; documentation/schema authority proposed for merge; runtime transition not started
+**Status:** Gate 0 accepted; guarded runtime foundations merged; production cutover not accepted
 **Owner:** Aesop / Ed
 **Orchestration authority:** Director policy and deterministic code, never a model
-**Director baseline:** `director-orchestrator` main at `3454e4369857cf9030cbb366d09f7c1b83959871`
+**Director baseline:** `director-orchestrator` main at `a299590e9999dd6eaf22e0181e025be396b58ed3`
 **Uppercut checkpoint:** `Project-Uppercut` main at `af4cafcb727ce837f62f99fd16f07704b7122904`
 **Project consumer:** `edwardjones3976/Project-Uppercut`
 
@@ -56,6 +57,42 @@ Issue #58 remains outside orchestration Gate 0. It blocks First Bell and gamepla
 8. Provider-specific data stays inside adapter envelopes; canonical state remains provider-neutral.
 9. Existing task IDs, API endpoints, Slack commands, allowlists, and callback validation remain compatible until a separately approved change.
 10. Project Uppercut combat canon, C++ authority, Decision 0040, and First Bell gates cannot be altered by an orchestration migration.
+
+## Capability restrictions and graduation
+
+The migration distinguishes a temporary lack of production authority from a
+permanent unsafe design. The controlling policy is:
+
+> Unrestricted host completion runners, production-affecting LangGraph
+> execution, and LangGraph-owned parallel external dispatch remain disabled
+> until their respective evidence-based graduation gates are independently
+> accepted. Structured allowlisted completion gates and isolated shadow
+> execution are permitted. Regex may supplement privacy enforcement but shall
+> never constitute the sole privacy control.
+
+- **Host completion runners — temporarily restricted in unrestricted form.**
+  The isolated proof runtime may execute only fixed, registered commands with a
+  sanitized environment, `shell=False`, timeouts, output ceilings, exact-SHA
+  binding, process-tree termination, and independently verified results.
+  Arbitrary host-shell execution remains prohibited.
+- **Production-affecting LangGraph execution — temporarily restricted.** Tests,
+  offline replay, and isolated shadow comparison are permitted. LangGraph may
+  not become the production decision or side-effect owner until independent
+  review, legacy-versus-graph comparison, restart recovery, approval durability,
+  rollback, and explicit cutover acceptance are complete.
+- **LangGraph-owned parallel external dispatch — temporarily restricted.**
+  Parallel local analysis and read-only work are permitted. Parallel provider
+  calls graduate only after correlation, idempotency, budgets, cancellation,
+  recovery, bounded concurrency, deterministic aggregation, and a kill switch
+  are proven without duplicate charges, callbacks, assignments, or writes.
+- **Regex-only privacy enforcement — permanently prohibited as the sole
+  boundary.** Typed allowlisted packets, explicit field selection,
+  provider-specific policy, data-flow separation, and fail-closed validation are
+  primary. Regex and secret scanners remain defense-in-depth only.
+
+Each temporary restriction has its own graduation gate. Acceptance of one does
+not authorize either of the others, and model agreement cannot substitute for
+the required deterministic and independent evidence.
 
 ## Target graph
 
@@ -291,3 +328,4 @@ worker's result write is guarded on `CLAIMED`/`DISPATCHING`, so it loses its
 reservation, its result is refused, and the row stays in reconciliation.
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->

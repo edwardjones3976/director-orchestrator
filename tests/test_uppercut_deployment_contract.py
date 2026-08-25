@@ -1,5 +1,14 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -71,7 +80,9 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertIn("cannot be combined with -EnablePaidRuns", self.script)
 
     def test_failure_closes_paid_gate_and_keeps_slack_intake_offline(self):
-        catch_block = self.script[self.script.rindex("\ncatch {") :]
+        final_success = self.script.rindex('\nWrite-Host "LIVE VALIDATION PASSED.')
+        paid_catch = self.script.rfind("\ncatch {", 0, final_success)
+        catch_block = self.script[paid_catch:final_success]
         self.assertIn("Write-ProfileSwitches -PaidRuns $false", catch_block)
         self.assertIn("stop slackbot", catch_block)
         self.assertIn("$LASTEXITCODE -ne 0", catch_block)
@@ -108,6 +119,46 @@ class UppercutDeploymentContractTests(unittest.TestCase):
             "only ok/prompted evidence is acceptable",
             self.script,
         )
+        self.assertIn("Get-CompletionVerifiedProviders", self.script)
+        self.assertIn(
+            "requires authenticated terminal callback evidence",
+            self.script,
+        )
+        self.assertGreaterEqual(
+            self.script.count(
+                "-CompletionVerifiedProviders $completionVerifiedProviders"
+            ),
+            3,
+        )
+
+    def test_mixed_case_long_table_requires_claude_completion_evidence(self):
+        shell = shutil.which("pwsh") or shutil.which("pwsh.exe")
+        if shell is None:
+            self.skipTest("PowerShell 7 is unavailable in this environment")
+        start = self.script.index("function Get-CompletionVerifiedProviders")
+        end = self.script.index("function Assert-CoolingProviderEvidence", start)
+        function_source = self.script[start:end]
+        probe = (
+            function_source
+            + "\n$result = @(Get-CompletionVerifiedProviders -ProfileName 'Long-Table')"
+            + "\nWrite-Output ($result.Count.ToString() + '|' + [string]$result[0])"
+        )
+        completed = subprocess.run(
+            [shell, "-NoProfile", "-NonInteractive", "-Command", "-"],
+            input=probe,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        ansi_control_sequence = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+        normalized_stdout = ansi_control_sequence.sub("", completed.stdout)
+        normalized_stdout = "".join(
+            character
+            for character in normalized_stdout
+            if character in "\r\n\t" or ord(character) >= 0x20
+        )
+        self.assertEqual("1|claude", normalized_stdout.strip())
 
     def test_usage_cooldown_evidence_fails_closed_for_error_and_skipped(self):
         cooling_fn = self.script[
@@ -147,8 +198,11 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertIn("finally {", self.script)
         self.assertIn("Set-Location $originalLocation", self.script)
 
-    def test_collision_detection_covers_primary_and_both_isolated_profiles(self):
-        self.assertIn('@(".env", ".env.uppercut", ".env.edge-oracle")', self.script)
+    def test_collision_detection_covers_primary_and_all_isolated_profiles(self):
+        self.assertIn(
+            '@(".env", ".env.uppercut", ".env.edge-oracle", ".env.long-table")',
+            self.script,
+        )
         for name in (
             "DIRECTOR_COMPOSE_PROJECT_NAME",
             "DIRECTOR_HOST_PORT",
@@ -252,5 +306,179 @@ class EdgeOracleDeploymentContractTests(unittest.TestCase):
         self.assertIn("No values were printed", self.script)
 
 
+class LongTableDeploymentContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.wrapper = (
+            ROOT / "scripts" / "windows-long-table-live-validation.ps1"
+        ).read_text(encoding="utf-8")
+        cls.script = (
+            ROOT / "scripts" / "windows-isolated-live-validation.ps1"
+        ).read_text(encoding="utf-8")
+        cls.profile = (ROOT / ".env.long-table.example").read_text(encoding="utf-8")
+        cls.dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    def test_wrapper_selects_api_only_long_table_canary(self):
+        self.assertIn('ProfileName = "long-table"', self.wrapper)
+        self.assertIn("ApiOnly = $true", self.wrapper)
+        self.assertNotIn("docker compose", self.wrapper)
+
+    def test_identity_ports_repository_and_stores_are_isolated(self):
+        expected = (
+            "APP_ENV=long-table",
+            "DIRECTOR_COMPOSE_PROJECT_NAME=long-table-director",
+            "DIRECTOR_HOST_PORT=38080",
+            "N8N_HOST_PORT=35678",
+            "SQLITE_PATH=/data/long-table.sqlite3",
+            "PROJECT_ALLOWLIST=long-table",
+            "REPOSITORY_ALLOWLIST=edwardjones3976/long-table-bid-whist",
+            "ALLOWED_STARTING_REFS=main",
+            "LANGGRAPH_CHECKPOINT_PATH=/data/long-table-langgraph-shadow.sqlite3",
+            "LANGGRAPH_RUNTIME_CHECKPOINT_PATH=/data/long-table-langgraph-runtime.sqlite3",
+            "LANGGRAPH_RUNTIME_LEDGER_PATH=/data/long-table-langgraph-ledger.sqlite3",
+            "COMPLETION_GATE_STORE_PATH=/data/long-table-completion-gates.sqlite3",
+            "REPOSITORY_SNAPSHOT_HOST_PATH=C:/Users/edwar/.director-snapshots/long-table-main",
+            "REPOSITORY_SNAPSHOT_ROOT=/repository",
+        )
+        for line in expected:
+            self.assertIn(line, self.profile)
+
+    def test_canary_budget_and_all_activation_switches_start_closed(self):
+        for line in (
+            "ALLOW_PAID_RUNS=false",
+            "MAX_TASK_BUDGET_USD=1.00",
+            "MAX_DAILY_PROVIDER_BUDGET_USD=5.00",
+            "LANGGRAPH_RUNTIME_ENABLED=false",
+            "LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED=false",
+            "LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED=false",
+            "COMPLETION_GATES_ENABLED=false",
+            "COMPLETION_GATE_ISOLATED_PROOF_ENABLED=false",
+            "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED=false",
+            "LANGGRAPH_PARALLEL_KILL_SWITCH=true",
+        ):
+            self.assertIn(line, self.profile)
+
+    def test_long_table_is_the_only_paid_api_only_canary(self):
+        self.assertIn(
+            '$ApiOnly -and $EnablePaidRuns -and $ProfileName -ne "long-table"',
+            self.script,
+        )
+        self.assertIn(
+            '$ProfileName -notin @("edge-oracle", "long-table")', self.script
+        )
+        paid_section = self.script[self.script.index("Write-ProfileSwitches -PaidRuns $true") :]
+        self.assertIn("if ($ApiOnly)", paid_section)
+        self.assertIn("stop slackbot n8n n8n-db", paid_section)
+        self.assertIn(
+            "up -d --build --remove-orphans --force-recreate orchestrator",
+            paid_section,
+        )
+
+    def test_paid_activation_and_rollback_switch_the_complete_writer_set(self):
+        switch_section = self.script[
+            self.script.index("function Write-ProfileSwitches") :
+            self.script.index("function Assert-Configured")
+        ]
+        for name in (
+            "LANGGRAPH_RUNTIME_ENABLED",
+            "LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED",
+            "LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED",
+            "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED",
+            "LANGGRAPH_PARALLEL_KILL_SWITCH",
+        ):
+            self.assertIn(name, switch_section)
+        self.assertNotIn('Name "COMPLETION_GATES_ENABLED"', switch_section)
+        self.assertNotIn('Name "COMPLETION_GATE_ISOLATED_PROOF_ENABLED"', switch_section)
+        self.assertIn(
+            "Write-ProfileSwitches -PaidRuns $false -UsageChecks $false -RuntimeGraduation $false",
+            self.script,
+        )
+        self.assertIn(
+            "Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $false",
+            self.script,
+        )
+        self.assertIn(
+            "Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $true",
+            self.script,
+        )
+        identity_start = self.script.index("$identity = [ordered]@{")
+        writer_closed = self.script.index(
+            '$identity["LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED"] = "false"',
+            identity_start,
+        )
+        profile_write = self.script.index("Write-Utf8NoBom -Path $profilePath", identity_start)
+        self.assertLess(writer_closed, profile_write)
+
+    def test_writer_secret_and_exact_snapshot_are_fail_closed(self):
+        self.assertIn('"LANGGRAPH_RUNTIME_WRITER_SECRET"', self.script)
+        self.assertIn('Assert-Configured -Values $values -Names @("LANGGRAPH_RUNTIME_WRITER_SECRET")', self.script)
+
+    def test_long_table_readiness_uses_strict_booleans_and_passed_values(self):
+        readiness = self.script[
+            self.script.index("function ConvertTo-StrictBoolean") :
+            self.script.index("function Assert-LongTableSnapshot")
+        ]
+        self.assertIn("worker_execution_active", readiness)
+        self.assertNotIn("completion_gates.execution_active", readiness)
+        self.assertIn('$Values["COMPLETION_GATE_ISOLATED_PROOF_ENABLED"]', readiness)
+        self.assertIn('$text -ceq "true"', readiness)
+        self.assertIn('$text -ceq "false"', readiness)
+        self.assertIn("-Values $values", self.script)
+
+    def test_snapshot_identity_matches_the_shipped_profile(self):
+        snapshot_line = next(
+            line
+            for line in self.profile.splitlines()
+            if line.startswith("REPOSITORY_SNAPSHOT_HOST_PATH=")
+        )
+        snapshot_path = snapshot_line.split("=", 1)[1]
+        self.assertIn(
+            f'[string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"] -cne "{snapshot_path}"',
+            self.script,
+        )
+
+    def test_early_preflight_failure_stops_previously_running_writers(self):
+        self.assertIn('catch {\n    $outerFailure = $_', self.script)
+        self.assertIn(
+            'stop orchestrator slackbot | Out-Null',
+            self.script,
+        )
+        self.assertIn(
+            'Write-ProfileSwitches -PaidRuns $false -UsageChecks $false -RuntimeGraduation $false',
+            self.script,
+        )
+        self.assertIn("function Assert-LongTableSnapshot", self.script)
+        self.assertIn("git -C $snapshotPath rev-parse HEAD", self.script)
+        self.assertIn("git -C $snapshotPath remote get-url origin", self.script)
+        self.assertIn("status --porcelain --untracked-files=all", self.script)
+        self.assertIn("git -C $snapshotPath rev-parse origin/main", self.script)
+        self.assertIn("$head -cne $remoteHead", self.script)
+        self.assertIn('"LANGGRAPH_RUNTIME_WRITER_SECRET"', self.script)
+        self.assertIn("reuses a Long Table internal secret", self.script)
+
+    def test_compose_snapshot_mount_is_explicitly_read_only(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "source: ${REPOSITORY_SNAPSHOT_HOST_PATH:-./.repository-snapshot-disabled}",
+            compose,
+        )
+        self.assertIn("target: /repository", compose)
+        self.assertIn("read_only: true", compose)
+        self.assertTrue((ROOT / ".repository-snapshot-disabled" / "README.md").is_file())
+
+    def test_runtime_image_contains_git_for_exact_snapshot_authentication(self):
+        self.assertIn("apt-get install --yes --no-install-recommends git", self.dockerfile)
+        resolver = (
+            ROOT / "src" / "director_orchestrator" / "packet_transports.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"-c", f"safe.directory={self.root}"', resolver)
+
+
 if __name__ == "__main__":
     unittest.main()
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | END]]

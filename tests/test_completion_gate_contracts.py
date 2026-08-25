@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]]
@@ -1041,9 +1042,12 @@ class CompletionGateContractTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertNotIn("[[", path.read_text(encoding="utf-8"))
 
-    def test_existing_packet_contracts_remain_byte_for_byte_compatible(self):
+    def test_packet_contract_fingerprints_are_explicitly_bound(self):
+        # The work-packet schema intentionally gained the optional,
+        # independently validated authority_base_ref binding.  Pin the exact
+        # resulting contract so later drift cannot pass silently.
         expected = {
-            "model-work-packet-v1.schema.json": "sha256:40242aa9612af134cfade5a0ab73672834c711b60b4ad6b2cbdc0035b6646e40",
+            "model-work-packet-v1.schema.json": "sha256:7f8b2470cd7727147bb815a5122cce0c48856a139af88d8c1a40d715c83cce8f",
             "model-work-packet-v1.example.json": "sha256:ac01061350c0bd2ef0535910191aa43accd9652c0bc0cedb26607b8e9e495ce6",
             "model-result-packet-v1.schema.json": "sha256:8fec656c0fea5efcc436fe6385416dd521b3dcc2d5e627608ad7198b95961cdb",
             "model-result-packet-v1.example.json": "sha256:8a761ded8fbbd7033fbd2fba90c0e48c311ccae26a063629e1a1c6cfcc43d3a6",
@@ -1065,3 +1069,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

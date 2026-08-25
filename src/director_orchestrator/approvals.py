@@ -1,3 +1,9 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -13,6 +19,7 @@ from .models import (
     AmbiguousDispatchResolution,
     Assignment,
     AssignmentOutcome,
+    IntakeAuthentication,
     MAX_SLACK_INTAKE_TEXT,
     OracleRecoveryApproval,
     OracleRecoveryState,
@@ -24,6 +31,7 @@ from .models import (
     ProviderRun,
     ReviewVerdict,
     SlackGatewayProof,
+    SlackIntake,
     TaskEffectEvidence,
     TaskRecord,
     TaskStatus,
@@ -47,7 +55,16 @@ _SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_TASK_EFFECTS = 200
 _SLACK_GATEWAY_PROOF_TTL_SECONDS = 300
 _SLACK_GATEWAY_FUTURE_SKEW_SECONDS = 30
+PAID_REARM_MESSAGE = (
+    "Paid execution requires a fresh authenticated Slack gateway proof."
+)
 _SLACK_GATEWAY_MIN_SECRET_LENGTH = 32
+_SLACK_INTAKE_ATTESTATION_VERSION = "v1"
+SLACK_INTAKE_ISSUED_AT_HEADER = "X-Director-Intake-Issued-At"
+SLACK_INTAKE_NONCE_HEADER = "X-Director-Intake-Nonce"
+SLACK_INTAKE_SIGNATURE_HEADER = "X-Director-Intake-Signature"
+_SLACK_INTAKE_NONCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+_SLACK_INTAKE_SIGNATURE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 def owner_identity_matches(provided: str, configured: str) -> bool:
@@ -60,6 +77,115 @@ def owner_identity_matches(provided: str, configured: str) -> bool:
     if not configured or not provided:
         return False
     return hmac.compare_digest(provided, configured)
+
+
+def _slack_intake_attestation_payload(
+    intake: SlackIntake, *, issued_at: int, nonce: str
+) -> bytes:
+    return json.dumps(
+        {
+            "version": _SLACK_INTAKE_ATTESTATION_VERSION,
+            "method": "POST",
+            "path": "/v1/intake",
+            "issued_at": issued_at,
+            "nonce": nonce,
+            "intake": intake.model_dump(mode="json"),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def build_slack_intake_attestation(
+    secret: str,
+    shared_secret: str,
+    intake: SlackIntake,
+    *,
+    issued_at: int | None = None,
+    nonce: str | None = None,
+) -> dict[str, str]:
+    """Bind one short-lived Slack intake to its exact canonical payload."""
+
+    if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Slack gateway signing secret is not securely configured")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Slack gateway signing secret must be distinct")
+    observed_at = (
+        issued_at
+        if issued_at is not None
+        else int(datetime.now(timezone.utc).timestamp())
+    )
+    observed_nonce = nonce or secrets.token_urlsafe(32)
+    if not _SLACK_INTAKE_NONCE_PATTERN.fullmatch(observed_nonce):
+        raise StaleApproval("Slack intake attestation nonce is malformed")
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        _slack_intake_attestation_payload(
+            intake, issued_at=observed_at, nonce=observed_nonce
+        ),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        SLACK_INTAKE_ISSUED_AT_HEADER: str(observed_at),
+        SLACK_INTAKE_NONCE_HEADER: observed_nonce,
+        SLACK_INTAKE_SIGNATURE_HEADER: signature,
+    }
+
+
+def verify_slack_intake_attestation(
+    secret: str,
+    shared_secret: str,
+    intake: SlackIntake,
+    *,
+    expected_owner_user_id: str,
+    expected_channel_id: str,
+    issued_at: str | None,
+    nonce: str | None,
+    signature: str | None,
+    now: int | None = None,
+) -> tuple[str, str]:
+    """Fail closed unless the Slack gateway attested this owner intake exactly."""
+
+    if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Authenticated Slack intake attestation is required")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Slack gateway signing secret must be distinct")
+    if not owner_identity_matches(intake.user_id, expected_owner_user_id):
+        raise StaleApproval("Slack intake owner identity mismatch")
+    if (
+        not intake.channel_id
+        or not expected_channel_id
+        or not hmac.compare_digest(intake.channel_id, expected_channel_id)
+    ):
+        raise StaleApproval("Slack intake channel mismatch")
+    if (
+        issued_at is None
+        or nonce is None
+        or signature is None
+        or not issued_at.isdigit()
+        or not _SLACK_INTAKE_NONCE_PATTERN.fullmatch(nonce)
+        or not _SLACK_INTAKE_SIGNATURE_PATTERN.fullmatch(signature)
+    ):
+        raise StaleApproval("Slack intake attestation is missing or malformed")
+    issued_timestamp = int(issued_at)
+    current_time = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    age = current_time - issued_timestamp
+    if age < -_SLACK_GATEWAY_FUTURE_SKEW_SECONDS or age > _SLACK_GATEWAY_PROOF_TTL_SECONDS:
+        raise StaleApproval("Slack intake attestation is expired or not yet valid")
+    expected_signature = hmac.new(
+        secret.encode("utf-8"),
+        _slack_intake_attestation_payload(
+            intake, issued_at=issued_timestamp, nonce=nonce
+        ),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected_signature):
+        raise StaleApproval("Slack intake attestation signature is invalid")
+    return (
+        _canonical_digest({"nonce": nonce}),
+        _canonical_digest(intake.model_dump(mode="json")),
+    )
 
 
 def pending_assignment(record: TaskRecord) -> Assignment | None:
@@ -108,14 +234,14 @@ def _refresh_cumulative_cost(record: TaskRecord) -> None:
     reserved = [
         effect.estimated_cost_usd
         for key, effect in intents.items()
-        if "failed_pre_submit" not in observations.get(key, set())
+        if observations.get(key, set()) != {"failed_pre_submit"}
     ]
     reserved.extend(effect.estimated_cost_usd for effect in legacy.values())
     record.cumulative_estimated_cost_usd = round(sum(reserved), 8)
     record.cumulative_effect_hops = sum(
         effect.hop_units
         for key, effect in intents.items()
-        if "failed_pre_submit" not in observations.get(key, set())
+        if observations.get(key, set()) != {"failed_pre_submit"}
     )
 
 
@@ -485,7 +611,34 @@ class CurrentOwnerDecision:
 def current_owner_decision(record: TaskRecord) -> CurrentOwnerDecision | None:
     """Classify and bind the exact deterministic owner stop currently pending."""
 
-    if record.status != TaskStatus.OWNER_DECISION_REQUIRED or record.plan is None:
+    if record.status != TaskStatus.OWNER_DECISION_REQUIRED:
+        return None
+    if (
+        record.intake_authentication != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+        and hmac.compare_digest(record.message or "", PAID_REARM_MESSAGE)
+    ):
+        return CurrentOwnerDecision(
+            kind="paid_rearm",
+            digest="sha256:"
+            + _canonical_digest(
+                {
+                    "task_id": record.task_id,
+                    "kind": "paid_rearm",
+                    "plan_generation": record.plan_generation,
+                    "intake_digest": _canonical_digest(
+                        record.intake.model_dump(mode="json")
+                    ),
+                    "plan_digest": (
+                        plan_approval_digest(record)
+                        if record.plan is not None
+                        else None
+                    ),
+                }
+            ),
+            assignment_sequence=None,
+            clarification=False,
+        )
+    if record.plan is None:
         return None
     plan_digest = plan_approval_digest(record)
     kind: str
@@ -731,9 +884,10 @@ def verify_slack_gateway_proof(
     *,
     channel_id: str,
     path: str,
+    allow_paid_runs: bool,
     now: int | None = None,
-) -> tuple[str, int]:
-    """Verify transport provenance and return the durable nonce claim."""
+) -> tuple[str, str, int]:
+    """Verify transport provenance and return the bound decision and nonce claim."""
 
     proof = approval.slack_gateway_proof
     if proof is None or len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
@@ -753,6 +907,9 @@ def verify_slack_gateway_proof(
     age = current_time - proof.issued_at
     if age < -_SLACK_GATEWAY_FUTURE_SKEW_SECONDS or age > _SLACK_GATEWAY_PROOF_TTL_SECONDS:
         raise StaleApproval("Slack gateway proof is expired or not yet valid")
+    decision_kind, _ = _slack_gateway_decision(record)
+    if decision_kind == "paid_rearm" and not allow_paid_runs:
+        raise StaleApproval("Paid rearm is disabled while paid execution is off")
     expected_signature = hmac.new(
         secret.encode("utf-8"),
         _slack_gateway_payload(record, approval, proof, path=path),
@@ -763,7 +920,11 @@ def verify_slack_gateway_proof(
     nonce_digest = _canonical_digest(
         {"task_id": record.task_id, "nonce": proof.nonce}
     )
-    return nonce_digest, proof.issued_at + _SLACK_GATEWAY_PROOF_TTL_SECONDS
+    return (
+        decision_kind,
+        nonce_digest,
+        proof.issued_at + _SLACK_GATEWAY_PROOF_TTL_SECONDS,
+    )
 
 
 def record_oracle_recovery(
@@ -1223,3 +1384,9 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
     record.error = None
     record.message = note
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]

@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -110,6 +115,10 @@ def _default_completion_gate_store_path() -> str:
     return _sibling_database_path("completion-gates")
 
 
+def _default_completion_worker_store_path() -> str:
+    return _sibling_database_path("completion-workers")
+
+
 def _default_langgraph_runtime_namespace() -> str:
     profile = os.getenv("APP_ENV", "local").strip().lower() or "local"
     safe_profile = "-".join(part for part in profile.replace("_", "-").split("-") if part)
@@ -145,6 +154,9 @@ class Settings:
     max_agent_hops: int = _int("MAX_AGENT_HOPS", 6)
     max_revisions: int = _int("MAX_REVISIONS", 2)
     max_task_budget_usd: float = _float("MAX_TASK_BUDGET_USD", 2.0)
+    max_daily_provider_budget_usd: float = _positive_float(
+        "MAX_DAILY_PROVIDER_BUDGET_USD", 1_000.0
+    )
     provider_poll_seconds: int = _int("PROVIDER_POLL_SECONDS", 15)
     provider_timeout_seconds: int = _int("PROVIDER_TIMEOUT_SECONDS", 3600)
     sqlite_path: str = os.getenv("SQLITE_PATH", "/data/director.sqlite3")
@@ -175,6 +187,9 @@ class Settings:
     )
     langgraph_runtime_live_dispatch_enabled: bool = field(
         default_factory=lambda: _bool("LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED", False)
+    )
+    langgraph_runtime_task_writer_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED", False)
     )
     langgraph_runtime_checkpoint_path: str = field(
         default_factory=lambda: os.getenv(
@@ -213,6 +228,80 @@ class Settings:
     )
     completion_gate_result_max_age_seconds: int = field(
         default_factory=lambda: _int("COMPLETION_GATE_RESULT_MAX_AGE_SECONDS", 86_400)
+    )
+    langgraph_runtime_writer_secret: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_RUNTIME_WRITER_SECRET", "")
+    )
+    repository_snapshot_root: str = field(
+        default_factory=lambda: os.getenv("REPOSITORY_SNAPSHOT_ROOT", "").strip()
+    )
+    completion_gate_execution_tiers: tuple[str, ...] = field(
+        default_factory=lambda: _csv("COMPLETION_GATE_EXECUTION_TIERS", "container")
+    )
+    completion_gate_container_image: str = field(
+        default_factory=lambda: os.getenv("COMPLETION_GATE_CONTAINER_IMAGE", "").strip()
+    )
+    # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:06 UTC | BEGIN]]
+    completion_gate_workers_enabled: bool = field(
+        default_factory=lambda: _bool("COMPLETION_GATE_WORKERS_ENABLED", False)
+    )
+    completion_gate_worker_store_path: str = field(
+        default_factory=lambda: os.getenv(
+            "COMPLETION_GATE_WORKER_STORE_PATH",
+            _default_completion_worker_store_path(),
+        ).strip()
+    )
+    completion_gate_host_broker_path: str = field(
+        default_factory=lambda: os.getenv(
+            "COMPLETION_GATE_HOST_BROKER_PATH", ""
+        ).strip()
+    )
+    completion_gate_container_runtime_path: str = field(
+        default_factory=lambda: os.getenv(
+            "COMPLETION_GATE_CONTAINER_RUNTIME_PATH", ""
+        ).strip()
+    )
+    # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:06 UTC | END]]
+    langgraph_parallel_external_dispatch_enabled: bool = field(
+        default_factory=lambda: _bool(
+            "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED", False
+        )
+    )
+    langgraph_parallel_kill_switch: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_PARALLEL_KILL_SWITCH", True)
+    )
+    langgraph_parallel_initial_max_concurrency: int = field(
+        default_factory=lambda: _int(
+            "LANGGRAPH_PARALLEL_INITIAL_MAX_CONCURRENCY", 2
+        )
+    )
+    langgraph_parallel_auto_scale_max_concurrency: int = field(
+        default_factory=lambda: _int(
+            "LANGGRAPH_PARALLEL_AUTO_SCALE_MAX_CONCURRENCY", 3
+        )
+    )
+    langgraph_parallel_clean_batches_to_scale: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PARALLEL_CLEAN_BATCHES_TO_SCALE", 10)
+    )
+    langgraph_parallel_recovery_clean_batches: int = field(
+        default_factory=lambda: _int(
+            "LANGGRAPH_PARALLEL_RECOVERY_CLEAN_BATCHES", 3
+        )
+    )
+    langgraph_parallel_openai_cap: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PARALLEL_OPENAI_CAP", 1)
+    )
+    langgraph_parallel_claude_cap: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PARALLEL_CLAUDE_CAP", 1)
+    )
+    langgraph_parallel_cursor_cap: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PARALLEL_CURSOR_CAP", 1)
+    )
+    langgraph_parallel_gemini_cap: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PARALLEL_GEMINI_CAP", 1)
+    )
+    langgraph_parallel_perplexity_cap: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PARALLEL_PERPLEXITY_CAP", 1)
     )
     # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
     project_allowlist: tuple[str, ...] = _csv("PROJECT_ALLOWLIST", "")
@@ -605,6 +694,8 @@ class Settings:
             self.langgraph_runtime_checkpoint_namespace.strip()
         )
         writer_owner_configured = bool(self.langgraph_runtime_writer_owner_id.strip())
+        writer_secret_configured = len(self.langgraph_runtime_writer_secret) >= 32
+        snapshot_root_configured = bool(self.repository_snapshot_root.strip())
         namespaces_isolated = namespace_configured and (
             self.langgraph_runtime_checkpoint_namespace.strip()
             != self.langgraph_checkpoint_namespace.strip()
@@ -627,12 +718,15 @@ class Settings:
         return {
             "runtime_enabled": self.langgraph_runtime_enabled,
             "live_dispatch_enabled": self.langgraph_runtime_live_dispatch_enabled,
+            "task_writer_enabled": self.langgraph_runtime_task_writer_enabled,
             "paid_execution_enabled": self.allow_paid_runs,
             "checkpoint_path_configured": checkpoint_configured,
             "ledger_path_configured": ledger_configured,
             "checkpoint_namespace_configured": namespace_configured,
             "checkpoint_namespace_isolated": namespaces_isolated,
             "writer_owner_configured": writer_owner_configured,
+            "writer_secret_configured": writer_secret_configured,
+            "snapshot_root_configured": snapshot_root_configured,
             "stores_isolated": stores_isolated,
             "single_writer_token_required": True,
             "packet_validation_required": True,
@@ -641,8 +735,20 @@ class Settings:
             "live_provider_dispatch": (
                 runtime_active
                 and self.langgraph_runtime_live_dispatch_enabled
+                and self.langgraph_runtime_task_writer_enabled
                 and self.allow_paid_runs
                 and execution_profile_ready
+                and writer_secret_configured
+                and snapshot_root_configured
+            ),
+            "task_writer_active": (
+                runtime_active
+                and self.langgraph_runtime_live_dispatch_enabled
+                and self.langgraph_runtime_task_writer_enabled
+                and self.allow_paid_runs
+                and execution_profile_ready
+                and writer_secret_configured
+                and snapshot_root_configured
             ),
         }
 
@@ -652,8 +758,6 @@ class Settings:
         if not self.langgraph_runtime_enabled:
             return
         readiness = self.langgraph_runtime_readiness()
-        if readiness["configuration_valid"]:
-            return
         problems: list[str] = []
         if not readiness["checkpoint_path_configured"]:
             problems.append("LANGGRAPH_RUNTIME_CHECKPOINT_PATH must be configured")
@@ -667,14 +771,34 @@ class Settings:
             )
         if not readiness["writer_owner_configured"]:
             problems.append("LANGGRAPH_RUNTIME_WRITER_OWNER_ID must be configured")
+        if self.langgraph_runtime_live_dispatch_enabled and not readiness[
+            "writer_secret_configured"
+        ]:
+            problems.append(
+                "LANGGRAPH_RUNTIME_WRITER_SECRET must contain at least 32 characters"
+            )
+        if self.langgraph_runtime_live_dispatch_enabled and not readiness[
+            "snapshot_root_configured"
+        ]:
+            problems.append("REPOSITORY_SNAPSHOT_ROOT must be configured")
+        if (
+            self.langgraph_runtime_live_dispatch_enabled
+            and not self.langgraph_runtime_task_writer_enabled
+        ):
+            problems.append(
+                "LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED must be true whenever live "
+                "dispatch is enabled"
+            )
         if not readiness["stores_isolated"]:
             problems.append(
                 "runtime checkpoint, runtime ledger, shadow checkpoint, shadow resume "
                 "claim, and SQLITE_PATH databases must all be distinct files"
             )
-        raise ValueError(
-            "Invalid enabled LangGraph runtime configuration: " + "; ".join(problems)
-        )
+        if problems:
+            raise ValueError(
+                "Invalid enabled LangGraph runtime configuration: "
+                + "; ".join(problems)
+            )
 
     def completion_gate_readiness(self) -> dict[str, bool]:
         """Report Completion Gate evidence readiness without claiming authority.
@@ -689,9 +813,65 @@ class Settings:
             (self.completion_gate_store_path, *self._runtime_store_paths())
         )
         freshness_valid = 1 <= self.completion_gate_result_max_age_seconds <= 2_592_000
-        configuration_valid = (
+        tiers = tuple(dict.fromkeys(self.completion_gate_execution_tiers))
+        tiers_valid = bool(tiers) and set(tiers).issubset({"host", "container"})
+        container_required = "container" in tiers
+        container_image_pinned = bool(
+            re.fullmatch(
+                r"[^\s@]+@sha256:[0-9a-f]{64}", self.completion_gate_container_image
+            )
+        )
+        execution_configuration_valid = (
+            tiers_valid and (not container_required or container_image_pinned)
+        )
+        # Worker execution is a separately switched production boundary. Merely
+        # recording gate evidence or enabling the older isolated-proof contract
+        # never constructs a host broker or a container runtime.
+        worker_store_configured = bool(self.completion_gate_worker_store_path.strip())
+        worker_store_isolated = worker_store_configured and _pairwise_isolated(
+            (
+                self.completion_gate_worker_store_path,
+                self.completion_gate_store_path,
+                *self._runtime_store_paths(),
+            )
+        )
+        host_required = "host" in tiers
+        container_runtime_required = "container" in tiers
+        host_broker_configured = bool(
+            self.completion_gate_host_broker_path
+            and os.path.isabs(self.completion_gate_host_broker_path)
+            and os.path.isfile(self.completion_gate_host_broker_path)
+        )
+        container_runtime_configured = bool(
+            self.completion_gate_container_runtime_path
+            and os.path.isabs(self.completion_gate_container_runtime_path)
+            and os.path.isfile(self.completion_gate_container_runtime_path)
+        )
+        worker_configuration_valid = (
+            not self.completion_gate_workers_enabled
+            or (
+                self.completion_gates_enabled
+                and self.completion_gate_isolated_proof_enabled
+                and execution_configuration_valid
+                and worker_store_isolated
+                and not host_required
+                and (
+                    not container_runtime_required
+                    or container_runtime_configured
+                )
+            )
+        )
+        configuration_valid = worker_configuration_valid and (
             not self.completion_gates_enabled
-            or (store_configured and store_isolated and freshness_valid)
+            or (
+                store_configured
+                and store_isolated
+                and freshness_valid
+                and (
+                    not self.completion_gate_isolated_proof_enabled
+                    or execution_configuration_valid
+                )
+            )
         )
         return {
             "enabled": self.completion_gates_enabled,
@@ -699,6 +879,15 @@ class Settings:
             "store_configured": store_configured,
             "store_isolated": store_isolated,
             "result_freshness_valid": freshness_valid,
+            "execution_tiers_valid": tiers_valid,
+            "container_image_pinned": container_image_pinned,
+            "execution_configuration_valid": execution_configuration_valid,
+            "workers_enabled": self.completion_gate_workers_enabled,
+            "worker_store_configured": worker_store_configured,
+            "worker_store_isolated": worker_store_isolated,
+            "host_broker_configured": host_broker_configured,
+            "container_runtime_configured": container_runtime_configured,
+            "worker_configuration_valid": worker_configuration_valid,
             "configuration_valid": configuration_valid,
             "evidence_recording_active": (
                 self.completion_gates_enabled and configuration_valid
@@ -706,6 +895,13 @@ class Settings:
             "execution_active": (
                 self.completion_gates_enabled
                 and self.completion_gate_isolated_proof_enabled
+                and configuration_valid
+            ),
+            "worker_execution_active": (
+                self.completion_gate_workers_enabled
+                and self.completion_gates_enabled
+                and self.completion_gate_isolated_proof_enabled
+                and worker_configuration_valid
                 and configuration_valid
             ),
             "completion_authority": False,
@@ -729,9 +925,123 @@ class Settings:
             problems.append(
                 "COMPLETION_GATE_RESULT_MAX_AGE_SECONDS must be between 1 and 2592000"
             )
+        if self.completion_gate_isolated_proof_enabled and not readiness[
+            "execution_tiers_valid"
+        ]:
+            problems.append(
+                "COMPLETION_GATE_EXECUTION_TIERS must contain only host and/or container"
+            )
+        if (
+            self.completion_gate_isolated_proof_enabled
+            and "container" in self.completion_gate_execution_tiers
+            and not readiness["container_image_pinned"]
+        ):
+            problems.append(
+                "COMPLETION_GATE_CONTAINER_IMAGE must use an exact sha256 digest"
+            )
+        if self.completion_gate_workers_enabled:
+            if not self.completion_gates_enabled:
+                problems.append(
+                    "COMPLETION_GATES_ENABLED must be true before workers are enabled"
+                )
+            if not self.completion_gate_isolated_proof_enabled:
+                problems.append(
+                    "COMPLETION_GATE_ISOLATED_PROOF_ENABLED must be true before workers are enabled"
+                )
+            if not readiness["worker_store_configured"]:
+                problems.append("COMPLETION_GATE_WORKER_STORE_PATH must be configured")
+            elif not readiness["worker_store_isolated"]:
+                problems.append(
+                    "COMPLETION_GATE_WORKER_STORE_PATH must differ from the gate, "
+                    "task, and every LangGraph database"
+                )
+            if "host" in self.completion_gate_execution_tiers and not readiness[
+                "host_broker_configured"
+            ]:
+                problems.append(
+                    "COMPLETION_GATE_HOST_BROKER_PATH must name an existing absolute file"
+                )
+            if "host" in self.completion_gate_execution_tiers:
+                problems.append(
+                    "the audited host tier is not activatable until its OS controls "
+                    "can be independently verified; select container only"
+                )
+            if "container" in self.completion_gate_execution_tiers and not readiness[
+                "container_runtime_configured"
+            ]:
+                problems.append(
+                    "COMPLETION_GATE_CONTAINER_RUNTIME_PATH must name an existing absolute file"
+                )
         raise ValueError(
             "Invalid enabled Completion Gate configuration: " + "; ".join(problems)
         )
+
+    def parallel_dispatch_readiness(self) -> dict[str, bool | int]:
+        """Report bounded parallel-dispatch readiness without dispatching."""
+
+        provider_caps = self.parallel_provider_caps()
+        limits_valid = (
+            self.langgraph_parallel_initial_max_concurrency == 2
+            and self.langgraph_parallel_auto_scale_max_concurrency == 3
+            and self.langgraph_parallel_clean_batches_to_scale == 10
+            and self.langgraph_parallel_recovery_clean_batches == 3
+            and all(value >= 1 for value in provider_caps.values())
+        )
+        task_writer_active = bool(
+            self.langgraph_runtime_readiness()["task_writer_active"]
+        )
+        return {
+            "enabled": self.langgraph_parallel_external_dispatch_enabled,
+            "kill_switch_open": not self.langgraph_parallel_kill_switch,
+            "limits_valid": limits_valid,
+            "task_writer_active": task_writer_active,
+            "initial_max_concurrency": self.langgraph_parallel_initial_max_concurrency,
+            "auto_scale_max_concurrency": (
+                self.langgraph_parallel_auto_scale_max_concurrency
+            ),
+            "clean_batches_to_scale": self.langgraph_parallel_clean_batches_to_scale,
+            "recovery_clean_batches": self.langgraph_parallel_recovery_clean_batches,
+            "active": (
+                self.langgraph_parallel_external_dispatch_enabled
+                and not self.langgraph_parallel_kill_switch
+                and limits_valid
+                and task_writer_active
+            ),
+        }
+
+    def parallel_dispatch_health_readiness(self) -> dict[str, bool]:
+        """Expose only boolean parallel-dispatch readiness on public health."""
+
+        readiness = self.parallel_dispatch_readiness()
+        return {
+            key: bool(readiness[key])
+            for key in (
+                "enabled",
+                "kill_switch_open",
+                "limits_valid",
+                "task_writer_active",
+                "active",
+            )
+        }
+
+    def validate_parallel_dispatch_configuration(self) -> None:
+        readiness = self.parallel_dispatch_readiness()
+        if not self.langgraph_parallel_external_dispatch_enabled or readiness["limits_valid"]:
+            return
+        raise ValueError(
+            "Invalid enabled parallel dispatch configuration: caps must start at 2, "
+            "scale to 3 after 10 clean batches, recover after 3 clean batches, and "
+            "every provider cap must be positive"
+        )
+
+    def parallel_provider_caps(self) -> dict[str, int]:
+        return {
+            "openai": self.langgraph_parallel_openai_cap,
+            "claude": self.langgraph_parallel_claude_cap,
+            "cursor": self.langgraph_parallel_cursor_cap,
+            "gemini": self.langgraph_parallel_gemini_cap,
+            "perplexity": self.langgraph_parallel_perplexity_cap,
+        }
     # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
     def oracle_merge_readiness(self) -> dict[str, bool]:
@@ -840,3 +1150,8 @@ class Settings:
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

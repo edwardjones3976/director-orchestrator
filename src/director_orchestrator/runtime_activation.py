@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """Fail-closed activation for the packet coordinator and Completion Gate store.
@@ -36,21 +40,63 @@ every pending assignment silently stopping for an owner decision.
 from __future__ import annotations
 
 import sqlite3
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from .completion_gates import RunnerRegistry, completion_runtime_readiness
 from .completion_store import CompletionGateStore
+from .completion_worker_runtime import (
+    CompletionWorkerRuntime,
+    build_completion_worker_runtime,
+)
 from .config import Settings
 from .langgraph_runtime import (
     LangGraphPacketRuntime,
     PacketBoundaryAdapter,
     WriterOwnershipToken,
 )
+from .packet_results import DirectorPacketResultConsumer
 
 
 class RuntimeActivationError(RuntimeError):
     """An enabled component could not be built, so the process must not start."""
+
+
+def _build_serialized_sqlite_saver(
+    saver_type: type[Any], connection: sqlite3.Connection
+) -> Any:
+    """Add an orchestrator-owned lock around every checkpointer cursor.
+
+    ``run_packet`` may execute concurrently in two or three ``asyncio.to_thread``
+    workers.  A single SQLite connection remains the durable checkpoint owner,
+    but no two threads may operate a cursor or perform lazy setup on it at the
+    same time.  The lock deliberately covers only checkpointer database work,
+    not the surrounding graph invocation or provider call, so bounded external
+    dispatch can still overlap.
+
+    The pinned LangGraph saver currently carries an implementation lock of its
+    own.  This separate lock is an activation-layer invariant rather than an
+    assumption about that dependency's private implementation.
+    """
+
+    class _OrchestratorSerializedSqliteSaver(saver_type):
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            super().__init__(conn)
+            self._orchestrator_operation_lock = threading.RLock()
+
+        def setup(self) -> None:
+            with self._orchestrator_operation_lock:
+                super().setup()
+
+        @contextmanager
+        def cursor(self, transaction: bool = True):
+            with self._orchestrator_operation_lock:
+                with super().cursor(transaction=transaction) as cursor:
+                    yield cursor
+
+    return _OrchestratorSerializedSqliteSaver(connection)
 
 
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -89,13 +135,16 @@ class RuntimeActivation:
         # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
         packet_task_router: PacketTaskRouter | None = None,
         # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+        packet_result_consumer: DirectorPacketResultConsumer | None = None,
     ) -> None:
         self.settings = settings
         self._runner_registry = runner_registry
         self._packet_task_router = packet_task_router
+        self._packet_result_consumer = packet_result_consumer
         self._connection: sqlite3.Connection | None = None
         self.runtime: LangGraphPacketRuntime | None = None
         self.completion_store: CompletionGateStore | None = None
+        self.completion_worker_runtime: CompletionWorkerRuntime | None = None
 
         # Validate before building anything so a misconfigured process fails at
         # import time rather than at the first dispatch.
@@ -120,6 +169,21 @@ class RuntimeActivation:
             self.runtime = self._build_runtime()
         if settings.completion_gate_readiness()["evidence_recording_active"]:
             self.completion_store = self._build_completion_store()
+        # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:11 UTC | BEGIN]]
+        if settings.completion_gate_readiness()["worker_execution_active"]:
+            self.completion_worker_runtime = self._build_completion_worker_runtime()
+            production_registry = self.completion_worker_runtime.runner_registry
+            if (
+                runner_registry is not None
+                and runner_registry.registry_digest
+                != production_registry.registry_digest
+            ):
+                raise RuntimeActivationError(
+                    "the injected runner registry does not match the authenticated "
+                    "Completion Gate worker registry"
+                )
+            self._runner_registry = production_registry
+        # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:11 UTC | END]]
 
     def _build_runtime(self) -> LangGraphPacketRuntime:
         try:
@@ -134,7 +198,7 @@ class RuntimeActivation:
         connection = sqlite3.connect(checkpoint_path, check_same_thread=False)
         try:
             runtime = LangGraphPacketRuntime(
-                SqliteSaver(connection),
+                _build_serialized_sqlite_saver(SqliteSaver, connection),
                 ledger_database_path=self.settings.langgraph_runtime_ledger_path,
                 legacy_database_path=self.settings.sqlite_path,
                 checkpoint_namespace=(
@@ -160,6 +224,14 @@ class RuntimeActivation:
                 "the Completion Gate evidence store could not be opened"
             ) from exc
 
+    def _build_completion_worker_runtime(self) -> CompletionWorkerRuntime:
+        try:
+            return build_completion_worker_runtime(self.settings)
+        except Exception as exc:
+            raise RuntimeActivationError(
+                "the Completion Gate worker tiers could not be activated"
+            ) from exc
+
     @property
     def runner_registry(self) -> RunnerRegistry | None:
         return self._runner_registry
@@ -168,6 +240,10 @@ class RuntimeActivation:
     @property
     def packet_task_router(self) -> PacketTaskRouter | None:
         return self._packet_task_router
+
+    @property
+    def packet_result_consumer(self) -> DirectorPacketResultConsumer | None:
+        return self._packet_result_consumer
 
     def coordinator_owns_dispatch(self) -> bool:
         """True when the coordinator, not the legacy engine, owns live dispatch."""
@@ -184,6 +260,10 @@ class RuntimeActivation:
         completion_readiness = self.settings.completion_gate_readiness()
         runtime_surface: dict[str, Any] = dict(runtime_readiness)
         runtime_surface["coordinator_constructed"] = self.runtime is not None
+        runtime_surface["task_router_wired"] = self._packet_task_router is not None
+        runtime_surface["result_consumer_wired"] = (
+            self._packet_result_consumer is not None
+        )
         if self.runtime is not None:
             # The coordinator's own view must agree with configuration. A
             # disagreement means the process is not in the state it advertises.
@@ -209,10 +289,51 @@ class RuntimeActivation:
                 runner_registry=self._runner_registry,
             )
         )
+        worker_executor = (
+            self.completion_worker_runtime.executor
+            if self.completion_worker_runtime is not None
+            else None
+        )
+        worker_readiness = (
+            worker_executor.readiness()
+            if worker_executor is not None
+            else {
+                "ready": False,
+                "tiers": {
+                    (
+                        "audited_host"
+                        if tier == "host"
+                        else "disposable_container"
+                    ): False
+                    for tier in self.settings.completion_gate_execution_tiers
+                },
+                "reasons": ["worker_runtime_not_constructed"],
+            }
+        )
+        completion_surface["worker_executor_constructed"] = worker_executor is not None
+        completion_surface["worker_execution_ready"] = bool(worker_readiness["ready"])
+        completion_surface["worker_tiers_ready"] = dict(worker_readiness["tiers"])
+        completion_surface["worker_reasons"] = list(worker_readiness["reasons"])
         return {
             "langgraph_runtime": runtime_surface,
             "completion_gates": completion_surface,
         }
+
+    def health_readiness(self) -> dict[str, Any]:
+        """Return the public boolean-only view plus the packet transport ID."""
+
+        def project(surface: dict[str, Any]) -> dict[str, Any]:
+            public: dict[str, Any] = {}
+            for key, value in surface.items():
+                if isinstance(value, bool):
+                    public[key] = value
+                elif key == "packet_transport" and isinstance(value, str):
+                    public[key] = value
+                elif isinstance(value, dict):
+                    public[key] = project(value)
+            return public
+
+        return project(self.readiness())
 
     def single_writer_conflict(self) -> str | None:
         """Return why the legacy engine must not dispatch, or None.
@@ -255,5 +376,10 @@ class RuntimeActivation:
             self._connection.close()
             self._connection = None
         self.runtime = None
+        self.completion_worker_runtime = None
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

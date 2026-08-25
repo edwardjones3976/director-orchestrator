@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -20,7 +21,11 @@ from director_orchestrator.interactions import (
     start_interaction,
     transition_interaction,
 )
-from director_orchestrator.models import ProviderName, TaskRecord
+from director_orchestrator.models import (
+    IntakeAuthentication,
+    ProviderName,
+    TaskRecord,
+)
 
 
 def seed_production_plan_materialization(record: TaskRecord) -> None:
@@ -28,6 +33,7 @@ def seed_production_plan_materialization(record: TaskRecord) -> None:
 
     if record.plan is None:
         raise AssertionError("a plan is required before seeding its authority")
+    record.intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
     if record.plan_generation == 0:
         record.plan_generation = 1
     target_generation = record.plan_generation
@@ -132,3 +138,4 @@ def seed_production_plan_materialization(record: TaskRecord) -> None:
 
 
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:04 UTC | END]]

@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -22,6 +27,7 @@ from typing import Any, Mapping, Sequence
 
 import rfc8785
 from jsonschema import Draft202012Validator
+from .process_isolation import launch_contained_process, trusted_neutral_cwd
 
 
 JsonObject = dict[str, Any]
@@ -37,6 +43,119 @@ _MAX_DOCUMENT_BYTES = 1_048_576
 #: Windows FILE_ATTRIBUTE_REPARSE_POINT. Junctions and mount points set this
 #: without being symbolic links, so `S_ISLNK` alone does not detect them.
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+_SAFE_PYTHON_X_OPTIONS = frozenset(
+    {
+        "context_aware_warnings",
+        "cpu_count",
+        "dev",
+        "disable_remote_debug",
+        "faulthandler",
+        "frozen_modules",
+        "gil",
+        "importtime",
+        "int_max_str_digits",
+        "no_debug_ranges",
+        "perf",
+        "perf_jit",
+        "pycache_prefix",
+        "showrefcount",
+        "thread_inherit_context",
+        "tlbc",
+        "tracemalloc",
+        "utf8",
+        "warn_default_encoding",
+    }
+)
+
+
+def _legacy_python_code_execution_option(
+    argv: Sequence[str],
+    *,
+    authenticated_script: Path | None = None,
+) -> str | None:
+    """Return the first Python code-loading option unsafe outside a worker.
+
+    CPython accepts split, compact, and clustered spellings (for example
+    ``-m x``, ``-mx``, and ``-Bmx``). The legacy runner has no independently
+    verified low-privilege or network boundary, so module, command-string, and
+    unsafe or unknown implementation-specific ``-X`` hooks must graduate through
+    an isolated worker instead. For an exact-bound repository script, inspection
+    ends only at that authenticated script; later values are script arguments.
+    """
+
+    def is_authenticated_script(argument: str) -> bool:
+        if authenticated_script is None:
+            return False
+        try:
+            return os.path.samefile(argument, authenticated_script)
+        except (OSError, ValueError):
+            return False
+
+    def unsafe_x_option(value: str, spelling: str) -> str | None:
+        name = value.split("=", 1)[0]
+        if name not in _SAFE_PYTHON_X_OPTIONS:
+            return spelling
+        return None
+
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
+        if authenticated_script is not None and is_authenticated_script(argument):
+            return None
+        if argument == "--":
+            if authenticated_script is not None:
+                if index + 1 >= len(argv) or not is_authenticated_script(argv[index + 1]):
+                    raise CompletionGateError(
+                        "repository script runner argv does not bind authenticated script"
+                    )
+            return None
+        if not argument.startswith("-") or argument == "-":
+            if authenticated_script is not None:
+                raise CompletionGateError(
+                    "repository script runner argv does not bind authenticated script"
+                )
+            return None
+        if argument.startswith("--"):
+            if argument == "--check-hash-based-pycs":
+                index += 1
+            index += 1
+            continue
+
+        cluster = argument[1:]
+        cluster_index = 0
+        while cluster_index < len(cluster):
+            option = cluster[cluster_index]
+            if option in {"m", "c"}:
+                return argument
+            if option == "X":
+                inline_value = cluster[cluster_index + 1:]
+                if inline_value:
+                    rejected = unsafe_x_option(inline_value, argument)
+                    if rejected is not None:
+                        return rejected
+                    break
+                if index + 1 >= len(argv):
+                    return argument
+                rejected = unsafe_x_option(argv[index + 1], argument)
+                if rejected is not None:
+                    return rejected
+                index += 1
+                break
+            # -W consumes the remainder of this token or the following token.
+            if option == "W":
+                if cluster_index + 1 == len(cluster):
+                    index += 1
+                break
+            cluster_index += 1
+        index += 1
+
+    if authenticated_script is not None:
+        raise CompletionGateError(
+            "repository script runner argv does not bind authenticated script"
+        )
+    return None
 
 
 class CompletionGateError(ValueError):
@@ -807,23 +926,33 @@ class RunnerRegistry:
         before_status = self._git_status(root)
         if before_status:
             raise CompletionGateError("runner requires a clean repository worktree")
+        authenticated_script = None
         if gate["runner_id"] == "repository_owned_script":
-            self._verify_repository_script(
+            authenticated_script = self._verify_repository_script(
                 root,
                 gate,
                 expected_head_sha=ledger["expected_head_sha"],
                 authenticated_script_approval_digests=authenticated_script_approval_digests,
             )
 
+        unsafe_python_option = _legacy_python_code_execution_option(
+            profile.argv,
+            authenticated_script=authenticated_script,
+        )
+        if unsafe_python_option is not None:
+            raise CompletionGateError(
+                "Python code-loading options require the isolated completion worker boundary"
+            )
         argv = (definition.executable, *profile.argv)
         safe_environment = {
             key: value for key, value in os.environ.items()
             if key.upper() in {"SYSTEMROOT", "WINDIR", "TEMP", "TMP", "COMSPEC"}
         }
+        safe_environment["PYTHONSAFEPATH"] = "1"
         exit_code, timed_out, output_limit_exceeded, stdout_bytes, stderr_bytes = (
             self._run_bounded(
                 argv,
-                cwd=workdir,
+                cwd=trusted_neutral_cwd(),
                 environment=safe_environment,
                 timeout_seconds=gate["timeout_seconds"],
                 output_limit_bytes=gate["output_limit_bytes"],
@@ -975,7 +1104,8 @@ class RunnerRegistry:
     @staticmethod
     def _git_head(root: Path) -> str:
         completed = subprocess.run(
-            ("git", "rev-parse", "HEAD"), cwd=root, shell=False, check=False,
+            ("git", "-C", str(root), "rev-parse", "HEAD"),
+            cwd=trusted_neutral_cwd(), shell=False, check=False,
             capture_output=True, text=True, timeout=15,
         )
         if completed.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}\n?", completed.stdout):
@@ -1021,14 +1151,7 @@ class RunnerRegistry:
         timeout_seconds: int,
         output_limit_bytes: int,
     ) -> tuple[int | None, bool, bool, bytes, bytes]:
-        process_group: dict[str, Any]
-        if os.name == "nt":
-            process_group = {
-                "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            }
-        else:
-            process_group = {"start_new_session": True}
-        process = subprocess.Popen(
+        process, tree_guard = launch_contained_process(
             tuple(argv),
             cwd=cwd,
             env=dict(environment),
@@ -1036,20 +1159,24 @@ class RunnerRegistry:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            **process_group,
         )
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         lock = threading.Lock()
         output_limit_exceeded = threading.Event()
         termination_started = threading.Event()
         termination_lock = threading.Lock()
+        termination_errors: list[BaseException] = []
 
         def terminate_tree_once() -> None:
             with termination_lock:
                 if termination_started.is_set():
                     return
                 termination_started.set()
-            RunnerRegistry._terminate_process_tree(process)
+            try:
+                tree_guard.terminate()
+                RunnerRegistry._terminate_process_tree(process)
+            except BaseException as exc:
+                termination_errors.append(exc)
 
         def drain(name: str, stream: Any) -> None:
             try:
@@ -1091,6 +1218,9 @@ class RunnerRegistry:
                     "runner process tree did not terminate after timeout"
                 ) from exc
             exit_code = None
+        # Even a successful parent may have spawned a detached descendant.
+        # The mandatory Job/session group is closed before evidence is returned.
+        terminate_tree_once()
         # A child can inherit a pipe and outlive a normally exited parent. Give
         # ordinary drains a short grace period, then close the complete tree so
         # no descendant can keep proof execution alive or mutate after return.
@@ -1111,6 +1241,12 @@ class RunnerRegistry:
                 thread.join(timeout=1)
         if any(thread.is_alive() for thread in threads):
             raise CompletionGateError("runner output drain did not terminate")
+        try:
+            tree_guard.close()
+        except BaseException as exc:
+            termination_errors.append(exc)
+        if termination_errors:
+            raise CompletionGateError("runner process containment failed") from termination_errors[0]
         return (
             exit_code,
             timed_out,
@@ -1122,8 +1258,12 @@ class RunnerRegistry:
     @staticmethod
     def _git_status(root: Path) -> str:
         completed = subprocess.run(
-            ("git", "status", "--porcelain=v2", "--untracked-files=all"),
-            cwd=root, shell=False, check=False, capture_output=True, text=True, timeout=15,
+            (
+                "git", "-C", str(root), "status", "--porcelain=v2",
+                "--untracked-files=all",
+            ),
+            cwd=trusted_neutral_cwd(), shell=False, check=False,
+            capture_output=True, text=True, timeout=15,
         )
         if completed.returncode != 0:
             raise CompletionGateError("cannot authenticate repository worktree status")
@@ -1136,7 +1276,7 @@ class RunnerRegistry:
         *,
         expected_head_sha: str,
         authenticated_script_approval_digests: frozenset[str],
-    ) -> None:
+    ) -> Path:
         binding = gate.get("script_binding")
         if not isinstance(binding, dict):
             raise CompletionGateError("repository script lacks an exact binding")
@@ -1146,14 +1286,16 @@ class RunnerRegistry:
             raise CompletionGateError("repository script approval is not authenticated")
         script = RunnerRegistry._contained_file(root, binding["path"])
         blob = subprocess.run(
-            ("git", "rev-parse", f"HEAD:{binding['path']}"),
-            cwd=root, shell=False, check=False, capture_output=True, text=True, timeout=15,
+            ("git", "-C", str(root), "rev-parse", f"HEAD:{binding['path']}"),
+            cwd=trusted_neutral_cwd(), shell=False, check=False,
+            capture_output=True, text=True, timeout=15,
         )
         if blob.returncode != 0 or blob.stdout.strip() != binding["blob_sha"]:
             raise CompletionGateError("repository script Git blob mismatch")
         content_digest = "sha256:" + hashlib.sha256(script.read_bytes()).hexdigest()
         if content_digest != binding["content_digest"]:
             raise CompletionGateError("repository script content digest mismatch")
+        return script
 
     @staticmethod
     def _sanitize(value: str) -> tuple[str, set[str]]:
@@ -1168,3 +1310,8 @@ class RunnerRegistry:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]

@@ -1,3 +1,10 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -21,8 +28,13 @@ from .approvals import (
     apply_owner_clarification,
     clarification_required,
     owner_identity_matches,
+    reset_for_owner_clarification,
     reserve_task_effect,
+    SLACK_INTAKE_ISSUED_AT_HEADER,
+    SLACK_INTAKE_NONCE_HEADER,
+    SLACK_INTAKE_SIGNATURE_HEADER,
     task_effect_key,
+    verify_slack_intake_attestation,
     verify_slack_gateway_proof,
 )
 from .callbacks import (
@@ -49,6 +61,7 @@ from .engine import OrchestrationEngine
 from .models import (
     AmbiguousDispatchResolution,
     ClaudeCallback,
+    IntakeAuthentication,
     ManualRunCompletion,
     OracleRecoveryApproval,
     OwnerApproval,
@@ -68,8 +81,34 @@ from .oracle_merge import (
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from .runtime_activation import RuntimeActivation
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
-from .store import PrivacyCleanupResume, TaskStore
+from .store import PrivacyCleanupResume, SlackIntakeReplayConflict, TaskStore
 from .usage import UsageMonitor
+from .packet_results import DirectorPacketResultConsumer
+from .packet_routing import DirectorPacketTaskRouter
+from .packet_transports import (
+    GitHubReadOnlyRepositoryEffectVerifier,
+    GitHubRepositoryEffectVerifier,
+    LocalGitAuthoritySnapshotResolver,
+    build_primary_packet_adapters,
+)
+from .providers import provider_registry
+from .parallel_dispatch import (
+    DailyTaskBudgetLedger,
+)
+
+
+def _build_github_effect_verifier(
+    current_settings: Settings,
+) -> GitHubRepositoryEffectVerifier | None:
+    """Inject GET-only effect corroboration, or preserve fail-closed absence."""
+
+    if not current_settings.oracle_github_credential_configured():
+        return None
+    timeout_seconds = min(15.0, float(current_settings.provider_timeout_seconds))
+    return GitHubReadOnlyRepositoryEffectVerifier.from_settings(
+        current_settings,
+        request_timeout_seconds=timeout_seconds,
+    )
 
 
 settings = Settings()
@@ -77,11 +116,42 @@ settings = Settings()
 settings.validate_langgraph_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+store = TaskStore(settings.sqlite_path)
+settings.validate_parallel_dispatch_configuration()
+providers = provider_registry(settings)
+packet_task_router = None
+packet_result_consumer = None
+if settings.langgraph_runtime_readiness()["live_provider_dispatch"]:
+    if len(settings.repository_allowlist) != 1:
+        raise RuntimeError(
+            "live packet dispatch requires exactly one repository allowlist entry"
+        )
+    packet_task_router = DirectorPacketTaskRouter(
+        authority_snapshots=LocalGitAuthoritySnapshotResolver(
+            settings.repository_allowlist[0], settings.repository_snapshot_root
+        ),
+        boundary_adapters=build_primary_packet_adapters(
+            providers,
+            task_store=store,
+            poll_seconds=settings.provider_poll_seconds,
+            github_effect_verifier=_build_github_effect_verifier(settings),
+            github_effect_timeout_seconds=min(
+                15.0, float(settings.provider_timeout_seconds)
+            ),
+        ),
+        writer_owner_id=settings.langgraph_runtime_writer_owner_id,
+        writer_secret=settings.langgraph_runtime_writer_secret,
+        timeout_seconds=settings.provider_timeout_seconds,
+    )
+    packet_result_consumer = DirectorPacketResultConsumer()
 # Startup fails closed on an enabled-but-unisolated coordinator or gate store.
 # RuntimeActivation re-runs both validations and builds only what is enabled.
-runtime_activation = RuntimeActivation(settings)
+runtime_activation = RuntimeActivation(
+    settings,
+    packet_task_router=packet_task_router,
+    packet_result_consumer=packet_result_consumer,
+)
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
-store = TaskStore(settings.sqlite_path)
 oracle_merge_policy = OracleMergePolicy(settings)
 oracle_merge_store = OracleMergeStore(settings.sqlite_path)
 oracle_github = (
@@ -99,8 +169,12 @@ engine = OrchestrationEngine(
     store,
     oracle_merge_service,
     runtime_activation=runtime_activation,
+    providers=providers,
 )
 usage_monitor = UsageMonitor(settings, store)
+daily_task_budget = (
+    DailyTaskBudgetLedger(settings.sqlite_path) if settings.allow_paid_runs else None
+)
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 chatgpt_bridge = ChatGPTBridgeService(
     settings,
@@ -313,7 +387,12 @@ def health() -> dict:
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
         # Booleans and one transport identifier only: no path, namespace value,
         # secret, or allowlist entry is exposed here.
-        **runtime_activation.readiness(),
+        **runtime_activation.health_readiness(),
+        "parallel_dispatch": {
+            **settings.parallel_dispatch_health_readiness(),
+            "ledger_configured": engine.parallel_dispatch is not None,
+            "daily_task_budget_configured": daily_task_budget is not None,
+        },
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
         "oracle_merge": settings.oracle_merge_readiness(),
         "usage_monitor": usage_monitor.health(),
@@ -401,10 +480,53 @@ def chatgpt_bridge_delivery_ambiguous(
 
 
 @app.post("/v1/intake", response_model=TaskRecord, status_code=202, dependencies=[Depends(require_auth)])
-def intake(payload: SlackIntake, background: BackgroundTasks) -> TaskRecord:
+def intake(
+    payload: SlackIntake,
+    background: BackgroundTasks,
+    intake_issued_at: str | None = Header(
+        default=None, alias=SLACK_INTAKE_ISSUED_AT_HEADER
+    ),
+    intake_nonce: str | None = Header(default=None, alias=SLACK_INTAKE_NONCE_HEADER),
+    intake_signature: str | None = Header(
+        default=None, alias=SLACK_INTAKE_SIGNATURE_HEADER
+    ),
+) -> TaskRecord:
+    intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
+    replay_identity: tuple[str, str] | None = None
+    if settings.allow_paid_runs:
+        try:
+            replay_identity = verify_slack_intake_attestation(
+                settings.slack_gateway_secret,
+                settings.shared_secret,
+                payload,
+                expected_owner_user_id=settings.slack_owner_user_id,
+                expected_channel_id=settings.slack_channel_id,
+                issued_at=intake_issued_at,
+                nonce=intake_nonce,
+                signature=intake_signature,
+            )
+        except StaleApproval as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
     task_id = f"DIR-{secrets.token_hex(5).upper()}"
-    record = TaskRecord(task_id=task_id, status=TaskStatus.QUEUED, intake=payload)
-    stored, created = store.create(record)
+    record = TaskRecord(
+        task_id=task_id,
+        status=TaskStatus.QUEUED,
+        intake=payload,
+        intake_authentication=intake_authentication,
+    )
+    try:
+        stored, created = (
+            store.create_signed_slack_intake(
+                record,
+                nonce_digest=replay_identity[0],
+                payload_digest=replay_identity[1],
+            )
+            if replay_identity is not None
+            else store.create(record)
+        )
+    except SlackIntakeReplayConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
         background.add_task(engine.run, stored.task_id)
     return stored
@@ -441,11 +563,17 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
     current, expected_version = versioned
     gateway_nonce_digest: str | None = None
     gateway_nonce_expires_at: int | None = None
+    verified_decision_kind: str | None = None
+    is_paid_rearm = False
     if approval.source in {
         OwnerApprovalSource.SLACK_BUTTON,
         OwnerApprovalSource.SLACK_COMMAND,
     }:
-        gateway_nonce_digest, gateway_nonce_expires_at = verify_slack_gateway_proof(
+        (
+            verified_decision_kind,
+            gateway_nonce_digest,
+            gateway_nonce_expires_at,
+        ) = verify_slack_gateway_proof(
             settings.slack_gateway_secret,
             settings.shared_secret,
             current,
@@ -453,17 +581,45 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
             approval,
             channel_id=settings.slack_channel_id,
             path=f"/v1/tasks/{task_id}/approve",
+            allow_paid_runs=settings.allow_paid_runs,
         )
+        is_paid_rearm = verified_decision_kind == "paid_rearm"
+        if is_paid_rearm and approval.source != OwnerApprovalSource.SLACK_COMMAND:
+            raise StaleApproval(
+                "Paid rearm requires a fresh authenticated Slack command"
+            )
     elif approval.slack_gateway_proof is not None:
         raise StaleApproval("Slack gateway proof cannot authorize an API request")
     elif current.status == TaskStatus.FAILED:
         raise StaleApproval(
             "Failed retry requires an authenticated Slack gateway proof"
         )
+    elif (
+        settings.allow_paid_runs
+        and current.intake_authentication
+        != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+    ):
+        raise StaleApproval(
+            "Paid rearm requires a fresh authenticated Slack gateway proof"
+        )
+
+    def apply_verified_owner_decision(record: TaskRecord) -> None:
+        if is_paid_rearm:
+            reset_for_owner_clarification(record)
+            record.intake_authentication = (
+                IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+            )
+            record.status = TaskStatus.QUEUED
+            record.message = (
+                "Authenticated paid rearm accepted; a fresh live plan is required."
+            )
+            return
+        _apply_owner_decision(record, approval)
+
     stored = task_store.mutate_if_version(
         task_id,
         expected_version,
-        lambda current: _apply_owner_decision(current, approval),
+        apply_verified_owner_decision,
         gateway_nonce_digest=gateway_nonce_digest,
         gateway_nonce_expires_at=gateway_nonce_expires_at,
     )
@@ -656,3 +812,10 @@ def complete_run(
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

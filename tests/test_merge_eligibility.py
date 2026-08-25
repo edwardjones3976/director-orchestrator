@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """Provider-neutral, deterministic, fail-closed merge eligibility."""
 
@@ -145,6 +146,27 @@ class MergeEligibilityTests(unittest.TestCase):
             "independent_exact_sha_review_missing", verdict["blocking_reasons"]
         )
 
+    def test_security_reviewer_must_differ_from_the_independent_reviewer(self):
+        shared = review("reviewer-1", "shared")
+        build = check("build")
+        verdict = evaluate_merge_eligibility(
+            bundle(
+                independent_reviews=(shared,),
+                security_reviews=(shared,),
+                authenticated_record_digests=frozenset(
+                    {
+                        shared.authentication_record_digest,
+                        shared.record_digest,
+                        build.response_digest,
+                        digest("owner"),
+                    }
+                ),
+            ),
+            policy=policy(),
+        )
+        self.assertFalse(verdict["eligible"])
+        self.assertIn("security_reviewer_not_distinct", verdict["blocking_reasons"])
+
     def test_unauthenticated_review_records_are_ignored(self):
         verdict = evaluate_merge_eligibility(
             bundle(authenticated_record_digests=frozenset()), policy=policy()
@@ -253,7 +275,9 @@ class MergeEligibilityTests(unittest.TestCase):
         scanned = [
             line for line in lines if parse_contribution_tag(line) is None
         ]
-        self.assertEqual(len(lines) - len(scanned), 2, "expected one outer tag pair")
+        tag_count = len(lines) - len(scanned)
+        self.assertGreaterEqual(tag_count, 2, "expected an outer tag pair")
+        self.assertEqual(tag_count % 2, 0, "expected balanced contribution pairs")
 
         source = "\n".join(scanned).lower()
         for vendor in ("openai", "claude", "cursor", "gemini", "perplexity", "github"):
@@ -263,3 +287,4 @@ class MergeEligibilityTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]

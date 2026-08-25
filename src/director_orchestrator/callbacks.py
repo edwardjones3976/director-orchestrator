@@ -1,12 +1,16 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 12:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import hmac
 
 from .models import ClaudeCallback, ManualRunCompletion, ProviderName, TaskRecord, TaskStatus
+from .packet_contracts import canonical_json_bytes
 from .interactions import (
     ProviderInteractionState,
     ProviderTransport,
@@ -21,6 +25,54 @@ from .interactions import (
 
 class CallbackConflict(ValueError):
     pass
+
+
+_CALLBACK_EFFECT_DIGEST_FIELD = "claude_callback_side_effect_evidence_digest"
+_CALLBACK_RESULT_DIGEST_FIELD = "claude_callback_result_digest"
+
+
+def _terminal_result_digest(result: str) -> str:
+    return hashlib.sha256(result.encode("utf-8")).hexdigest()
+
+
+def _callback_effect_payload(callback: ClaudeCallback) -> dict | None:
+    if callback.side_effect_evidence is None:
+        return None
+    return callback.side_effect_evidence.model_dump(mode="json")
+
+
+def _callback_effect_digest(callback: ClaudeCallback) -> str:
+    return hashlib.sha256(
+        canonical_json_bytes(_callback_effect_payload(callback))
+    ).hexdigest()
+
+
+def _require_callback_effect_identity(
+    record: TaskRecord,
+    callback: ClaudeCallback,
+    *,
+    interaction_id: str,
+    assignment_sequence: int | None,
+) -> None:
+    evidence = callback.side_effect_evidence
+    if evidence is None:
+        return
+    if assignment_sequence is None:
+        raise CallbackConflict("Claude callback lacks its assignment binding")
+    expected = {
+        "task_id": record.task_id,
+        "assignment_id": f"{record.task_id}-{assignment_sequence}",
+        "correlation_id": interaction_id,
+        "provider_run_id": callback.run_id,
+        "result_digest": _terminal_result_digest(callback.result),
+    }
+    observed = evidence.model_dump(mode="json")
+    for field, value in expected.items():
+        item = observed[field]
+        if not hmac.compare_digest(item, value):
+            raise CallbackConflict(
+                "Claude callback side-effect evidence does not match its terminal run"
+            )
 
 
 def bearer_matches(secret: str, authorization: str | None) -> bool:
@@ -48,15 +100,49 @@ def apply_claude_callback(record: TaskRecord, callback: ClaudeCallback) -> bool:
 
     run = matching[-1]
     if run.status != "WAITING_CALLBACK":
-        if run.status == callback.status and hmac.compare_digest(run.result or "", callback.result):
-            return False
+        callback_effect_digest = _callback_effect_digest(callback)
+        stored_effect_digest = run.raw.get(_CALLBACK_EFFECT_DIGEST_FIELD)
+        exact_terminal_result = (
+            run.status == callback.status
+            and hmac.compare_digest(run.result or "", callback.result)
+        )
+        if exact_terminal_result:
+            if isinstance(stored_effect_digest, str) and hmac.compare_digest(
+                stored_effect_digest, callback_effect_digest
+            ):
+                return False
+            # Records persisted before effect-digest binding existed may replay
+            # only an evidence-free terminal callback. Any newly supplied effect
+            # evidence remains a conflict because the legacy record cannot prove
+            # that those effects were part of the accepted callback.
+            if stored_effect_digest is None and callback.side_effect_evidence is None:
+                return False
         raise CallbackConflict("Claude run already has a different terminal result")
     if not run.interaction_id:
         raise CallbackConflict("Claude callback lacks its backend interaction binding")
 
+    _require_callback_effect_identity(
+        record,
+        callback,
+        interaction_id=run.interaction_id,
+        assignment_sequence=run.assignment_sequence,
+    )
+    callback_effect_payload = _callback_effect_payload(callback)
+    terminal_raw = dict(run.raw)
+    # The initial Routine response precedes the work and can never attest its
+    # terminal effects. Replace, rather than merge, this field at the callback.
+    terminal_raw.pop("side_effect_evidence", None)
+    if callback_effect_payload is not None:
+        terminal_raw["side_effect_evidence"] = callback_effect_payload
+    terminal_raw[_CALLBACK_EFFECT_DIGEST_FIELD] = _callback_effect_digest(callback)
+    terminal_raw[_CALLBACK_RESULT_DIGEST_FIELD] = _terminal_result_digest(
+        callback.result
+    )
+
     run.status = callback.status
     run.result = callback.result
     run.url = callback.session_url or run.url
+    run.raw = terminal_raw
     run.evidence_source = "provider_authenticated"
     evidence = build_transport_evidence(
         transport=ProviderTransport.CLAUDE_CALLBACK,
@@ -190,3 +276,5 @@ def apply_manual_run_completion(
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:58 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 12:22 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]

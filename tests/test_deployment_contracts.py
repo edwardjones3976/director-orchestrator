@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -18,8 +19,27 @@ class DeploymentContractTests(unittest.TestCase):
         request_node = next(node for node in workflow["nodes"] if node["name"] == "Create Director Task")
         headers = request_node["parameters"]["headerParameters"]["parameters"]
         authorization = next(item["value"] for item in headers if item["name"] == "Authorization")
+        attestation_headers = {
+            item["name"]: item["value"]
+            for item in headers
+            if item["name"].startswith("X-Director-Intake-")
+        }
 
         self.assertEqual(authorization, "={{ $json.headers.authorization }}")
+        self.assertEqual(
+            attestation_headers,
+            {
+                "X-Director-Intake-Issued-At": (
+                    "={{ $json.headers['x-director-intake-issued-at'] }}"
+                ),
+                "X-Director-Intake-Nonce": (
+                    "={{ $json.headers['x-director-intake-nonce'] }}"
+                ),
+                "X-Director-Intake-Signature": (
+                    "={{ $json.headers['x-director-intake-signature'] }}"
+                ),
+            },
+        )
         self.assertEqual(request_node["parameters"]["url"], "http://orchestrator:8080/v1/intake")
         self.assertNotIn("ORCHESTRATOR_SHARED_SECRET", json.dumps(workflow))
 
@@ -98,3 +118,4 @@ class DeploymentContractTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]

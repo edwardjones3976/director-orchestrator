@@ -1,8 +1,11 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:22 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """The v1 packet contract is the live adapter boundary in both directions."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import sqlite3
@@ -38,12 +41,19 @@ class RecordingTransport:
         self.result = copy.deepcopy(dict(result))
         self.received: list[bytes] = []
         self.contexts: list[ProviderAdapterContext] = []
+        self.readbacks: list[tuple[bytes, Mapping[str, Any]]] = []
 
     def send(
         self, work_packet_json: bytes, *, context: ProviderAdapterContext
     ) -> Mapping[str, Any]:
         self.received.append(work_packet_json)
         self.contexts.append(context)
+        return copy.deepcopy(self.result)
+
+    def authenticated_readback(
+        self, work_packet_json: bytes, provider_run: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        self.readbacks.append((work_packet_json, provider_run))
         return copy.deepcopy(self.result)
 
 
@@ -136,6 +146,26 @@ class PacketBoundaryAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PacketBoundaryAdapter("  ", RecordingTransport(self.result))
 
+    def test_authenticated_readback_requires_current_packet_correlation(self):
+        transport = RecordingTransport(self.result)
+        provider_run = {
+            "provider": self.result["provider"],
+            "interaction_id": "stale-generation-correlation",
+            "run_id": self.result["run_reference"],
+            "status": "completed",
+            "result": self.result["outcome"],
+            "evidence_source": "provider_authenticated",
+        }
+
+        with self.assertRaisesRegex(PacketContractError, "current work-packet correlation"):
+            asyncio.run(
+                self.adapter(transport).authenticated_readback(
+                    self.work, provider_run
+                )
+            )
+
+        self.assertEqual([], transport.readbacks)
+
 
 class BoundaryAdapterInRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -190,3 +220,5 @@ class BoundaryAdapterInRuntimeTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:22 UTC | END]]

@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
@@ -16,7 +19,13 @@ from .interactions import (
     ProviderInteractionEvent,
     append_interaction_event,
 )
-from .models import TaskEffectEvidence, TaskRecord, TaskStatus, UsageCheckRecord
+from .models import (
+    IntakeAuthentication,
+    TaskEffectEvidence,
+    TaskRecord,
+    TaskStatus,
+    UsageCheckRecord,
+)
 
 
 _INTENT_KINDS = frozenset(
@@ -37,6 +46,10 @@ class StaleTaskWrite(RuntimeError):
 
 class PrivacyCleanupPending(RuntimeError):
     """Private task projections remain pinned in SQLite's WAL."""
+
+
+class SlackIntakeReplayConflict(RuntimeError):
+    """A signed Slack nonce or source event was reused with different authority."""
 
 
 @dataclass(frozen=True)
@@ -288,6 +301,36 @@ class TaskStore:
             connection.execute(
                 """CREATE INDEX IF NOT EXISTS idx_slack_gateway_nonce_expiry
                 ON slack_gateway_nonces(expires_at)"""
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS slack_intake_claims (
+                    nonce_digest TEXT PRIMARY KEY,
+                    source_event_id TEXT NOT NULL,
+                    payload_digest TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    claimed_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                )
+                """
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_slack_intake_claim_source
+                ON slack_intake_claims(source_event_id)"""
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS slack_intake_claims_no_update
+                BEFORE UPDATE ON slack_intake_claims
+                BEGIN SELECT RAISE(ABORT, 'Slack intake claims are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS slack_intake_claims_no_delete
+                BEFORE DELETE ON slack_intake_claims
+                BEGIN SELECT RAISE(ABORT, 'Slack intake claims are append-only'); END
+                """
             )
             self._migrate_effect_ledgers(connection)
             if self._journal_mode(connection) == "wal":
@@ -675,6 +718,140 @@ class TaskStore:
         self._attempt_privacy_cleanup()
         return record, True
 
+    def create_signed_slack_intake(
+        self,
+        record: TaskRecord,
+        *,
+        nonce_digest: str,
+        payload_digest: str,
+    ) -> tuple[TaskRecord, bool]:
+        """Atomically bind one paid Slack intake to its durable replay identity."""
+
+        if (
+            len(nonce_digest) != 64
+            or len(payload_digest) != 64
+            or any(character not in "0123456789abcdef" for character in nonce_digest)
+            or any(character not in "0123456789abcdef" for character in payload_digest)
+        ):
+            raise SlackIntakeReplayConflict("Signed Slack intake digest is malformed")
+        self._attempt_privacy_cleanup()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            nonce_claim = connection.execute(
+                "SELECT * FROM slack_intake_claims WHERE nonce_digest = ?",
+                (nonce_digest,),
+            ).fetchone()
+            source_claim = connection.execute(
+                """SELECT * FROM slack_intake_claims
+                WHERE source_event_id = ? ORDER BY claimed_at, nonce_digest LIMIT 1""",
+                (record.intake.source_event_id,),
+            ).fetchone()
+
+            for claim in (nonce_claim, source_claim):
+                if claim is None:
+                    continue
+                if (
+                    claim["source_event_id"] != record.intake.source_event_id
+                    or claim["payload_digest"] != payload_digest
+                ):
+                    raise SlackIntakeReplayConflict(
+                        "Signed Slack intake replay identity conflicts with durable authority"
+                    )
+
+            authoritative_claim = nonce_claim or source_claim
+            if authoritative_claim is not None:
+                task = connection.execute(
+                    "SELECT * FROM tasks WHERE task_id = ?",
+                    (authoritative_claim["task_id"],),
+                ).fetchone()
+                if task is None:
+                    raise SlackIntakeReplayConflict(
+                        "Signed Slack intake claim has no durable task"
+                    )
+                if nonce_claim is None:
+                    connection.execute(
+                        """INSERT INTO slack_intake_claims(
+                            nonce_digest, source_event_id, payload_digest,
+                            task_id, claimed_at
+                        ) VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            nonce_digest,
+                            record.intake.source_event_id,
+                            payload_digest,
+                            authoritative_claim["task_id"],
+                            datetime.now(timezone.utc).isoformat(),
+                        ),
+                    )
+                return self._record_from_row(connection, task), False
+
+            legacy_task = connection.execute(
+                "SELECT * FROM tasks WHERE source_event_id = ?",
+                (record.intake.source_event_id,),
+            ).fetchone()
+            if legacy_task is not None:
+                stored = self._record_from_row(connection, legacy_task)
+                if stored.intake.model_dump(mode="json") != record.intake.model_dump(
+                    mode="json"
+                ):
+                    raise SlackIntakeReplayConflict(
+                        "Signed Slack source event conflicts with an existing task"
+                    )
+                connection.execute(
+                    """INSERT INTO slack_intake_claims(
+                        nonce_digest, source_event_id, payload_digest,
+                        task_id, claimed_at
+                    ) VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        nonce_digest,
+                        record.intake.source_event_id,
+                        payload_digest,
+                        stored.task_id,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                return stored, False
+
+            connection.execute(
+                """INSERT INTO tasks(
+                    task_id, source_event_id, status, record_json,
+                    created_at, updated_at, effect_migration_status
+                ) VALUES (?, ?, ?, ?, ?, ?, 'complete')""",
+                (
+                    record.task_id,
+                    record.intake.source_event_id,
+                    record.status.value,
+                    self._record_json_without_effect_projection(record),
+                    record.created_at.isoformat(),
+                    record.updated_at.isoformat(),
+                ),
+            )
+            self._append_effects(connection, record.task_id, record.task_effect_ledger)
+            self._append_provider_interactions(
+                connection, record.task_id, record.provider_interaction_ledger
+            )
+            self._hydrate_effects(connection, record)
+            self._hydrate_provider_interactions(connection, record)
+            connection.execute(
+                "UPDATE tasks SET record_json = ? WHERE task_id = ?",
+                (self._record_json_without_effect_projection(record), record.task_id),
+            )
+            connection.execute(
+                """INSERT INTO slack_intake_claims(
+                    nonce_digest, source_event_id, payload_digest,
+                    task_id, claimed_at
+                ) VALUES (?, ?, ?, ?, ?)""",
+                (
+                    nonce_digest,
+                    record.intake.source_event_id,
+                    payload_digest,
+                    record.task_id,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            record._store_version = 0
+        self._attempt_privacy_cleanup()
+        return record, True
+
     def get(self, task_id: str) -> TaskRecord | None:
         versioned = self.get_versioned(task_id)
         return versioned[0] if versioned is not None else None
@@ -867,11 +1044,22 @@ class TaskStore:
         persisted.provider_interaction_ledger = []
         return persisted.model_dump_json()
 
+    @staticmethod
+    def _task_record_from_persisted_json(record_json: str) -> TaskRecord:
+        payload = json.loads(record_json)
+        if not isinstance(payload, dict):
+            raise ValueError("Persisted task record must be an object")
+        payload.setdefault(
+            "intake_authentication",
+            IntakeAuthentication.BEARER_DRY_RUN.value,
+        )
+        return TaskRecord.model_validate(payload)
+
     def _record_from_row(
         self, connection: sqlite3.Connection, row: sqlite3.Row
     ) -> TaskRecord:
         self._require_effect_migration(row)
-        record = TaskRecord.model_validate_json(row["record_json"])
+        record = self._task_record_from_persisted_json(row["record_json"])
         record._store_version = int(row["record_version"])
         self._hydrate_effects(connection, record)
         self._hydrate_provider_interactions(connection, record)
@@ -1032,11 +1220,17 @@ class TaskStore:
                 observations.setdefault(effect.effect_key, set()).add(effect.outcome)
                 if effect.effect_key not in intents:
                     legacy[effect.effect_key] = effect
+        def counts_as_consumed_effect(key: str) -> bool:
+            outcomes = observations.get(key, set())
+            return "failed_pre_submit" not in outcomes or bool(
+                outcomes - {"failed_pre_submit"}
+            )
+
         record.cumulative_estimated_cost_usd = round(
             sum(
                 effect.estimated_cost_usd
                 for key, effect in intents.items()
-                if "failed_pre_submit" not in observations.get(key, set())
+                if counts_as_consumed_effect(key)
             )
             + sum(effect.estimated_cost_usd for effect in legacy.values()),
             8,
@@ -1044,7 +1238,7 @@ class TaskStore:
         record.cumulative_effect_hops = sum(
             effect.hop_units
             for key, effect in intents.items()
-            if "failed_pre_submit" not in observations.get(key, set())
+            if counts_as_consumed_effect(key)
         )
 
     def _migrate_effect_ledgers(self, connection: sqlite3.Connection) -> None:
@@ -1053,7 +1247,7 @@ class TaskStore:
         ).fetchall()
         for row in rows:
             try:
-                record = TaskRecord.model_validate_json(row["record_json"])
+                record = self._task_record_from_persisted_json(row["record_json"])
                 self._append_effects(
                     connection,
                     record.task_id,
@@ -1163,3 +1357,6 @@ class TaskStore:
         ]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
