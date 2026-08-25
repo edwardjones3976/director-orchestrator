@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:27 UTC | BEGIN]]
@@ -364,7 +365,11 @@ class CompletionWorkerTests(unittest.TestCase):
         for run in (backend_run, executor_run):
             for call in run.call_args_list:
                 command = call.args[0]
-                self.assertEqual(("git", "-C", str(self.repository)), command[:3])
+                self.assertEqual(("git", "-C"), command[:2])
+                self.assertTrue(
+                    os.path.samefile(command[2], self.repository),
+                    f"git -C targeted a different repository: {command[2]}",
+                )
                 self.assertEqual(trusted_neutral_cwd(), call.kwargs["cwd"])
 
     def test_container_cleanup_is_label_bound_forced_and_verified(self):
@@ -475,3 +480,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:27 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:35 UTC | END]]

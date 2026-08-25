@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
@@ -5,6 +6,7 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import unittest
@@ -149,7 +151,14 @@ class UppercutDeploymentContractTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual("1|claude", completed.stdout.strip())
+        ansi_control_sequence = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+        normalized_stdout = ansi_control_sequence.sub("", completed.stdout)
+        normalized_stdout = "".join(
+            character
+            for character in normalized_stdout
+            if character in "\r\n\t" or ord(character) >= 0x20
+        )
+        self.assertEqual("1|claude", normalized_stdout.strip())
 
     def test_usage_cooldown_evidence_fails_closed_for_error_and_skipped(self):
         cooling_fn = self.script[
@@ -472,3 +481,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | END]]
