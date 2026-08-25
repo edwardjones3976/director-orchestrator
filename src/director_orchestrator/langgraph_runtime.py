@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -165,6 +166,32 @@ class PacketBoundaryAdapter:
             )
         return result
 
+    def authenticated_readback(
+        self,
+        work_packet: Mapping[str, Any],
+        provider_run: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Normalize one separately authenticated provider readback.
+
+        This path never contacts the provider. It exists solely to bind a late
+        callback/readback to an already ambiguous durable dispatch.
+        """
+
+        readback = getattr(self._transport, "authenticated_readback", None)
+        if not callable(readback):
+            raise RuntimeContractError(
+                "packet transport cannot normalize authenticated readback evidence"
+            )
+        work = validate_packet("work", work_packet)
+        raw = readback(canonical_json_bytes(work), provider_run)
+        result = validate_packet("result", raw)
+        build_replay_run(work, result)
+        if result["provider"] != self.provider:
+            raise PacketContractError(
+                "readback result does not identify this adapter's provider"
+            )
+        return result
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeReadiness:
@@ -297,6 +324,37 @@ class LangGraphPacketRuntime:
                 );
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(runtime_dispatch_ledger)"
+                ).fetchall()
+            }
+            if "work_packet_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE runtime_dispatch_ledger ADD COLUMN work_packet_json TEXT"
+                )
+
+    def bound_work_packet(self, idempotency_key: str) -> dict[str, Any] | None:
+        """Return the first accepted canonical packet for restart-safe replay."""
+
+        with closing(sqlite3.connect(self._ledger_database, timeout=30)) as connection:
+            row = connection.execute(
+                "SELECT work_packet_json, work_packet_digest "
+                "FROM runtime_dispatch_ledger WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        try:
+            packet = validate_packet("work", json.loads(str(row[0])))
+        except (json.JSONDecodeError, PacketContractError, TypeError, ValueError) as exc:
+            raise RuntimeContractError("persisted work packet is invalid") from exc
+        if not _secure_equal(document_digest(packet), str(row[1])):
+            raise RuntimeContractError("persisted work packet digest is invalid")
+        if packet["idempotency_key"] != idempotency_key:
+            raise RuntimeContractError("persisted work packet key is invalid")
+        return packet
 
     @contextmanager
     def _transaction(self):
@@ -510,8 +568,9 @@ class LangGraphPacketRuntime:
             connection.execute(
                 "INSERT INTO runtime_dispatch_ledger("
                 "idempotency_key, task_id, assignment_id, provider, execution_mode, "
-                "work_packet_digest, authority_snapshot_digest, writer_token_digest, status"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "work_packet_digest, authority_snapshot_digest, writer_token_digest, status, "
+                "work_packet_json"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     work["idempotency_key"],
                     work["task_id"],
@@ -522,6 +581,7 @@ class LangGraphPacketRuntime:
                     work["authority_snapshot_digest"],
                     writer_digest,
                     initial_status,
+                    canonical_json_bytes(work).decode("utf-8"),
                 ),
             )
         return None
@@ -1010,3 +1070,4 @@ class LangGraphPacketRuntime:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:15 UTC | END]]

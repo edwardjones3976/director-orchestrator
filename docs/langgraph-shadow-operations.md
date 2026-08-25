@@ -1,76 +1,216 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:39 UTC | BEGIN]] -->
 **[[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]**
 
-# LangGraph shadow and approval-resume operations
+# LangGraph shadow, packet-runtime, and writer-cutover operations
 
-## Authority boundary
+## Current status: implemented capability, default-off activation
 
-The LangGraph additions are default-on proof lanes. The legacy Director engine remains the sole workflow authority, provider dispatcher, and GitHub/Slack writer. Neither feature flag activates a graph from the API process, and LangGraph cannot approve, resume, dispatch, merge, deploy, or write externally.
+The repository now contains two separate LangGraph surfaces. Do not use the
+older shadow flags as evidence that the production packet runtime is active.
 
-The proof has two bounded purposes:
+1. `LANGGRAPH_SHADOW_ENABLED` and `LANGGRAPH_APPROVAL_RESUME_ENABLED` retain the
+   isolated comparison and approval-resume proof lanes. They use the shadow
+   checkpoint database and never own live provider dispatch.
+2. `LANGGRAPH_RUNTIME_ENABLED` constructs the production-capable provider-neutral
+   packet coordinator with its own checkpoint and dispatch ledger. It still
+   contacts no provider until the live-dispatch and task-writer cutover gates are
+   also satisfied.
 
-- `LANGGRAPH_SHADOW_ENABLED` permits isolated shadow-state experiments that compare graph transitions with legacy decisions.
-- `LANGGRAPH_APPROVAL_RESUME_ENABLED` permits isolated approval pause/resume experiments while existing deterministic policy continues to decide whether an approval is authentic, current, assignment-scoped, and sufficient.
+The packet runtime, exact task-writer token, v1 work/result packet adapters,
+validated result-to-task progression, authenticated late-result reconciliation,
+and dynamic bounded parallel-dispatch ledger are implemented. They remain
+operator-gated and default off. A merged implementation is capability evidence;
+only the active deployment's health, exact profile, and runtime ledgers establish
+that a cutover actually occurred.
 
-Both flags default to `true`, with an isolated checkpoint database derived from `SQLITE_PATH` and a namespace derived from `APP_ENV` when a profile omits explicit values. Operators can still set either flag to `false` as an immediate rollback. There is no provider dispatch integration, state migration, production cutover, or provider subgraph in this phase.
+## Implemented production path
 
-## Required isolation
+When the complete cutover configuration is valid, `main.py` constructs one
+`DirectorPacketTaskRouter` and one `DirectorPacketResultConsumer` around the
+`LangGraphPacketRuntime`:
 
-An enabled proof lane requires both:
+- the router resolves exactly one allowlisted repository from a clean local Git
+  snapshot, binds an immutable 40-character commit and authority-snapshot digest,
+  builds a validated `model-work-packet-v1`, and selects the provider boundary;
+- every live provider call uses `PacketBoundaryAdapter`; provider-native payloads
+  do not become coordinator state;
+- the runtime atomically reserves the packet idempotency key, validates task,
+  assignment, provider, authority, acceptance, side-effect, usage, and writer
+  bindings, and stores the validated `model-result-packet-v1` before reporting
+  completion;
+- the result consumer verifies the replay envelope and packet digest, binds or
+  creates the provider run, records usage and authenticated interaction evidence,
+  and returns control to the existing Director acceptance/revision/review path.
 
-- `LANGGRAPH_CHECKPOINT_PATH`: a SQLite file different from `SQLITE_PATH`;
-- `LANGGRAPH_CHECKPOINT_NAMESPACE`: a non-empty, profile-specific namespace.
+Runtime `COMPLETED` therefore means a validated provider result was durably
+recorded and progressed into Director task evidence. It does not mean independent
+exact-SHA acceptance, Codex Security, CI, merge, deployment, publication, or
+project completion occurred.
 
-Startup fails closed when an enabled lane has a blank namespace, a blank checkpoint path, or a checkpoint path that resolves to the legacy task database. The committed example profiles use distinct values:
+## Exact activation gates
 
-| Profile | Legacy task database | LangGraph checkpoint database | Namespace |
-| --- | --- | --- | --- |
-| Local | `/data/director.sqlite3` | `/data/langgraph-shadow.sqlite3` | `director-local-shadow-v1` |
-| Project Uppercut | `/data/project-uppercut.sqlite3` | `/data/project-uppercut-langgraph-shadow.sqlite3` | `project-uppercut-shadow-v1` |
-| Edge Oracle | `/data/edge-oracle.sqlite3` | `/data/edge-oracle-langgraph-shadow.sqlite3` | `edge-oracle-shadow-v1` |
+Live packet dispatch is active only when every row below is satisfied:
 
-Do not reuse a checkpoint path or namespace across deployment profiles. Checkpoints must not contain secrets, raw provider credentials, or unrestricted transcripts.
+| Gate | Required state |
+| --- | --- |
+| `LANGGRAPH_RUNTIME_ENABLED` | `true` |
+| `LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED` | `true` |
+| `LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED` | `true` |
+| `ALLOW_PAID_RUNS` | `true` |
+| Runtime checkpoint and ledger | Non-empty, file-backed, and distinct from the task, shadow, and resume-claim stores |
+| Runtime namespace | Non-empty and different from the shadow namespace |
+| `LANGGRAPH_RUNTIME_WRITER_OWNER_ID` | Non-empty stable writer identity |
+| `LANGGRAPH_RUNTIME_WRITER_SECRET` | At least 32 characters and never reported by health |
+| `REPOSITORY_SNAPSHOT_ROOT` | Configured clean local snapshot for the one repository allowlist entry |
+| Project/repository/ref allowlists | Fully configured |
+| Packet router and result consumer | Constructed by startup |
 
-## Health interpretation
+An enabled-but-invalid combination is a startup error. In particular, live
+dispatch without task-writer enablement, a writer secret, a repository snapshot,
+or a packet router does not silently fall back to a provider call.
 
-`GET /health` exposes only booleans under `langgraph`:
+## No-dual-writer rule
 
-- configured feature flags;
-- whether the checkpoint path is present and isolated;
-- whether the namespace is present;
-- whether the enabled configuration is valid;
-- `runtime_active=false`;
-- `legacy_sole_writer=true`.
+Exactly one engine may own provider dispatch and task-state progression for an
+assignment.
 
-An enabled/configured flag is not evidence that LangGraph owns execution. In this phase the API validates configuration but never imports or invokes the graph.
+- Before cutover, the legacy engine owns the lane and the packet runtime cannot
+  dispatch.
+- After all live gates are active, the coordinator binds one authenticated writer
+  token to the task. The legacy engine routes eligible assignments through that
+  coordinator and does not independently call the same provider.
+- Runtime and parallel ledgers reserve the same exact effect identity before a
+  call. Redelivery replays a durable result or stops for reconciliation; it never
+  creates a second dispatch.
+- A writer-token, packet, provider, base/head, authority-snapshot, or idempotency
+  mismatch fails closed. No model output can transfer writer ownership.
+- Slack/GitHub actions remain subject to their existing deterministic effect and
+  approval gates. Checkpoint rollback is never represented as reversal of an
+  external effect.
 
-## Safe proof procedure
+Never run legacy and packet dispatchers against the same active task as a
+"comparison." Shadow comparison uses fixtures or copied evidence and performs no
+live side effect.
 
-1. Keep paid execution, Slack intake, and external writes closed for the proof.
-2. Copy the appropriate example profile to its ignored local environment file.
-3. Confirm the profile's LangGraph checkpoint path and namespace are unique.
-4. Confirm the required proof lane remains enabled; disable any lane not needed by the accepted work order.
-5. Restart the isolated API and confirm the `langgraph` health booleans while `runtime_active` remains false and `legacy_sole_writer` remains true.
-6. Run offline fixtures or the separately approved proof tooling. Do not route live intake or provider callbacks into the graph.
-7. Preserve comparison and recovery evidence outside canonical task state.
+## Late results and restart recovery
 
-## Rollback
+A timeout, provider exception, or process loss after durable reservation is
+ambiguous, not failed. The runtime records `RECONCILIATION_REQUIRED` and refuses
+to resend the packet.
 
-1. Set both LangGraph feature flags to `false`.
-2. Restart the isolated Director profile.
-3. Confirm `/health` reports both flags false, `runtime_active=false`, and `legacy_sole_writer=true`.
-4. Retain the graph database as evidence, or remove only that isolated graph database after its exact path has been verified. Never delete or replace `SQLITE_PATH`.
+- `open_reconciliation` moves only a legacy `CLAIMED` row into reconciliation.
+- `recover_stranded_dispatch` moves only a hard-killed `DISPATCHING` row after an
+  explicit attestation that the dispatching process stopped.
+- `reconcile_result` accepts only separately authenticated provider readback bound
+  to the original work packet, provider, writer token, authority snapshot, and
+  idempotency key.
+- A late callback that already produced a canonical provider run may be bound to
+  the packet result only when its identity and result agree; conflicting packet
+  digests or callback evidence are rejected.
+- `COMPLETED` results replay without another paid call. `REJECTED` is terminal.
 
-Disabling the flags requires no task-state conversion because there is no migration from the legacy store. Removing the isolated graph database cannot roll back an external effect and must never be represented as doing so.
+For a parallel batch, restart recovery finds the latest batch containing the
+exact effect keys. Reserved members may be claimed once, dispatching members are
+replayed through the runtime ledger rather than blindly resent, and successful
+members have their already-durable results consumed. Ambiguous members require
+explicit reconciliation.
 
-## Explicitly deferred
+## Dynamic bounded parallel dispatch
 
-- importing or invoking a graph from `main.py`;
-- provider dispatch or callback ownership;
-- GitHub, Slack, merge, deployment, or other side effects;
-- migration of existing task records or graph checkpoints;
-- provider-specific subgraphs;
-- any dual-writer or writer-cutover phase.
+Parallel external dispatch has its own switch and kill switch. It becomes active
+only when the packet task writer is active and these fixed bounds validate:
 
-Each deferred capability requires separate acceptance evidence and authority.
+- initial global cap: 2;
+- scale cap: 3 after 10 consecutive clean batches;
+- any failure, partial result, reconciliation requirement, or success only after
+  reconciliation resets the clean streak and applies backpressure cap 1;
+- three clean batches are required to leave backpressure;
+- provider-specific caps remain positive and are enforced when claiming a member;
+- dependency-incomplete, cooldown, overlapping write-surface, provider-cap, and
+  budget-conflicting candidates remain out of the batch;
+- the conservative batch reservation includes dispatch and independent-review
+  cost, while the deployment-wide daily budget remains authoritative.
+
+The engine currently parallelizes only eligible dependency-independent packet
+assignments. Owner assignments and Claude's callback-owned lane remain sequential.
+Results are consumed serially into canonical task state. Engaging
+`LANGGRAPH_PARALLEL_KILL_SWITCH` cancels only unstarted reserved members; in-flight
+members remain visible and must complete or reconcile.
+
+## Completion worker boundary
+
+Completion Gate evidence and execution are separate from provider dispatch.
+`COMPLETION_GATES_ENABLED` records evidence;
+`COMPLETION_GATE_ISOLATED_PROOF_ENABLED` permits the isolated-proof contract; and
+`COMPLETION_GATE_WORKERS_ENABLED` constructs the selected audited-host and/or
+disposable-container worker tiers.
+
+The worker executor and append-only worker store are implemented and exposed to
+the internal runtime. There is no unrestricted shell, public command endpoint,
+automatic project-completion authority, or automatic merge/deployment authority.
+The host tier requires a separately installed exact-fingerprint low-privilege
+broker. The container tier requires an exact image digest, no network, non-root
+identity, read-only root and repository, no capabilities, no-new-privileges, and
+bounded resources. Do not mount a host Docker socket into the Director to make
+this appear ready.
+
+## Evidence-based graduation procedure
+
+Use one isolated deployment profile and one harmless canary repository.
+
+1. Merge an independently reviewed exact SHA after trusted CI and security review.
+2. Keep live dispatch, parallel dispatch, and workers off. Start the profile and
+   prove all task, shadow, runtime, ledger, Completion Gate, and worker database
+   paths and namespaces are distinct.
+3. Run offline packet replay and shadow comparison. Prove identical packet/result
+   validation, restart recovery, and zero external calls.
+4. Enable the packet runtime only. Confirm `/health` reports the coordinator
+   constructed while live dispatch and task-writer activity remain false.
+5. Configure the writer secret and clean repository snapshot, then enable live
+   dispatch and task-writer cutover for one bounded canary task. Confirm exactly
+   one provider dispatch and normal Director acceptance progression.
+6. Restart during a second active canary. Prove durable replay or explicit
+   reconciliation and no duplicate provider charge or callback consumption.
+7. Exercise a deliberately delayed result through authenticated readback. Prove
+   the exact reservation completes without resending.
+8. Enable parallel dispatch with its kill switch initially engaged. Open it for
+   two independent assignments, observe the 2 -> 3 graduation only after ten
+   clean batches, inject one controlled failure to prove cap 1, and recover only
+   after three clean batches.
+9. Activate Completion Gate workers only from a dedicated low-privilege service
+   environment with both executable fingerprints and the pinned image verified.
+   Prove fixed argv, timeout/output/process-tree termination, repository
+   immutability, restart replay, and append-only evidence.
+10. Record exact commits, profile identifiers, store paths by digest or safe name,
+    provider run IDs, costs, reconciliation evidence, health output, and rollback
+    results. Obtain the separately required owner/operator acceptance before
+    widening the canary.
+
+## Rollback without duplicate effects
+
+1. Stop new intake for the affected profile.
+2. Engage `LANGGRAPH_PARALLEL_KILL_SWITCH=true`. This cancels reserved work only;
+   record every dispatching or ambiguous member.
+3. Allow known in-flight calls to finish or move them through the authenticated
+   reconciliation path. Do not hand an unresolved packet assignment to the legacy
+   engine.
+4. Set `LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED=false`,
+   `LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED=false`, and
+   `LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED=false`; restart the profile.
+5. Confirm health reports packet live dispatch/task writer/parallel activity false
+   and the legacy sole-writer indication true for new tasks.
+6. Resume only new or proven-undispatched legacy work. Keep every completed,
+   rejected, dispatching, and reconciliation row; never delete a ledger to make a
+   retry possible.
+7. After all packet-owned tasks are terminal, optionally set
+   `LANGGRAPH_RUNTIME_ENABLED=false`. Preserve checkpoint and ledger databases as
+   evidence. Disabling runtime or deleting a checkpoint does not reverse an
+   external effect.
+8. Disable Completion Gate workers independently with
+   `COMPLETION_GATE_WORKERS_ENABLED=false`; preserve their append-only store.
+
+The shadow proof flags may remain enabled because they own no live side effects,
+or they may be disabled separately for a complete LangGraph rollback.
 
 **[[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]**
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:39 UTC | END]] -->

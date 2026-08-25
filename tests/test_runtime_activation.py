@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """Fail-closed activation of the packet coordinator and Completion Gate store."""
@@ -22,6 +24,7 @@ from director_orchestrator.runtime_activation import (
     RuntimeActivation,
     RuntimeActivationError,
 )
+from director_orchestrator.packet_results import DirectorPacketResultConsumer
 
 
 WORK_PACKET_EXAMPLE = (
@@ -74,6 +77,8 @@ class _IsolatedSettings:
             "langgraph_runtime_ledger_path": str(self.root / "runtime-ledger.sqlite3"),
             "langgraph_runtime_checkpoint_namespace": "director-test-runtime-v1",
             "langgraph_runtime_writer_owner_id": "langgraph-packet-runtime",
+            "langgraph_runtime_writer_secret": "w" * 32,
+            "repository_snapshot_root": str(self.root),
             "completion_gate_store_path": str(self.root / "gates.sqlite3"),
             "project_allowlist": ("demo",),
             "repository_allowlist": ("example/demo",),
@@ -109,6 +114,7 @@ class ActivationSettingsTests(_IsolatedSettings, unittest.TestCase):
         base = {
             "langgraph_runtime_enabled": True,
             "langgraph_runtime_live_dispatch_enabled": True,
+            "langgraph_runtime_task_writer_enabled": True,
             "allow_paid_runs": True,
         }
         self.assertTrue(
@@ -192,6 +198,7 @@ class ActivationSettingsTests(_IsolatedSettings, unittest.TestCase):
         active = self.settings(
             langgraph_runtime_enabled=True,
             langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
             allow_paid_runs=True,
         ).langgraph_shadow_readiness()
         self.assertTrue(active["runtime_active"])
@@ -244,6 +251,7 @@ class RuntimeActivationTests(_IsolatedSettings, unittest.TestCase):
             self.settings(
                 langgraph_runtime_enabled=True,
                 langgraph_runtime_live_dispatch_enabled=True,
+                langgraph_runtime_task_writer_enabled=True,
                 allow_paid_runs=True,
             ),
             packet_task_router=StubPacketTaskRouter(),
@@ -266,6 +274,7 @@ class RuntimeActivationTests(_IsolatedSettings, unittest.TestCase):
                 self.settings(
                     langgraph_runtime_enabled=True,
                     langgraph_runtime_live_dispatch_enabled=True,
+                    langgraph_runtime_task_writer_enabled=True,
                     allow_paid_runs=True,
                 )
             )
@@ -283,6 +292,19 @@ class RuntimeActivationTests(_IsolatedSettings, unittest.TestCase):
         self.assertIsNone(activation.single_writer_conflict())
     # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 
+    def test_result_consumer_wiring_is_explicit_and_visible(self):
+        consumer = DirectorPacketResultConsumer()
+        activation = RuntimeActivation(
+            self.settings(langgraph_runtime_enabled=True),
+            packet_result_consumer=consumer,
+        )
+        self.addCleanup(activation.close)
+
+        self.assertIs(activation.packet_result_consumer, consumer)
+        readiness = activation.readiness()["langgraph_runtime"]
+        self.assertTrue(readiness["result_consumer_wired"])
+        self.assertFalse(readiness["task_router_wired"])
+
     def test_an_invalid_enabled_configuration_refuses_to_activate(self):
         with self.assertRaises(ValueError):
             RuntimeActivation(
@@ -297,6 +319,7 @@ class RuntimeActivationTests(_IsolatedSettings, unittest.TestCase):
             self.settings(
                 langgraph_runtime_enabled=True,
                 langgraph_runtime_live_dispatch_enabled=True,
+                langgraph_runtime_task_writer_enabled=True,
                 allow_paid_runs=True,
             ),
             packet_task_router=StubPacketTaskRouter(),
@@ -337,3 +360,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]

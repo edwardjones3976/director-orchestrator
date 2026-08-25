@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:01 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -21,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import hmac
 import json
@@ -120,6 +122,15 @@ from .langgraph_runtime import (
 from .scheduling import SchedulingError, dependency_ready_decision
 from .store import PrivacyCleanupPending, StaleTaskWrite, TaskStore
 from .team_charter import AdvisoryVote, tally_advisory_votes
+from .parallel_dispatch import (
+    DailyTaskBudgetExceeded,
+    DailyTaskBudgetLedger,
+    DispatchCandidate,
+    MemberState,
+    ParallelDispatchLedger,
+    ParallelDispatchPolicy,
+    plan_dispatch_batch,
+)
 
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance only
@@ -267,13 +278,14 @@ class OrchestrationEngine:
         oracle_merge_service: OracleMergeService | None = None,
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
         runtime_activation: "RuntimeActivation | None" = None,
+        providers: dict[ProviderName, object] | None = None,
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
     ):
         self.settings = settings
         self.store = store
         self.oracle_merge_service = oracle_merge_service
         self.director = OpenAIDirector(settings)
-        self.providers = provider_registry(settings)
+        self.providers = providers or provider_registry(settings)
         # The daily spend ledger is durable, so it exists only when a durable task
         # store does. Callers that pass no store (narrow in-process unit tests of
         # poll/wait behavior) get no ledger, and
@@ -282,10 +294,20 @@ class OrchestrationEngine:
         self.provider_spend = (
             ProviderDailySpendLedger(store.path) if store is not None else None
         )
+        self.daily_task_budget = (
+            DailyTaskBudgetLedger(store.path)
+            if store is not None and settings.allow_paid_runs
+            else None
+        )
         self.notifier = SlackNotifier(settings)
         # When the packet coordinator owns live dispatch, this engine surrenders
         # it rather than racing for the same external effect keys.
         self.runtime_activation = runtime_activation
+        self.parallel_dispatch = (
+            ParallelDispatchLedger(settings.langgraph_runtime_ledger_path)
+            if settings.langgraph_runtime_readiness()["task_writer_active"]
+            else None
+        )
         self._task_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -300,6 +322,116 @@ class OrchestrationEngine:
         await self._status_post(
             record,
             f"*{record.task_id} — OWNER DECISION REQUIRED*\n{record.message}",
+        )
+
+    def _reserve_packet_effect(
+        self, record: TaskRecord, assignment: Assignment
+    ) -> tuple[TaskRecord, str]:
+        """Bind packet dispatch to the canonical task budget/effect ledger."""
+
+        expected_version = record._store_version
+        if expected_version is None:
+            raise StaleApproval("Packet dispatch requires a persisted task snapshot")
+        assignment_digest = assignment_approval_digest(assignment)
+        reserved_key: str | None = None
+
+        def reserve(current: TaskRecord) -> None:
+            nonlocal reserved_key
+            self._require_verified_plan_materialization(current)
+            if current.plan_generation != record.plan_generation or current.plan is None:
+                raise EffectAlreadyClaimed(
+                    "The packet plan changed before provider dispatch"
+                )
+            planned = next(
+                (
+                    item
+                    for item in current.plan.assignments
+                    if item.sequence == assignment.sequence
+                ),
+                None,
+            )
+            if planned is None:
+                raise EffectAlreadyClaimed("The packet assignment left the plan")
+            effective = self._effective_assignment(current, planned)
+            if assignment_approval_digest(effective) != assignment_digest:
+                raise EffectAlreadyClaimed("The packet assignment authority changed")
+            if effective.requires_approval and not assignment_is_approved(
+                current, effective
+            ):
+                raise EffectAlreadyClaimed("The packet assignment approval changed")
+            existing_runs = [
+                run
+                for run in current.provider_runs
+                if run.assignment_sequence == effective.sequence
+            ]
+            failed_keys = {
+                item.effect_key
+                for item in current.task_effect_ledger
+                if item.kind == "provider_observation"
+                and item.outcome == "failed_pre_submit"
+            }
+            active = [
+                item
+                for item in current.task_effect_ledger
+                if item.kind == "provider_intent"
+                and item.phase == "dispatch"
+                and item.plan_generation == current.plan_generation
+                and item.assignment_digest == assignment_digest
+                and item.effect_key not in failed_keys
+            ]
+            if active:
+                if len(active) != 1:
+                    raise StaleApproval(
+                        "Packet dispatch has conflicting durable task intents"
+                    )
+                reserved_key = active[0].effect_key
+                return
+            if existing_runs:
+                raise EffectAlreadyClaimed(
+                    "A provider run exists without its canonical packet intent"
+                )
+            if self._provider_run_count(current) >= self._provider_run_limit(current):
+                raise StaleApproval("Maximum agent hops reached")
+            reserved_key = reserve_provider_effect(
+                current,
+                effective,
+                phase="dispatch",
+                max_task_budget_usd=self.settings.max_task_budget_usd,
+            )
+            current.status = TaskStatus.RUNNING
+
+        stored = self.store.mutate_if_version(record.task_id, expected_version, reserve)
+        if stored is None or reserved_key is None:
+            raise EffectAlreadyClaimed(
+                "Another worker changed packet dispatch authority"
+            )
+        return stored, reserved_key
+
+    @staticmethod
+    def _record_packet_effect_outcome(
+        record: TaskRecord,
+        assignment: Assignment,
+        *,
+        effect_key: str,
+        outcome: str,
+        run_id: str | None = None,
+    ) -> None:
+        observed = {
+            item.outcome
+            for item in record.task_effect_ledger
+            if item.kind == "provider_observation" and item.effect_key == effect_key
+        }
+        if outcome in observed or "completed" in observed:
+            return
+        if observed and outcome != "completed":
+            return
+        record_provider_effect_observation(
+            record,
+            assignment,
+            effect_key=effect_key,
+            phase="dispatch",
+            outcome=outcome,
+            run_id=run_id,
         )
 
     async def _route_live_dispatch(
@@ -331,13 +463,25 @@ class OrchestrationEngine:
         conflict = activation.single_writer_conflict()
         if conflict is None:
             return None
+        if any(
+            item.assignment_sequence == assignment.sequence
+            and item.raw.get("packet_result_digest")
+            for item in record.provider_runs
+        ):
+            return None
         runtime = activation.runtime
         router = activation.packet_task_router
         if runtime is None or router is None:
             await self._stop_for_owner(record, conflict)
             return False
         try:
-            work_packet = router.work_packet(record, assignment)
+            idempotency_key = router.idempotency_key(record, assignment)
+            bound_packet = runtime.bound_work_packet(idempotency_key)
+            work_packet = (
+                router.validate_bound_packet(record, assignment, bound_packet)
+                if bound_packet is not None
+                else router.work_packet(record, assignment)
+            )
             writer_token = router.writer_token(record)
             adapter = router.boundary_adapter(assignment.agent.value)
         except Exception as exc:
@@ -348,6 +492,62 @@ class OrchestrationEngine:
                 f"assignment {assignment.sequence} is unavailable, so nothing was "
                 "dispatched.",
                 error=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        try:
+            reserved_record, task_effect_key = self._reserve_packet_effect(
+                record, assignment
+            )
+            for field_name in type(record).model_fields:
+                setattr(
+                    record,
+                    field_name,
+                    copy.deepcopy(getattr(reserved_record, field_name)),
+                )
+            record._store_version = reserved_record._store_version
+            if self.daily_task_budget is None:
+                raise DailyTaskBudgetExceeded(
+                    "Paid packet dispatch requires a durable daily task-budget ledger"
+                )
+            self.daily_task_budget.reserve(
+                task_id=record.task_id,
+                task_budget_usd=self.settings.max_task_budget_usd,
+                daily_budget_usd=self.settings.max_daily_provider_budget_usd,
+            )
+        except (
+            StaleApproval,
+            EffectAlreadyClaimed,
+            DailyTaskBudgetExceeded,
+            ValueError,
+        ) as exc:
+            await self._stop_for_owner(
+                record,
+                "The packet coordinator could not reserve the assignment in the "
+                "canonical task budget/effect ledger; nothing was dispatched.",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        try:
+            self._reserve_provider_daily_spend(
+                assignment,
+                effect_key=task_effect_key,
+            )
+        except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
+            self._record_packet_effect_outcome(
+                record,
+                assignment,
+                effect_key=task_effect_key,
+                outcome=(
+                    "ambiguous"
+                    if isinstance(exc, ProviderReservationIdentityConflict)
+                    else "failed_pre_submit"
+                ),
+            )
+            record.status = TaskStatus.BLOCKED
+            record.message = str(exc)[:2_000]
+            self.store.save(record)
+            await self._status_post(
+                record, f"*{record.task_id} — BLOCKED*\n{record.message}"
             )
             return False
         try:
@@ -363,6 +563,12 @@ class OrchestrationEngine:
             # `run_packet` refuses an unauthorized or unresolved execution before
             # contacting a provider. A refusal is never retried here and never
             # falls back to the legacy lane.
+            self._record_packet_effect_outcome(
+                record,
+                assignment,
+                effect_key=task_effect_key,
+                outcome="ambiguous",
+            )
             await self._stop_for_owner(
                 record,
                 "The packet coordinator refused to execute assignment "
@@ -370,19 +576,105 @@ class OrchestrationEngine:
                 error=f"{type(exc).__name__}: {exc}",
             )
             return False
+        if outcome.status == RuntimeExecutionStatus.OWNER_DECISION_REQUIRED:
+            latest = self.store.get(record.task_id) or record
+            authenticated_readbacks = [
+                item
+                for item in latest.provider_runs
+                if item.assignment_sequence == assignment.sequence
+                and item.evidence_source == "provider_authenticated"
+                and item.status != "WAITING_CALLBACK"
+                and item.result
+                and not item.raw.get("packet_result_digest")
+            ]
+            if authenticated_readbacks:
+                readback = authenticated_readbacks[-1]
+                try:
+                    result_packet = adapter.authenticated_readback(
+                        work_packet,
+                        readback.model_dump(mode="json"),
+                    )
+                    outcome = await asyncio.to_thread(
+                        runtime.reconcile_result,
+                        work_packet,
+                        result_packet,
+                        provider=assignment.agent.value,
+                        writer_token=writer_token,
+                    )
+                except Exception as exc:
+                    await self._stop_for_owner(
+                        latest,
+                        "Authenticated provider readback could not reconcile the "
+                        "ambiguous packet dispatch; nothing was resent.",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                    return False
         if outcome.status in {
             RuntimeExecutionStatus.COMPLETED,
             RuntimeExecutionStatus.REPLAYED,
         }:
-            await self._stop_for_owner(
+            consumer = activation.packet_result_consumer
+            if consumer is None:
+                await self._stop_for_owner(
+                    record,
+                    "The packet coordinator executed the assignment but no result "
+                    "consumer is wired; "
+                    "the validated evidence was preserved without advancing the task.",
+                )
+                return False
+            latest = self.store.get(record.task_id) or record
+            # Claude callback delivery may have advanced the durable record while
+            # the packet thread waited. Carry that exact state forward before
+            # binding the result packet, rather than overwriting it with a stale
+            # in-memory record.
+            for field_name in type(record).model_fields:
+                setattr(
+                    record,
+                    field_name,
+                    copy.deepcopy(getattr(latest, field_name)),
+                )
+            record._store_version = latest._store_version
+            self._record_packet_effect_outcome(
                 record,
-                f"The packet coordinator executed assignment {assignment.sequence} "
-                f"through `{assignment.agent.value}` and recorded a validated result "
-                f"packet ({outcome.result_packet_digest}). Owner acceptance is "
-                "required because the coordinator holds no acceptance authority.",
+                assignment,
+                effect_key=task_effect_key,
+                outcome="completed",
+                run_id=(
+                    str(outcome.result_packet["run_reference"])
+                    if outcome.result_packet is not None
+                    else None
+                ),
             )
-            return False
+            try:
+                progression = consumer.consume(
+                    record, assignment, dict(work_packet), outcome
+                )
+            except Exception as exc:
+                await self._stop_for_owner(
+                    record,
+                    "The packet result failed deterministic task-state binding; "
+                    "nothing was accepted or redispatched.",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                return False
+            self.store.save(record)
+            if progression.terminal_task_status is not None:
+                await self._status_post(
+                    record, f"*{record.task_id} — {record.status.value}*\n{record.message}"
+                )
+                return False
+            # The existing OpenAI acceptance/revision/exact-SHA path now consumes
+            # the authenticated ProviderRun. Returning None is safe: the provider
+            # run exists, so the legacy branch below cannot reserve or dispatch a
+            # second external effect.
+            return None
         if outcome.status == RuntimeExecutionStatus.REJECTED:
+            self._record_packet_effect_outcome(
+                record,
+                assignment,
+                effect_key=task_effect_key,
+                outcome="ambiguous",
+            )
             record.status = TaskStatus.BLOCKED
             record.message = (
                 f"The packet coordinator rejected assignment {assignment.sequence}: "
@@ -393,12 +685,440 @@ class OrchestrationEngine:
                 record, f"*{record.task_id} — BLOCKED*\n{record.message}"
             )
             return False
+        self._record_packet_effect_outcome(
+            record,
+            assignment,
+            effect_key=task_effect_key,
+            outcome="ambiguous",
+        )
         await self._stop_for_owner(
             record,
             f"The packet coordinator could not resolve assignment "
             f"{assignment.sequence}: {outcome.reason}",
         )
         return False
+
+    async def _dispatch_parallel_packet_batch(
+        self, record: TaskRecord
+    ) -> bool | None:
+        """Dispatch one dependency-ready packet batch and persist all outcomes.
+
+        Only provider calls run concurrently.  Task state, Slack messages, packet
+        result consumption, and acceptance review remain serialized by the
+        Director's task lock. Claude is excluded because its authenticated
+        callback updates the canonical task record while the call is in flight;
+        that transport remains exactly-once but sequential until callback state
+        has its own isolated ledger.
+        """
+
+        readiness = self.settings.parallel_dispatch_readiness()
+        activation = self.runtime_activation
+        ledger = self.parallel_dispatch
+        if (
+            not readiness["active"]
+            or activation is None
+            or activation.runtime is None
+            or activation.packet_task_router is None
+            or activation.packet_result_consumer is None
+            or ledger is None
+            or record.plan is None
+        ):
+            return None
+
+        completed = {item.assignment_sequence for item in record.assignment_outcomes}
+        routed: dict[int, tuple[Assignment, dict[str, object], object, object]] = {}
+        candidates: list[DispatchCandidate] = []
+        for planned in sorted(record.plan.assignments, key=lambda item: item.sequence):
+            if planned.sequence in completed or planned.agent in {
+                ProviderName.OWNER,
+                ProviderName.CLAUDE,
+            }:
+                continue
+            if any(
+                item.assignment_sequence == planned.sequence
+                for item in record.provider_runs
+            ):
+                continue
+            if not set(planned.depends_on).issubset(completed):
+                continue
+            try:
+                assignment = self._effective_assignment(record, planned)
+                if assignment.requires_approval and not assignment_is_approved(
+                    record, assignment
+                ):
+                    continue
+                idempotency_key = activation.packet_task_router.idempotency_key(
+                    record, assignment
+                )
+                bound_packet = activation.runtime.bound_work_packet(idempotency_key)
+                work = dict(
+                    activation.packet_task_router.validate_bound_packet(
+                        record, assignment, bound_packet
+                    )
+                    if bound_packet is not None
+                    else activation.packet_task_router.work_packet(record, assignment)
+                )
+                adapter = activation.packet_task_router.boundary_adapter(
+                    assignment.agent.value
+                )
+                token = activation.packet_task_router.writer_token(record)
+            except Exception:
+                continue
+            effect_key = hashlib.sha256(
+                str(work["idempotency_key"]).encode("utf-8")
+            ).hexdigest()
+            candidate = DispatchCandidate(
+                sequence=assignment.sequence,
+                provider=assignment.agent.value,
+                effect_key=effect_key,
+                depends_on=tuple(assignment.depends_on),
+                write_surfaces=("repository-write",) if assignment.allow_draft_pr else (),
+                dispatch_cost_usd=float(assignment.estimated_cost_usd),
+                review_cost_usd=float(self.settings.openai_review_estimated_cost_usd),
+            )
+            candidates.append(candidate)
+            routed[assignment.sequence] = (assignment, work, adapter, token)
+
+        if not candidates:
+            return None
+        policy = ParallelDispatchPolicy(
+            enabled=True,
+            kill_switch_engaged=False,
+            initial_cap=self.settings.langgraph_parallel_initial_max_concurrency,
+            scaled_cap=self.settings.langgraph_parallel_auto_scale_max_concurrency,
+            clean_batches_to_scale=self.settings.langgraph_parallel_clean_batches_to_scale,
+            provider_caps=self.settings.parallel_provider_caps(),
+        )
+        by_effect = {item.effect_key: item for item in candidates}
+        recovered = ledger.find_latest_batch(record.task_id, tuple(by_effect))
+        if recovered is None:
+            decision = plan_dispatch_batch(
+                task_id=record.task_id,
+                ordinal=ledger.next_ordinal(record.task_id),
+                candidates=candidates,
+                completed_sequences=sorted(completed),
+                available_budget_usd=max(
+                    0.0,
+                    self.settings.max_task_budget_usd
+                    - record.cumulative_estimated_cost_usd,
+                ),
+                policy=policy,
+                health=ledger.load_health("__deployment__"),
+            )
+            if decision.batch is None:
+                return None
+            batch_id = decision.batch.batch_id
+            aggregate = ledger.reserve(
+                decision.batch,
+                daily_budget_usd=self.settings.max_daily_provider_budget_usd,
+            )
+        else:
+            batch_id = recovered.batch_id
+            aggregate = recovered
+
+        member_states = {item.effect_key: item.state for item in aggregate.members}
+        selected = [
+            by_effect[item.effect_key]
+            for item in aggregate.members
+            if item.effect_key in by_effect
+        ]
+        if not selected:
+            return None
+        if any(
+            member_states[item.effect_key] == MemberState.AMBIGUOUS
+            for item in selected
+        ):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "Parallel provider outcome is ambiguous; reconcile the recorded "
+                "batch without redispatching."
+            )
+            self.store.save(record)
+            return False
+        if any(
+            member_states[item.effect_key]
+            in {MemberState.FAILED, MemberState.RECONCILED_FAILED}
+            for item in selected
+        ):
+            record.status = TaskStatus.BLOCKED
+            record.message = "A recovered parallel provider dispatch failed."
+            self.store.save(record)
+            return False
+
+        dispatchable: list[
+            tuple[
+                DispatchCandidate,
+                Assignment,
+                dict[str, object],
+                object,
+                object,
+                MemberState,
+                str,
+            ]
+        ] = []
+        provider_caps = self.settings.parallel_provider_caps()
+        for member in selected:
+            state = member_states[member.effect_key]
+            if state in {
+                MemberState.CANCELLED,
+                MemberState.RECONCILED_SUCCEEDED,
+            }:
+                continue
+            assignment, work, adapter, token = routed[member.sequence]
+            try:
+                stored, task_effect_key = self._reserve_packet_effect(
+                    record, assignment
+                )
+                for field_name in type(record).model_fields:
+                    setattr(
+                        record,
+                        field_name,
+                        copy.deepcopy(getattr(stored, field_name)),
+                    )
+                record._store_version = stored._store_version
+            except (
+                StaleApproval,
+                EffectAlreadyClaimed,
+                DailyTaskBudgetExceeded,
+                ValueError,
+            ) as exc:
+                ledger.cancel_unstarted(
+                    batch_id, reason="task_effect_reservation_failed"
+                )
+                await self._stop_for_owner(
+                    record,
+                    "Parallel dispatch could not reserve canonical task-budget "
+                    "authority; no unstarted provider work was sent.",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                return False
+            if state == MemberState.RESERVED:
+                if not await self._publish_delegation(record, assignment):
+                    ledger.cancel_unstarted(
+                        batch_id, reason="delegation_not_published"
+                    )
+                    return False
+                if not ledger.claim(
+                    batch_id,
+                    member.effect_key,
+                    provider_limit=provider_caps[assignment.agent.value],
+                ):
+                    # Another task currently owns this provider's deployment-wide
+                    # slot. Leave this member RESERVED and resume it later.
+                    record.status = TaskStatus.QUEUED
+                    record.message = (
+                        f"Parallel provider slot for {assignment.agent.value} is "
+                        "temporarily occupied; the reserved member will resume."
+                    )
+                    self.store.save(record)
+                    return False
+                state = MemberState.DISPATCHING
+            try:
+                self._reserve_provider_daily_spend(
+                    assignment, effect_key=task_effect_key
+                )
+            except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
+                self._record_packet_effect_outcome(
+                    record,
+                    assignment,
+                    effect_key=task_effect_key,
+                    outcome=(
+                        "ambiguous"
+                        if isinstance(exc, ProviderReservationIdentityConflict)
+                        else "failed_pre_submit"
+                    ),
+                )
+                if state == MemberState.DISPATCHING:
+                    ledger.record(
+                        batch_id,
+                        member.effect_key,
+                        MemberState.FAILED,
+                        detail=type(exc).__name__,
+                    )
+                continue
+            dispatchable.append(
+                (
+                    member,
+                    assignment,
+                    work,
+                    adapter,
+                    token,
+                    state,
+                    task_effect_key,
+                )
+            )
+
+        async def dispatch_one(item):
+            member, assignment, work, adapter, token, _state, _task_effect_key = item
+            try:
+                outcome = await asyncio.to_thread(
+                    activation.runtime.run_packet,
+                    work,
+                    provider=assignment.agent.value,
+                    execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+                    adapter=adapter,
+                    writer_token=token,
+                )
+                return item, outcome, None
+            except Exception as exc:
+                return item, None, exc
+
+        observed = await asyncio.gather(
+            *(dispatch_one(item) for item in dispatchable)
+        )
+        completed_packets: list[
+            tuple[Assignment, dict[str, object], object, str]
+        ] = []
+        replay_integrity_failure = False
+        for item, outcome, error in observed:
+            (
+                member,
+                assignment,
+                work,
+                _adapter,
+                _token,
+                state,
+                task_effect_key,
+            ) = item
+            if error is not None:
+                replay_integrity_failure = (
+                    replay_integrity_failure
+                    or member_states[member.effect_key] == MemberState.SUCCEEDED
+                )
+                self._record_packet_effect_outcome(
+                    record,
+                    assignment,
+                    effect_key=task_effect_key,
+                    outcome="ambiguous",
+                )
+                if state == MemberState.DISPATCHING:
+                    ledger.record(
+                        batch_id,
+                        member.effect_key,
+                        MemberState.AMBIGUOUS,
+                        detail=type(error).__name__,
+                    )
+            elif outcome.status in {
+                RuntimeExecutionStatus.COMPLETED,
+                RuntimeExecutionStatus.REPLAYED,
+            }:
+                if member_states[member.effect_key] != MemberState.SUCCEEDED:
+                    ledger.record(
+                        batch_id,
+                        member.effect_key,
+                        MemberState.SUCCEEDED,
+                        detail=str(outcome.result_packet_digest or ""),
+                    )
+                completed_packets.append(
+                    (assignment, work, outcome, task_effect_key)
+                )
+            elif outcome.status == RuntimeExecutionStatus.REJECTED:
+                replay_integrity_failure = (
+                    replay_integrity_failure
+                    or member_states[member.effect_key] == MemberState.SUCCEEDED
+                )
+                self._record_packet_effect_outcome(
+                    record,
+                    assignment,
+                    effect_key=task_effect_key,
+                    outcome="ambiguous",
+                )
+                if state == MemberState.DISPATCHING:
+                    ledger.record(
+                        batch_id,
+                        member.effect_key,
+                        MemberState.FAILED,
+                        detail=outcome.reason,
+                    )
+            else:
+                replay_integrity_failure = (
+                    replay_integrity_failure
+                    or member_states[member.effect_key] == MemberState.SUCCEEDED
+                )
+                self._record_packet_effect_outcome(
+                    record,
+                    assignment,
+                    effect_key=task_effect_key,
+                    outcome="ambiguous",
+                )
+                if state == MemberState.DISPATCHING:
+                    ledger.record(
+                        batch_id,
+                        member.effect_key,
+                        MemberState.AMBIGUOUS,
+                        detail=outcome.reason,
+                    )
+
+        if replay_integrity_failure:
+            await self._stop_for_owner(
+                record,
+                "A previously successful parallel member could not replay its "
+                "durable runtime result; no provider call was repeated.",
+            )
+            return False
+
+        for assignment, work, outcome, task_effect_key in completed_packets:
+            self._record_packet_effect_outcome(
+                record,
+                assignment,
+                effect_key=task_effect_key,
+                outcome="completed",
+                run_id=(
+                    str(outcome.result_packet["run_reference"])
+                    if outcome.result_packet is not None
+                    else None
+                ),
+            )
+            try:
+                activation.packet_result_consumer.consume(
+                    record, assignment, work, outcome
+                )
+            except Exception as exc:
+                await self._stop_for_owner(
+                    record,
+                    "A parallel packet result failed deterministic task-state "
+                    "binding; durable provider evidence was retained.",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                return False
+        self.store.save(record)
+        aggregate = ledger.aggregate(batch_id)
+        ledger.observe_and_persist("__deployment__", aggregate)
+        if any(item.state == MemberState.AMBIGUOUS for item in aggregate.members):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "Parallel provider outcome is ambiguous; reconcile the recorded "
+                "batch without redispatching."
+            )
+            self.store.save(record)
+            await self._status_post(record, record.message)
+            return False
+        if any(
+            item.state in {MemberState.FAILED, MemberState.RECONCILED_FAILED}
+            for item in aggregate.members
+        ):
+            record.status = TaskStatus.BLOCKED
+            record.message = "One or more bounded parallel provider dispatches failed."
+            self.store.save(record)
+            await self._status_post(record, record.message)
+            return False
+        if any(item.state == MemberState.CANCELLED for item in aggregate.members):
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "A parallel member was cancelled before dispatch; it will not be "
+                "silently rerouted through a different writer."
+            )
+            self.store.save(record)
+            return False
+        if any(
+            item.state in {MemberState.RESERVED, MemberState.DISPATCHING}
+            for item in aggregate.members
+        ):
+            record.status = TaskStatus.QUEUED
+            record.message = "Parallel batch remains durably resumable."
+            self.store.save(record)
+            return False
+        return True
     # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 
     @staticmethod
@@ -766,6 +1486,28 @@ class OrchestrationEngine:
                 await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\nDry-run plan created; no paid provider was called. Suggested first specialist: `{record.plan.assignments[0].agent.value}`. Enable live execution only after credentials and spend limits are verified.")
                 return
 
+            if self.daily_task_budget is None:
+                record.status = TaskStatus.BLOCKED
+                record.message = (
+                    "Paid execution requires a durable deployment-wide daily "
+                    "task-budget ledger."
+                )
+                self.store.save(record)
+                await self._status_post(record, f"*{task_id} — BLOCKED*\n{record.message}")
+                return
+            try:
+                self.daily_task_budget.reserve(
+                    task_id=task_id,
+                    task_budget_usd=self.settings.max_task_budget_usd,
+                    daily_budget_usd=self.settings.max_daily_provider_budget_usd,
+                )
+            except DailyTaskBudgetExceeded as exc:
+                record.status = TaskStatus.BLOCKED
+                record.message = str(exc)[:2_000]
+                self.store.save(record)
+                await self._status_post(record, f"*{task_id} — BLOCKED*\n{record.message}")
+                return
+
             if not self.settings.openai_api_key:
                 self.store.set_status(
                     task_id,
@@ -917,6 +1659,13 @@ class OrchestrationEngine:
                     approvable=bool(record.plan.approval_required and not record.plan.owner_question),
                 )
                 return
+
+            parallel_dispatch = await self._dispatch_parallel_packet_batch(record)
+            if parallel_dispatch is False:
+                return
+
+            if parallel_dispatch is True:
+                record = self.store.get(task_id) or record
 
             while record.next_assignment_index < len(record.plan.assignments):
                 assignments = sorted(record.plan.assignments, key=lambda item: item.sequence)
@@ -4472,3 +5221,4 @@ class OrchestrationEngine:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:01 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]

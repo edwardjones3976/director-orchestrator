@@ -1,0 +1,337 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 02:27 UTC | BEGIN]]
+from __future__ import annotations
+
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+
+from director_orchestrator.completion_gates import domain_digest
+from director_orchestrator.completion_worker_backends import (
+    DisposableContainerWorkerBackend,
+    ExecutableBinding,
+    SanitizedWorkerOutput,
+)
+from director_orchestrator.completion_workers import (
+    AuditedHostProfile,
+    CompletionWorkerError,
+    CompletionWorkerExecutor,
+    CompletionWorkerRegistry,
+    CompletionWorkerRequest,
+    CompletionWorkerStore,
+    DisposableContainerSpec,
+    WorkerBackendCapabilities,
+    WorkerBackendEvidence,
+    WorkerIdentityConflict,
+    WorkerJobStatus,
+    WorkerTier,
+)
+
+
+DIGEST_A = "sha256:" + "a" * 64
+DIGEST_B = "sha256:" + "b" * 64
+DIGEST_C = "sha256:" + "c" * 64
+class StaticSanitizer:
+    def sanitize(self, stdout: bytes, stderr: bytes) -> SanitizedWorkerOutput:
+        payload = stdout + b"\0" + stderr
+        return SanitizedWorkerOutput(
+            decisive_output="sanitized",
+            output_digest=domain_digest(
+                "director-completion-worker-sanitized-output/v1",
+                payload.hex(),
+            ),
+            redaction_passed=True,
+            secret_scan_passed=True,
+        )
+
+
+class RecordingBackend:
+    def __init__(
+        self,
+        tier: WorkerTier,
+        *,
+        raise_error: bool = False,
+        mismatched_sha: bool = False,
+        process_tree_terminated: bool = True,
+        capabilities: WorkerBackendCapabilities | None = None,
+    ) -> None:
+        self.calls = 0
+        self.raise_error = raise_error
+        self.mismatched_sha = mismatched_sha
+        self.process_tree_terminated = process_tree_terminated
+        self._capabilities = capabilities or WorkerBackendCapabilities(
+            tier=tier,
+            low_privilege_identity=True,
+            network_isolation=True,
+            resource_limits=True,
+            process_tree_termination=True,
+            read_only_repository=True,
+            disposable_filesystem=(tier == WorkerTier.DISPOSABLE_CONTAINER),
+        )
+
+    @property
+    def capabilities(self) -> WorkerBackendCapabilities:
+        return self._capabilities
+
+    def execute(self, spec, request, *, lease_token):
+        self.calls += 1
+        if self.raise_error:
+            raise TimeoutError("backend outcome unknown")
+        return WorkerBackendEvidence(
+            job_id=request.job_id,
+            lease_digest=domain_digest(
+                "director-completion-worker-lease/v1", lease_token
+            ),
+            tier=spec.tier,
+            runner_registry_digest=request.runner_registry_digest,
+            worker_registry_digest=request.worker_registry_digest,
+            worker_spec_digest=request.worker_spec_digest,
+            before_head_sha=("2" * 40 if self.mismatched_sha else request.expected_head_sha),
+            after_head_sha=request.expected_head_sha,
+            before_clean=True,
+            after_clean=True,
+            exit_code=spec.expected_exit_code,
+            timed_out=False,
+            output_limit_exceeded=False,
+            sanitized_output_digest=DIGEST_C,
+            decisive_output="OK",
+            redaction_passed=True,
+            secret_scan_passed=True,
+            network_isolated=True,
+            resource_limits_applied=True,
+            low_privilege_identity_applied=True,
+            process_tree_terminated=self.process_tree_terminated,
+            repository_read_only=True,
+            disposable_filesystem=(spec.tier == WorkerTier.DISPOSABLE_CONTAINER),
+        )
+
+
+class CompletionWorkerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.repository = self.root / "repository"
+        self.repository.mkdir()
+        subprocess.run(("git", "init", "-q"), cwd=self.repository, check=True)
+        subprocess.run(
+            ("git", "config", "user.email", "completion@example.invalid"),
+            cwd=self.repository,
+            check=True,
+        )
+        subprocess.run(
+            ("git", "config", "user.name", "Completion Worker Test"),
+            cwd=self.repository,
+            check=True,
+        )
+        (self.repository / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+        subprocess.run(("git", "add", "fixture.txt"), cwd=self.repository, check=True)
+        subprocess.run(
+            ("git", "commit", "-q", "-m", "fixture"),
+            cwd=self.repository,
+            check=True,
+        )
+        self.head = subprocess.check_output(
+            ("git", "rev-parse", "HEAD"), cwd=self.repository, text=True
+        ).strip()
+        self.host = AuditedHostProfile.build(
+            spec_id="host.compile",
+            runner_id="python_compileall",
+            registry_digest=DIGEST_A,
+            runner_definition_digest=DIGEST_B,
+            parameter_profile_id="compile-src",
+            parameter_profile_digest=DIGEST_C,
+            launcher_profile_id="director-low-privilege-python",
+            fixed_argv=("python", "-m", "compileall", "-q", "src"),
+        )
+        self.container = DisposableContainerSpec.build(
+            spec_id="container.tests",
+            runner_id="python_unittest",
+            registry_digest=DIGEST_A,
+            runner_definition_digest=DIGEST_B,
+            parameter_profile_id="unit-tests",
+            parameter_profile_digest=DIGEST_C,
+            image="registry.example/director-worker@sha256:" + "d" * 64,
+            fixed_argv=("python", "-m", "unittest", "discover", "-s", "tests"),
+        )
+        self.registry = CompletionWorkerRegistry((self.host, self.container))
+        self.store = CompletionWorkerStore(str(self.root / "workers.sqlite3"))
+
+    def request(self, **changes) -> CompletionWorkerRequest:
+        values = {
+            "job_id": "worker-job-1",
+            "idempotency_key": "task:assignment:gate:attempt-1",
+            "task_id": "DIR-TEST",
+            "assignment_id": "DIR-TEST-1",
+            "gate_id": "director.tests",
+            "ledger_digest": DIGEST_B,
+            "expected_head_sha": self.head,
+            "runner_registry_digest": self.registry.runner_registry_digest,
+            "worker_registry_digest": self.registry.registry_digest,
+            "worker_spec_id": self.host.spec_id,
+            "worker_spec_digest": self.host.spec_digest,
+            "repository_root": str(self.repository.resolve()),
+        }
+        values.update(changes)
+        return CompletionWorkerRequest(**values)
+
+    def executor(self, host=None, container=None, **kwargs) -> CompletionWorkerExecutor:
+        return CompletionWorkerExecutor(
+            self.registry,
+            self.store,
+            {
+                WorkerTier.AUDITED_HOST: host or RecordingBackend(WorkerTier.AUDITED_HOST),
+                WorkerTier.DISPOSABLE_CONTAINER: container
+                or RecordingBackend(WorkerTier.DISPOSABLE_CONTAINER),
+            },
+            enabled=True,
+            **kwargs,
+        )
+
+    def test_registry_rejects_unpinned_container_and_mixed_runner_registries(self):
+        with self.assertRaisesRegex(CompletionWorkerError, "pinned"):
+            DisposableContainerSpec.build(
+                spec_id="bad",
+                runner_id="python_unittest",
+                registry_digest=DIGEST_A,
+                runner_definition_digest=DIGEST_B,
+                parameter_profile_id="tests",
+                parameter_profile_digest=DIGEST_C,
+                image="python:3.12",
+                fixed_argv=("python", "-V"),
+            )
+        other = replace(self.host, spec_id="other", registry_digest=DIGEST_B)
+        with self.assertRaisesRegex(CompletionWorkerError, "one runner registry"):
+            CompletionWorkerRegistry((self.host, other))
+
+    def test_readiness_requires_both_tiers_and_an_isolated_store(self):
+        disabled = CompletionWorkerExecutor(
+            self.registry,
+            self.store,
+            {
+                WorkerTier.AUDITED_HOST: RecordingBackend(WorkerTier.AUDITED_HOST),
+                WorkerTier.DISPOSABLE_CONTAINER: RecordingBackend(
+                    WorkerTier.DISPOSABLE_CONTAINER
+                ),
+            },
+        ).readiness()
+        self.assertFalse(disabled["ready"])
+        self.assertIn("worker_execution_disabled", disabled["reasons"])
+
+        incomplete = CompletionWorkerExecutor(
+            self.registry,
+            self.store,
+            {WorkerTier.AUDITED_HOST: RecordingBackend(WorkerTier.AUDITED_HOST)},
+            enabled=True,
+        ).readiness()
+        self.assertFalse(incomplete["ready"])
+        self.assertIn("disposable_container_backend_not_ready", incomplete["reasons"])
+        self.assertFalse(incomplete["completion_authority"])
+
+        colliding = self.executor(
+            reserved_database_paths=(self.store.path,)
+        ).readiness()
+        self.assertFalse(colliding["ready"])
+        self.assertIn("worker_store_not_isolated", colliding["reasons"])
+
+    def test_success_is_durable_and_redelivery_does_not_execute_again(self):
+        backend = RecordingBackend(WorkerTier.AUDITED_HOST)
+        executor = self.executor(host=backend)
+
+        first = executor.execute(self.request())
+        replay = executor.execute(self.request())
+
+        self.assertEqual(WorkerJobStatus.SUCCEEDED, first.status)
+        self.assertEqual(WorkerJobStatus.SUCCEEDED, replay.status)
+        self.assertTrue(replay.replayed)
+        self.assertEqual(1, backend.calls)
+
+    def test_idempotency_reuse_with_different_work_fails_closed(self):
+        executor = self.executor()
+        executor.execute(self.request())
+        with self.assertRaises(WorkerIdentityConflict):
+            executor.execute(self.request(assignment_id="DIR-TEST-2"))
+
+    def test_backend_exception_requires_reconciliation_and_never_redispatches(self):
+        backend = RecordingBackend(WorkerTier.AUDITED_HOST, raise_error=True)
+        executor = self.executor(host=backend)
+
+        first = executor.execute(self.request())
+        replay = executor.execute(self.request())
+
+        self.assertEqual(WorkerJobStatus.RECONCILIATION_REQUIRED, first.status)
+        self.assertEqual(WorkerJobStatus.RECONCILIATION_REQUIRED, replay.status)
+        self.assertIn("will not be dispatched again", replay.reason)
+        self.assertEqual(1, backend.calls)
+
+    def test_stranded_running_job_is_recovered_as_readback_only(self):
+        request = self.request()
+        self.store.claim(request)
+        self.assertIsNotNone(self.store.acquire(request))
+        backend = RecordingBackend(WorkerTier.AUDITED_HOST)
+
+        outcome = self.executor(host=backend).execute(request)
+
+        self.assertEqual(WorkerJobStatus.RECONCILIATION_REQUIRED, outcome.status)
+        self.assertEqual(0, backend.calls)
+
+    def test_exact_sha_or_isolation_evidence_cannot_pass(self):
+        backend = RecordingBackend(WorkerTier.AUDITED_HOST, mismatched_sha=True)
+        outcome = self.executor(host=backend).execute(self.request())
+        self.assertEqual(WorkerJobStatus.FAILED, outcome.status)
+        self.assertIn("exact binding", outcome.reason)
+
+        missing_termination = RecordingBackend(
+            WorkerTier.AUDITED_HOST,
+            process_tree_terminated=False,
+        )
+        outcome = self.executor(host=missing_termination).execute(
+            self.request(
+                job_id="worker-job-2",
+                idempotency_key="task:assignment:gate:attempt-2",
+            )
+        )
+        self.assertEqual(WorkerJobStatus.FAILED, outcome.status)
+        self.assertIn("isolation", outcome.reason)
+
+    def test_container_command_is_pinned_fixed_and_deny_by_default(self):
+        backend = DisposableContainerWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        request = self.request(
+            worker_spec_id=self.container.spec_id,
+            worker_spec_digest=self.container.spec_digest,
+        )
+        command = backend.command(self.container, request)
+        self.assertEqual(sys.executable, command[0])
+        for required in (
+            "--network", "none", "--read-only", "--cap-drop", "ALL",
+            "no-new-privileges", "--pids-limit", "--memory", "--cpus",
+            "--user", "--mount", self.container.image,
+        ):
+            self.assertIn(required, command)
+        self.assertEqual(self.container.fixed_argv, command[-len(self.container.fixed_argv):])
+        self.assertNotIn("-c", command[: command.index(self.container.image)])
+
+    def test_append_only_audit_and_guarded_job_transitions(self):
+        request = self.request()
+        self.store.claim(request)
+        connection = sqlite3.connect(self.store.path)
+        try:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                connection.execute("UPDATE completion_worker_events SET event_type='x'")
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "invalid"):
+                connection.execute(
+                    "UPDATE completion_worker_jobs SET status='SUCCEEDED' WHERE job_id=?",
+                    (request.job_id,),
+                )
+        finally:
+            connection.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
+# [[Codex | GPT-5.6 | 2026-08-25 | 02:27 UTC | END]]

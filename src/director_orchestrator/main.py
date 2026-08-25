@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -70,6 +71,17 @@ from .runtime_activation import RuntimeActivation
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 from .store import PrivacyCleanupResume, TaskStore
 from .usage import UsageMonitor
+from .packet_results import DirectorPacketResultConsumer
+from .packet_routing import DirectorPacketTaskRouter
+from .packet_transports import (
+    LocalGitAuthoritySnapshotResolver,
+    build_primary_packet_adapters,
+)
+from .providers import provider_registry
+from .parallel_dispatch import (
+    DailyTaskBudgetExceeded,
+    DailyTaskBudgetLedger,
+)
 
 
 settings = Settings()
@@ -77,11 +89,38 @@ settings = Settings()
 settings.validate_langgraph_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
+store = TaskStore(settings.sqlite_path)
+settings.validate_parallel_dispatch_configuration()
+providers = provider_registry(settings)
+packet_task_router = None
+packet_result_consumer = None
+if settings.langgraph_runtime_readiness()["live_provider_dispatch"]:
+    if len(settings.repository_allowlist) != 1:
+        raise RuntimeError(
+            "live packet dispatch requires exactly one repository allowlist entry"
+        )
+    packet_task_router = DirectorPacketTaskRouter(
+        authority_snapshots=LocalGitAuthoritySnapshotResolver(
+            settings.repository_allowlist[0], settings.repository_snapshot_root
+        ),
+        boundary_adapters=build_primary_packet_adapters(
+            providers,
+            task_store=store,
+            poll_seconds=settings.provider_poll_seconds,
+        ),
+        writer_owner_id=settings.langgraph_runtime_writer_owner_id,
+        writer_secret=settings.langgraph_runtime_writer_secret,
+        timeout_seconds=settings.provider_timeout_seconds,
+    )
+    packet_result_consumer = DirectorPacketResultConsumer()
 # Startup fails closed on an enabled-but-unisolated coordinator or gate store.
 # RuntimeActivation re-runs both validations and builds only what is enabled.
-runtime_activation = RuntimeActivation(settings)
+runtime_activation = RuntimeActivation(
+    settings,
+    packet_task_router=packet_task_router,
+    packet_result_consumer=packet_result_consumer,
+)
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
-store = TaskStore(settings.sqlite_path)
 oracle_merge_policy = OracleMergePolicy(settings)
 oracle_merge_store = OracleMergeStore(settings.sqlite_path)
 oracle_github = (
@@ -99,8 +138,12 @@ engine = OrchestrationEngine(
     store,
     oracle_merge_service,
     runtime_activation=runtime_activation,
+    providers=providers,
 )
 usage_monitor = UsageMonitor(settings, store)
+daily_task_budget = (
+    DailyTaskBudgetLedger(settings.sqlite_path) if settings.allow_paid_runs else None
+)
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 chatgpt_bridge = ChatGPTBridgeService(
     settings,
@@ -314,6 +357,11 @@ def health() -> dict:
         # Booleans and one transport identifier only: no path, namespace value,
         # secret, or allowlist entry is exposed here.
         **runtime_activation.readiness(),
+        "parallel_dispatch": {
+            **settings.parallel_dispatch_readiness(),
+            "ledger_configured": engine.parallel_dispatch is not None,
+            "daily_task_budget_configured": daily_task_budget is not None,
+        },
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
         "oracle_merge": settings.oracle_merge_readiness(),
         "usage_monitor": usage_monitor.health(),
@@ -405,6 +453,19 @@ def intake(payload: SlackIntake, background: BackgroundTasks) -> TaskRecord:
     task_id = f"DIR-{secrets.token_hex(5).upper()}"
     record = TaskRecord(task_id=task_id, status=TaskStatus.QUEUED, intake=payload)
     stored, created = store.create(record)
+    if daily_task_budget is not None:
+        try:
+            daily_task_budget.reserve(
+                task_id=stored.task_id,
+                task_budget_usd=settings.max_task_budget_usd,
+                daily_budget_usd=settings.max_daily_provider_budget_usd,
+            )
+        except DailyTaskBudgetExceeded as exc:
+            if created:
+                stored.status = TaskStatus.BLOCKED
+                stored.message = str(exc)[:2_000]
+                store.save(stored)
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
     if created:
         background.add_task(engine.run, stored.task_id)
     return stored
@@ -656,3 +717,4 @@ def complete_run(
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]

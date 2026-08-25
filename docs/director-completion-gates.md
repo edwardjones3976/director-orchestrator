@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:50 UTC | BEGIN]] -->
@@ -6,7 +7,9 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]] -->
 # Director Completion Gates
 
-**Status:** Default-off isolated-proof runtime foundation; no completion authority
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:16 UTC | BEGIN]] -->
+
+**Status:** Production-capable isolated worker runtime; default off; no completion authority
 **Schema authority:** `director-gate-ledger/v1` and `director-gate-result/v1`
 **Frozen starting point:** `21c4c70ad4bb1135e82d7b69df9866a1634f3546`
 
@@ -21,13 +24,13 @@ review, Codex Security, trusted CI, and deterministic merge policy. It never gra
 assignment, provider-selection, budget, repository, approval, review, merge,
 deployment, LangGraph, provider-dispatch, or external-write authority.
 
-The runtime foundation adds deterministic semantic validation, an append-only
-SQLite evidence store, a fixed-argument runner registry, bounded `shell=False`
-execution, aggregate gate-evidence reporting, and a small fail-closed readiness
-surface. Execution still requires both explicit runtime and isolated-proof
-enablement and accepts only `ISOLATED_PROOF_LANE` ledgers. It is not wired to
-provider dispatch, external writes, merge, deployment, or project-completion
-authority.
+The runtime foundation adds deterministic semantic validation, append-only gate
+and worker SQLite stores, a fixed-argument runner registry, bounded `shell=False`
+execution, aggregate gate-evidence reporting, and a fail-closed readiness surface.
+Production worker construction requires three independent choices: gate evidence,
+isolated proof, and worker execution. It accepts only `ISOLATED_PROOF_LANE`
+ledgers. It is not wired to provider dispatch, external writes, merge, deployment,
+or project-completion authority.
 
 ## Two different authorities
 
@@ -66,9 +69,42 @@ isolated store:
 | `COMPLETION_GATE_ISOLATED_PROOF_ENABLED` | Additionally permits runner execution |
 | `COMPLETION_GATE_STORE_PATH` | Must be a distinct file from `SQLITE_PATH` and every LangGraph shadow or runtime database |
 | `COMPLETION_GATE_RESULT_MAX_AGE_SECONDS` | Result freshness ceiling (1–2592000) |
+| `COMPLETION_GATE_WORKERS_ENABLED` | Constructs the explicitly selected worker tiers; defaults off |
+| `COMPLETION_GATE_WORKER_STORE_PATH` | Append-only worker reservations/events; must be distinct from every other database |
+| `COMPLETION_GATE_EXECUTION_TIERS` | Comma-separated `host`, `container`, or both |
+| `COMPLETION_GATE_HOST_BROKER_PATH` | Existing absolute path to the separately installed audited low-privilege broker when `host` is selected |
+| `COMPLETION_GATE_CONTAINER_RUNTIME_PATH` | Existing absolute path to the container runtime executable when `container` is selected |
+| `COMPLETION_GATE_CONTAINER_IMAGE` | Immutable `name@sha256:<64 lowercase hex>` image required by the container tier |
 
 `/health` reports these as booleans under `completion_gates`, including a
 permanently false `completion_authority`.
+
+## Construction is not activation or authority
+
+The normal API startup path now constructs the worker registry, append-only worker
+store, and selected backends when—and only when—all three execution switches and
+every selected-tier binding validate. Health distinguishes:
+
+- configured evidence recording;
+- isolated-proof contract enablement;
+- worker execution enablement;
+- executor construction;
+- per-tier backend readiness; and
+- the permanently false completion-authority claim.
+
+The implementation is therefore production-capable, but a repository merge does
+not activate it. The deployed environment must supply the explicit switches,
+distinct database, executable fingerprints, and immutable image, and must then
+show `worker_execution_ready=true`. No public raw-command endpoint or automatic
+gate scheduler is introduced. An authenticated internal caller must still supply
+the exact ledger, gate, task, assignment, head, registry, worker-spec, and
+idempotency bindings.
+
+One worker job identity has one durable reservation. A successful redelivery
+replays the stored outcome; a backend exception becomes
+`RECONCILIATION_REQUIRED` and is not automatically redispatched. This worker lane
+produces evidence only. It cannot become a second provider dispatcher, task-state
+writer, GitHub/Slack writer, merger, deployer, or project-completion authority.
 
 ## Applicability
 
@@ -308,12 +344,32 @@ an otherwise unbound review authoritative.
 
 ## Isolated runner boundary
 
-Structured host execution is permitted only through this allowlisted isolated
-proof boundary. It is a temporary foundation for evidence-producing completion
-gates, not unrestricted shell authority. Free-form commands, shell strings,
-ambient host environments, unbounded output, and unregistered runners remain
-prohibited; any broader runner requires a separate independently accepted
-graduation gate.
+Structured host execution is permitted only through an exact-fingerprint,
+separately installed low-privilege broker. The Director passes a registered
+launcher profile and fixed argv; it never invokes a repository command directly
+under the orchestrator account. The broker contract requires no network, a
+read-only repository view, bounded CPU/memory/PIDs/output/time, and complete
+process-tree termination. A missing or changed broker fingerprint fails startup
+or execution closed.
+
+The disposable-container tier requires an immutable image digest and a fixed argv.
+It uses no network, a read-only root, a read-only repository bind mount, a bounded
+`tmpfs`, a numeric non-root identity, no capabilities, no-new-privileges, and
+bounded CPU/memory/PIDs/output/time. Neither tier accepts a shell string,
+request-supplied argv, an externally writable mount, or ambient credentials.
+
+Worker stdout and stderr are not retained as prose. The production sanitizer
+discards both streams and emits only a closed-vocabulary marker plus a
+domain-separated content digest of the discarded streams. Regex is therefore not
+the privacy boundary.
+
+For a containerized Director, do not mount the host Docker socket or a writable
+host control surface merely to satisfy worker readiness; that would expand the
+orchestrator's privilege boundary. Activate both tiers from a dedicated local
+Director service account that can reach the audited broker and container runtime,
+or keep `COMPLETION_GATE_WORKERS_ENABLED=false` until a separately authenticated
+worker service is deployed. Health reports the latter state as not constructed,
+never as a silent fallback.
 
 An authenticated registry may register fixed profiles for:
 
@@ -363,18 +419,51 @@ remain later independently reviewable increments.
 
 ## Default-off and rollback rule
 
-No Completion Gate executes unless both runtime and isolated-proof enablement are
-explicitly supplied for a named `ISOLATED_PROOF_LANE` assignment. Defaults remain
-off. No global Unlazy
+No Completion Gate worker executes unless gate evidence, isolated proof, and the
+separate worker switch are all enabled for a named `ISOLATED_PROOF_LANE`
+assignment. Every selected tier must also pass executable authentication and
+store-isolation readiness. Defaults remain off. No global Unlazy
 installation, Claude Stop hook, ambient shell execution, production credential,
 external write, deployment, or LangGraph writer connection is authorized here.
 
 Disabling either proof flag stops execution without deleting immutable evidence.
 Removing the isolated runtime modules and their separate SQLite database rolls the
 foundation back without changing canonical task or LangGraph state.
+
+### Worker graduation
+
+Before enabling workers for a named profile:
+
+1. independently accept the exact implementation SHA after trusted CI and
+   security review;
+2. prove the gate and worker stores are distinct from task, shadow, runtime,
+   runtime-ledger, and resume-claim stores;
+3. authenticate the host broker and container runtime executable fingerprints;
+4. pull and verify the exact container image digest without granting the Director
+   a host Docker socket or writable host-control surface;
+5. run one fixed no-write profile in each selected tier and prove exact head,
+   clean worktree, no network, resource bounds, process-tree termination,
+   output withholding, and append-only replay;
+6. restart after reservation and prove the stored outcome replays without another
+   execution; then inject one ambiguous backend outcome and prove it stops for
+   reconciliation; and
+7. record the profile, exact SHA, registry/spec digests, safe store identity,
+   health result, and rollback evidence before widening use.
+
+### Worker rollback
+
+Stop new gate execution, set `COMPLETION_GATE_WORKERS_ENABLED=false`, and restart.
+Confirm executor construction and worker execution readiness are false while gate
+evidence remains readable. Do not delete or alter `RUNNING`, terminal, or
+reconciliation-required reservations to manufacture a retry. After all worker
+jobs are terminal, the isolated-proof and evidence switches may be disabled
+independently. Preserve both append-only stores; deleting them is not rollback of
+an execution or external effect.
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:16 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:50 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]] -->

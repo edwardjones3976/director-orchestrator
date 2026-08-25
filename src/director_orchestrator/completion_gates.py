@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -22,6 +23,7 @@ from typing import Any, Mapping, Sequence
 
 import rfc8785
 from jsonschema import Draft202012Validator
+from .process_isolation import ProcessTreeGuard
 
 
 JsonObject = dict[str, Any]
@@ -1038,6 +1040,7 @@ class RunnerRegistry:
             stderr=subprocess.PIPE,
             **process_group,
         )
+        tree_guard = ProcessTreeGuard(process)
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         lock = threading.Lock()
         output_limit_exceeded = threading.Event()
@@ -1049,6 +1052,7 @@ class RunnerRegistry:
                 if termination_started.is_set():
                     return
                 termination_started.set()
+            tree_guard.terminate()
             RunnerRegistry._terminate_process_tree(process)
 
         def drain(name: str, stream: Any) -> None:
@@ -1111,6 +1115,7 @@ class RunnerRegistry:
                 thread.join(timeout=1)
         if any(thread.is_alive() for thread in threads):
             raise CompletionGateError("runner output drain did not terminate")
+        tree_guard.close()
         return (
             exit_code,
             timed_out,
@@ -1168,3 +1173,4 @@ class RunnerRegistry:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 name: ${DIRECTOR_COMPOSE_PROJECT_NAME:-director-orchestrator}
 
@@ -10,6 +12,10 @@ services:
       - "127.0.0.1:${DIRECTOR_HOST_PORT:-8080}:8080"
     volumes:
       - director-data:/data
+      - type: bind
+        source: ${REPOSITORY_SNAPSHOT_HOST_PATH:-./.repository-snapshot-disabled}
+        target: /repository
+        read_only: true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
       interval: 30s
@@ -91,3 +97,5 @@ volumes:
   n8n-data:
   n8n-db-data:
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
