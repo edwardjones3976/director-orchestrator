@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
@@ -1240,9 +1241,12 @@ class RunnerRegistry:
                 thread.join(timeout=1)
         if any(thread.is_alive() for thread in threads):
             raise CompletionGateError("runner output drain did not terminate")
+        try:
+            tree_guard.close()
+        except BaseException as exc:
+            termination_errors.append(exc)
         if termination_errors:
             raise CompletionGateError("runner process containment failed") from termination_errors[0]
-        tree_guard.close()
         return (
             exit_code,
             timed_out,
@@ -1310,3 +1314,4 @@ class RunnerRegistry:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]

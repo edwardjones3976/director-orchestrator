@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
@@ -758,13 +759,15 @@ class OrchestrationEngine:
         activation = self.runtime_activation
         ledger = self.parallel_dispatch
         if (
-            not readiness["active"]
-            or activation is None
+            activation is None
             or activation.runtime is None
             or activation.packet_task_router is None
             or activation.packet_result_consumer is None
             or ledger is None
             or record.plan is None
+            or not readiness["enabled"]
+            or not readiness["limits_valid"]
+            or not readiness["task_writer_active"]
         ):
             return None
 
@@ -824,6 +827,20 @@ class OrchestrationEngine:
 
         if not candidates:
             return None
+        by_effect = {item.effect_key: item for item in candidates}
+        recovered = ledger.find_latest_batch(record.task_id, tuple(by_effect))
+        if not readiness["kill_switch_open"]:
+            if recovered is None:
+                return None
+            aggregate = ledger.engage_kill_switch(recovered.batch_id)
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.message = (
+                "The parallel-dispatch kill switch cancelled every unstarted "
+                "member; any in-flight member remains recorded for reconciliation."
+            )
+            self.store.save(record)
+            await self._status_post(record, record.message)
+            return False
         provider_caps = self.settings.parallel_provider_caps()
         unknown_providers = sorted(
             {
@@ -849,8 +866,6 @@ class OrchestrationEngine:
         )
         deployment_health = ledger.load_health("__deployment__")
         deployment_limit = policy.effective_cap(deployment_health)
-        by_effect = {item.effect_key: item for item in candidates}
-        recovered = ledger.find_latest_batch(record.task_id, tuple(by_effect))
         if recovered is None:
             decision = plan_dispatch_batch(
                 task_id=record.task_id,
@@ -965,14 +980,10 @@ class OrchestrationEngine:
                     deployment_limit=deployment_limit,
                 ):
                     # Another task currently owns this provider's deployment-wide
-                    # slot. Leave this member RESERVED and resume it later.
-                    record.status = TaskStatus.QUEUED
-                    record.message = (
-                        f"Parallel provider slot for {assignment.agent.value} is "
-                        "temporarily occupied; the reserved member will resume."
-                    )
-                    self.store.save(record)
-                    return False
+                    # slot. Leave this member RESERVED, but still execute every
+                    # sibling already claimed in this loop so those slots cannot
+                    # be stranded in DISPATCHING without an in-flight call.
+                    continue
                 state = MemberState.DISPATCHING
             try:
                 self._reserve_provider_daily_spend(
@@ -5560,3 +5571,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]

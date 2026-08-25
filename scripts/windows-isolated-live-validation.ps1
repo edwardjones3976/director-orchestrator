@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
@@ -640,14 +641,7 @@ if (-not $EnablePaidRuns) {
         docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans orchestrator
     }
     else {
-        if ($ApiOnly) {
-            docker compose --project-name $composeProject --env-file $profilePath stop slackbot n8n n8n-db
-            if ($LASTEXITCODE -ne 0) { throw "Unable to stop optional services after cooldown verification." }
-            docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans orchestrator
-        }
-        else {
-            docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
-        }
+        docker compose --project-name $composeProject --env-file $profilePath up -d --build --remove-orphans
     }
     if ($LASTEXITCODE -ne 0) { throw "Docker Compose failed to start the $displayName Director." }
     $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
@@ -866,3 +860,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
