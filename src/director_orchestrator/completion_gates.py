@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -24,7 +25,7 @@ from typing import Any, Mapping, Sequence
 
 import rfc8785
 from jsonschema import Draft202012Validator
-from .process_isolation import launch_contained_process
+from .process_isolation import launch_contained_process, trusted_neutral_cwd
 
 
 JsonObject = dict[str, Any]
@@ -818,15 +819,20 @@ class RunnerRegistry:
                 authenticated_script_approval_digests=authenticated_script_approval_digests,
             )
 
+        if "-m" in profile.argv:
+            raise CompletionGateError(
+                "Python module runners require the isolated completion worker boundary"
+            )
         argv = (definition.executable, *profile.argv)
         safe_environment = {
             key: value for key, value in os.environ.items()
             if key.upper() in {"SYSTEMROOT", "WINDIR", "TEMP", "TMP", "COMSPEC"}
         }
+        safe_environment["PYTHONSAFEPATH"] = "1"
         exit_code, timed_out, output_limit_exceeded, stdout_bytes, stderr_bytes = (
             self._run_bounded(
                 argv,
-                cwd=workdir,
+                cwd=trusted_neutral_cwd(),
                 environment=safe_environment,
                 timeout_seconds=gate["timeout_seconds"],
                 output_limit_bytes=gate["output_limit_bytes"],
@@ -978,7 +984,8 @@ class RunnerRegistry:
     @staticmethod
     def _git_head(root: Path) -> str:
         completed = subprocess.run(
-            ("git", "rev-parse", "HEAD"), cwd=root, shell=False, check=False,
+            ("git", "-C", str(root), "rev-parse", "HEAD"),
+            cwd=trusted_neutral_cwd(), shell=False, check=False,
             capture_output=True, text=True, timeout=15,
         )
         if completed.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}\n?", completed.stdout):
@@ -1128,8 +1135,12 @@ class RunnerRegistry:
     @staticmethod
     def _git_status(root: Path) -> str:
         completed = subprocess.run(
-            ("git", "status", "--porcelain=v2", "--untracked-files=all"),
-            cwd=root, shell=False, check=False, capture_output=True, text=True, timeout=15,
+            (
+                "git", "-C", str(root), "status", "--porcelain=v2",
+                "--untracked-files=all",
+            ),
+            cwd=trusted_neutral_cwd(), shell=False, check=False,
+            capture_output=True, text=True, timeout=15,
         )
         if completed.returncode != 0:
             raise CompletionGateError("cannot authenticate repository worktree status")
@@ -1152,8 +1163,9 @@ class RunnerRegistry:
             raise CompletionGateError("repository script approval is not authenticated")
         script = RunnerRegistry._contained_file(root, binding["path"])
         blob = subprocess.run(
-            ("git", "rev-parse", f"HEAD:{binding['path']}"),
-            cwd=root, shell=False, check=False, capture_output=True, text=True, timeout=15,
+            ("git", "-C", str(root), "rev-parse", f"HEAD:{binding['path']}"),
+            cwd=trusted_neutral_cwd(), shell=False, check=False,
+            capture_output=True, text=True, timeout=15,
         )
         if blob.returncode != 0 or blob.stdout.strip() != binding["blob_sha"]:
             raise CompletionGateError("repository script Git blob mismatch")
@@ -1176,3 +1188,4 @@ class RunnerRegistry:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]

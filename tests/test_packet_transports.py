@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 from __future__ import annotations
@@ -5,13 +6,18 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import patch
 
+from director_orchestrator.callbacks import apply_claude_callback
+from director_orchestrator.interactions import (
+    ProviderInteractionState,
+    TransportEvidenceSource,
+    project_interaction,
+)
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.models import (
     Assignment,
+    ClaudeCallback,
     DirectorPlan,
     ProviderName,
     ProviderRun,
@@ -197,6 +203,22 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
         ).work_packet(record, assignment)
         return record, packet
 
+    @staticmethod
+    def _effect_evidence(packet, run_id: str, effects, *, provider="cursor"):
+        return {
+            "schema_version": "1.0",
+            "task_id": packet["task_id"],
+            "assignment_id": packet["assignment_id"],
+            "packet_idempotency_key": packet["idempotency_key"],
+            "authority_snapshot_digest": packet["authority_snapshot_digest"],
+            "correlation_id": packet["correlation"]["correlation_id"],
+            "repository": packet["repository"],
+            "starting_ref": packet["starting_ref"],
+            "provider": provider,
+            "provider_run_id": run_id,
+            "effects": effects,
+        }
+
     def test_terminal_provider_result_is_normalized_without_another_poll(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             store = TaskStore(str(Path(root) / "tasks.sqlite3"))
@@ -302,23 +324,22 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                 transport = LegacyProviderPacketTransport(
                     provider, task_store=store, poll_seconds=1
                 )
-                claude_recording = (
-                    patch.object(transport, "_record_claude_dispatch", return_value=None)
-                    if provider_name == ProviderName.CLAUDE
-                    else nullcontext()
+                transport.send(
+                    canonical_json_bytes(packet),
+                    context=self._context(record, packet),
                 )
-
-                with claude_recording:
-                    transport.send(
-                        canonical_json_bytes(packet),
-                        context=self._context(record, packet),
-                    )
 
                 self.assertIsNotNone(provider.context)
                 marker = "DIRECTOR_WORK_PACKET_V1_JSON="
                 _, found, encoded = provider.context.partition(marker)
                 self.assertEqual(marker, found)
-                transmitted = json.loads(encoded)
+                effect_marker = "\nDIRECTOR_SIDE_EFFECT_EVIDENCE_CONTRACT_V1_JSON="
+                encoded_packet, found_effect_contract, encoded_effect_contract = (
+                    encoded.partition(effect_marker)
+                )
+                self.assertEqual(effect_marker, found_effect_contract)
+                transmitted = json.loads(encoded_packet)
+                effect_contract = json.loads(encoded_effect_contract)
                 self.assertEqual(packet, transmitted)
                 for field in (
                     "constraints",
@@ -332,6 +353,17 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                     "correlation",
                 ):
                     self.assertEqual(packet[field], transmitted[field])
+                self.assertEqual(
+                    packet["idempotency_key"],
+                    effect_contract["bindings"]["packet_idempotency_key"],
+                )
+                self.assertEqual(
+                    {
+                        kind: f"{packet['idempotency_key']}:effect:{kind.lower()}"
+                        for kind in packet["allowed_external_effects"]
+                    },
+                    effect_contract["effect_idempotency_keys"],
+                )
 
     def test_authenticated_complete_side_effect_evidence_can_progress(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -345,29 +377,38 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
             effects = [
                 {
                     "kind": "WRITE_ISOLATED_BRANCH",
-                    "target": "example/demo:codex/focused",
+                    "target": f"example/demo@{packet['starting_ref']}:codex/focused",
                     "status": "COMPLETED",
-                    "idempotency_key": "branch-effect-1",
+                    "idempotency_key": (
+                        f"{packet['idempotency_key']}:effect:write_isolated_branch"
+                    ),
                     "external_id": "codex/focused",
                 },
                 {
                     "kind": "OPEN_DRAFT_PULL_REQUEST",
-                    "target": "example/demo#123",
+                    "target": f"example/demo@{packet['starting_ref']}#123",
                     "status": "COMPLETED",
-                    "idempotency_key": "draft-pr-effect-1",
+                    "idempotency_key": (
+                        f"{packet['idempotency_key']}:effect:open_draft_pull_request"
+                    ),
                     "external_id": "123",
                 },
             ]
+            run_id = "cursor-effects-1"
 
             result = transport._result(
                 packet,
                 ProviderRun(
                     provider=ProviderName.CURSOR,
-                    run_id="cursor-effects-1",
+                    run_id=run_id,
                     status="FINISHED",
                     result="bounded result",
                     evidence_source="provider_authenticated",
-                    raw={"side_effects": effects},
+                    raw={
+                        "side_effect_evidence": self._effect_evidence(
+                            packet, run_id, effects
+                        )
+                    },
                 ),
             )
 
@@ -386,21 +427,44 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
             )
             allowed_branch = {
                 "kind": "WRITE_ISOLATED_BRANCH",
-                "target": "example/demo:codex/focused",
+                "target": f"example/demo@{packet['starting_ref']}:codex/focused",
                 "status": "COMPLETED",
-                "idempotency_key": "branch-effect-1",
+                "idempotency_key": (
+                    f"{packet['idempotency_key']}:effect:write_isolated_branch"
+                ),
+                "external_id": "codex/focused",
+            }
+            allowed_pr = {
+                "kind": "OPEN_DRAFT_PULL_REQUEST",
+                "target": f"example/demo@{packet['starting_ref']}#123",
+                "status": "COMPLETED",
+                "idempotency_key": (
+                    f"{packet['idempotency_key']}:effect:open_draft_pull_request"
+                ),
+                "external_id": "123",
             }
             unauthorized_merge = {
                 "kind": "MERGE_PULL_REQUEST",
-                "target": "example/demo#123",
+                "target": f"example/demo@{packet['starting_ref']}#123",
                 "status": "COMPLETED",
-                "idempotency_key": "merge-effect-1",
+                "idempotency_key": (
+                    f"{packet['idempotency_key']}:effect:merge_pull_request"
+                ),
             }
+            run_ids = {label: f"cursor-{label}" for label in ("missing", "partial", "extra")}
             cases = {
                 "missing": {},
-                "partial": {"side_effects": [allowed_branch]},
+                "partial": {
+                    "side_effect_evidence": self._effect_evidence(
+                        packet, run_ids["partial"], [allowed_branch]
+                    )
+                },
                 "extra": {
-                    "side_effects": [allowed_branch, unauthorized_merge]
+                    "side_effect_evidence": self._effect_evidence(
+                        packet,
+                        run_ids["extra"],
+                        [allowed_branch, allowed_pr, unauthorized_merge],
+                    )
                 },
             }
             for label, raw in cases.items():
@@ -409,7 +473,7 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                         packet,
                         ProviderRun(
                             provider=ProviderName.CURSOR,
-                            run_id=f"cursor-{label}",
+                            run_id=run_ids[label],
                             status="FINISHED",
                             result="bounded result",
                             evidence_source="provider_authenticated",
@@ -421,8 +485,130 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                     self.assertTrue(result["blockers"])
                     self.assertTrue(result["requested_decisions"])
 
+    def test_effect_evidence_must_bind_packet_target_and_director_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            _, packet = self._packet(root, store, ProviderName.CURSOR)
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CURSOR),
+                task_store=store,
+                poll_seconds=1,
+            )
+            run_id = "cursor-binding"
+            branch = {
+                "kind": "WRITE_ISOLATED_BRANCH",
+                "target": f"example/demo@{packet['starting_ref']}:codex/focused",
+                "status": "COMPLETED",
+                "idempotency_key": (
+                    f"{packet['idempotency_key']}:effect:write_isolated_branch"
+                ),
+                "external_id": "codex/focused",
+            }
+            draft_pr = {
+                "kind": "OPEN_DRAFT_PULL_REQUEST",
+                "target": f"example/demo@{packet['starting_ref']}#123",
+                "status": "COMPLETED",
+                "idempotency_key": (
+                    f"{packet['idempotency_key']}:effect:open_draft_pull_request"
+                ),
+                "external_id": "123",
+            }
+            valid = self._effect_evidence(packet, run_id, [branch, draft_pr])
+            cases = {
+                "repository": {**valid, "repository": "other/repo"},
+                "snapshot": {**valid, "authority_snapshot_digest": "sha256:" + "0" * 64},
+                "correlation": {**valid, "correlation_id": "stale-correlation"},
+                "target": {
+                    **valid,
+                    "effects": [
+                        {**branch, "target": f"other/repo@{packet['starting_ref']}:codex/focused"},
+                        draft_pr,
+                    ],
+                },
+                "effect_key": {
+                    **valid,
+                    "effects": [
+                        {**branch, "idempotency_key": "provider-selected-key"},
+                        draft_pr,
+                    ],
+                },
+            }
+            for label, evidence in cases.items():
+                with self.subTest(case=label):
+                    result = transport._result(
+                        packet,
+                        ProviderRun(
+                            provider=ProviderName.CURSOR,
+                            run_id=run_id,
+                            status="FINISHED",
+                            result="bounded result",
+                            evidence_source="provider_authenticated",
+                            raw={"side_effect_evidence": evidence},
+                        ),
+                    )
+                    self.assertEqual("OWNER_DECISION_REQUIRED", result["status"])
+                    self.assertEqual([], result["side_effects"])
+                    self.assertTrue(result["blockers"])
+
+    def test_claude_waiting_callback_persists_authenticated_acknowledgement(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            record, packet = self._packet(root, store, ProviderName.CLAUDE)
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CLAUDE),
+                task_store=store,
+                poll_seconds=1,
+            )
+            run = ProviderRun(
+                provider=ProviderName.CLAUDE,
+                run_id="claude-session-1",
+                session_id="claude-session-1",
+                status="WAITING_CALLBACK",
+                raw={"claude_code_session_id": "claude-session-1"},
+            )
+
+            transport._record_claude_dispatch(
+                packet, self._context(record, packet), record.plan.assignments[0], run
+            )
+
+            persisted = store.get(record.task_id)
+            persisted_run = persisted.provider_runs[-1]
+            self.assertEqual("WAITING_CALLBACK", persisted_run.status)
+            self.assertEqual("unverified", persisted_run.evidence_source)
+            acknowledgement = project_interaction(
+                persisted.provider_interaction_ledger,
+                persisted_run.interaction_id,
+            )
+            self.assertEqual(ProviderInteractionState.ACKNOWLEDGED, acknowledgement.state)
+            self.assertEqual(
+                TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+                persisted.provider_interaction_ledger[-1].transport_evidence.source,
+            )
+
+            self.assertTrue(
+                apply_claude_callback(
+                    persisted,
+                    ClaudeCallback(
+                        run_id="claude-session-1",
+                        status="completed",
+                        result="bounded completion evidence",
+                    ),
+                )
+            )
+            self.assertEqual(
+                "provider_authenticated", persisted.provider_runs[-1].evidence_source
+            )
+            self.assertEqual(
+                ProviderInteractionState.VERIFIED,
+                project_interaction(
+                    persisted.provider_interaction_ledger,
+                    persisted_run.interaction_id,
+                ).state,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]

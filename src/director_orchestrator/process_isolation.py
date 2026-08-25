@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 """Cross-platform process-tree ownership for bounded runner execution."""
@@ -8,11 +9,29 @@ import ctypes
 import os
 import subprocess
 from ctypes import wintypes
+from pathlib import Path
 from typing import Any, Sequence
 
 
 class ProcessContainmentError(RuntimeError):
     """The child could not be launched inside an enforceable process boundary."""
+
+
+def trusted_neutral_cwd() -> Path:
+    """Return an existing OS-owned cwd that contains no repository content."""
+
+    if os.name == "nt":
+        system_root = os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR")
+        if not system_root:
+            raise ProcessContainmentError(
+                "trusted Windows system directory is unavailable"
+            )
+        neutral = Path(system_root, "System32").resolve(strict=True)
+    else:
+        neutral = Path("/").resolve(strict=True)
+    if not neutral.is_dir():
+        raise ProcessContainmentError("trusted neutral directory is unavailable")
+    return neutral
 
 
 class ProcessTreeGuard:
@@ -228,3 +247,4 @@ def _resume_only_thread(process_id: int) -> None:
     if previous_count != 1:
         raise ProcessContainmentError("Windows primary thread resume was ambiguous")
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]

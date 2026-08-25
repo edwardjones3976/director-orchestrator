@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 """Production packet transports for the primary repository providers.
@@ -47,6 +48,23 @@ _SIDE_EFFECT_STATUSES = {"NOT_ATTEMPTED", "ATTEMPTED", "COMPLETED", "FAILED"}
 _SIDE_EFFECT_KEYS = {
     "kind", "target", "status", "idempotency_key", "external_id",
 }
+_SIDE_EFFECT_EVIDENCE_KEYS = {
+    "schema_version",
+    "task_id",
+    "assignment_id",
+    "packet_idempotency_key",
+    "authority_snapshot_digest",
+    "correlation_id",
+    "repository",
+    "starting_ref",
+    "provider",
+    "provider_run_id",
+    "effects",
+}
+_ISOLATED_BRANCH_PREFIXES = (
+    "codex/", "claude/", "cursor/", "antigravity/", "oracle/",
+)
+_SAFE_BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
 _TERMINAL_SUCCESS = {"FINISHED", "completed"}
 _TERMINAL_FAILURE = {
     "ERROR", "CANCELLED", "EXPIRED", "failed", "cancelled", "incomplete",
@@ -189,11 +207,20 @@ class LegacyProviderPacketTransport:
             raise RuntimeError("Claude callback task record is unavailable")
         run.assignment_sequence = assignment.sequence
         run.interaction_id = str(packet["correlation"]["correlation_id"])
-        run.evidence_source = "provider_authenticated"
         backend = build_transport_evidence(
             transport=ProviderTransport.CLAUDE_ROUTINE,
             source=TransportEvidenceSource.BACKEND_OBSERVATION,
             idempotency_key=context.idempotency_key,
+        )
+        authenticated_acknowledgement = build_transport_evidence(
+            transport=ProviderTransport.CLAUDE_ROUTINE,
+            source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
+            idempotency_key=context.idempotency_key,
+            response=canonical_json_bytes(run.raw),
+            response_id=run.run_id,
+            provider_run_id=run.run_id,
+            provider_session_id=run.session_id,
+            native_status=run.status,
         )
         event = start_interaction(
             task_id=record.task_id,
@@ -209,11 +236,7 @@ class LegacyProviderPacketTransport:
         record.provider_interaction_ledger = append_interaction_event(
             record.provider_interaction_ledger, event
         )
-        for state in (
-            ProviderInteractionState.ATTEMPTED,
-            ProviderInteractionState.DISPATCHED,
-            ProviderInteractionState.ACKNOWLEDGED,
-        ):
+        for state in (ProviderInteractionState.ATTEMPTED, ProviderInteractionState.DISPATCHED):
             event = transition_interaction(
                 record.provider_interaction_ledger,
                 interaction_id=run.interaction_id,
@@ -223,6 +246,15 @@ class LegacyProviderPacketTransport:
             record.provider_interaction_ledger = append_interaction_event(
                 record.provider_interaction_ledger, event
             )
+        event = transition_interaction(
+            record.provider_interaction_ledger,
+            interaction_id=run.interaction_id,
+            next_state=ProviderInteractionState.ACKNOWLEDGED,
+            transport_evidence=authenticated_acknowledgement,
+        )
+        record.provider_interaction_ledger = append_interaction_event(
+            record.provider_interaction_ledger, event
+        )
         if any(existing.run_id == run.run_id for existing in record.provider_runs):
             raise RuntimeError("Claude provider run identity is already recorded")
         record.provider_runs.append(run)
@@ -282,7 +314,38 @@ class LegacyProviderPacketTransport:
         """Serialize the complete validated packet into one bounded wire contract."""
 
         encoded = canonical_json_bytes(packet)
-        if len(encoded) > _MAX_CANONICAL_HANDOFF_BYTES:
+        repository = str(packet["repository"])
+        starting_ref = str(packet["starting_ref"])
+        effect_contract = {
+            "schema_version": "1.0",
+            "raw_field": "side_effect_evidence",
+            "bindings": {
+                "task_id": packet["task_id"],
+                "assignment_id": packet["assignment_id"],
+                "packet_idempotency_key": packet["idempotency_key"],
+                "authority_snapshot_digest": packet["authority_snapshot_digest"],
+                "correlation_id": packet["correlation"]["correlation_id"],
+                "repository": repository,
+                "starting_ref": starting_ref,
+            },
+            "effect_idempotency_keys": {
+                str(kind): LegacyProviderPacketTransport._effect_idempotency_key(
+                    packet, str(kind)
+                )
+                for kind in packet["allowed_external_effects"]
+            },
+            "target_authority_prefix": f"{repository}@{starting_ref}",
+            "isolated_branch_prefixes": list(_ISOLATED_BRANCH_PREFIXES),
+            "completed_pull_request_target": (
+                f"{repository}@{starting_ref}#<pull-request-number>"
+            ),
+            "effects_field": "effects",
+        }
+        encoded_effect_contract = canonical_json_bytes(effect_contract)
+        if (
+            len(encoded) + len(encoded_effect_contract)
+            > _MAX_CANONICAL_HANDOFF_BYTES
+        ):
             raise ValueError(
                 "canonical provider work packet exceeds the bounded handoff size"
             )
@@ -292,8 +355,58 @@ class LegacyProviderPacketTransport:
             "prohibited_actions, allowed_tools, allowed_external_effects, limits, "
             "approval_requirements, authority_snapshot, and correlation fields are "
             "the complete execution boundary.\n"
-            "DIRECTOR_WORK_PACKET_V1_JSON=" + encoded.decode("utf-8")
+            "DIRECTOR_WORK_PACKET_V1_JSON=" + encoded.decode("utf-8") + "\n"
+            "DIRECTOR_SIDE_EFFECT_EVIDENCE_CONTRACT_V1_JSON="
+            + encoded_effect_contract.decode("utf-8")
         )
+
+    @staticmethod
+    def _effect_idempotency_key(packet: Mapping[str, Any], kind: str) -> str:
+        return f"{packet['idempotency_key']}:effect:{kind.lower()}"
+
+    @staticmethod
+    def _effect_target_is_authorized(
+        packet: Mapping[str, Any], effect: Mapping[str, Any]
+    ) -> bool:
+        repository = str(packet["repository"]).strip().removesuffix(".git")
+        starting_ref = str(packet["starting_ref"])
+        target = str(effect["target"])
+        status = str(effect["status"])
+        external_id = effect.get("external_id")
+        authority_prefix = f"{repository}@{starting_ref}"
+        if status == "NOT_ATTEMPTED":
+            return target == authority_prefix and external_id is None
+        if effect["kind"] == "WRITE_ISOLATED_BRANCH":
+            prefix = authority_prefix + ":"
+            if not target.startswith(prefix):
+                return False
+            branch = target[len(prefix):]
+            return bool(
+                branch.startswith(_ISOLATED_BRANCH_PREFIXES)
+                and _SAFE_BRANCH.fullmatch(branch)
+                and ".." not in branch
+                and "//" not in branch
+                and "@{" not in branch
+                and not branch.endswith(("/", ".lock"))
+                and (external_id is None or external_id == branch)
+            )
+        if effect["kind"] == "OPEN_DRAFT_PULL_REQUEST":
+            prefix = authority_prefix + "#"
+            if not target.startswith(prefix):
+                return False
+            pull_request = target[len(prefix):]
+            if status == "COMPLETED":
+                return bool(
+                    pull_request.isdigit()
+                    and external_id == pull_request
+                )
+            return bool(
+                pull_request == "pending"
+                and external_id is None
+                or pull_request.isdigit()
+                and (external_id is None or external_id == pull_request)
+            )
+        return False
 
     @staticmethod
     def _authenticated_side_effects(
@@ -306,13 +419,41 @@ class LegacyProviderPacketTransport:
         """
 
         allowed = {str(item) for item in packet["allowed_external_effects"]}
-        raw_effects = run.raw.get("side_effects")
-        if not allowed and raw_effects is None:
+        raw_evidence = run.raw.get("side_effect_evidence")
+        if not allowed and raw_evidence is None:
             return [], None
         if run.evidence_source != "provider_authenticated":
             return [], "Provider side-effect evidence is not authenticated."
-        if not isinstance(raw_effects, list):
+        if not isinstance(raw_evidence, Mapping):
             return [], "Authenticated provider side-effect evidence is missing."
+        evidence = dict(raw_evidence)
+        if set(evidence) != _SIDE_EFFECT_EVIDENCE_KEYS:
+            return [], "Authenticated provider side-effect evidence is malformed."
+        expected_bindings = {
+            "schema_version": "1.0",
+            "task_id": str(packet["task_id"]),
+            "assignment_id": str(packet["assignment_id"]),
+            "packet_idempotency_key": str(packet["idempotency_key"]),
+            "authority_snapshot_digest": str(packet["authority_snapshot_digest"]),
+            "correlation_id": str(packet["correlation"]["correlation_id"]),
+            "repository": str(packet["repository"]),
+            "starting_ref": str(packet["starting_ref"]),
+            "provider": run.provider.value,
+            "provider_run_id": run.run_id,
+        }
+        for field, expected in expected_bindings.items():
+            observed = evidence.get(field)
+            if (
+                not isinstance(observed, str)
+                or not hmac.compare_digest(observed, expected)
+            ):
+                return [], (
+                    "Authenticated provider side-effect evidence is not bound to "
+                    "the current packet authority."
+                )
+        raw_effects = evidence.get("effects")
+        if not isinstance(raw_effects, list):
+            return [], "Authenticated provider side-effect evidence is malformed."
 
         normalized: list[dict[str, Any]] = []
         seen_idempotency_keys: set[str] = set()
@@ -334,6 +475,20 @@ class LegacyProviderPacketTransport:
             if idempotency_key in seen_idempotency_keys:
                 return [], "Authenticated provider side-effect evidence is ambiguous."
             seen_idempotency_keys.add(idempotency_key)
+            expected_effect_key = LegacyProviderPacketTransport._effect_idempotency_key(
+                packet, str(effect["kind"])
+            )
+            if not hmac.compare_digest(idempotency_key, expected_effect_key):
+                return [], (
+                    "Provider side-effect evidence does not use the Director-issued "
+                    "idempotency identity."
+                )
+            if not LegacyProviderPacketTransport._effect_target_is_authorized(
+                packet, effect
+            ):
+                return [], (
+                    "Provider side-effect evidence target is outside packet authority."
+                )
             normalized.append(effect)
 
         reported = {effect["kind"] for effect in normalized}
@@ -478,3 +633,4 @@ def build_primary_packet_adapters(
     return result
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]

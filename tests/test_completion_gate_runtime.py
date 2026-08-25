@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -15,6 +16,7 @@ import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from director_orchestrator.completion_gates import (
     AuthenticatedGateContext,
@@ -30,6 +32,7 @@ from director_orchestrator.completion_gates import (
 )
 from director_orchestrator.completion_store import CompletionGateStore
 from director_orchestrator.packet_contracts import load_json_document
+from director_orchestrator.process_isolation import trusted_neutral_cwd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -374,17 +377,85 @@ class CompletionGateRuntimeTests(unittest.TestCase):
                 self.registry.execute(
                     verified, "director.contract-tests", repository_root=repository
                 )
-            observation = self.registry.execute(
-                verified,
-                "director.contract-tests",
-                repository_root=repository,
-                enabled=True,
-                isolated_proof_enabled=True,
-            )
+            with patch.object(
+                self.registry, "_run_bounded", wraps=self.registry._run_bounded
+            ) as bounded:
+                observation = self.registry.execute(
+                    verified,
+                    "director.contract-tests",
+                    repository_root=repository,
+                    enabled=True,
+                    isolated_proof_enabled=True,
+                )
         self.assertEqual("PASS", observation.status)
         self.assertEqual(0, observation.exit_code)
         self.assertEqual((), observation.failure_reasons)
         self.assertEqual(observation.before_head_sha, observation.after_head_sha)
+        self.assertEqual(trusted_neutral_cwd(), bounded.call_args.kwargs["cwd"])
+
+    def test_module_runner_cannot_execute_repository_search_path_shadow(self):
+        self.profile = ParameterProfile.build(
+            "repository-shadow", ("-m", "compileall", "-q", ".")
+        )
+        self.definition = RunnerDefinition.build(
+            "python_unittest", sys.executable, (self.profile,),
+            maximum_timeout_seconds=300,
+        )
+        self.registry = RunnerRegistry((self.definition,))
+        self._single_runnable_gate()
+        gate = self.ledger["director_gates"][0]
+        gate["parameter_profile_id"] = self.profile.profile_id
+        rebind_gate(gate)
+        rebind_ledger(self.ledger)
+        with tempfile.TemporaryDirectory() as temporary:
+            repository, _ = self._proof_repository(temporary)
+            marker = Path(temporary) / "repository-module-executed.txt"
+            (repository / "compileall.py").write_text(
+                f"from pathlib import Path\nPath({str(marker)!r}).write_text('unsafe')\n",
+                encoding="utf-8",
+            )
+            subprocess.run(("git", "add", "compileall.py"), cwd=repository, check=True)
+            subprocess.run(
+                ("git", "commit", "-q", "-m", "shadow"), cwd=repository, check=True
+            )
+            self.ledger["expected_head_sha"] = self._git_head(repository)
+            planned = self.planned_predecessor()
+            self.bind_predecessor(planned)
+            verified = validate_gate_ledger(
+                self.ledger,
+                context=self._context(),
+                predecessor=planned,
+                runner_registry=self.registry,
+            )
+
+            with self.assertRaisesRegex(CompletionGateError, "isolated completion worker"):
+                self.registry.execute(
+                    verified,
+                    "director.contract-tests",
+                    repository_root=repository,
+                    enabled=True,
+                    isolated_proof_enabled=True,
+                )
+            self.assertFalse(marker.exists())
+
+    def test_git_probe_uses_explicit_repository_from_neutral_cwd(self):
+        expected_head = "a" * 40
+        completed = type(
+            "Completed", (), {"returncode": 0, "stdout": expected_head + "\n"}
+        )()
+        repository = Path("C:/untrusted-repository")
+        with patch(
+            "director_orchestrator.completion_gates.subprocess.run",
+            return_value=completed,
+        ) as run:
+            observed = RunnerRegistry._git_head(repository)
+
+        self.assertEqual(expected_head, observed)
+        self.assertEqual(
+            ("git", "-C", str(repository), "rev-parse", "HEAD"),
+            run.call_args.args[0],
+        )
+        self.assertEqual(trusted_neutral_cwd(), run.call_args.kwargs["cwd"])
 
     def test_bounded_runner_timeout_terminates_descendant_tree(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -643,3 +714,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]

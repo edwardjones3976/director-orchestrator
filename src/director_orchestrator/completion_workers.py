@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:14 UTC | BEGIN]]
 """Production boundary for isolated Completion Gate worker execution.
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping, Protocol, Sequence
 
 from .completion_gates import canonical_json_bytes, domain_digest
+from .process_isolation import trusted_neutral_cwd
 
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -856,12 +858,17 @@ class CompletionWorkerExecutor:
         except OSError as exc:
             raise CompletionWorkerError("worker repository root cannot be authenticated") from exc
         head = subprocess.run(
-            ("git", "rev-parse", "HEAD"), cwd=root, shell=False, check=False,
+            ("git", "-C", str(root), "rev-parse", "HEAD"),
+            cwd=trusted_neutral_cwd(), shell=False, check=False,
             capture_output=True, text=True, timeout=15,
         )
         status = subprocess.run(
-            ("git", "status", "--porcelain=v2", "--untracked-files=all"),
-            cwd=root, shell=False, check=False, capture_output=True, text=True, timeout=15,
+            (
+                "git", "-C", str(root), "status", "--porcelain=v2",
+                "--untracked-files=all",
+            ),
+            cwd=trusted_neutral_cwd(), shell=False, check=False,
+            capture_output=True, text=True, timeout=15,
         )
         if head.returncode != 0 or status.returncode != 0:
             raise CompletionWorkerError("worker repository Git state is unavailable")
@@ -871,3 +878,4 @@ class CompletionWorkerExecutor:
             raise CompletionWorkerError("worker repository must be clean before execution")
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]

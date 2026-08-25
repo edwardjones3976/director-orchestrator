@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:27 UTC | BEGIN]]
 from __future__ import annotations
@@ -10,7 +11,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from director_orchestrator.completion_gates import domain_digest
 from director_orchestrator.completion_worker_backends import (
@@ -18,7 +19,9 @@ from director_orchestrator.completion_worker_backends import (
     DisposableContainerWorkerBackend,
     ExecutableBinding,
     SanitizedWorkerOutput,
+    _repository_state,
 )
+from director_orchestrator.process_isolation import trusted_neutral_cwd
 from director_orchestrator.completion_workers import (
     AuditedHostProfile,
     CompletionWorkerError,
@@ -344,23 +347,87 @@ class CompletionWorkerTests(unittest.TestCase):
         self.assertEqual(expected_cwd, backend._trusted_cwd())
         self.assertNotEqual(self.repository.resolve(), backend._trusted_cwd())
 
+    def test_worker_git_probes_use_explicit_repository_from_neutral_cwd(self):
+        head_result = Mock(returncode=0, stdout=self.head + "\n")
+        status_result = Mock(returncode=0, stdout="")
+        with patch(
+            "director_orchestrator.completion_worker_backends.subprocess.run",
+            side_effect=[head_result, status_result],
+        ) as backend_run:
+            self.assertEqual((self.head, True), _repository_state(self.repository))
+        with patch(
+            "director_orchestrator.completion_workers.subprocess.run",
+            side_effect=[head_result, status_result],
+        ) as executor_run:
+            CompletionWorkerExecutor._authenticate_repository(self.request())
+
+        for run in (backend_run, executor_run):
+            for call in run.call_args_list:
+                command = call.args[0]
+                self.assertEqual(("git", "-C", str(self.repository)), command[:3])
+                self.assertEqual(trusted_neutral_cwd(), call.kwargs["cwd"])
+
     def test_container_cleanup_is_label_bound_forced_and_verified(self):
         backend = DisposableContainerWorkerBackend(
             ExecutableBinding.create(sys.executable), StaticSanitizer()
         )
+        backend._ABSENCE_POLL_SECONDS = 0
         backend._runtime_control = Mock(
             side_effect=[
                 (0, b"director-gate-fixture|worker-job-1\n"),
                 (0, b""),
                 (0, b""),
+                (0, b""),
             ]
         )
         backend._ensure_container_absent("director-gate-fixture", "worker-job-1")
-        self.assertEqual(3, backend._runtime_control.call_count)
+        self.assertEqual(4, backend._runtime_control.call_count)
         self.assertEqual(
             ("rm", "--force", "director-gate-fixture"),
             backend._runtime_control.call_args_list[1].args[0],
         )
+
+    def test_container_cleanup_catches_late_creation_before_stable_absence(self):
+        backend = DisposableContainerWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        backend._ABSENCE_POLL_SECONDS = 0
+        backend._runtime_control = Mock(
+            side_effect=[
+                (0, b""),
+                (0, b"director-gate-fixture|worker-job-1\n"),
+                (0, b""),
+                (0, b""),
+                (0, b""),
+            ]
+        )
+
+        backend._ensure_container_absent("director-gate-fixture", "worker-job-1")
+
+        self.assertEqual(
+            ("rm", "--force", "director-gate-fixture"),
+            backend._runtime_control.call_args_list[2].args[0],
+        )
+
+    def test_container_cleanup_fails_when_absence_never_stabilizes(self):
+        backend = DisposableContainerWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        backend._ABSENCE_POLL_SECONDS = 0
+        backend._runtime_control = Mock(
+            side_effect=[
+                (0, b""),
+                (0, b"director-gate-fixture|worker-job-1\n"),
+                (0, b""),
+                (0, b""),
+                (0, b"director-gate-fixture|worker-job-1\n"),
+                (0, b""),
+                (0, b""),
+            ]
+        )
+
+        with self.assertRaisesRegex(CompletionWorkerError, "stable.*absence"):
+            backend._ensure_container_absent("director-gate-fixture", "worker-job-1")
 
     def test_container_cleanup_refuses_a_foreign_label(self):
         backend = DisposableContainerWorkerBackend(
@@ -407,3 +474,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:27 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:21 UTC | BEGIN]]
@@ -17,6 +18,7 @@ import re
 import signal
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Sequence
@@ -32,7 +34,7 @@ from .completion_workers import (
     WorkerSpec,
     WorkerTier,
 )
-from .process_isolation import launch_contained_process
+from .process_isolation import launch_contained_process, trusted_neutral_cwd
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,16 +189,12 @@ class _BoundedProcessBackend:
             pass
 
     def _trusted_cwd(self) -> Path:
-        if os.name == "nt":
-            system_root = os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR")
-            if not system_root:
-                raise CompletionWorkerError("trusted Windows system directory is unavailable")
-            neutral = Path(system_root, "System32").resolve(strict=True)
-        else:
-            neutral = Path("/").resolve(strict=True)
-        if not neutral.is_dir():
-            raise CompletionWorkerError("trusted neutral worker directory is unavailable")
-        return neutral
+        try:
+            return trusted_neutral_cwd()
+        except (OSError, RuntimeError) as exc:
+            raise CompletionWorkerError(
+                "trusted neutral worker directory is unavailable"
+            ) from exc
 
 
 class AuditedHostWorkerBackend(_BoundedProcessBackend):
@@ -278,6 +276,10 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
 
 
 class DisposableContainerWorkerBackend(_BoundedProcessBackend):
+    _ABSENCE_READS_REQUIRED = 2
+    _ABSENCE_POLL_ATTEMPTS = 5
+    _ABSENCE_POLL_SECONDS = 0.2
+
     def __init__(
         self,
         runtime: ExecutableBinding,
@@ -376,18 +378,27 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
         )
 
     def _ensure_container_absent(self, name: str, job_id: str) -> None:
-        label = self._container_label(name)
-        if label is None:
-            return
-        if label != job_id:
-            raise CompletionWorkerError(
-                "deterministic worker container name is owned by another job"
-            )
-        return_code, _ = self._runtime_control(("rm", "--force", name))
-        if return_code != 0:
-            raise CompletionWorkerError("worker container force-removal failed")
-        if self._container_label(name) is not None:
-            raise CompletionWorkerError("worker container removal could not be verified")
+        consecutive_absence_reads = 0
+        for attempt in range(self._ABSENCE_POLL_ATTEMPTS):
+            label = self._container_label(name)
+            if label is None:
+                consecutive_absence_reads += 1
+                if consecutive_absence_reads >= self._ABSENCE_READS_REQUIRED:
+                    return
+            else:
+                consecutive_absence_reads = 0
+                if label != job_id:
+                    raise CompletionWorkerError(
+                        "deterministic worker container name is owned by another job"
+                    )
+                return_code, _ = self._runtime_control(("rm", "--force", name))
+                if return_code != 0:
+                    raise CompletionWorkerError("worker container force-removal failed")
+            if attempt + 1 < self._ABSENCE_POLL_ATTEMPTS:
+                time.sleep(self._ABSENCE_POLL_SECONDS)
+        raise CompletionWorkerError(
+            "stable worker container absence could not be verified"
+        )
 
     def _container_label(self, name: str) -> str | None:
         return_code, stdout = self._runtime_control(
@@ -537,13 +548,19 @@ def _verified_container_controls(
 
 
 def _repository_state(root: Path) -> tuple[str, bool]:
+    neutral_cwd = trusted_neutral_cwd()
     head = subprocess.run(
-        ("git", "rev-parse", "HEAD"), cwd=root, shell=False, check=False,
+        ("git", "-C", str(root), "rev-parse", "HEAD"),
+        cwd=neutral_cwd, shell=False, check=False,
         capture_output=True, text=True, timeout=15,
     )
     status = subprocess.run(
-        ("git", "status", "--porcelain=v2", "--untracked-files=all"),
-        cwd=root, shell=False, check=False, capture_output=True, text=True, timeout=15,
+        (
+            "git", "-C", str(root), "status", "--porcelain=v2",
+            "--untracked-files=all",
+        ),
+        cwd=neutral_cwd, shell=False, check=False,
+        capture_output=True, text=True, timeout=15,
     )
     if (
         head.returncode != 0
@@ -596,3 +613,4 @@ def _evidence(
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:21 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
