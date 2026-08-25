@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]]
 # Canonical project profile template (director-project-profile/v1).
@@ -100,7 +101,9 @@ team:
         - "<bounded responsibility>"
       forbidden_authority:
         - "<authority this lane must not infer>"
-        # gemini_antigravity: never POSITION/REBUTTAL debate; advisory weight never cast (see team-operating-charter.md)
+        # gemini_antigravity: POSITION/REBUTTAL only after a matching persisted
+        # Director invitation; may not initiate; an invited vote stays advisory
+        # and grants no review, acceptance, merge, deployment, or write authority
   shared_skill_catalog:
     cursor_agent_workflow: "unknown" # discovered | unavailable | unknown
     antigravity_sandbox_workflow: "unknown"
@@ -177,3 +180,4 @@ next:
   expected_evidence: "<what this action should add>"
 # [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]

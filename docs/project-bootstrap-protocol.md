@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
@@ -260,21 +261,25 @@ The minimum useful sequence is:
 
 Providers communicate through the Director's correlated transport rather than
 starting unbounded, cross-project conversations. They may debate when it helps:
-collect independent `POSITION` statements from Claude and Cursor first, allow
-one focused `REBUTTAL` round, preserve evidence and dissent, and keep the
-discussion scoped to the active decision. Antigravity cannot participate in
-`POSITION` or `REBUTTAL`: none of the question, options, or peer arguments may
-cross its outbound contract. Its configured advisory weight stays in the
-immutable committee denominator and is never cast, exactly like an unavailable
-member—see [`team-operating-charter.md`](team-operating-charter.md).
+collect independent `POSITION` statements from the seated members first, allow
+only the configured bounded `REBUTTAL` rounds, preserve evidence and dissent,
+and keep the discussion scoped to the active decision. The Director may invite
+Antigravity through a persisted debate assignment. That separate typed contract
+may relay the sanitized question, vote options, accepted declared-dependency
+contributions, and a bounded Director revision request; the ordinary work
+contract remains prose-free. Antigravity cannot initiate, self-route, widen, or
+autonomously continue a conversation, and a seat grants no operational or
+acceptance authority—see
+[`team-operating-charter.md`](team-operating-charter.md).
 
 Producer votes count at their full configured advisory weight for seated
-members. Antigravity is never seated in debate and never casts its configured
-weight; it remains in the immutable denominator only. Voting is still not
-acceptance: the producing provider cannot be its own independent reviewer,
-and no vote overrides deterministic policy, approval, budget, allowlist,
-exact-SHA, CI, security, or serious-safety requirements. An ordinary tie is an
-OpenAI evidence judgment; when the tied choices materially differ in cost,
+members, including Antigravity when the Director invited it. Unavailable or
+abstaining members cast zero without changing the immutable denominator or any
+configured weight. Voting is still not acceptance: the producing provider
+cannot be its own independent reviewer, and no vote overrides deterministic
+policy, approval, budget, allowlist, exact-SHA, CI, security, or serious-safety
+requirements. An ordinary tie is an OpenAI evidence judgment; when the tied
+choices materially differ in cost,
 authority, safety, privacy, repository scope, runtime behavior, or project
 direction, OpenAI asks the owner one focused question.
 
@@ -390,3 +395,4 @@ project-specific control.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]] -->

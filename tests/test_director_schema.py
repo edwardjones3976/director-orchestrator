@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:28 UTC | BEGIN]]
@@ -468,8 +469,18 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         prompt = (root / "prompts" / "director-system.md").read_text(
             encoding="utf-8"
         )
+        protocol = (root / "docs" / "project-bootstrap-protocol.md").read_text(
+            encoding="utf-8"
+        )
+        profile = (
+            root
+            / "docs"
+            / "templates"
+            / "project-bootstrap"
+            / "project-profile.yaml"
+        ).read_text(encoding="utf-8")
 
-        for surface in (charter, setup, prompt):
+        for surface in (charter, setup, prompt, protocol):
             self.assertIn("cannot initiate", surface)
 
         self.assertIn("Ordinary Antigravity *work*", charter)
@@ -479,6 +490,10 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("typed debate contract", setup)
         self.assertIn("separate typed debate contract", prompt)
         self.assertNotIn("Antigravity cannot debate", prompt)
+        self.assertNotIn("Antigravity cannot participate", protocol)
+        self.assertNotIn("never POSITION/REBUTTAL", profile)
+        self.assertIn("matching persisted", profile)
+        self.assertIn("may not initiate", profile)
         self.assertNotIn(
             "sends only the assignment's own bounded task and acceptance checks",
             setup,
@@ -889,3 +904,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 22:28 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]
