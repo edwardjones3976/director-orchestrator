@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -13,9 +14,11 @@ adapter.  It does not plan, approve, merge, deploy, or infer authority.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import hmac
+import inspect
 import json
 import queue
 import secrets
@@ -167,7 +170,7 @@ class PacketBoundaryAdapter:
             )
         return result
 
-    def authenticated_readback(
+    async def authenticated_readback(
         self,
         work_packet: Mapping[str, Any],
         provider_run: Mapping[str, Any],
@@ -196,7 +199,21 @@ class PacketBoundaryAdapter:
                 "authenticated provider readback does not match the current "
                 "work-packet correlation"
             )
-        raw = readback(canonical_json_bytes(work), provider_run)
+        packet_bytes = canonical_json_bytes(work)
+        timeout_seconds = int(work["limits"]["timeout_seconds"])
+        async_callable = inspect.iscoroutinefunction(readback) or inspect.iscoroutinefunction(
+            getattr(readback, "__call__", None)
+        )
+
+        async def invoke() -> Any:
+            if async_callable:
+                return await readback(packet_bytes, provider_run)
+            raw = await asyncio.to_thread(readback, packet_bytes, provider_run)
+            if inspect.isawaitable(raw):
+                return await raw
+            return raw
+
+        raw = await asyncio.wait_for(invoke(), timeout=timeout_seconds)
         result = validate_packet("result", raw)
         build_replay_run(work, result)
         if result["provider"] != self.provider:
@@ -334,6 +351,11 @@ class LangGraphPacketRuntime:
                     result_packet_json TEXT,
                     result_packet_digest TEXT,
                     error_code TEXT
+                );
+                CREATE TABLE IF NOT EXISTS runtime_pre_submit_closures (
+                    idempotency_key TEXT PRIMARY KEY,
+                    parallel_effect_key TEXT,
+                    closed_at TEXT NOT NULL
                 );
                 """
             )
@@ -524,6 +546,16 @@ class LangGraphPacketRuntime:
         with self._transaction() as connection:
             if writer_token is not None:
                 self._assert_writer(connection, writer_token)
+            pre_submit_closed = connection.execute(
+                """SELECT 1 FROM runtime_pre_submit_closures
+                WHERE idempotency_key = ?""",
+                (work["idempotency_key"],),
+            ).fetchone()
+            if pre_submit_closed is not None:
+                return RuntimeExecutionOutcome(
+                    RuntimeExecutionStatus.REJECTED,
+                    "the exact provider effect was durably closed before submit",
+                )
             row = connection.execute(
                 "SELECT task_id, assignment_id, provider, execution_mode, "
                 "work_packet_digest, authority_snapshot_digest, writer_token_digest, "
@@ -1085,3 +1117,4 @@ class LangGraphPacketRuntime:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:15 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | END]]

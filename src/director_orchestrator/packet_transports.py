@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:31 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
@@ -14,6 +15,8 @@ lanes: a generic repository packet must never bypass those privacy contracts.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import hashlib
 import hmac
@@ -21,8 +24,13 @@ import re
 import subprocess
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+from urllib.parse import quote
+
+import httpx
+import jwt
 
 from .interactions import (
     ProviderInteractionPhase,
@@ -72,6 +80,257 @@ _TERMINAL_FAILURE = {
     "ERROR", "CANCELLED", "EXPIRED", "failed", "cancelled", "incomplete",
     "requires_action", "budget_exceeded",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubRepositoryEffectReadback:
+    """Read-only GitHub state used to corroborate provider repository claims."""
+
+    repository: str
+    base_ref: str
+    base_sha: str
+    branch: str
+    head_sha: str
+    compare_base_sha: str
+    compare_head_sha: str
+    base_is_ancestor: bool
+    pull_number: int | None = None
+    pull_state: str | None = None
+    pull_is_draft: bool | None = None
+    pull_is_merged: bool | None = None
+    pull_head_repository: str | None = None
+    pull_head_ref: str | None = None
+    pull_head_sha: str | None = None
+    pull_base_repository: str | None = None
+    pull_base_ref: str | None = None
+    pull_base_sha: str | None = None
+
+
+class GitHubRepositoryEffectVerifier(Protocol):
+    """Least-privilege independent readback; implementations expose no writes."""
+
+    async def readback(
+        self,
+        repository: str,
+        *,
+        starting_ref: str,
+        branch: str,
+        pull_number: int | None,
+    ) -> GitHubRepositoryEffectReadback: ...
+
+
+class GitHubReadOnlyRepositoryEffectVerifier:
+    """GET-only GitHub corroboration using the configured App or token secret."""
+
+    def __init__(
+        self,
+        *,
+        token: str = "",
+        app_id: str = "",
+        installation_id: str = "",
+        private_key_b64: str = "",
+        api_base: str = "https://api.github.com",
+        request_timeout_seconds: float = 15.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        app_values = (app_id, installation_id, private_key_b64)
+        if bool(token) == any(app_values):
+            raise ValueError("configure exactly one GitHub authentication method")
+        if any(app_values) and not all(app_values):
+            raise ValueError("GitHub App authentication is incomplete")
+        if app_values[0] and (not app_id.isdigit() or not installation_id.isdigit()):
+            raise ValueError("GitHub App and installation IDs must be numeric")
+        self._token = token
+        self._app_id = app_id
+        self._installation_id = installation_id
+        self._private_key_b64 = private_key_b64
+        self._api_base = api_base.rstrip("/")
+        self._request_timeout_seconds = max(0.1, float(request_timeout_seconds))
+        self._transport = transport
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: Any,
+        *,
+        api_base: str = "https://api.github.com",
+        request_timeout_seconds: float = 15.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> GitHubReadOnlyRepositoryEffectVerifier:
+        return cls(
+            token=settings.oracle_automerge_github_token,
+            app_id=settings.oracle_automerge_github_app_id,
+            installation_id=settings.oracle_automerge_github_installation_id,
+            private_key_b64=settings.oracle_automerge_github_app_private_key_b64,
+            api_base=api_base,
+            request_timeout_seconds=request_timeout_seconds,
+            transport=transport,
+        )
+
+    async def _authorization(self, client: httpx.AsyncClient) -> str:
+        if self._token:
+            return self._token
+        try:
+            private_key = base64.b64decode(self._private_key_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("GitHub App private key is not valid base64") from exc
+        now = int(time.time())
+        app_jwt = jwt.encode(
+            {"iat": now - 60, "exp": now + 540, "iss": self._app_id},
+            private_key,
+            algorithm="RS256",
+        )
+        response = await client.post(
+            f"/app/installations/{self._installation_id}/access_tokens",
+            headers={"Authorization": f"Bearer {app_jwt}"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token = payload.get("token") if isinstance(payload, Mapping) else None
+        if not isinstance(token, str) or not token:
+            raise RuntimeError("GitHub App returned an incomplete installation token")
+        return token
+
+    @staticmethod
+    def _required_mapping(value: Any, field: str) -> Mapping[str, Any]:
+        if not isinstance(value, Mapping):
+            raise ValueError(f"GitHub readback field {field} is malformed")
+        return value
+
+    @staticmethod
+    def _required_string(value: Any, field: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"GitHub readback field {field} is malformed")
+        return value
+
+    async def _get(
+        self, client: httpx.AsyncClient, path: str, authorization: str
+    ) -> Mapping[str, Any]:
+        response = await client.get(
+            path, headers={"Authorization": f"Bearer {authorization}"}
+        )
+        response.raise_for_status()
+        return self._required_mapping(response.json(), path)
+
+    async def readback(
+        self,
+        repository: str,
+        *,
+        starting_ref: str,
+        branch: str,
+        pull_number: int | None,
+    ) -> GitHubRepositoryEffectReadback:
+        if not repository or not _GIT_SHA.fullmatch(starting_ref):
+            raise ValueError("GitHub readback requires an exact repository base SHA")
+        if not branch or not _SAFE_BRANCH.fullmatch(branch):
+            raise ValueError("GitHub readback branch is malformed")
+        if pull_number is not None and (type(pull_number) is not int or pull_number < 1):
+            raise ValueError("GitHub readback pull number is malformed")
+
+        async with httpx.AsyncClient(
+            base_url=self._api_base,
+            timeout=self._request_timeout_seconds,
+            transport=self._transport,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "director-orchestrator-repository-effect-readback",
+            },
+        ) as client:
+            authorization = await self._authorization(client)
+            ref_payload = await self._get(
+                client,
+                f"/repos/{repository}/git/ref/heads/{quote(branch, safe='')}",
+                authorization,
+            )
+            ref_object = self._required_mapping(ref_payload.get("object"), "ref.object")
+            head_sha = self._required_string(ref_object.get("sha"), "ref.object.sha")
+            compare = await self._get(
+                client,
+                f"/repos/{repository}/compare/{starting_ref}...{head_sha}",
+                authorization,
+            )
+            compare_base = self._required_mapping(
+                compare.get("base_commit"), "compare.base_commit"
+            )
+            merge_base = self._required_mapping(
+                compare.get("merge_base_commit"), "compare.merge_base_commit"
+            )
+            commits = compare.get("commits")
+            if not isinstance(commits, list) or not commits:
+                raise ValueError("GitHub compare result lacks an exact head commit")
+            compare_head = self._required_mapping(commits[-1], "compare.commits[-1]")
+            compare_base_sha = self._required_string(
+                compare_base.get("sha"), "compare.base_commit.sha"
+            )
+            merge_base_sha = self._required_string(
+                merge_base.get("sha"), "compare.merge_base_commit.sha"
+            )
+            compare_head_sha = self._required_string(
+                compare_head.get("sha"), "compare.commits[-1].sha"
+            )
+            base_is_ancestor = (
+                compare.get("status") == "ahead"
+                and hmac.compare_digest(compare_base_sha, starting_ref)
+                and hmac.compare_digest(merge_base_sha, starting_ref)
+                and hmac.compare_digest(compare_head_sha, head_sha)
+            )
+
+            pull_payload: Mapping[str, Any] | None = None
+            if pull_number is not None:
+                pull_payload = await self._get(
+                    client,
+                    f"/repos/{repository}/pulls/{pull_number}",
+                    authorization,
+                )
+            pull_head = (
+                self._required_mapping(pull_payload.get("head"), "pull.head")
+                if pull_payload is not None
+                else None
+            )
+            pull_base = (
+                self._required_mapping(pull_payload.get("base"), "pull.base")
+                if pull_payload is not None
+                else None
+            )
+            pull_head_repo = (
+                self._required_mapping(pull_head.get("repo"), "pull.head.repo")
+                if pull_head is not None
+                else None
+            )
+            pull_base_repo = (
+                self._required_mapping(pull_base.get("repo"), "pull.base.repo")
+                if pull_base is not None
+                else None
+            )
+            return GitHubRepositoryEffectReadback(
+                repository=repository,
+                base_ref=(
+                    self._required_string(pull_base.get("ref"), "pull.base.ref")
+                    if pull_base is not None
+                    else starting_ref
+                ),
+                base_sha=starting_ref,
+                branch=branch,
+                head_sha=head_sha,
+                compare_base_sha=compare_base_sha,
+                compare_head_sha=compare_head_sha,
+                base_is_ancestor=base_is_ancestor,
+                pull_number=pull_number,
+                pull_state=(pull_payload.get("state") if pull_payload is not None else None),
+                pull_is_draft=(pull_payload.get("draft") if pull_payload is not None else None),
+                pull_is_merged=(pull_payload.get("merged") if pull_payload is not None else None),
+                pull_head_repository=(
+                    pull_head_repo.get("full_name") if pull_head_repo is not None else None
+                ),
+                pull_head_ref=(pull_head.get("ref") if pull_head is not None else None),
+                pull_head_sha=(pull_head.get("sha") if pull_head is not None else None),
+                pull_base_repository=(
+                    pull_base_repo.get("full_name") if pull_base_repo is not None else None
+                ),
+                pull_base_ref=(pull_base.get("ref") if pull_base is not None else None),
+                pull_base_sha=(pull_base.get("sha") if pull_base is not None else None),
+            )
 
 
 class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
@@ -169,12 +428,18 @@ class LegacyProviderPacketTransport:
         *,
         task_store: TaskStore,
         poll_seconds: int,
+        github_effect_verifier: GitHubRepositoryEffectVerifier | None = None,
+        github_effect_timeout_seconds: float = 15.0,
     ) -> None:
         if adapter.name == ProviderName.OPENAI:
             raise ValueError("OpenAI Director review is not a provider assignment transport")
         self.adapter = adapter
         self.task_store = task_store
         self.poll_seconds = max(1, int(poll_seconds))
+        self.github_effect_verifier = github_effect_verifier
+        self.github_effect_timeout_seconds = max(
+            0.1, float(github_effect_timeout_seconds)
+        )
 
     def _assignment(self, packet: Mapping[str, Any], provider: ProviderName) -> Assignment:
         sequence_text = str(packet["assignment_id"]).rsplit("-", 1)[-1]
@@ -416,8 +681,169 @@ class LegacyProviderPacketTransport:
         return False
 
     @staticmethod
-    def _authenticated_side_effects(
-        packet: Mapping[str, Any], run: ProviderRun
+    def _canonical_repository(value: str) -> str:
+        return value.strip().removesuffix(".git").strip("/").lower()
+
+    @staticmethod
+    def _canonical_ref(value: str) -> str:
+        return value.strip().removeprefix("refs/heads/").removeprefix("origin/")
+
+    @staticmethod
+    def _valid_readback_shape(
+        observed: Any, *, pull_required: bool
+    ) -> bool:
+        if not isinstance(observed, GitHubRepositoryEffectReadback):
+            return False
+        required_strings = (
+            observed.repository,
+            observed.base_ref,
+            observed.base_sha,
+            observed.branch,
+            observed.head_sha,
+            observed.compare_base_sha,
+            observed.compare_head_sha,
+        )
+        if any(type(value) is not str or not value for value in required_strings):
+            return False
+        if type(observed.base_is_ancestor) is not bool:
+            return False
+        pull_values = (
+            observed.pull_state,
+            observed.pull_head_repository,
+            observed.pull_head_ref,
+            observed.pull_head_sha,
+            observed.pull_base_repository,
+            observed.pull_base_ref,
+            observed.pull_base_sha,
+        )
+        if not pull_required:
+            return (
+                observed.pull_number is None
+                and observed.pull_is_draft is None
+                and observed.pull_is_merged is None
+                and all(value is None for value in pull_values)
+            )
+        return (
+            type(observed.pull_number) is int
+            and observed.pull_number > 0
+            and all(type(value) is str and value for value in pull_values)
+            and type(observed.pull_is_draft) is bool
+            and type(observed.pull_is_merged) is bool
+        )
+
+    async def _verify_completed_repository_effects(
+        self,
+        packet: Mapping[str, Any],
+        effects: list[dict[str, Any]],
+    ) -> str | None:
+        completed = [effect for effect in effects if effect["status"] == "COMPLETED"]
+        repository_effects = [
+            effect
+            for effect in completed
+            if effect["kind"]
+            in {"WRITE_ISOLATED_BRANCH", "OPEN_DRAFT_PULL_REQUEST"}
+        ]
+        if not repository_effects:
+            return None
+        if self.github_effect_verifier is None:
+            return "Independent GitHub repository-effect verification is unavailable."
+
+        branches = [
+            effect for effect in repository_effects
+            if effect["kind"] == "WRITE_ISOLATED_BRANCH"
+        ]
+        pull_requests = [
+            effect for effect in repository_effects
+            if effect["kind"] == "OPEN_DRAFT_PULL_REQUEST"
+        ]
+        if len(branches) != 1 or len(pull_requests) > 1:
+            return "Completed repository effects do not identify one exact branch candidate."
+        if pull_requests and len(branches) != 1:
+            return "A completed draft pull request lacks its exact branch candidate."
+
+        repository = self._canonical_repository(str(packet["repository"]))
+        raw_starting_ref = str(packet["starting_ref"])
+        starting_ref = self._canonical_ref(raw_starting_ref)
+        branch_target = str(branches[0]["target"])
+        branch_prefix = f"{str(packet['repository']).strip().removesuffix('.git')}@{packet['starting_ref']}:"
+        if not branch_target.startswith(branch_prefix):
+            return "Completed branch evidence changed after packet validation."
+        branch = branch_target[len(branch_prefix):]
+        pull_number = (
+            int(str(pull_requests[0]["external_id"]))
+            if pull_requests
+            else None
+        )
+        authority_shas = {
+            str(item.get("commit_sha"))
+            for item in packet["authority_snapshot"]
+            if isinstance(item, Mapping)
+        }
+        if len(authority_shas) != 1:
+            return "Packet authority snapshot does not bind one exact base SHA."
+        expected_base_sha = next(iter(authority_shas))
+        if not _GIT_SHA.fullmatch(expected_base_sha):
+            return "Packet authority snapshot base SHA is malformed."
+
+        try:
+            observed = await asyncio.wait_for(
+                self.github_effect_verifier.readback(
+                    repository,
+                    starting_ref=expected_base_sha,
+                    branch=branch,
+                    pull_number=pull_number,
+                ),
+                timeout=self.github_effect_timeout_seconds,
+            )
+        except Exception:
+            return "Independent GitHub repository-effect verification failed."
+
+        if not self._valid_readback_shape(
+            observed, pull_required=pull_number is not None
+        ):
+            return "Independent GitHub repository-effect verification returned malformed evidence."
+        if (
+            self._canonical_repository(observed.repository) != repository
+            or (
+                not _GIT_SHA.fullmatch(raw_starting_ref)
+                and self._canonical_ref(observed.base_ref) != starting_ref
+            )
+            or not hmac.compare_digest(observed.base_sha, expected_base_sha)
+            or observed.branch != branch
+            or not _GIT_SHA.fullmatch(observed.head_sha)
+            or hmac.compare_digest(observed.head_sha, expected_base_sha)
+            or not _GIT_SHA.fullmatch(observed.compare_base_sha)
+            or not hmac.compare_digest(
+                observed.compare_base_sha, expected_base_sha
+            )
+            or not _GIT_SHA.fullmatch(observed.compare_head_sha)
+            or not hmac.compare_digest(observed.compare_head_sha, observed.head_sha)
+            or observed.base_is_ancestor is not True
+        ):
+            return "Independent GitHub branch readback does not match packet authority."
+        if pull_number is None:
+            return None
+        if (
+            observed.pull_number != pull_number
+            or observed.pull_state != "open"
+            or observed.pull_is_draft is not True
+            or observed.pull_is_merged is not False
+            or self._canonical_repository(observed.pull_head_repository or "")
+            != repository
+            or observed.pull_head_ref != branch
+            or observed.pull_head_sha is None
+            or not hmac.compare_digest(observed.pull_head_sha, observed.head_sha)
+            or self._canonical_repository(observed.pull_base_repository or "")
+            != repository
+            or observed.pull_base_ref != observed.base_ref
+            or observed.pull_base_sha is None
+            or not hmac.compare_digest(observed.pull_base_sha, expected_base_sha)
+        ):
+            return "Independent GitHub draft pull-request readback does not match packet authority."
+        return None
+
+    async def _authenticated_side_effects(
+        self, packet: Mapping[str, Any], run: ProviderRun
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Return validated provider-side effects or a fail-closed reason.
 
@@ -507,7 +933,7 @@ class LegacyProviderPacketTransport:
             if idempotency_key in seen_idempotency_keys:
                 return [], "Authenticated provider side-effect evidence is ambiguous."
             seen_idempotency_keys.add(idempotency_key)
-            expected_effect_key = LegacyProviderPacketTransport._effect_idempotency_key(
+            expected_effect_key = self._effect_idempotency_key(
                 packet, str(effect["kind"])
             )
             if not hmac.compare_digest(idempotency_key, expected_effect_key):
@@ -515,9 +941,7 @@ class LegacyProviderPacketTransport:
                     "Provider side-effect evidence does not use the Director-issued "
                     "idempotency identity."
                 )
-            if not LegacyProviderPacketTransport._effect_target_is_authorized(
-                packet, effect
-            ):
+            if not self._effect_target_is_authorized(packet, effect):
                 return [], (
                     "Provider side-effect evidence target is outside packet authority."
                 )
@@ -529,9 +953,14 @@ class LegacyProviderPacketTransport:
         missing = allowed - reported
         if missing:
             return [], "Authenticated evidence does not dispose every allowed external effect."
+        readback_problem = await self._verify_completed_repository_effects(
+            packet, normalized
+        )
+        if readback_problem is not None:
+            return [], readback_problem
         return normalized, None
 
-    def _result(
+    async def _result_async(
         self, packet: Mapping[str, Any], run: ProviderRun
     ) -> Mapping[str, Any]:
         provider = self.adapter.name
@@ -540,7 +969,7 @@ class LegacyProviderPacketTransport:
         failed = run.status in _TERMINAL_FAILURE or not run.result
         if run.status == "WAITING_CALLBACK":
             raise ValueError("provider readback is not terminal")
-        side_effects, effect_evidence_problem = self._authenticated_side_effects(
+        side_effects, effect_evidence_problem = await self._authenticated_side_effects(
             packet, run
         )
         unverified_effects = effect_evidence_problem is not None
@@ -601,7 +1030,14 @@ class LegacyProviderPacketTransport:
         }
         return validate_packet("result", result)
 
-    def authenticated_readback(
+    def _result(
+        self, packet: Mapping[str, Any], run: ProviderRun
+    ) -> Mapping[str, Any]:
+        """Synchronous worker-thread entry point used by immediate dispatch."""
+
+        return asyncio.run(self._result_async(packet, run))
+
+    async def authenticated_readback(
         self,
         work_packet_json: bytes,
         provider_run: Mapping[str, Any],
@@ -618,7 +1054,7 @@ class LegacyProviderPacketTransport:
                 "authenticated provider readback does not match the current "
                 "work-packet correlation"
             )
-        return self._result(packet, run)
+        return await self._result_async(packet, run)
 
     def send(
         self, work_packet_json: bytes, *, context: ProviderAdapterContext
@@ -645,6 +1081,8 @@ def build_primary_packet_adapters(
     *,
     task_store: TaskStore,
     poll_seconds: int,
+    github_effect_verifier: GitHubRepositoryEffectVerifier | None = None,
+    github_effect_timeout_seconds: float = 15.0,
 ) -> dict[str, PacketBoundaryAdapter]:
     result: dict[str, PacketBoundaryAdapter] = {}
     for provider in (
@@ -659,7 +1097,11 @@ def build_primary_packet_adapters(
         result[provider.value] = PacketBoundaryAdapter(
             provider.value,
             LegacyProviderPacketTransport(
-                adapter, task_store=task_store, poll_seconds=poll_seconds
+                adapter,
+                task_store=task_store,
+                poll_seconds=poll_seconds,
+                github_effect_verifier=github_effect_verifier,
+                github_effect_timeout_seconds=github_effect_timeout_seconds,
             ),
         )
     return result
@@ -667,3 +1109,4 @@ def build_primary_packet_adapters(
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:31 UTC | END]]

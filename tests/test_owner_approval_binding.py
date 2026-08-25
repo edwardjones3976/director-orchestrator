@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:10 UTC | BEGIN]]
@@ -1227,6 +1228,32 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
 
         self.assertNotEqual(first, second)
         self.assertEqual(record.cumulative_estimated_cost_usd, 0.75)
+
+    def test_late_failed_pre_submit_cannot_erase_completed_effect_accounting(self):
+        record = _record(owner_approved=True, approved=[1])
+        assignment = record.plan.assignments[0]
+        assignment.estimated_cost_usd = 0.75
+        effect_key = reserve_provider_effect(
+            record, assignment, phase="dispatch", max_task_budget_usd=1.0
+        )
+        record_provider_effect_observation(
+            record,
+            assignment,
+            effect_key=effect_key,
+            phase="dispatch",
+            outcome="completed",
+            run_id="completed-run",
+        )
+        record_provider_effect_observation(
+            record,
+            assignment,
+            effect_key=effect_key,
+            phase="dispatch",
+            outcome="failed_pre_submit",
+        )
+
+        self.assertEqual(0.75, record.cumulative_estimated_cost_usd)
+        self.assertEqual(1, record.cumulative_effect_hops)
 
     def test_completed_revision_allows_next_revision_but_not_duplicate_attempt(self):
         record = _record(owner_approved=True, approved=[1])
@@ -3171,6 +3198,9 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
             record = _record()
             record.task_id = "DIR-DRY-SLACK-REARM"
             record.intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
+            record.message = (
+                "Paid execution requires a fresh authenticated Slack gateway proof."
+            )
             task_store.create(record)
             current, version = task_store.get_versioned(record.task_id)
             test_settings = replace(
@@ -3214,6 +3244,55 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
                 restarted.intake_authentication,
             )
             self.assertEqual(TaskStatus.QUEUED, restarted.status)
+            run.assert_awaited_once_with(record.task_id)
+
+    def test_nonpaid_slack_decision_remains_the_current_plan_approval(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            record = _record()
+            record.task_id = "DIR-DRY-SLACK-PLAN-APPROVAL"
+            record.intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
+            task_store.create(record)
+            current, version = task_store.get_versioned(record.task_id)
+            test_settings = replace(
+                self._settings(),
+                allow_paid_runs=False,
+                slack_owner_user_id="U0B9UJ86D27",
+            )
+            approval = OwnerApproval(
+                owner_user_id="U0B9UJ86D27",
+                source=OwnerApprovalSource.SLACK_COMMAND,
+                note="Approve only the current dry-run plan decision",
+            )
+            approval = _signed_slack_approval(
+                current,
+                version,
+                approval,
+                secret=test_settings.slack_gateway_secret,
+                shared_secret=test_settings.shared_secret,
+                channel_id=test_settings.slack_channel_id,
+            )
+            run = AsyncMock(return_value=None)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main.engine, "run", new=run),
+            ):
+                response = TestClient(main.app).post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json=approval.model_dump(mode="json"),
+                )
+
+            self.assertEqual(200, response.status_code, response.text)
+            stored = task_store.get(record.task_id)
+            self.assertTrue(stored.owner_approved)
+            self.assertEqual(
+                IntakeAuthentication.BEARER_DRY_RUN,
+                stored.intake_authentication,
+            )
             run.assert_awaited_once_with(record.task_id)
 
     def test_failed_retry_proof_cannot_be_consumed_as_paid_rearm(self):
@@ -3375,6 +3454,8 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
             )
             live_engine = OrchestrationEngine(paid_settings, task_store)
             live_engine.director.plan = AsyncMock(return_value=fresh_plan)
+            asyncio.run(live_engine.run(task_id))
+            preview, preview_version = task_store.get_versioned(task_id)
             approval = _signed_slack_approval(
                 preview,
                 preview_version,
@@ -3661,3 +3742,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:41 UTC | END]]

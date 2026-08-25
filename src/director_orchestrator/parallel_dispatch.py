@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | BEGIN]]
 """Deterministic policy and durable ledger primitives for bounded dispatch batches.
@@ -376,6 +377,13 @@ class ParallelDispatchLedger:
                     updated_at TEXT NOT NULL
                 )"""
             )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS runtime_pre_submit_closures(
+                    idempotency_key TEXT PRIMARY KEY,
+                    parallel_effect_key TEXT,
+                    closed_at TEXT NOT NULL
+                )"""
+            )
 
     @staticmethod
     def _identity_json(batch: DispatchBatch) -> str:
@@ -549,12 +557,19 @@ class ParallelDispatchLedger:
         return updated
 
     def claim(
-        self, batch_id: str, effect_key: str, *, provider_limit: int = 1
+        self,
+        batch_id: str,
+        effect_key: str,
+        *,
+        provider_limit: int = 1,
+        deployment_limit: int = 2,
     ) -> bool:
-        """Claim one reserved member once; all other states are non-dispatchable."""
+        """Claim one member under provider and deployment-wide durable caps."""
 
         if provider_limit < 1:
             raise ParallelDispatchError("provider concurrency limit must be positive")
+        if deployment_limit < 1:
+            raise ParallelDispatchError("deployment concurrency limit must be positive")
         with self._lock, self._connect(immediate=True) as connection:
             member = connection.execute(
                 """SELECT provider,state FROM parallel_dispatch_members
@@ -563,7 +578,7 @@ class ParallelDispatchLedger:
             ).fetchone()
             if member is None or member["state"] != MemberState.RESERVED.value:
                 return False
-            active = int(
+            provider_active = int(
                 connection.execute(
                     """SELECT COUNT(*) FROM parallel_dispatch_members
                     WHERE provider = ? AND state IN (?, ?)""",
@@ -574,7 +589,20 @@ class ParallelDispatchLedger:
                     ),
                 ).fetchone()[0]
             )
-            if active >= provider_limit:
+            deployment_active = int(
+                connection.execute(
+                    """SELECT COUNT(*) FROM parallel_dispatch_members
+                    WHERE state IN (?, ?)""",
+                    (
+                        MemberState.DISPATCHING.value,
+                        MemberState.AMBIGUOUS.value,
+                    ),
+                ).fetchone()[0]
+            )
+            if (
+                provider_active >= provider_limit
+                or deployment_active >= deployment_limit
+            ):
                 return False
             changed = connection.execute(
                 """UPDATE parallel_dispatch_members SET state = ?
@@ -587,6 +615,66 @@ class ParallelDispatchLedger:
                 ),
             ).rowcount
             return changed == 1
+
+    def reserve_pre_submit_closure(
+        self,
+        *,
+        runtime_idempotency_key: str,
+        parallel_effect_key: str | None = None,
+    ) -> bool:
+        """Persist an exact-key tombstone before task-level pre-submit closure."""
+
+        if not runtime_idempotency_key.strip():
+            raise ParallelDispatchError("runtime idempotency key is required")
+        if parallel_effect_key is not None and not _EFFECT_KEY.fullmatch(
+            parallel_effect_key
+        ):
+            raise ParallelDispatchError("parallel effect key must be canonical")
+        with self._lock, self._connect(immediate=True) as connection:
+            existing_closure = connection.execute(
+                """SELECT parallel_effect_key FROM runtime_pre_submit_closures
+                WHERE idempotency_key = ?""",
+                (runtime_idempotency_key,),
+            ).fetchone()
+            if existing_closure is not None:
+                if existing_closure["parallel_effect_key"] != parallel_effect_key:
+                    raise ParallelDispatchIntegrityError(
+                        "runtime pre-submit closure identity conflicts"
+                    )
+                return True
+            runtime_table = connection.execute(
+                """SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'runtime_dispatch_ledger'"""
+            ).fetchone()
+            runtime_owned = runtime_table is not None and connection.execute(
+                    """SELECT 1 FROM runtime_dispatch_ledger
+                    WHERE idempotency_key = ?""",
+                    (runtime_idempotency_key,),
+                ).fetchone() is not None
+            parallel_owned = False
+            if parallel_effect_key is not None:
+                row = connection.execute(
+                    """SELECT state FROM parallel_dispatch_members
+                    WHERE effect_key = ?""",
+                    (parallel_effect_key,),
+                ).fetchone()
+                parallel_owned = row is not None and row["state"] not in {
+                    MemberState.RESERVED.value,
+                    MemberState.CANCELLED.value,
+                }
+            if runtime_owned or parallel_owned:
+                return False
+            connection.execute(
+                """INSERT INTO runtime_pre_submit_closures(
+                    idempotency_key, parallel_effect_key, closed_at
+                ) VALUES (?, ?, ?)""",
+                (
+                    runtime_idempotency_key,
+                    parallel_effect_key,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            return True
 
     def record(
         self, batch_id: str, effect_key: str, state: MemberState, *, detail: str = ""
@@ -804,3 +892,4 @@ class DailyTaskBudgetLedger:
             return reserved + task_budget_usd
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
@@ -10,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -21,7 +23,10 @@ from director_orchestrator.completion_worker_backends import (
     DisposableContainerWorkerBackend,
     ExecutableBinding,
     SanitizedWorkerOutput,
+    _git_environment,
     _repository_state,
+    _start_cat_file_batch,
+    _tracked_repository_snapshot,
 )
 from director_orchestrator.process_isolation import trusted_neutral_cwd
 from director_orchestrator.completion_workers import (
@@ -98,6 +103,11 @@ class RecordingBackend:
             runner_registry_digest=request.runner_registry_digest,
             worker_registry_digest=request.worker_registry_digest,
             worker_spec_digest=request.worker_spec_digest,
+            snapshot_manifest_digest=domain_digest(
+                "director-completion-worker-snapshot-manifest/v1",
+                {"head_sha": request.expected_head_sha, "entries": []},
+            ),
+            snapshot_file_count=0,
             before_head_sha=("2" * 40 if self.mismatched_sha else request.expected_head_sha),
             after_head_sha=request.expected_head_sha,
             before_clean=True,
@@ -314,7 +324,17 @@ class CompletionWorkerTests(unittest.TestCase):
             worker_spec_id=self.container.spec_id,
             worker_spec_digest=self.container.spec_digest,
         )
-        command = backend.command(self.container, request)
+        with _tracked_repository_snapshot(
+            self.repository, self.head, deadline=time.monotonic() + 30
+        ) as snapshot:
+            command = backend.command(self.container, request, snapshot)
+            mount = next(
+                command[index + 1]
+                for index, value in enumerate(command[:-1])
+                if value == "--mount"
+            )
+            self.assertIn(str(snapshot.root), mount)
+            self.assertNotIn(str(self.repository.resolve()), mount)
         self.assertEqual(Path(sys.executable).resolve(), Path(command[0]).resolve())
         for required in (
             "--network", "none", "--read-only", "--cap-drop", "ALL",
@@ -335,19 +355,198 @@ class CompletionWorkerTests(unittest.TestCase):
         backend = AuditedHostWorkerBackend(
             ExecutableBinding.create(sys.executable), StaticSanitizer()
         )
-        command = backend.command(self.host, self.request())
-        self.assertIn("--env", command)
-        pythonpath = next(
-            item.removeprefix("PYTHONPATH=")
-            for item in command
-            if item.startswith("PYTHONPATH=")
-        )
-        self.assertEqual((self.repository / "src").resolve(), Path(pythonpath).resolve())
+        with _tracked_repository_snapshot(
+            self.repository, self.head, deadline=time.monotonic() + 30
+        ) as snapshot:
+            command = backend.command(self.host, self.request(), snapshot)
+            self.assertIn("--env", command)
+            pythonpath = next(
+                item.removeprefix("PYTHONPATH=")
+                for item in command
+                if item.startswith("PYTHONPATH=")
+            )
+            self.assertEqual((snapshot.root / "src").resolve(), Path(pythonpath).resolve())
+            self.assertNotEqual(
+                (self.repository / "src").resolve(), Path(pythonpath).resolve()
+            )
         expected_cwd = (
             Path(os.environ["SYSTEMROOT"], "System32") if os.name == "nt" else Path("/")
         )
         self.assertEqual(expected_cwd, backend._trusted_cwd())
         self.assertNotEqual(self.repository.resolve(), backend._trusted_cwd())
+
+    def test_tracked_snapshot_excludes_ignored_secret_and_binds_manifest(self):
+        (self.repository / ".gitignore").write_text(".env.secret\n", encoding="utf-8")
+        subprocess.run(("git", "add", ".gitignore"), cwd=self.repository, check=True)
+        subprocess.run(("git", "commit", "-q", "-m", "ignore secret"), cwd=self.repository, check=True)
+        head = subprocess.check_output(
+            ("git", "rev-parse", "HEAD"), cwd=self.repository, text=True
+        ).strip()
+        (self.repository / ".env.secret").write_text(
+            "PERPLEXITY_API_KEY=never-copy-this\n", encoding="utf-8"
+        )
+
+        snapshot_path: Path | None = None
+        with patch(
+            "director_orchestrator.completion_worker_backends._start_cat_file_batch",
+            wraps=_start_cat_file_batch,
+        ) as batch_start:
+            with _tracked_repository_snapshot(
+                self.repository, head, deadline=time.monotonic() + 30
+            ) as snapshot:
+                snapshot_path = snapshot.root
+                self.assertFalse((snapshot.root / ".env.secret").exists())
+                self.assertEqual("fixture\n", (snapshot.root / "fixture.txt").read_text())
+                self.assertEqual(2, snapshot.file_count)
+                self.assertRegex(snapshot.manifest_digest, r"^sha256:[0-9a-f]{64}$")
+                self.assertNotEqual(self.repository.resolve(), snapshot.root)
+                self.assertNotIn(self.repository.resolve(), snapshot.root.parents)
+        self.assertEqual(1, batch_start.call_count)
+        self.assertIsNotNone(snapshot_path)
+        self.assertFalse(snapshot_path.exists())
+
+    def test_live_mutate_read_restore_cannot_change_worker_snapshot(self):
+        live = self.repository / "fixture.txt"
+        original = live.read_text(encoding="utf-8")
+
+        with _tracked_repository_snapshot(
+            self.repository, self.head, deadline=time.monotonic() + 30
+        ) as snapshot:
+            live.write_text("mutated during worker execution\n", encoding="utf-8")
+            try:
+                self.assertEqual(
+                    original,
+                    (snapshot.root / "fixture.txt").read_text(encoding="utf-8"),
+                )
+            finally:
+                live.write_text(original, encoding="utf-8")
+
+        status = subprocess.check_output(
+            ("git", "status", "--porcelain=v2", "--untracked-files=all"),
+            cwd=self.repository,
+            text=True,
+        )
+        self.assertEqual("", status)
+
+    def test_snapshot_and_worker_share_one_total_deadline(self):
+        backend = DisposableContainerWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        backend._ensure_container_absent = Mock()
+        execution = (
+            0,
+            False,
+            False,
+            StaticSanitizer().sanitize(b"OK", b""),
+            True,
+        )
+        backend._execute_argv = Mock(return_value=execution)
+        short_spec = replace(
+            self.container,
+            limits=replace(self.container.limits, timeout_seconds=1),
+        )
+        request = self.request(
+            worker_spec_id=self.container.spec_id,
+            worker_spec_digest=self.container.spec_digest,
+        )
+
+        backend.execute(short_spec, request, lease_token="lease")
+
+        remaining = backend._execute_argv.call_args.kwargs["timeout_seconds"]
+        self.assertGreater(remaining, 0)
+        self.assertLess(remaining, short_spec.limits.timeout_seconds)
+
+    def test_expired_total_deadline_prevents_snapshot_construction(self):
+        with self.assertRaisesRegex(CompletionWorkerError, "total deadline"):
+            with _tracked_repository_snapshot(
+                self.repository,
+                self.head,
+                deadline=time.monotonic() - 1,
+            ):
+                self.fail("expired construction must not yield a snapshot")
+
+    def test_snapshot_git_batch_is_contained_and_cannot_lazy_fetch(self):
+        environment = _git_environment()
+        self.assertEqual("1", environment["GIT_NO_LAZY_FETCH"])
+        self.assertEqual("0", environment["GIT_TERMINAL_PROMPT"])
+        self.assertEqual("Never", environment["GCM_INTERACTIVE"])
+        process = Mock()
+        guard = Mock()
+        with patch(
+            "director_orchestrator.completion_worker_backends.launch_contained_process",
+            return_value=(process, guard),
+        ) as launch:
+            returned = _start_cat_file_batch(self.repository)
+
+        self.assertEqual((process, guard), returned)
+        command = launch.call_args.args[0]
+        self.assertEqual(("cat-file", "--batch"), command[-2:])
+        self.assertFalse(launch.call_args.kwargs["shell"])
+        self.assertEqual("1", launch.call_args.kwargs["env"]["GIT_NO_LAZY_FETCH"])
+
+    def test_cleanup_errors_never_skip_snapshot_removal_or_handle_closure(self):
+        class BrokenInput:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def write(self, _value: bytes) -> None:
+                raise BrokenPipeError("fixture write failure")
+
+            def flush(self) -> None:
+                pass
+
+            def close(self) -> None:
+                self.closed = True
+                raise OSError("fixture stdin close failure")
+
+        class BrokenOutput:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def readline(self) -> bytes:
+                return b""
+
+            def close(self) -> None:
+                self.closed = True
+                raise OSError("fixture stdout close failure")
+
+        process = Mock()
+        process.stdin = BrokenInput()
+        process.stdout = BrokenOutput()
+        process.pid = 424242
+        process.poll.return_value = None
+        process.kill.side_effect = OSError("fixture kill failure")
+        process.wait.return_value = 1
+        guard = Mock()
+        guard.terminate.side_effect = OSError("fixture guard failure")
+        snapshot_root = self.root / "forced-snapshot"
+        snapshot_root.mkdir()
+
+        with patch(
+            "director_orchestrator.completion_worker_backends.tempfile.mkdtemp",
+            return_value=str(snapshot_root),
+        ), patch(
+            "director_orchestrator.completion_worker_backends._start_cat_file_batch",
+            return_value=(process, guard),
+        ), patch(
+            "director_orchestrator.completion_worker_backends.os.killpg",
+            create=True,
+        ):
+            with self.assertRaisesRegex(CompletionWorkerError, "cleanup failed closed"):
+                with _tracked_repository_snapshot(
+                    self.repository,
+                    self.head,
+                    deadline=time.monotonic() + 30,
+                ):
+                    self.fail("broken batch must not yield")
+
+        self.assertFalse(snapshot_root.exists())
+        self.assertTrue(process.stdin.closed)
+        self.assertTrue(process.stdout.closed)
+        process.kill.assert_called()
+        process.wait.assert_called()
+        guard.terminate.assert_called()
+        guard.close.assert_called()
 
     def test_host_backend_fails_closed_without_orchestrator_verified_controls(self):
         backend = AuditedHostWorkerBackend(
@@ -500,3 +699,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]

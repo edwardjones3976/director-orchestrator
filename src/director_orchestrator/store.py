@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
@@ -1050,11 +1051,17 @@ class TaskStore:
                 observations.setdefault(effect.effect_key, set()).add(effect.outcome)
                 if effect.effect_key not in intents:
                     legacy[effect.effect_key] = effect
+        def counts_as_consumed_effect(key: str) -> bool:
+            outcomes = observations.get(key, set())
+            return "failed_pre_submit" not in outcomes or bool(
+                outcomes - {"failed_pre_submit"}
+            )
+
         record.cumulative_estimated_cost_usd = round(
             sum(
                 effect.estimated_cost_usd
                 for key, effect in intents.items()
-                if "failed_pre_submit" not in observations.get(key, set())
+                if counts_as_consumed_effect(key)
             )
             + sum(effect.estimated_cost_usd for effect in legacy.values()),
             8,
@@ -1062,7 +1069,7 @@ class TaskStore:
         record.cumulative_effect_hops = sum(
             effect.hop_units
             for key, effect in intents.items()
-            if "failed_pre_submit" not in observations.get(key, set())
+            if counts_as_consumed_effect(key)
         )
 
     def _migrate_effect_ledgers(self, connection: sqlite3.Connection) -> None:
@@ -1182,3 +1189,4 @@ class TaskStore:
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]

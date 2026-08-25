@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:58 UTC | BEGIN]]
 """Cross-worker regressions for post-publication provider authority rebinding."""
@@ -336,7 +337,7 @@ class PostPublicationPlanRevalidationTests(unittest.IsolatedAsyncioTestCase):
         self._assert_fail_closed(store)
         self._assert_failed_pre_submit(store)
 
-    async def test_parallel_rebind_failure_closes_proven_unsubmitted_effect(self) -> None:
+    async def test_parallel_rebind_failure_preserves_claimed_effect_as_ambiguous(self) -> None:
         transport = RecordingTransport(self.result)
         router = StubPacketTaskRouter(
             self.work, PacketBoundaryAdapter("cursor", transport)
@@ -365,7 +366,7 @@ class PostPublicationPlanRevalidationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(0, transport.sends)
         self._assert_fail_closed(store)
-        self._assert_failed_pre_submit(store)
+        self._assert_preserved_ambiguity(store)
 
     async def test_accepted_recovery_reloads_before_collaboration_side_effect(self) -> None:
         settings = self._settings(cursor_api_key="test-cursor-key")
@@ -412,3 +413,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]

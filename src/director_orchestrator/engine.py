@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | BEGIN]]
@@ -579,6 +580,7 @@ class OrchestrationEngine:
                 assignment,
                 effect_key=task_effect_key,
                 reserved_by_caller=task_effect_reserved_here,
+                runtime_idempotency_key=str(work_packet["idempotency_key"]),
             )
             return False
         try:
@@ -628,7 +630,7 @@ class OrchestrationEngine:
             if authenticated_readbacks:
                 readback = authenticated_readbacks[-1]
                 try:
-                    result_packet = adapter.authenticated_readback(
+                    result_packet = await adapter.authenticated_readback(
                         work_packet,
                         readback.model_dump(mode="json"),
                     )
@@ -819,14 +821,31 @@ class OrchestrationEngine:
 
         if not candidates:
             return None
+        provider_caps = self.settings.parallel_provider_caps()
+        unknown_providers = sorted(
+            {
+                item.provider.casefold()
+                for item in candidates
+                if item.provider.casefold() not in provider_caps
+            }
+        )
+        if unknown_providers:
+            await self._stop_for_owner(
+                record,
+                "Parallel dispatch has no configured concurrency cap for provider(s) "
+                f"{', '.join(unknown_providers)}; no batch or task effect was reserved.",
+            )
+            return False
         policy = ParallelDispatchPolicy(
             enabled=True,
             kill_switch_engaged=False,
             initial_cap=self.settings.langgraph_parallel_initial_max_concurrency,
             scaled_cap=self.settings.langgraph_parallel_auto_scale_max_concurrency,
             clean_batches_to_scale=self.settings.langgraph_parallel_clean_batches_to_scale,
-            provider_caps=self.settings.parallel_provider_caps(),
+            provider_caps=provider_caps,
         )
+        deployment_health = ledger.load_health("__deployment__")
+        deployment_limit = policy.effective_cap(deployment_health)
         by_effect = {item.effect_key: item for item in candidates}
         recovered = ledger.find_latest_batch(record.task_id, tuple(by_effect))
         if recovered is None:
@@ -841,7 +860,7 @@ class OrchestrationEngine:
                     - record.cumulative_estimated_cost_usd,
                 ),
                 policy=policy,
-                health=ledger.load_health("__deployment__"),
+                health=deployment_health,
             )
             if decision.batch is None:
                 return None
@@ -894,7 +913,6 @@ class OrchestrationEngine:
                 str,
             ]
         ] = []
-        provider_caps = self.settings.parallel_provider_caps()
         for member in selected:
             state = member_states[member.effect_key]
             if state in {
@@ -939,6 +957,7 @@ class OrchestrationEngine:
                     batch_id,
                     member.effect_key,
                     provider_limit=provider_caps[assignment.agent.value],
+                    deployment_limit=deployment_limit,
                 ):
                     # Another task currently owns this provider's deployment-wide
                     # slot. Leave this member RESERVED and resume it later.
@@ -1002,6 +1021,8 @@ class OrchestrationEngine:
                             assignment,
                             effect_key=task_effect_key,
                             reserved_by_caller=task_effect_reserved_here,
+                            runtime_idempotency_key=str(work["idempotency_key"]),
+                            parallel_member_effect_key=member.effect_key,
                         )
                     )
                     ledger.record(
@@ -2363,6 +2384,8 @@ class OrchestrationEngine:
         *,
         effect_key: str,
         reserved_by_caller: bool = True,
+        runtime_idempotency_key: str | None = None,
+        parallel_member_effect_key: str | None = None,
     ) -> bool:
         """Close only a provably unsubmitted effect after publication drift.
 
@@ -2449,6 +2472,24 @@ class OrchestrationEngine:
             )
 
         try:
+            if self.parallel_dispatch is None or (
+                runtime_idempotency_key is None
+                and parallel_member_effect_key is None
+            ):
+                return (
+                    self.store.mutate_if_version(
+                        published_record.task_id,
+                        expected_version,
+                        close,
+                    )
+                    is not None
+                )
+            pre_submit_closed = self.parallel_dispatch.reserve_pre_submit_closure(
+                runtime_idempotency_key=runtime_idempotency_key,
+                parallel_effect_key=parallel_member_effect_key,
+            )
+            if not pre_submit_closed:
+                return False
             return (
                 self.store.mutate_if_version(
                     published_record.task_id,
@@ -5512,3 +5553,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]

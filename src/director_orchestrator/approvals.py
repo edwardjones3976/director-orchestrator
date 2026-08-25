@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
@@ -52,6 +53,9 @@ _SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_TASK_EFFECTS = 200
 _SLACK_GATEWAY_PROOF_TTL_SECONDS = 300
 _SLACK_GATEWAY_FUTURE_SKEW_SECONDS = 30
+_PAID_REARM_MESSAGE = (
+    "Paid execution requires a fresh authenticated Slack gateway proof."
+)
 _SLACK_GATEWAY_MIN_SECRET_LENGTH = 32
 _SLACK_INTAKE_ATTESTATION_VERSION = "v1"
 SLACK_INTAKE_ISSUED_AT_HEADER = "X-Director-Intake-Issued-At"
@@ -224,14 +228,14 @@ def _refresh_cumulative_cost(record: TaskRecord) -> None:
     reserved = [
         effect.estimated_cost_usd
         for key, effect in intents.items()
-        if "failed_pre_submit" not in observations.get(key, set())
+        if observations.get(key, set()) != {"failed_pre_submit"}
     ]
     reserved.extend(effect.estimated_cost_usd for effect in legacy.values())
     record.cumulative_estimated_cost_usd = round(sum(reserved), 8)
     record.cumulative_effect_hops = sum(
         effect.hop_units
         for key, effect in intents.items()
-        if "failed_pre_submit" not in observations.get(key, set())
+        if observations.get(key, set()) != {"failed_pre_submit"}
     )
 
 
@@ -601,7 +605,34 @@ class CurrentOwnerDecision:
 def current_owner_decision(record: TaskRecord) -> CurrentOwnerDecision | None:
     """Classify and bind the exact deterministic owner stop currently pending."""
 
-    if record.status != TaskStatus.OWNER_DECISION_REQUIRED or record.plan is None:
+    if record.status != TaskStatus.OWNER_DECISION_REQUIRED:
+        return None
+    if (
+        record.intake_authentication != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+        and hmac.compare_digest(record.message or "", _PAID_REARM_MESSAGE)
+    ):
+        return CurrentOwnerDecision(
+            kind="paid_rearm",
+            digest="sha256:"
+            + _canonical_digest(
+                {
+                    "task_id": record.task_id,
+                    "kind": "paid_rearm",
+                    "plan_generation": record.plan_generation,
+                    "intake_digest": _canonical_digest(
+                        record.intake.model_dump(mode="json")
+                    ),
+                    "plan_digest": (
+                        plan_approval_digest(record)
+                        if record.plan is not None
+                        else None
+                    ),
+                }
+            ),
+            assignment_sequence=None,
+            clarification=False,
+        )
+    if record.plan is None:
         return None
     plan_digest = plan_approval_digest(record)
     kind: str
@@ -748,30 +779,6 @@ def failed_retry_decision_digest(record: TaskRecord) -> str:
 def _slack_gateway_decision(record: TaskRecord) -> tuple[str, str]:
     if record.status == TaskStatus.FAILED:
         return "failed_predispatch_retry", failed_retry_decision_digest(record)
-    if (
-        record.status == TaskStatus.OWNER_DECISION_REQUIRED
-        and record.intake_authentication
-        != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
-    ):
-        return (
-            "paid_rearm",
-            "sha256:"
-            + _canonical_digest(
-                {
-                    "task_id": record.task_id,
-                    "kind": "paid_rearm",
-                    "plan_generation": record.plan_generation,
-                    "intake_digest": _canonical_digest(
-                        record.intake.model_dump(mode="json")
-                    ),
-                    "plan_digest": (
-                        plan_approval_digest(record)
-                        if record.plan is not None
-                        else None
-                    ),
-                }
-            ),
-        )
     decision = current_owner_decision(record)
     if decision is None:
         raise StaleApproval("Task is not awaiting an owner decision")
@@ -871,6 +878,7 @@ def verify_slack_gateway_proof(
     *,
     channel_id: str,
     path: str,
+    allow_paid_runs: bool,
     now: int | None = None,
 ) -> tuple[str, str, int]:
     """Verify transport provenance and return the bound decision and nonce claim."""
@@ -893,6 +901,9 @@ def verify_slack_gateway_proof(
     age = current_time - proof.issued_at
     if age < -_SLACK_GATEWAY_FUTURE_SKEW_SECONDS or age > _SLACK_GATEWAY_PROOF_TTL_SECONDS:
         raise StaleApproval("Slack gateway proof is expired or not yet valid")
+    decision_kind, _ = _slack_gateway_decision(record)
+    if decision_kind == "paid_rearm" and not allow_paid_runs:
+        raise StaleApproval("Paid rearm is disabled while paid execution is off")
     expected_signature = hmac.new(
         secret.encode("utf-8"),
         _slack_gateway_payload(record, approval, proof, path=path),
@@ -903,7 +914,6 @@ def verify_slack_gateway_proof(
     nonce_digest = _canonical_digest(
         {"task_id": record.task_id, "nonce": proof.nonce}
     )
-    decision_kind, _ = _slack_gateway_decision(record)
     return (
         decision_kind,
         nonce_digest,
@@ -1371,3 +1381,4 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | END]]

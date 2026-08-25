@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:14 UTC | BEGIN]]
@@ -389,6 +390,8 @@ class WorkerBackendEvidence:
     runner_registry_digest: str
     worker_registry_digest: str
     worker_spec_digest: str
+    snapshot_manifest_digest: str
+    snapshot_file_count: int
     before_head_sha: str
     after_head_sha: str
     before_clean: bool
@@ -800,6 +803,8 @@ class CompletionWorkerExecutor:
             hmac.compare_digest(evidence.runner_registry_digest, request.runner_registry_digest),
             hmac.compare_digest(evidence.worker_registry_digest, request.worker_registry_digest),
             hmac.compare_digest(evidence.worker_spec_digest, request.worker_spec_digest),
+            _DIGEST.fullmatch(evidence.snapshot_manifest_digest) is not None,
+            evidence.snapshot_file_count >= 0,
             evidence.before_head_sha == request.expected_head_sha,
             evidence.after_head_sha == request.expected_head_sha,
         )
@@ -879,3 +884,4 @@ class CompletionWorkerExecutor:
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]

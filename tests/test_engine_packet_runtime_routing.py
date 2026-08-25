@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 11:58 UTC | BEGIN]]
@@ -15,17 +16,19 @@ adapter fails closed explicitly instead of falling back to the legacy writer.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
@@ -76,10 +79,26 @@ class LateReadbackTransport(RecordingTransport):
         self.sends += 1
         raise TimeoutError("provider completion arrived after packet timeout")
 
-    def authenticated_readback(
+    async def authenticated_readback(
         self, work_packet_json: bytes, provider_run: Mapping[str, Any]
     ) -> Mapping[str, Any]:
         self.readback_packet = json.loads(work_packet_json.decode("utf-8"))
+        return copy.deepcopy(self.result)
+
+
+class BlockingSyncLateReadbackTransport(LateReadbackTransport):
+    def __init__(self, result: Mapping[str, Any]) -> None:
+        super().__init__(result)
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.readback_calls = 0
+
+    def authenticated_readback(
+        self, work_packet_json: bytes, provider_run: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        self.readback_calls += 1
+        self.entered.set()
+        self.release.wait(timeout=5)
         return copy.deepcopy(self.result)
 
 
@@ -419,6 +438,48 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine._publish_delegation.assert_not_awaited()
         self.assertEqual(0, transport.sends)
 
+    async def test_unknown_parallel_provider_cap_stops_before_any_reservation(self):
+        transport = RecordingTransport(self.result)
+        router = StubPacketTaskRouter(
+            self.work, PacketBoundaryAdapter("claude", transport)
+        )
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            langgraph_parallel_external_dispatch_enabled=True,
+            langgraph_parallel_kill_switch=False,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        engine._publish_delegation = AsyncMock(return_value=True)
+        record, _ = self._record()
+        stored, _ = store.create(record)
+
+        with patch.object(
+            Settings, "parallel_provider_caps", return_value={"cursor": 1}
+        ):
+            self.assertFalse(await engine._dispatch_parallel_packet_batch(stored))
+
+        engine._publish_delegation.assert_not_awaited()
+        self.assertEqual(0, transport.sends)
+        persisted = store.get(record.task_id)
+        self.assertFalse(
+            [
+                item
+                for item in persisted.task_effect_ledger
+                if item.kind == "provider_intent"
+            ]
+        )
+        with closing(sqlite3.connect(self.ledger_path)) as connection:
+            self.assertEqual(
+                0,
+                connection.execute(
+                    "SELECT COUNT(*) FROM parallel_dispatch_batches"
+                ).fetchone()[0],
+            )
+
     async def test_legacy_ownership_is_preserved_while_live_dispatch_is_off(
         self,
     ) -> None:
@@ -491,6 +552,69 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("COMPLETED", self._ledger_status())
         self.assertEqual(1, consumer.calls)
         self.assertEqual(self.work["starting_ref"], transport.readback_packet["starting_ref"])
+
+    async def test_blocking_sync_readback_times_out_without_freezing_or_redispatch(
+        self,
+    ) -> None:
+        work = copy.deepcopy(self.work)
+        work["limits"]["timeout_seconds"] = 1
+        transport = BlockingSyncLateReadbackTransport(self.result)
+        router = StubPacketTaskRouter(
+            work, PacketBoundaryAdapter("claude", transport)
+        )
+        consumer = RecordingResultConsumer()
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+        )
+        activation = RuntimeActivation(
+            settings,
+            packet_task_router=router,
+            packet_result_consumer=consumer,
+        )
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record()
+        store.create(record)
+
+        self.assertFalse(await engine._execute_assignment(record, assignment))
+        late = store.get(record.task_id)
+        late.status = TaskStatus.RUNNING
+        late.provider_runs.append(
+            ProviderRun(
+                provider=ProviderName.CLAUDE,
+                assignment_sequence=assignment.sequence,
+                interaction_id=self.result["correlation"]["correlation_id"],
+                run_id=self.result["run_reference"],
+                status="completed",
+                result=self.result["outcome"],
+                evidence_source="provider_authenticated",
+            )
+        )
+        store.save(late)
+
+        route = asyncio.create_task(
+            engine._route_live_dispatch(store.get(record.task_id), assignment)
+        )
+        try:
+            self.assertTrue(
+                await asyncio.wait_for(
+                    asyncio.to_thread(transport.entered.wait, 2), timeout=2
+                )
+            )
+            await asyncio.sleep(0.05)
+            self.assertFalse(route.done(), "sync readback blocked the event loop")
+            self.assertFalse(await asyncio.wait_for(route, timeout=2))
+        finally:
+            transport.release.set()
+
+        persisted = store.get(record.task_id)
+        self.assertEqual(1, transport.sends)
+        self.assertEqual(1, transport.readback_calls)
+        self.assertEqual(0, consumer.calls)
+        self.assertEqual("RECONCILIATION_REQUIRED", self._ledger_status())
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, persisted.status)
 
     async def test_stale_generation_readback_cannot_reconcile_current_packet(self):
         transport = LateReadbackTransport(self.result)
@@ -866,3 +990,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 11:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:16 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]

@@ -1,8 +1,10 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | BEGIN]]
 from __future__ import annotations
 
 import hashlib
+import multiprocessing
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -22,7 +24,14 @@ from director_orchestrator.parallel_dispatch import (
     observe_batch,
     plan_dispatch_batch,
 )
-from director_orchestrator.models import SlackIntake, TaskRecord, TaskStatus
+from director_orchestrator.models import (
+    ProviderName,
+    SlackIntake,
+    TaskEffectEvidence,
+    TaskRecord,
+    TaskStatus,
+    canonical_task_effect_digest,
+)
 from director_orchestrator.store import TaskStore
 
 
@@ -54,6 +63,45 @@ def enabled_policy(**changes) -> ParallelDispatchPolicy:
     }
     values.update(changes)
     return ParallelDispatchPolicy(**values)
+
+
+def _claim_in_process(
+    path: str,
+    batch_id: str,
+    effect_key: str,
+    start,
+    results,
+) -> None:
+    start.wait(10)
+    claimed = ParallelDispatchLedger(path).claim(
+        batch_id,
+        effect_key,
+        provider_limit=2,
+        deployment_limit=1,
+    )
+    results.put((effect_key, claimed))
+
+
+def _effect_event(
+    *, effect_key: str, kind: str, outcome: str
+) -> TaskEffectEvidence:
+    payload = {
+        "event_version": "v2",
+        "effect_key": effect_key,
+        "kind": kind,
+        "phase": "dispatch",
+        "outcome": outcome,
+        "plan_generation": 0,
+        "assignment_sequence": 1,
+        "assignment_digest": "a" * 64,
+        "provider": ProviderName.CURSOR,
+        "attempt": 1,
+        "estimated_cost_usd": 0.25,
+        "hop_units": 1,
+        "recorded_at": datetime.now(timezone.utc),
+    }
+    payload["effect_digest"] = canonical_task_effect_digest(payload)
+    return TaskEffectEvidence.model_validate(payload)
 
 
 class ParallelDispatchPolicyTests(unittest.TestCase):
@@ -360,6 +408,130 @@ class ParallelDispatchLedgerTests(unittest.TestCase):
             self.ledger.claim(second.batch_id, second_key, provider_limit=1)
         )
 
+    def test_global_claim_cap_is_atomic_across_real_processes_and_providers(self):
+        first = plan_dispatch_batch(
+            task_id="DIR-GLOBAL-A",
+            ordinal=1,
+            candidates=[candidate(31, provider="cursor")],
+            completed_sequences=(),
+            available_budget_usd=1.0,
+            policy=enabled_policy(),
+        ).batch
+        second = plan_dispatch_batch(
+            task_id="DIR-GLOBAL-B",
+            ordinal=1,
+            candidates=[candidate(32, provider="gemini")],
+            completed_sequences=(),
+            available_budget_usd=1.0,
+            policy=enabled_policy(),
+        ).batch
+        self.ledger.reserve(first)
+        self.ledger.reserve(second)
+        context = multiprocessing.get_context("spawn")
+        start = context.Event()
+        results = context.Queue()
+        processes = [
+            context.Process(
+                target=_claim_in_process,
+                args=(
+                    self.ledger.path,
+                    batch.batch_id,
+                    batch.members[0].effect_key,
+                    start,
+                    results,
+                ),
+            )
+            for batch in (first, second)
+        ]
+        for process in processes:
+            process.start()
+        start.set()
+        observed = [results.get(timeout=15) for _ in processes]
+        for process in processes:
+            process.join(15)
+            self.assertEqual(0, process.exitcode)
+        self.assertEqual(1, sum(claimed for _, claimed in observed))
+
+        winner_key = next(key for key, claimed in observed if claimed)
+        winner_batch = first if winner_key == first.members[0].effect_key else second
+        loser_batch = second if winner_batch is first else first
+        self.ledger.record(
+            winner_batch.batch_id, winner_key, MemberState.SUCCEEDED
+        )
+        self.assertTrue(
+            self.ledger.claim(
+                loser_batch.batch_id,
+                loser_batch.members[0].effect_key,
+                provider_limit=2,
+                deployment_limit=1,
+            )
+        )
+
+    def test_cross_process_claim_blocks_failed_pre_submit_closure_guard(self):
+        self.ledger.reserve(self.batch)
+        member = self.batch.members[0]
+        context = multiprocessing.get_context("spawn")
+        start = context.Event()
+        results = context.Queue()
+        process = context.Process(
+            target=_claim_in_process,
+            args=(
+                self.ledger.path,
+                self.batch.batch_id,
+                member.effect_key,
+                start,
+                results,
+            ),
+        )
+        process.start()
+        start.set()
+        self.assertEqual((member.effect_key, True), results.get(timeout=15))
+        process.join(15)
+        self.assertEqual(0, process.exitcode)
+        self.assertFalse(
+            self.ledger.reserve_pre_submit_closure(
+                runtime_idempotency_key="runtime-cross-process-claim",
+                parallel_effect_key=member.effect_key,
+            )
+        )
+
+    def test_completed_or_ambiguous_evidence_dominates_failed_pre_submit_hydration(self):
+        for later_outcome in ("completed", "ambiguous"):
+            with self.subTest(later_outcome=later_outcome), tempfile.TemporaryDirectory() as root:
+                effect_key = hashlib.sha256(later_outcome.encode()).hexdigest()
+                record = TaskRecord(
+                    task_id=f"DIR-HYDRATE-{later_outcome.upper()}",
+                    status=TaskStatus.RUNNING,
+                    intake=SlackIntake(
+                        source_event_id=f"evt-{later_outcome}",
+                        channel_id="C123",
+                        thread_ts="123.45",
+                        user_id="U123",
+                        text="DIRECTOR preserve durable accounting",
+                    ),
+                    task_effect_ledger=[
+                        _effect_event(
+                            effect_key=effect_key,
+                            kind="provider_intent",
+                            outcome="reserved",
+                        ),
+                        _effect_event(
+                            effect_key=effect_key,
+                            kind="provider_observation",
+                            outcome="failed_pre_submit",
+                        ),
+                        _effect_event(
+                            effect_key=effect_key,
+                            kind="provider_observation",
+                            outcome=later_outcome,
+                        ),
+                    ],
+                )
+                store = TaskStore(str(Path(root) / "director.sqlite3"))
+                stored, _ = store.create(record)
+                self.assertAlmostEqual(0.25, stored.cumulative_estimated_cost_usd)
+                self.assertEqual(1, stored.cumulative_effect_hops)
+
 
 class DailyTaskBudgetLedgerTests(unittest.TestCase):
     def test_full_task_allowances_enforce_the_daily_stop_across_restart(self):
@@ -442,3 +614,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]

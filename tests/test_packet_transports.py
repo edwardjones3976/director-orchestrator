@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:36 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
@@ -5,12 +6,17 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
+import director_orchestrator.main as director_main
 from director_orchestrator.callbacks import CallbackConflict, apply_claude_callback
+from director_orchestrator.config import Settings
 from director_orchestrator.interactions import (
     ProviderInteractionState,
     TransportEvidenceSource,
@@ -31,6 +37,8 @@ from director_orchestrator.models import (
 from director_orchestrator.packet_contracts import canonical_json_bytes
 from director_orchestrator.packet_routing import DirectorPacketTaskRouter, PacketRoutingError
 from director_orchestrator.packet_transports import (
+    GitHubRepositoryEffectReadback,
+    GitHubReadOnlyRepositoryEffectVerifier,
     LegacyProviderPacketTransport,
     LocalGitAuthoritySnapshotResolver,
 )
@@ -39,6 +47,47 @@ from director_orchestrator.store import TaskStore
 
 COMMIT = "a" * 40
 BLOB = "b" * 40
+HEAD = "c" * 40
+
+
+class FakeGitHubEffectVerifier:
+    def __init__(
+        self,
+        readback=None,
+        error: Exception | None = None,
+        delay_seconds: float = 0.0,
+    ) -> None:
+        self.value = readback if readback is not None else GitHubRepositoryEffectReadback(
+            repository="example/demo",
+            base_ref="main",
+            base_sha=COMMIT,
+            branch="codex/focused",
+            head_sha=HEAD,
+            compare_base_sha=COMMIT,
+            compare_head_sha=HEAD,
+            base_is_ancestor=True,
+            pull_number=123,
+            pull_state="open",
+            pull_is_draft=True,
+            pull_is_merged=False,
+            pull_head_repository="example/demo",
+            pull_head_ref="codex/focused",
+            pull_head_sha=HEAD,
+            pull_base_repository="example/demo",
+            pull_base_ref="main",
+            pull_base_sha=COMMIT,
+        )
+        self.error = error
+        self.delay_seconds = delay_seconds
+        self.calls: list[tuple[str, str, str, int | None]] = []
+
+    async def readback(self, repository, *, starting_ref, branch, pull_number):
+        self.calls.append((repository, starting_ref, branch, pull_number))
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        if self.error is not None:
+            raise self.error
+        return self.value
 
 
 class ScriptedSnapshotResolver(LocalGitAuthoritySnapshotResolver):
@@ -378,6 +427,7 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                 CapturingProvider(ProviderName.CURSOR),
                 task_store=store,
                 poll_seconds=1,
+                github_effect_verifier=FakeGitHubEffectVerifier(),
             )
             effects = [
                 {
@@ -420,6 +470,225 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
         self.assertEqual("SUCCEEDED", result["status"])
         self.assertEqual(effects, result["side_effects"])
         self.assertEqual([], result["requested_decisions"])
+
+    def test_async_authenticated_readback_verifies_completed_repository_effects(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            _, packet = self._packet(root, store, ProviderName.CURSOR)
+            verifier = FakeGitHubEffectVerifier()
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CURSOR),
+                task_store=store,
+                poll_seconds=1,
+                github_effect_verifier=verifier,
+            )
+            effects = [
+                {
+                    "kind": "WRITE_ISOLATED_BRANCH",
+                    "target": f"example/demo@{packet['starting_ref']}:codex/focused",
+                    "status": "COMPLETED",
+                    "idempotency_key": f"{packet['idempotency_key']}:effect:write_isolated_branch",
+                    "external_id": "codex/focused",
+                },
+                {
+                    "kind": "OPEN_DRAFT_PULL_REQUEST",
+                    "target": f"example/demo@{packet['starting_ref']}#123",
+                    "status": "COMPLETED",
+                    "idempotency_key": f"{packet['idempotency_key']}:effect:open_draft_pull_request",
+                    "external_id": "123",
+                },
+            ]
+            run_id = "cursor-late-effects"
+            run = ProviderRun(
+                provider=ProviderName.CURSOR,
+                run_id=run_id,
+                status="FINISHED",
+                result="bounded result",
+                assignment_sequence=1,
+                interaction_id=packet["correlation"]["correlation_id"],
+                evidence_source="provider_authenticated",
+                raw={
+                    "side_effect_evidence": self._effect_evidence(
+                        packet, run_id, effects
+                    )
+                },
+            )
+
+            result = asyncio.run(
+                transport.authenticated_readback(
+                    canonical_json_bytes(packet), run.model_dump(mode="json")
+                )
+            )
+
+        self.assertEqual("SUCCEEDED", result["status"])
+        self.assertEqual(effects, result["side_effects"])
+        self.assertEqual(1, len(verifier.calls))
+
+    def test_completed_repository_effects_require_independent_readback(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            _, packet = self._packet(root, store, ProviderName.CURSOR)
+            effects = [
+                {
+                    "kind": "WRITE_ISOLATED_BRANCH",
+                    "target": f"example/demo@{packet['starting_ref']}:codex/focused",
+                    "status": "COMPLETED",
+                    "idempotency_key": f"{packet['idempotency_key']}:effect:write_isolated_branch",
+                    "external_id": "codex/focused",
+                },
+                {
+                    "kind": "OPEN_DRAFT_PULL_REQUEST",
+                    "target": f"example/demo@{packet['starting_ref']}#123",
+                    "status": "COMPLETED",
+                    "idempotency_key": f"{packet['idempotency_key']}:effect:open_draft_pull_request",
+                    "external_id": "123",
+                },
+            ]
+            run_id = "cursor-unverified-effects"
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CURSOR),
+                task_store=store,
+                poll_seconds=1,
+            )
+
+            result = transport._result(
+                packet,
+                ProviderRun(
+                    provider=ProviderName.CURSOR,
+                    run_id=run_id,
+                    status="FINISHED",
+                    result="bounded result",
+                    evidence_source="provider_authenticated",
+                    raw={
+                        "side_effect_evidence": self._effect_evidence(
+                            packet, run_id, effects
+                        )
+                    },
+                ),
+            )
+
+        self.assertEqual("OWNER_DECISION_REQUIRED", result["status"])
+        self.assertEqual([], result["side_effects"])
+        self.assertIn("Independent GitHub", result["blockers"][0])
+
+    def test_github_readback_mismatch_or_unavailability_fails_closed(self) -> None:
+        mismatch_values = {
+            "base SHA": replace(
+                FakeGitHubEffectVerifier().value, base_sha="d" * 40
+            ),
+            "pull base repository": replace(
+                FakeGitHubEffectVerifier().value, pull_base_repository="other/repo"
+            ),
+            "pull base ref": replace(
+                FakeGitHubEffectVerifier().value, pull_base_ref="release"
+            ),
+            "pull base SHA": replace(
+                FakeGitHubEffectVerifier().value, pull_base_sha="d" * 40
+            ),
+            "compare base SHA": replace(
+                FakeGitHubEffectVerifier().value, compare_base_sha="d" * 40
+            ),
+            "unrelated ancestry": replace(
+                FakeGitHubEffectVerifier().value, base_is_ancestor=False
+            ),
+            "head SHA": replace(
+                FakeGitHubEffectVerifier().value, pull_head_sha="d" * 40
+            ),
+            "branch": replace(
+                FakeGitHubEffectVerifier().value, pull_head_ref="cursor/other"
+            ),
+            "pull request": replace(
+                FakeGitHubEffectVerifier().value, pull_number=124
+            ),
+            "not draft": replace(
+                FakeGitHubEffectVerifier().value, pull_is_draft=False
+            ),
+        }
+        scenarios = {
+            **{
+                label: FakeGitHubEffectVerifier(value)
+                for label, value in mismatch_values.items()
+            },
+            "timeout": FakeGitHubEffectVerifier(error=TimeoutError("readback timed out")),
+            "malformed": FakeGitHubEffectVerifier(readback={"repository": "example/demo"}),
+            "hang": FakeGitHubEffectVerifier(delay_seconds=1.0),
+        }
+        for label, verifier in scenarios.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as root:
+                store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+                _, packet = self._packet(root, store, ProviderName.CURSOR)
+                effects = [
+                    {
+                        "kind": "WRITE_ISOLATED_BRANCH",
+                        "target": f"example/demo@{packet['starting_ref']}:codex/focused",
+                        "status": "COMPLETED",
+                        "idempotency_key": f"{packet['idempotency_key']}:effect:write_isolated_branch",
+                        "external_id": "codex/focused",
+                    },
+                    {
+                        "kind": "OPEN_DRAFT_PULL_REQUEST",
+                        "target": f"example/demo@{packet['starting_ref']}#123",
+                        "status": "COMPLETED",
+                        "idempotency_key": f"{packet['idempotency_key']}:effect:open_draft_pull_request",
+                        "external_id": "123",
+                    },
+                ]
+                run_id = f"cursor-readback-{label}"
+                transport = LegacyProviderPacketTransport(
+                    CapturingProvider(ProviderName.CURSOR),
+                    task_store=store,
+                    poll_seconds=1,
+                    github_effect_verifier=verifier,
+                    github_effect_timeout_seconds=0.01,
+                )
+                result = transport._result(
+                    packet,
+                    ProviderRun(
+                        provider=ProviderName.CURSOR,
+                        run_id=run_id,
+                        status="FINISHED",
+                        result="bounded result",
+                        evidence_source="provider_authenticated",
+                        raw={
+                            "side_effect_evidence": self._effect_evidence(
+                                packet, run_id, effects
+                            )
+                        },
+                    ),
+                )
+                self.assertEqual("OWNER_DECISION_REQUIRED", result["status"])
+                self.assertEqual([], result["side_effects"])
+                self.assertEqual(1, len(verifier.calls))
+
+    def test_production_github_effect_verifier_injection_and_absence(self) -> None:
+        base = Settings()
+        absent = replace(
+            base,
+            oracle_automerge_github_token="",
+            oracle_automerge_github_app_id="",
+            oracle_automerge_github_installation_id="",
+            oracle_automerge_github_app_private_key_b64="",
+        )
+        self.assertIsNone(director_main._build_github_effect_verifier(absent))
+
+        configured = replace(
+            absent,
+            oracle_automerge_github_token="configured-secret",
+            provider_timeout_seconds=8,
+        )
+        sentinel = object()
+        with patch.object(
+            GitHubReadOnlyRepositoryEffectVerifier,
+            "from_settings",
+            return_value=sentinel,
+        ) as factory:
+            self.assertIs(
+                sentinel,
+                director_main._build_github_effect_verifier(configured),
+            )
+        factory.assert_called_once_with(configured, request_timeout_seconds=8.0)
 
     def test_missing_or_extra_side_effect_evidence_requires_owner(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -686,6 +955,13 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                 CapturingProvider(ProviderName.CLAUDE),
                 task_store=store,
                 poll_seconds=1,
+                github_effect_verifier=FakeGitHubEffectVerifier(
+                    replace(
+                        FakeGitHubEffectVerifier().value,
+                        branch="claude/focused",
+                        pull_head_ref="claude/focused",
+                    )
+                ),
             )
             run_id = "claude-terminal-effects"
             result_text = "bounded completion evidence"
@@ -848,3 +1124,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:36 UTC | END]]

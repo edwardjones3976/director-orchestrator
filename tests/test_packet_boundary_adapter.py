@@ -1,9 +1,11 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 """The v1 packet contract is the live adapter boundary in both directions."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import sqlite3
@@ -156,7 +158,11 @@ class PacketBoundaryAdapterTests(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(PacketContractError, "current work-packet correlation"):
-            self.adapter(transport).authenticated_readback(self.work, provider_run)
+            asyncio.run(
+                self.adapter(transport).authenticated_readback(
+                    self.work, provider_run
+                )
+            )
 
         self.assertEqual([], transport.readbacks)
 
@@ -215,3 +221,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:22 UTC | END]]

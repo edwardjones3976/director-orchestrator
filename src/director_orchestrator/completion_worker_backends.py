@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
@@ -16,13 +17,17 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
+import unicodedata
+from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Protocol, Sequence
+from pathlib import Path, PurePosixPath
+from typing import Any, Iterator, Protocol, Sequence
 
 from .completion_gates import domain_digest
 from .completion_workers import (
@@ -35,7 +40,11 @@ from .completion_workers import (
     WorkerSpec,
     WorkerTier,
 )
-from .process_isolation import launch_contained_process, trusted_neutral_cwd
+from .process_isolation import (
+    ProcessTreeGuard,
+    launch_contained_process,
+    trusted_neutral_cwd,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +87,352 @@ def _file_digest(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
+class TrackedRepositorySnapshot:
+    root: Path
+    manifest_digest: str
+    file_count: int
+
+
+_SNAPSHOT_MAX_FILES = 10_000
+_SNAPSHOT_MAX_BYTES = 512 * 1024 * 1024
+_SNAPSHOT_MAX_TREE_BYTES = 8 * 1024 * 1024
+_GIT_OBJECT_ID = re.compile(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+
+
+def _git_bytes(
+    repository: Path,
+    argv: Sequence[str],
+    *,
+    stdin: bytes | None = None,
+    deadline: float,
+) -> bytes:
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(repository), *argv),
+            cwd=trusted_neutral_cwd(),
+            env=_git_environment(),
+            shell=False,
+            check=False,
+            input=stdin,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=_remaining_seconds(deadline),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CompletionWorkerError("completion worker total deadline expired") from exc
+    except OSError as exc:
+        raise CompletionWorkerError("tracked snapshot Git read failed") from exc
+    if completed.returncode != 0:
+        raise CompletionWorkerError("tracked snapshot Git read failed")
+    return completed.stdout
+
+
+def _remaining_seconds(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise CompletionWorkerError("completion worker total deadline expired")
+    return remaining
+
+
+def _git_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GCM_INTERACTIVE": "Never",
+        }
+    )
+    return environment
+
+
+def _start_cat_file_batch(
+    repository: Path,
+) -> tuple[subprocess.Popen[bytes], ProcessTreeGuard]:
+    try:
+        return launch_contained_process(
+            ("git", "-C", str(repository), "cat-file", "--batch"),
+            cwd=trusted_neutral_cwd(),
+            env=_git_environment(),
+            shell=False,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise CompletionWorkerError("tracked snapshot Git read failed") from exc
+
+
+def _snapshot_path(path_bytes: bytes, seen: set[str]) -> tuple[str, PurePosixPath]:
+    try:
+        path = path_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise CompletionWorkerError("tracked snapshot contains a non-UTF-8 path") from exc
+    pure = PurePosixPath(path)
+    if (
+        not path
+        or pure.is_absolute()
+        or "\\" in path
+        or any(
+            not part
+            or part in {".", ".."}
+            or ":" in part
+            or part.casefold() == ".git"
+            for part in pure.parts
+        )
+    ):
+        raise CompletionWorkerError("tracked snapshot path is unsafe")
+    alias = "/".join(
+        unicodedata.normalize("NFC", part).casefold() for part in pure.parts
+    )
+    if alias in seen:
+        raise CompletionWorkerError("tracked snapshot contains an aliased path")
+    seen.add(alias)
+    return path, pure
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    try:
+        if path.is_symlink():
+            return True
+        attributes = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+    except OSError as exc:
+        raise CompletionWorkerError("tracked snapshot path cannot be authenticated") from exc
+    return bool(attributes & getattr(__import__("stat"), "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def _remove_snapshot(root: Path) -> None:
+    def make_writable_and_retry(function: Any, path: str, _error: Any) -> None:
+        os.chmod(path, 0o700)
+        function(path)
+
+    if root.exists():
+        shutil.rmtree(root, onerror=make_writable_and_retry)
+    if root.exists():
+        raise CompletionWorkerError("tracked snapshot cleanup could not be verified")
+
+
+@contextmanager
+def _tracked_repository_snapshot(
+    repository: Path, expected_head_sha: str, *, deadline: float
+) -> Iterator[TrackedRepositorySnapshot]:
+    _remaining_seconds(deadline)
+    tree = _git_bytes(
+        repository,
+        ("ls-tree", "-rz", "--full-tree", expected_head_sha),
+        deadline=deadline,
+    )
+    if len(tree) > _SNAPSHOT_MAX_TREE_BYTES:
+        raise CompletionWorkerError("tracked snapshot tree exceeds its size limit")
+    records = [record for record in tree.split(b"\0") if record]
+    if len(records) > _SNAPSHOT_MAX_FILES:
+        raise CompletionWorkerError("tracked snapshot exceeds its file-count limit")
+
+    parsed: list[tuple[str, PurePosixPath, str, str]] = []
+    seen: set[str] = set()
+    for record in records:
+        header, separator, path_bytes = record.partition(b"\t")
+        fields = header.split(b" ")
+        if not separator or len(fields) != 3:
+            raise CompletionWorkerError("tracked snapshot tree record is malformed")
+        mode_bytes, object_type, object_id = fields
+        if mode_bytes == b"120000" or object_type != b"blob":
+            raise CompletionWorkerError("tracked snapshot cannot contain links or submodules")
+        if mode_bytes not in {b"100644", b"100755"} or not _GIT_OBJECT_ID.fullmatch(
+            object_id
+        ):
+            raise CompletionWorkerError("tracked snapshot tree record is unsupported")
+        path, pure = _snapshot_path(path_bytes, seen)
+        parsed.append((path, pure, mode_bytes.decode("ascii"), object_id.decode("ascii")))
+
+    root = Path(tempfile.mkdtemp(prefix="director-completion-snapshot-")).resolve(
+        strict=True
+    )
+    repository = repository.resolve(strict=True)
+    batch: subprocess.Popen[bytes] | None = None
+    batch_guard: ProcessTreeGuard | None = None
+    deadline_expired = threading.Event()
+    deadline_termination_errors: list[BaseException] = []
+    timer: threading.Timer | None = None
+    try:
+        if repository == root or repository in root.parents or _is_link_or_reparse(root):
+            raise CompletionWorkerError("tracked snapshot directory is not isolated")
+        manifest: list[dict[str, Any]] = []
+        total_size = 0
+        if parsed:
+            batch, batch_guard = _start_cat_file_batch(repository)
+            if batch.stdin is None or batch.stdout is None:
+                raise CompletionWorkerError("tracked snapshot batch pipes are unavailable")
+
+            def expire_batch() -> None:
+                deadline_expired.set()
+                if batch is not None:
+                    try:
+                        if batch_guard is not None:
+                            batch_guard.terminate()
+                        if os.name != "nt":
+                            try:
+                                os.killpg(batch.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        batch.kill()
+                    except BaseException as exc:
+                        deadline_termination_errors.append(exc)
+
+            timer = threading.Timer(_remaining_seconds(deadline), expire_batch)
+            timer.daemon = True
+            timer.start()
+
+        for path, pure, mode, object_id in parsed:
+            _remaining_seconds(deadline)
+            assert batch is not None and batch.stdin is not None and batch.stdout is not None
+            try:
+                batch.stdin.write(object_id.encode("ascii") + b"\n")
+                batch.stdin.flush()
+                header = batch.stdout.readline()
+            except (BrokenPipeError, OSError) as exc:
+                if deadline_expired.is_set():
+                    raise CompletionWorkerError(
+                        "completion worker total deadline expired"
+                    ) from exc
+                raise CompletionWorkerError("tracked snapshot Git batch failed") from exc
+            fields = header.rstrip(b"\n").split(b" ")
+            if (
+                len(fields) != 3
+                or fields[0].decode("ascii", errors="ignore") != object_id
+                or fields[1] != b"blob"
+                or not fields[2].isdigit()
+            ):
+                if deadline_expired.is_set():
+                    raise CompletionWorkerError("completion worker total deadline expired")
+                raise CompletionWorkerError("tracked snapshot object inventory is invalid")
+            expected_size = int(fields[2])
+            total_size += expected_size
+            if total_size > _SNAPSHOT_MAX_BYTES:
+                raise CompletionWorkerError("tracked snapshot exceeds its byte limit")
+            target = root.joinpath(*pure.parts)
+            if root not in target.parents:
+                raise CompletionWorkerError("tracked snapshot path escaped its root")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if any(_is_link_or_reparse(parent) for parent in target.parents if parent != root):
+                raise CompletionWorkerError("tracked snapshot path traversed a link")
+            digest = hashlib.sha256()
+            try:
+                with target.open("xb") as handle:
+                    remaining = expected_size
+                    while remaining:
+                        _remaining_seconds(deadline)
+                        chunk = batch.stdout.read(min(1_048_576, remaining))
+                        if not chunk:
+                            if deadline_expired.is_set():
+                                raise CompletionWorkerError(
+                                    "completion worker total deadline expired"
+                                )
+                            raise CompletionWorkerError(
+                                "tracked snapshot blob was truncated"
+                            )
+                        handle.write(chunk)
+                        digest.update(chunk)
+                        remaining -= len(chunk)
+                    if batch.stdout.read(1) != b"\n":
+                        raise CompletionWorkerError(
+                            "tracked snapshot blob delimiter is invalid"
+                        )
+            except OSError as exc:
+                raise CompletionWorkerError("tracked snapshot file could not be created") from exc
+            content_digest = "sha256:" + digest.hexdigest()
+            manifest.append(
+                {
+                    "path": path,
+                    "mode": mode,
+                    "object_id": object_id,
+                    "size": expected_size,
+                    "content_digest": content_digest,
+                }
+            )
+            os.chmod(target, 0o555 if mode == "100755" else 0o444)
+        if batch is not None:
+            assert batch.stdin is not None
+            batch.stdin.close()
+            try:
+                return_code = batch.wait(timeout=_remaining_seconds(deadline))
+            except subprocess.TimeoutExpired as exc:
+                deadline_expired.set()
+                batch.kill()
+                batch.wait(timeout=5)
+                raise CompletionWorkerError(
+                    "completion worker total deadline expired"
+                ) from exc
+            if return_code != 0:
+                if deadline_expired.is_set():
+                    raise CompletionWorkerError("completion worker total deadline expired")
+                raise CompletionWorkerError("tracked snapshot Git batch failed")
+            if deadline_termination_errors:
+                raise CompletionWorkerError(
+                    "tracked snapshot deadline containment failed"
+                ) from deadline_termination_errors[0]
+        directories = {root}
+        for _, pure, _, _ in parsed:
+            candidate = root.joinpath(*pure.parts).parent
+            while candidate != root:
+                directories.add(candidate)
+                candidate = candidate.parent
+        for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+            os.chmod(directory, 0o555)
+        _remaining_seconds(deadline)
+        yield TrackedRepositorySnapshot(
+            root=root,
+            manifest_digest=domain_digest(
+                "director-completion-worker-snapshot-manifest/v1",
+                {"head_sha": expected_head_sha, "entries": manifest},
+            ),
+            file_count=len(manifest),
+        )
+    finally:
+        if timer is not None:
+            timer.cancel()
+        cleanup_errors: list[BaseException] = []
+
+        def cleanup_step(operation: Any) -> None:
+            try:
+                operation()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+
+        try:
+            if batch is not None:
+                if batch.stdin is not None and not batch.stdin.closed:
+                    cleanup_step(batch.stdin.close)
+                if batch_guard is not None:
+                    cleanup_step(batch_guard.terminate)
+                if os.name != "nt":
+                    def terminate_batch_group() -> None:
+                        try:
+                            os.killpg(batch.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+
+                    cleanup_step(terminate_batch_group)
+                if batch.poll() is None:
+                    cleanup_step(batch.kill)
+                    cleanup_step(lambda: batch.wait(timeout=5))
+                if batch.stdout is not None and not batch.stdout.closed:
+                    cleanup_step(batch.stdout.close)
+                if batch_guard is not None:
+                    cleanup_step(batch_guard.close)
+        finally:
+            cleanup_step(lambda: _remove_snapshot(root))
+        if cleanup_errors:
+            raise CompletionWorkerError(
+                "tracked snapshot cleanup failed closed"
+            ) from cleanup_errors[0]
+
+
 class _BoundedProcessBackend:
     binding: ExecutableBinding
     sanitizer: WorkerOutputSanitizer
@@ -87,7 +442,7 @@ class _BoundedProcessBackend:
         argv: Sequence[str],
         *,
         cwd: Path,
-        timeout_seconds: int,
+        timeout_seconds: float,
         output_limit_bytes: int,
     ) -> tuple[int | None, bool, bool, SanitizedWorkerOutput, bool]:
         self.binding.authenticate()
@@ -226,7 +581,10 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
         )
 
     def command(
-        self, spec: AuditedHostProfile, request: CompletionWorkerRequest
+        self,
+        spec: AuditedHostProfile,
+        request: CompletionWorkerRequest,
+        snapshot: TrackedRepositorySnapshot,
     ) -> tuple[str, ...]:
         limits = spec.limits
         return (
@@ -243,9 +601,9 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
             "--pids-limit",
             str(limits.pids_limit),
             "--read-only-repository",
-            request.repository_root,
+            str(snapshot.root),
             "--env",
-            f"PYTHONPATH={Path(request.repository_root, 'src')}",
+            f"PYTHONPATH={snapshot.root / 'src'}",
             "--expected-head",
             request.expected_head_sha,
             "--",
@@ -263,31 +621,39 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
             raise CompletionWorkerError("host backend received the wrong worker tier")
         root = _repository_root(request)
         before_head, before_clean = _repository_state(root)
-        command = self.command(spec, request)
-        controls = _verified_host_controls(command, spec, request)
-        if not all(
-            (
-                controls.low_privilege_identity,
-                controls.network_isolation,
-                controls.resource_limits,
-                controls.read_only_repository,
+        deadline = time.monotonic() + spec.limits.timeout_seconds
+        with _tracked_repository_snapshot(
+            root, request.expected_head_sha, deadline=deadline
+        ) as snapshot:
+            command = self.command(spec, request, snapshot)
+            controls = _verified_host_controls(command, spec, request, snapshot)
+            if not all(
+                (
+                    controls.low_privilege_identity,
+                    controls.network_isolation,
+                    controls.resource_limits,
+                    controls.read_only_repository,
+                )
+            ):
+                raise CompletionWorkerError(
+                    "audited host isolation lacks orchestrator-verifiable OS evidence"
+                )
+            result = self._execute_argv(
+                command,
+                cwd=self._trusted_cwd(),
+                timeout_seconds=_remaining_seconds(deadline),
+                output_limit_bytes=spec.limits.output_limit_bytes,
             )
-        ):
-            raise CompletionWorkerError(
-                "audited host isolation lacks orchestrator-verifiable OS evidence"
-            )
-        result = self._execute_argv(
-            command,
-            cwd=self._trusted_cwd(),
-            timeout_seconds=spec.limits.timeout_seconds,
-            output_limit_bytes=spec.limits.output_limit_bytes,
-        )
+            snapshot_manifest_digest = snapshot.manifest_digest
+            snapshot_file_count = snapshot.file_count
         after_head, after_clean = _repository_state(root)
         return _evidence(
             request, spec, lease_token, before_head, after_head,
             before_clean, after_clean, result,
             disposable=False,
             controls=controls,
+            snapshot_manifest_digest=snapshot_manifest_digest,
+            snapshot_file_count=snapshot_file_count,
         )
 
 
@@ -317,9 +683,13 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
         )
 
     def command(
-        self, spec: DisposableContainerSpec, request: CompletionWorkerRequest
+        self,
+        spec: DisposableContainerSpec,
+        request: CompletionWorkerRequest,
+        snapshot: TrackedRepositorySnapshot,
     ) -> tuple[str, ...]:
-        if any(character in request.repository_root for character in (",", "\r", "\n")):
+        snapshot_root = str(snapshot.root)
+        if any(character in snapshot_root for character in (",", "\r", "\n")):
             raise CompletionWorkerError("repository path cannot be encoded safely for a mount")
         name = _container_name(request.job_id)
         limits = spec.limits
@@ -349,7 +719,7 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
             "--workdir",
             spec.working_directory,
             "--mount",
-            f"type=bind,src={request.repository_root},dst=/workspace,readonly",
+            f"type=bind,src={snapshot_root},dst=/workspace,readonly",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,nodev,size=67108864",
             "--env",
@@ -372,25 +742,33 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
         root = _repository_root(request)
         before_head, before_clean = _repository_state(root)
         name = _container_name(request.job_id)
-        command = self.command(spec, request)
-        controls = _verified_container_controls(command, spec, request)
-        try:
-            result = self._execute_argv(
-                command,
-                cwd=self._trusted_cwd(),
-                timeout_seconds=spec.limits.timeout_seconds,
-                output_limit_bytes=spec.limits.output_limit_bytes,
-            )
-        except BaseException:
+        deadline = time.monotonic() + spec.limits.timeout_seconds
+        with _tracked_repository_snapshot(
+            root, request.expected_head_sha, deadline=deadline
+        ) as snapshot:
+            command = self.command(spec, request, snapshot)
+            controls = _verified_container_controls(command, spec, request, snapshot)
+            try:
+                result = self._execute_argv(
+                    command,
+                    cwd=self._trusted_cwd(),
+                    timeout_seconds=_remaining_seconds(deadline),
+                    output_limit_bytes=spec.limits.output_limit_bytes,
+                )
+            except BaseException:
+                self._ensure_container_absent(name, request.job_id)
+                raise
             self._ensure_container_absent(name, request.job_id)
-            raise
-        self._ensure_container_absent(name, request.job_id)
+            snapshot_manifest_digest = snapshot.manifest_digest
+            snapshot_file_count = snapshot.file_count
         after_head, after_clean = _repository_state(root)
         return _evidence(
             request, spec, lease_token, before_head, after_head,
             before_clean, after_clean, result,
             disposable=True,
             controls=controls,
+            snapshot_manifest_digest=snapshot_manifest_digest,
+            snapshot_file_count=snapshot_file_count,
         )
 
     def _ensure_container_absent(self, name: str, job_id: str) -> None:
@@ -498,6 +876,7 @@ def _verified_host_controls(
     command: Sequence[str],
     spec: AuditedHostProfile,
     request: CompletionWorkerRequest,
+    snapshot: TrackedRepositorySnapshot,
 ) -> WorkerBackendCapabilities:
     required_pairs = (
         ("--profile", spec.launcher_profile_id),
@@ -505,8 +884,8 @@ def _verified_host_controls(
         ("--memory-bytes", str(spec.limits.memory_limit_bytes)),
         ("--cpus", str(spec.limits.cpu_limit)),
         ("--pids-limit", str(spec.limits.pids_limit)),
-        ("--read-only-repository", request.repository_root),
-        ("--env", f"PYTHONPATH={Path(request.repository_root, 'src')}"),
+        ("--read-only-repository", str(snapshot.root)),
+        ("--env", f"PYTHONPATH={snapshot.root / 'src'}"),
         ("--expected-head", request.expected_head_sha),
     )
     if not all(_command_pair(command, option, value) for option, value in required_pairs):
@@ -528,6 +907,7 @@ def _verified_container_controls(
     command: Sequence[str],
     spec: DisposableContainerSpec,
     request: CompletionWorkerRequest,
+    snapshot: TrackedRepositorySnapshot,
 ) -> WorkerBackendCapabilities:
     required_flags = ("--rm", "--read-only")
     required_pairs = (
@@ -541,7 +921,7 @@ def _verified_container_controls(
         ("--cpus", str(spec.limits.cpu_limit)),
         ("--user", spec.run_as_user),
         ("--workdir", spec.working_directory),
-        ("--mount", f"type=bind,src={request.repository_root},dst=/workspace,readonly"),
+        ("--mount", f"type=bind,src={snapshot.root},dst=/workspace,readonly"),
         ("--env", "PYTHONPATH=/workspace/src"),
         ("--env", "PYTHONPYCACHEPREFIX=/tmp/pycache"),
     )
@@ -599,6 +979,8 @@ def _evidence(
     *,
     disposable: bool,
     controls: WorkerBackendCapabilities,
+    snapshot_manifest_digest: str,
+    snapshot_file_count: int,
 ) -> WorkerBackendEvidence:
     exit_code, timed_out, overflow, output, tree_terminated = execution
     return WorkerBackendEvidence(
@@ -608,6 +990,8 @@ def _evidence(
         runner_registry_digest=request.runner_registry_digest,
         worker_registry_digest=request.worker_registry_digest,
         worker_spec_digest=request.worker_spec_digest,
+        snapshot_manifest_digest=snapshot_manifest_digest,
+        snapshot_file_count=snapshot_file_count,
         before_head_sha=before_head,
         after_head_sha=after_head,
         before_clean=before_clean,
@@ -631,3 +1015,4 @@ def _evidence(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:25 UTC | END]]

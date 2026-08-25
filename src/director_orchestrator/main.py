@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | BEGIN]]
@@ -83,6 +84,8 @@ from .usage import UsageMonitor
 from .packet_results import DirectorPacketResultConsumer
 from .packet_routing import DirectorPacketTaskRouter
 from .packet_transports import (
+    GitHubReadOnlyRepositoryEffectVerifier,
+    GitHubRepositoryEffectVerifier,
     LocalGitAuthoritySnapshotResolver,
     build_primary_packet_adapters,
 )
@@ -90,6 +93,20 @@ from .providers import provider_registry
 from .parallel_dispatch import (
     DailyTaskBudgetLedger,
 )
+
+
+def _build_github_effect_verifier(
+    current_settings: Settings,
+) -> GitHubRepositoryEffectVerifier | None:
+    """Inject GET-only effect corroboration, or preserve fail-closed absence."""
+
+    if not current_settings.oracle_github_credential_configured():
+        return None
+    timeout_seconds = min(15.0, float(current_settings.provider_timeout_seconds))
+    return GitHubReadOnlyRepositoryEffectVerifier.from_settings(
+        current_settings,
+        request_timeout_seconds=timeout_seconds,
+    )
 
 
 settings = Settings()
@@ -115,6 +132,10 @@ if settings.langgraph_runtime_readiness()["live_provider_dispatch"]:
             providers,
             task_store=store,
             poll_seconds=settings.provider_poll_seconds,
+            github_effect_verifier=_build_github_effect_verifier(settings),
+            github_effect_timeout_seconds=min(
+                15.0, float(settings.provider_timeout_seconds)
+            ),
         ),
         writer_owner_id=settings.langgraph_runtime_writer_owner_id,
         writer_secret=settings.langgraph_runtime_writer_secret,
@@ -546,6 +567,7 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
             approval,
             channel_id=settings.slack_channel_id,
             path=f"/v1/tasks/{task_id}/approve",
+            allow_paid_runs=settings.allow_paid_runs,
         )
         is_paid_rearm = verified_decision_kind == "paid_rearm"
         if is_paid_rearm and approval.source != OwnerApprovalSource.SLACK_COMMAND:
@@ -780,3 +802,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | END]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:47 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]

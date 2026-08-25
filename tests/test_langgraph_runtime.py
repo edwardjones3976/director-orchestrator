@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
@@ -5,6 +6,7 @@
 from __future__ import annotations
 
 import copy
+import multiprocessing
 import sqlite3
 import tempfile
 import threading
@@ -61,6 +63,44 @@ class FakeAdapter:
         if self.failure is not None:
             raise self.failure
         return copy.deepcopy(self.result)
+
+
+def _run_packet_after_closure_process(
+    ledger_path: str,
+    checkpoint_path: str,
+    legacy_path: str,
+    work: dict[str, Any],
+    result: dict[str, Any],
+    ready,
+    start,
+    outcomes,
+) -> None:
+    connection = sqlite3.connect(checkpoint_path, check_same_thread=False)
+    try:
+        runtime = LangGraphPacketRuntime(
+            SqliteSaver(connection),
+            ledger_database_path=ledger_path,
+            legacy_database_path=legacy_path,
+            checkpoint_namespace="pre-submit-race-v1",
+            runtime_active=True,
+            allow_live_provider_dispatch=True,
+        )
+        adapter = FakeAdapter(result)
+        token = WriterOwnershipToken.issue(
+            task_id=work["task_id"], owner_id="langgraph"
+        )
+        ready.set()
+        start.wait(10)
+        outcome = runtime.run_packet(
+            work,
+            provider="claude",
+            execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+            adapter=adapter,
+            writer_token=token,
+        )
+        outcomes.put((outcome.status.value, outcome.reason, adapter.calls))
+    finally:
+        connection.close()
 
 
 class LangGraphPacketRuntimeTests(unittest.TestCase):
@@ -151,6 +191,47 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
         self.assertNotEqual(context.writer_token_digest, token.value)
         self.assertEqual(context.allowed_tools, tuple(self.work["allowed_tools"]))
         self.assertEqual(context.allowed_external_effects, ())
+
+    def test_future_runtime_waits_behind_closure_then_cannot_dispatch(self):
+        context = multiprocessing.get_context("spawn")
+        ready = context.Event()
+        start = context.Event()
+        outcomes = context.Queue()
+        process = context.Process(
+            target=_run_packet_after_closure_process,
+            args=(
+                str(self.ledger_path),
+                str(self.root / "race-checkpoint.sqlite3"),
+                str(self.legacy_path),
+                self.work,
+                self.result,
+                ready,
+                start,
+                outcomes,
+            ),
+        )
+        process.start()
+        self.assertTrue(ready.wait(15))
+        with closing(
+            sqlite3.connect(self.ledger_path, timeout=30, isolation_level=None)
+        ) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """INSERT INTO runtime_pre_submit_closures(
+                    idempotency_key, parallel_effect_key, closed_at
+                ) VALUES (?, NULL, ?)""",
+                (self.work["idempotency_key"], "2026-08-25T15:43:00+00:00"),
+            )
+            start.set()
+            time.sleep(0.25)
+            self.assertTrue(process.is_alive())
+            connection.commit()
+        status, reason, calls = outcomes.get(timeout=15)
+        process.join(15)
+        self.assertEqual(0, process.exitcode)
+        self.assertEqual(RuntimeExecutionStatus.REJECTED.value, status)
+        self.assertIn("closed before submit", reason)
+        self.assertEqual(0, calls)
 
     def test_live_dispatch_timeout_returns_and_never_redispatches(self):
         release = threading.Event()
@@ -1002,3 +1083,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | END]]
