@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from .models import (
     ProviderRun,
     ReviewVerdict,
     SlackGatewayProof,
+    SlackIntake,
     TaskEffectEvidence,
     TaskRecord,
     TaskStatus,
@@ -48,6 +50,12 @@ _MAX_TASK_EFFECTS = 200
 _SLACK_GATEWAY_PROOF_TTL_SECONDS = 300
 _SLACK_GATEWAY_FUTURE_SKEW_SECONDS = 30
 _SLACK_GATEWAY_MIN_SECRET_LENGTH = 32
+_SLACK_INTAKE_ATTESTATION_VERSION = "v1"
+SLACK_INTAKE_ISSUED_AT_HEADER = "X-Director-Intake-Issued-At"
+SLACK_INTAKE_NONCE_HEADER = "X-Director-Intake-Nonce"
+SLACK_INTAKE_SIGNATURE_HEADER = "X-Director-Intake-Signature"
+_SLACK_INTAKE_NONCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+_SLACK_INTAKE_SIGNATURE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 def owner_identity_matches(provided: str, configured: str) -> bool:
@@ -60,6 +68,111 @@ def owner_identity_matches(provided: str, configured: str) -> bool:
     if not configured or not provided:
         return False
     return hmac.compare_digest(provided, configured)
+
+
+def _slack_intake_attestation_payload(
+    intake: SlackIntake, *, issued_at: int, nonce: str
+) -> bytes:
+    return json.dumps(
+        {
+            "version": _SLACK_INTAKE_ATTESTATION_VERSION,
+            "method": "POST",
+            "path": "/v1/intake",
+            "issued_at": issued_at,
+            "nonce": nonce,
+            "intake": intake.model_dump(mode="json"),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def build_slack_intake_attestation(
+    secret: str,
+    shared_secret: str,
+    intake: SlackIntake,
+    *,
+    issued_at: int | None = None,
+    nonce: str | None = None,
+) -> dict[str, str]:
+    """Bind one short-lived Slack intake to its exact canonical payload."""
+
+    if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Slack gateway signing secret is not securely configured")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Slack gateway signing secret must be distinct")
+    observed_at = (
+        issued_at
+        if issued_at is not None
+        else int(datetime.now(timezone.utc).timestamp())
+    )
+    observed_nonce = nonce or secrets.token_urlsafe(32)
+    if not _SLACK_INTAKE_NONCE_PATTERN.fullmatch(observed_nonce):
+        raise StaleApproval("Slack intake attestation nonce is malformed")
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        _slack_intake_attestation_payload(
+            intake, issued_at=observed_at, nonce=observed_nonce
+        ),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        SLACK_INTAKE_ISSUED_AT_HEADER: str(observed_at),
+        SLACK_INTAKE_NONCE_HEADER: observed_nonce,
+        SLACK_INTAKE_SIGNATURE_HEADER: signature,
+    }
+
+
+def verify_slack_intake_attestation(
+    secret: str,
+    shared_secret: str,
+    intake: SlackIntake,
+    *,
+    expected_owner_user_id: str,
+    expected_channel_id: str,
+    issued_at: str | None,
+    nonce: str | None,
+    signature: str | None,
+    now: int | None = None,
+) -> None:
+    """Fail closed unless the Slack gateway attested this owner intake exactly."""
+
+    if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Authenticated Slack intake attestation is required")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Slack gateway signing secret must be distinct")
+    if not owner_identity_matches(intake.user_id, expected_owner_user_id):
+        raise StaleApproval("Slack intake owner identity mismatch")
+    if (
+        not intake.channel_id
+        or not expected_channel_id
+        or not hmac.compare_digest(intake.channel_id, expected_channel_id)
+    ):
+        raise StaleApproval("Slack intake channel mismatch")
+    if (
+        issued_at is None
+        or nonce is None
+        or signature is None
+        or not issued_at.isdigit()
+        or not _SLACK_INTAKE_NONCE_PATTERN.fullmatch(nonce)
+        or not _SLACK_INTAKE_SIGNATURE_PATTERN.fullmatch(signature)
+    ):
+        raise StaleApproval("Slack intake attestation is missing or malformed")
+    issued_timestamp = int(issued_at)
+    current_time = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    age = current_time - issued_timestamp
+    if age < -_SLACK_GATEWAY_FUTURE_SKEW_SECONDS or age > _SLACK_GATEWAY_PROOF_TTL_SECONDS:
+        raise StaleApproval("Slack intake attestation is expired or not yet valid")
+    expected_signature = hmac.new(
+        secret.encode("utf-8"),
+        _slack_intake_attestation_payload(
+            intake, issued_at=issued_timestamp, nonce=nonce
+        ),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected_signature):
+        raise StaleApproval("Slack intake attestation signature is invalid")
 
 
 def pending_assignment(record: TaskRecord) -> Assignment | None:
@@ -1223,3 +1336,4 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
     record.error = None
     record.message = note
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]

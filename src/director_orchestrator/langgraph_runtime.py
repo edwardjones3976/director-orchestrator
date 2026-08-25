@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
@@ -183,6 +184,18 @@ class PacketBoundaryAdapter:
                 "packet transport cannot normalize authenticated readback evidence"
             )
         work = validate_packet("work", work_packet)
+        expected_correlation_id = str(work["correlation"]["correlation_id"])
+        observed_correlation_id = provider_run.get("interaction_id")
+        if (
+            not isinstance(observed_correlation_id, str)
+            or not hmac.compare_digest(
+                observed_correlation_id, expected_correlation_id
+            )
+        ):
+            raise PacketContractError(
+                "authenticated provider readback does not match the current "
+                "work-packet correlation"
+            )
         raw = readback(canonical_json_bytes(work), provider_run)
         result = validate_packet("result", raw)
         build_replay_run(work, result)
@@ -1071,3 +1084,4 @@ class LangGraphPacketRuntime:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:15 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]

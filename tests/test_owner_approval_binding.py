@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:53 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | BEGIN]]
@@ -36,6 +37,7 @@ from director_orchestrator.approvals import (
     apply_owner_clarification,
     assignment_approval_digest,
     assignment_is_approved,
+    build_slack_intake_attestation,
     build_slack_gateway_proof,
     clarification_required,
     clarification_source,
@@ -49,7 +51,11 @@ from director_orchestrator.approvals import (
     reserve_provider_effect,
     reserve_task_effect,
     reset_for_owner_clarification,
+    SLACK_INTAKE_ISSUED_AT_HEADER,
+    SLACK_INTAKE_NONCE_HEADER,
+    SLACK_INTAKE_SIGNATURE_HEADER,
     task_effect_key,
+    verify_slack_intake_attestation,
 )
 from director_orchestrator.models import (
     AmbiguousDispatchResolution,
@@ -79,6 +85,7 @@ from director_orchestrator.models import (
     canonical_task_effect_digest,
     canonical_opaque_identifier_digest,
 )
+from director_orchestrator.parallel_dispatch import DailyTaskBudgetLedger
 from director_orchestrator.store import (
     PrivacyCleanupPending,
     StaleTaskWrite,
@@ -2791,6 +2798,314 @@ class DurableEffectStoreTests(unittest.TestCase):
             self.assertNotIn(marker.encode(), Path(database).read_bytes())
 
 
+class IntakeBudgetAdmissionTests(unittest.TestCase):
+    @staticmethod
+    def _payload(source_event_id: str) -> dict[str, str]:
+        return {
+            "source_event_id": source_event_id,
+            "channel_id": "C123",
+            "thread_ts": "123.45",
+            "user_id": "U-OWNER",
+            "text": "DIRECTOR queue this task without spending paid capacity",
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @staticmethod
+    def _settings():
+        return replace(
+            main.settings,
+            shared_secret="test-secret",
+            slack_gateway_secret="gateway-test-secret-at-least-32-characters",
+            slack_owner_user_id="U-OWNER",
+            slack_channel_id="C123",
+            allow_paid_runs=True,
+            max_task_budget_usd=1.0,
+            max_daily_provider_budget_usd=2.0,
+        )
+
+    @staticmethod
+    def _signed_headers(
+        payload: dict[str, str], test_settings, *, issued_at: int | None = None
+    ) -> dict[str, str]:
+        intake = SlackIntake.model_validate(payload)
+        return {
+            "Authorization": "Bearer test-secret",
+            **build_slack_intake_attestation(
+                test_settings.slack_gateway_secret,
+                test_settings.shared_secret,
+                intake,
+                issued_at=issued_at,
+                nonce="N" * 32,
+            ),
+        }
+
+    @staticmethod
+    def _budget_rows(database: str) -> list[tuple[str, float]]:
+        with sqlite3.connect(database) as connection:
+            return connection.execute(
+                "SELECT task_id,reserved_budget_usd FROM paid_task_daily_budget "
+                "ORDER BY recorded_at"
+            ).fetchall()
+
+    def test_forged_owner_id_with_bearer_only_cannot_schedule_or_reserve(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            ledger = DailyTaskBudgetLedger(database)
+            test_settings = self._settings()
+            run = AsyncMock(return_value=None)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main, "daily_task_budget", ledger),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                response = client.post(
+                    "/v1/intake",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json=self._payload("evt-forged-owner"),
+                )
+
+            self.assertEqual(403, response.status_code)
+            self.assertEqual([], self._budget_rows(database))
+            run.assert_not_awaited()
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(0, connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0])
+
+    def test_dry_run_intake_remains_bearer_only_and_cannot_reserve(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            test_settings = replace(
+                self._settings(), allow_paid_runs=False, slack_gateway_secret=""
+            )
+            run = AsyncMock(return_value=None)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main, "daily_task_budget", None),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                response = client.post(
+                    "/v1/intake",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json=self._payload("evt-dry-run-bearer-only"),
+                )
+
+            self.assertEqual(202, response.status_code)
+            run.assert_awaited_once_with(response.json()["task_id"])
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    0,
+                    connection.execute(
+                        "SELECT COUNT(*) FROM sqlite_master "
+                        "WHERE type='table' AND name='paid_task_daily_budget'"
+                    ).fetchone()[0],
+                )
+
+    def test_signed_owner_channel_intake_schedules_without_early_reservation(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            ledger = DailyTaskBudgetLedger(database)
+            test_settings = self._settings()
+            run = AsyncMock(return_value=None)
+            payload = self._payload("evt-signed-owner")
+            headers = self._signed_headers(payload, test_settings)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main, "daily_task_budget", ledger),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                response = client.post("/v1/intake", headers=headers, json=payload)
+
+            self.assertEqual(202, response.status_code)
+            self.assertEqual([], self._budget_rows(database))
+            run.assert_awaited_once_with(response.json()["task_id"])
+
+    def test_paid_intake_attestation_rejects_tamper_stale_malformed_and_wrong_signature(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            ledger = DailyTaskBudgetLedger(database)
+            test_settings = self._settings()
+            run = AsyncMock(return_value=None)
+            payload = self._payload("evt-invalid-attestation")
+            valid_headers = self._signed_headers(payload, test_settings)
+            stale_headers = self._signed_headers(
+                payload,
+                test_settings,
+                issued_at=int(datetime.now(timezone.utc).timestamp()) - 301,
+            )
+            cases = {
+                "tampered-body": (
+                    valid_headers,
+                    {**payload, "text": payload["text"] + " altered"},
+                ),
+                "stale": (stale_headers, payload),
+                "malformed": (
+                    {
+                        **valid_headers,
+                        SLACK_INTAKE_NONCE_HEADER: "short",
+                    },
+                    payload,
+                ),
+                "malformed-issued-at": (
+                    {
+                        **valid_headers,
+                        SLACK_INTAKE_ISSUED_AT_HEADER: "not-a-timestamp",
+                    },
+                    payload,
+                ),
+                "wrong-signature": (
+                    {
+                        **valid_headers,
+                        SLACK_INTAKE_SIGNATURE_HEADER: "0" * 64,
+                    },
+                    payload,
+                ),
+            }
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main, "daily_task_budget", ledger),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                for label, (headers, body) in cases.items():
+                    with self.subTest(label=label):
+                        response = client.post(
+                            "/v1/intake", headers=headers, json=body
+                        )
+                        self.assertEqual(403, response.status_code)
+
+            self.assertEqual([], self._budget_rows(database))
+            run.assert_not_awaited()
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(0, connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0])
+
+    def test_duplicate_signed_event_replays_idempotently(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            ledger = DailyTaskBudgetLedger(database)
+            test_settings = self._settings()
+            run = AsyncMock(return_value=None)
+            payload = self._payload("evt-signed-duplicate")
+            headers = self._signed_headers(payload, test_settings)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main, "daily_task_budget", ledger),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                first = client.post("/v1/intake", headers=headers, json=payload)
+                replay = client.post("/v1/intake", headers=headers, json=payload)
+
+            self.assertEqual([202, 202], [first.status_code, replay.status_code])
+            self.assertEqual(first.json()["task_id"], replay.json()["task_id"])
+            self.assertEqual([], self._budget_rows(database))
+            run.assert_awaited_once_with(first.json()["task_id"])
+
+    def test_slack_forward_signs_exact_payload_before_direct_or_n8n_delivery(self):
+        import director_orchestrator.config as config_module
+        import slack_bolt
+
+        test_settings = replace(
+            self._settings(),
+            slack_bot_token="xoxb-test",
+            slack_app_token="xapp-test",
+            n8n_webhook_url="http://n8n.test/webhook/director-intake",
+        )
+        module_name = "director_orchestrator.slack_bot"
+        sys.modules.pop(module_name, None)
+        with (
+            patch.object(config_module, "Settings", return_value=test_settings),
+            patch.object(slack_bolt, "App", _FakeBoltApp),
+        ):
+            slack_bot = importlib.import_module(module_name)
+
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"task_id": "DIR-SIGNED"}
+        client = MagicMock()
+        try:
+            with patch.object(slack_bot.httpx, "post", return_value=response) as post:
+                slack_bot._forward(
+                    {
+                        "channel": "C123",
+                        "user": "U-OWNER",
+                        "ts": "1787640000.123456",
+                        "event_ts": "1787640000.123456",
+                        "text": "DIRECTOR verify signed forwarding",
+                    },
+                    client,
+                    require_prefix=False,
+                )
+        finally:
+            sys.modules.pop(module_name, None)
+
+        post.assert_called_once()
+        target = post.call_args.args[0]
+        headers = post.call_args.kwargs["headers"]
+        intake = SlackIntake.model_validate(post.call_args.kwargs["json"])
+        self.assertEqual(test_settings.n8n_webhook_url, target)
+        self.assertEqual("Bearer test-secret", headers["Authorization"])
+        verify_slack_intake_attestation(
+            test_settings.slack_gateway_secret,
+            test_settings.shared_secret,
+            intake,
+            expected_owner_user_id=test_settings.slack_owner_user_id,
+            expected_channel_id=test_settings.slack_channel_id,
+            issued_at=headers[SLACK_INTAKE_ISSUED_AT_HEADER],
+            nonce=headers[SLACK_INTAKE_NONCE_HEADER],
+            signature=headers[SLACK_INTAKE_SIGNATURE_HEADER],
+        )
+
+    def test_owner_authorized_engine_admission_reserves_once_across_replay(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            record = TaskRecord(
+                task_id="DIR-AUTHORIZED-BUDGET",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake.model_validate(self._payload("evt-authorized-budget")),
+                owner_approved=True,
+            )
+            task_store.create(record)
+            test_settings = replace(
+                main.settings,
+                allow_paid_runs=True,
+                openai_api_key="",
+                slack_bot_token="",
+                max_task_budget_usd=1.0,
+                max_daily_provider_budget_usd=2.0,
+                langgraph_runtime_enabled=False,
+                langgraph_runtime_live_dispatch_enabled=False,
+                langgraph_runtime_task_writer_enabled=False,
+            )
+            authorized_engine = OrchestrationEngine(test_settings, task_store)
+
+            self.assertEqual([], self._budget_rows(database))
+            asyncio.run(authorized_engine.run(record.task_id))
+            first_rows = self._budget_rows(database)
+            asyncio.run(authorized_engine.run(record.task_id))
+            replay_rows = self._budget_rows(database)
+
+            self.assertEqual([(record.task_id, 1.0)], first_rows)
+            self.assertEqual(first_rows, replay_rows)
+
+
 class SlackGatewayProofTests(unittest.TestCase):
     def _settings(self):
         return replace(
@@ -2996,3 +3311,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:53 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | END]]

@@ -1,4 +1,5 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 """LIVE_SAFE routing: the coordinator executes the task it takes ownership of.
 
@@ -394,6 +395,51 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, consumer.calls)
         self.assertEqual(self.work["starting_ref"], transport.readback_packet["starting_ref"])
 
+    async def test_stale_generation_readback_cannot_reconcile_current_packet(self):
+        transport = LateReadbackTransport(self.result)
+        router = StubPacketTaskRouter(
+            self.work, PacketBoundaryAdapter("claude", transport)
+        )
+        consumer = RecordingResultConsumer()
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+        )
+        activation = RuntimeActivation(
+            settings,
+            packet_task_router=router,
+            packet_result_consumer=consumer,
+        )
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record()
+        store.create(record)
+
+        self.assertFalse(await engine._execute_assignment(record, assignment))
+        late = store.get(record.task_id)
+        late.status = TaskStatus.RUNNING
+        late.provider_runs.append(
+            ProviderRun(
+                provider=ProviderName.CLAUDE,
+                assignment_sequence=assignment.sequence,
+                interaction_id="stale-generation-correlation",
+                run_id=self.result["run_reference"],
+                status="completed",
+                result=self.result["outcome"],
+                evidence_source="provider_authenticated",
+            )
+        )
+        store.save(late)
+
+        self.assertFalse(
+            await engine._route_live_dispatch(store.get(record.task_id), assignment)
+        )
+        self.assertEqual(1, transport.sends)
+        self.assertIsNone(transport.readback_packet)
+        self.assertEqual(0, consumer.calls)
+        self.assertEqual("RECONCILIATION_REQUIRED", self._ledger_status())
+
     async def test_completed_packet_replays_original_snapshot_after_ref_advances(self):
         transport = RecordingTransport(self.result)
         router = StubPacketTaskRouter(
@@ -583,3 +629,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]

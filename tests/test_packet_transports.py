@@ -1,10 +1,13 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import patch
 
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.models import (
@@ -69,6 +72,25 @@ class FinishedCursor:
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         raise AssertionError("terminal Cursor runs must not be polled")
+
+
+class CapturingProvider:
+    def __init__(self, name: ProviderName) -> None:
+        self.name = name
+        self.context: str | None = None
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        self.context = context
+        return ProviderRun(
+            provider=self.name,
+            run_id=f"{self.name.value}-run-1",
+            status="FINISHED",
+            result="bounded result",
+            evidence_source="provider_authenticated",
+        )
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        raise AssertionError("terminal provider runs must not be polled")
 
 
 def record_for(assignment: Assignment) -> TaskRecord:
@@ -137,6 +159,44 @@ class LocalGitAuthoritySnapshotTests(unittest.TestCase):
 
 
 class LegacyProviderPacketTransportTests(unittest.TestCase):
+    @staticmethod
+    def _context(record, packet) -> ProviderAdapterContext:
+        return ProviderAdapterContext(
+            task_id=record.task_id,
+            assignment_id=packet["assignment_id"],
+            idempotency_key=packet["idempotency_key"],
+            work_packet_digest="sha256:" + "d" * 64,
+            writer_token_digest="sha256:" + "e" * 64,
+            timeout_seconds=30,
+            budget_usd=0.2,
+            max_hops=3,
+            max_revisions=1,
+            allowed_tools=tuple(packet["allowed_tools"]),
+            allowed_external_effects=tuple(packet["allowed_external_effects"]),
+        )
+
+    @staticmethod
+    def _packet(root, store, provider: ProviderName):
+        assignment = Assignment(
+            sequence=1,
+            agent=provider,
+            task="change one file",
+            acceptance=["focused test passes"],
+            repository="example/demo",
+            starting_ref="main",
+            allow_draft_pr=True,
+            estimated_cost_usd=0.2,
+        )
+        record, _ = store.create(record_for(assignment))
+        packet = DirectorPacketTaskRouter(
+            authority_snapshots=ScriptedSnapshotResolver(root),
+            boundary_adapters={},
+            writer_owner_id="test-writer",
+            writer_secret="x" * 32,
+            timeout_seconds=30,
+        ).work_packet(record, assignment)
+        return record, packet
+
     def test_terminal_provider_result_is_normalized_without_another_poll(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             store = TaskStore(str(Path(root) / "tasks.sqlite3"))
@@ -233,7 +293,136 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
         self.assertEqual([], result["side_effects"])
         self.assertTrue(result["requested_decisions"])
 
+    def test_cursor_and_claude_receive_the_complete_canonical_packet(self) -> None:
+        for provider_name in (ProviderName.CURSOR, ProviderName.CLAUDE):
+            with self.subTest(provider=provider_name.value), tempfile.TemporaryDirectory() as root:
+                store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+                record, packet = self._packet(root, store, provider_name)
+                provider = CapturingProvider(provider_name)
+                transport = LegacyProviderPacketTransport(
+                    provider, task_store=store, poll_seconds=1
+                )
+                claude_recording = (
+                    patch.object(transport, "_record_claude_dispatch", return_value=None)
+                    if provider_name == ProviderName.CLAUDE
+                    else nullcontext()
+                )
+
+                with claude_recording:
+                    transport.send(
+                        canonical_json_bytes(packet),
+                        context=self._context(record, packet),
+                    )
+
+                self.assertIsNotNone(provider.context)
+                marker = "DIRECTOR_WORK_PACKET_V1_JSON="
+                _, found, encoded = provider.context.partition(marker)
+                self.assertEqual(marker, found)
+                transmitted = json.loads(encoded)
+                self.assertEqual(packet, transmitted)
+                for field in (
+                    "constraints",
+                    "prohibited_actions",
+                    "allowed_tools",
+                    "allowed_external_effects",
+                    "evidence_requirements",
+                    "limits",
+                    "approval_requirements",
+                    "authority_snapshot",
+                    "correlation",
+                ):
+                    self.assertEqual(packet[field], transmitted[field])
+
+    def test_authenticated_complete_side_effect_evidence_can_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            _, packet = self._packet(root, store, ProviderName.CURSOR)
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CURSOR),
+                task_store=store,
+                poll_seconds=1,
+            )
+            effects = [
+                {
+                    "kind": "WRITE_ISOLATED_BRANCH",
+                    "target": "example/demo:codex/focused",
+                    "status": "COMPLETED",
+                    "idempotency_key": "branch-effect-1",
+                    "external_id": "codex/focused",
+                },
+                {
+                    "kind": "OPEN_DRAFT_PULL_REQUEST",
+                    "target": "example/demo#123",
+                    "status": "COMPLETED",
+                    "idempotency_key": "draft-pr-effect-1",
+                    "external_id": "123",
+                },
+            ]
+
+            result = transport._result(
+                packet,
+                ProviderRun(
+                    provider=ProviderName.CURSOR,
+                    run_id="cursor-effects-1",
+                    status="FINISHED",
+                    result="bounded result",
+                    evidence_source="provider_authenticated",
+                    raw={"side_effects": effects},
+                ),
+            )
+
+        self.assertEqual("SUCCEEDED", result["status"])
+        self.assertEqual(effects, result["side_effects"])
+        self.assertEqual([], result["requested_decisions"])
+
+    def test_missing_or_extra_side_effect_evidence_requires_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            _, packet = self._packet(root, store, ProviderName.CURSOR)
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CURSOR),
+                task_store=store,
+                poll_seconds=1,
+            )
+            allowed_branch = {
+                "kind": "WRITE_ISOLATED_BRANCH",
+                "target": "example/demo:codex/focused",
+                "status": "COMPLETED",
+                "idempotency_key": "branch-effect-1",
+            }
+            unauthorized_merge = {
+                "kind": "MERGE_PULL_REQUEST",
+                "target": "example/demo#123",
+                "status": "COMPLETED",
+                "idempotency_key": "merge-effect-1",
+            }
+            cases = {
+                "missing": {},
+                "partial": {"side_effects": [allowed_branch]},
+                "extra": {
+                    "side_effects": [allowed_branch, unauthorized_merge]
+                },
+            }
+            for label, raw in cases.items():
+                with self.subTest(case=label):
+                    result = transport._result(
+                        packet,
+                        ProviderRun(
+                            provider=ProviderName.CURSOR,
+                            run_id=f"cursor-{label}",
+                            status="FINISHED",
+                            result="bounded result",
+                            evidence_source="provider_authenticated",
+                            raw=raw,
+                        ),
+                    )
+                    self.assertEqual("OWNER_DECISION_REQUIRED", result["status"])
+                    self.assertEqual([], result["side_effects"])
+                    self.assertTrue(result["blockers"])
+                    self.assertTrue(result["requested_decisions"])
+
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]

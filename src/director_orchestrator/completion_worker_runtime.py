@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:09 UTC | BEGIN]]
 """Fail-closed production construction for Completion Gate worker tiers.
 
@@ -11,6 +12,7 @@ only; it does not grant completion, merge, deployment, or external-write authori
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,10 +40,18 @@ from .config import Settings
 class ClosedVocabularyWorkerSanitizer:
     """Retain no subprocess prose and disclose only bounded structural evidence.
 
-    Regex is deliberately not the privacy boundary.  Raw stdout/stderr are
-    discarded before persistence; only their byte counts enter a domain-separated
-    digest and the decisive output is a fixed closed-vocabulary token.
+    Withholding is the privacy boundary: raw stdout/stderr are discarded before
+    persistence while their length-delimited bytes enter a one-way digest. A
+    small secret-pattern scan is defense in depth and never substitutes for
+    withholding. The decisive output is a fixed closed-vocabulary token.
     """
+
+    _secret_patterns = (
+        re.compile(rb"\bsk-[A-Za-z0-9_-]{16,}\b"),
+        re.compile(rb"\b(?:ghp|github_pat)_[A-Za-z0-9_]{16,}\b"),
+        re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+        re.compile(rb"(?i)\b(?:api[_ -]?key|access[_ -]?token|password)\s*[:=]\s*\S+"),
+    )
 
     def sanitize(self, stdout: bytes, stderr: bytes) -> SanitizedWorkerOutput:
         digest = hashlib.sha256()
@@ -50,11 +60,15 @@ class ClosedVocabularyWorkerSanitizer:
         digest.update(stdout)
         digest.update(len(stderr).to_bytes(8, "big"))
         digest.update(stderr)
+        secret_scan_passed = not any(
+            pattern.search(stdout) or pattern.search(stderr)
+            for pattern in self._secret_patterns
+        )
         return SanitizedWorkerOutput(
             decisive_output="WORKER_OUTPUT_WITHHELD_BY_POLICY",
             output_digest="sha256:" + digest.hexdigest(),
             redaction_passed=True,
-            secret_scan_passed=True,
+            secret_scan_passed=secret_scan_passed,
         )
 
 
@@ -124,7 +138,13 @@ def _worker_specs(
                     limits=limits,
                 )
             )
-        if "container" in settings.completion_gate_execution_tiers:
+        # The shipped digest-pinned base image intentionally contains only
+        # Python. Dependency-requiring unittest and pip checks stay on the
+        # audited host until a separately reviewed worker image is configured.
+        if (
+            "container" in settings.completion_gate_execution_tiers
+            and runner_id == "python_compileall"
+        ):
             specs.append(
                 DisposableContainerSpec.build(
                     spec_id=f"container.{runner_id}.{profile_id}",
@@ -179,3 +199,4 @@ def build_completion_worker_runtime(settings: Settings) -> CompletionWorkerRunti
         raise ValueError("Completion Gate worker backends are not ready")
     return CompletionWorkerRuntime(runner_registry, worker_registry, executor)
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:09 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]

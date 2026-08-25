@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:21 UTC | BEGIN]]
 """Concrete no-shell Completion Gate worker backends.
@@ -31,7 +32,7 @@ from .completion_workers import (
     WorkerSpec,
     WorkerTier,
 )
-from .process_isolation import ProcessTreeGuard
+from .process_isolation import launch_contained_process
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,16 +88,8 @@ class _BoundedProcessBackend:
         output_limit_bytes: int,
     ) -> tuple[int | None, bool, bool, SanitizedWorkerOutput, bool]:
         self.binding.authenticate()
-        environment = {
-            key: value
-            for key, value in os.environ.items()
-            if key.upper() in {"COMSPEC", "SYSTEMROOT", "TEMP", "TMP", "WINDIR"}
-        }
-        creationflags = 0
-        start_new_session = os.name != "nt"
-        if os.name == "nt":
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-        process = subprocess.Popen(
+        environment = _safe_environment()
+        process, tree_guard = launch_contained_process(
             tuple(argv),
             cwd=cwd,
             env=environment,
@@ -104,13 +97,24 @@ class _BoundedProcessBackend:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            start_new_session=start_new_session,
-            creationflags=creationflags,
         )
-        tree_guard = ProcessTreeGuard(process)
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         lock = threading.Lock()
         overflow = threading.Event()
+        termination_started = threading.Event()
+        termination_errors: list[BaseException] = []
+        termination_lock = threading.Lock()
+
+        def terminate_tree_once() -> None:
+            with termination_lock:
+                if termination_started.is_set():
+                    return
+                termination_started.set()
+            try:
+                tree_guard.terminate()
+                self._terminate_posix_group(process)
+            except BaseException as exc:  # evidence must fail closed
+                termination_errors.append(exc)
 
         def drain(name: str, stream: Any) -> None:
             try:
@@ -124,7 +128,7 @@ class _BoundedProcessBackend:
                         buffers[name].extend(chunk[:remaining])
                         if len(chunk) > remaining:
                             overflow.set()
-                            self._terminate_tree(process)
+                            terminate_tree_once()
                             return
             finally:
                 stream.close()
@@ -136,52 +140,63 @@ class _BoundedProcessBackend:
         for reader in readers:
             reader.start()
         timed_out = False
-        tree_terminated = False
         try:
             exit_code: int | None = process.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
-            tree_guard.terminate()
-            self._terminate_tree(process)
-            tree_terminated = True
-            process.wait(timeout=10)
+            terminate_tree_once()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired as exc:
+                raise CompletionWorkerError(
+                    "worker process tree did not terminate after timeout"
+                ) from exc
             exit_code = None
         if overflow.is_set():
-            tree_guard.terminate()
-            tree_terminated = True
-            process.wait(timeout=10)
+            terminate_tree_once()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired as exc:
+                raise CompletionWorkerError(
+                    "worker process tree did not terminate after output overflow"
+                ) from exc
+        # A normally exiting parent may leave descendants behind. Close the
+        # complete Job/session group before accepting any worker evidence.
+        terminate_tree_once()
         for reader in readers:
             reader.join(timeout=10)
         if any(reader.is_alive() for reader in readers):
-            self._terminate_tree(process)
             raise CompletionWorkerError("worker output readers did not terminate")
+        if termination_errors:
+            raise CompletionWorkerError("worker process containment failed") from termination_errors[0]
         sanitized = self.sanitizer.sanitize(
             bytes(buffers["stdout"]), bytes(buffers["stderr"])
         )
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", sanitized.output_digest):
             raise CompletionWorkerError("sanitizer returned a malformed output digest")
         tree_guard.close()
-        return exit_code, timed_out, overflow.is_set(), sanitized, tree_terminated
+        return exit_code, timed_out, overflow.is_set(), sanitized, True
 
     @staticmethod
-    def _terminate_tree(process: subprocess.Popen[bytes]) -> None:
-        if process.poll() is not None:
-            return
+    def _terminate_posix_group(process: subprocess.Popen[bytes]) -> None:
         if os.name == "nt":
-            subprocess.run(
-                ("taskkill", "/PID", str(process.pid), "/T", "/F"),
-                shell=False,
-                check=False,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=15,
-            )
+            return
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def _trusted_cwd(self) -> Path:
+        if os.name == "nt":
+            system_root = os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR")
+            if not system_root:
+                raise CompletionWorkerError("trusted Windows system directory is unavailable")
+            neutral = Path(system_root, "System32").resolve(strict=True)
         else:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            neutral = Path("/").resolve(strict=True)
+        if not neutral.is_dir():
+            raise CompletionWorkerError("trusted neutral worker directory is unavailable")
+        return neutral
 
 
 class AuditedHostWorkerBackend(_BoundedProcessBackend):
@@ -226,6 +241,8 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
             str(limits.pids_limit),
             "--read-only-repository",
             request.repository_root,
+            "--env",
+            f"PYTHONPATH={Path(request.repository_root, 'src')}",
             "--expected-head",
             request.expected_head_sha,
             "--",
@@ -243,9 +260,11 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
             raise CompletionWorkerError("host backend received the wrong worker tier")
         root = _repository_root(request)
         before_head, before_clean = _repository_state(root)
+        command = self.command(spec, request)
+        controls = _verified_host_controls(command, spec, request)
         result = self._execute_argv(
-            self.command(spec, request),
-            cwd=root,
+            command,
+            cwd=self._trusted_cwd(),
             timeout_seconds=spec.limits.timeout_seconds,
             output_limit_bytes=spec.limits.output_limit_bytes,
         )
@@ -254,6 +273,7 @@ class AuditedHostWorkerBackend(_BoundedProcessBackend):
             request, spec, lease_token, before_head, after_head,
             before_clean, after_clean, result,
             disposable=False,
+            controls=controls,
         )
 
 
@@ -283,9 +303,7 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
     ) -> tuple[str, ...]:
         if any(character in request.repository_root for character in (",", "\r", "\n")):
             raise CompletionWorkerError("repository path cannot be encoded safely for a mount")
-        name = "director-gate-" + hashlib.sha256(
-            request.job_id.encode("utf-8")
-        ).hexdigest()[:20]
+        name = _container_name(request.job_id)
         limits = spec.limits
         return (
             self.binding.path,
@@ -316,6 +334,10 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
             f"type=bind,src={request.repository_root},dst=/workspace,readonly",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,nodev,size=67108864",
+            "--env",
+            "PYTHONPATH=/workspace/src",
+            "--env",
+            "PYTHONPYCACHEPREFIX=/tmp/pycache",
             spec.image,
             *spec.fixed_argv,
         )
@@ -331,18 +353,92 @@ class DisposableContainerWorkerBackend(_BoundedProcessBackend):
             raise CompletionWorkerError("container backend received the wrong worker tier")
         root = _repository_root(request)
         before_head, before_clean = _repository_state(root)
-        result = self._execute_argv(
-            self.command(spec, request),
-            cwd=root,
-            timeout_seconds=spec.limits.timeout_seconds,
-            output_limit_bytes=spec.limits.output_limit_bytes,
-        )
+        name = _container_name(request.job_id)
+        command = self.command(spec, request)
+        controls = _verified_container_controls(command, spec, request)
+        try:
+            result = self._execute_argv(
+                command,
+                cwd=self._trusted_cwd(),
+                timeout_seconds=spec.limits.timeout_seconds,
+                output_limit_bytes=spec.limits.output_limit_bytes,
+            )
+        except BaseException:
+            self._ensure_container_absent(name, request.job_id)
+            raise
+        self._ensure_container_absent(name, request.job_id)
         after_head, after_clean = _repository_state(root)
         return _evidence(
             request, spec, lease_token, before_head, after_head,
             before_clean, after_clean, result,
             disposable=True,
+            controls=controls,
         )
+
+    def _ensure_container_absent(self, name: str, job_id: str) -> None:
+        label = self._container_label(name)
+        if label is None:
+            return
+        if label != job_id:
+            raise CompletionWorkerError(
+                "deterministic worker container name is owned by another job"
+            )
+        return_code, _ = self._runtime_control(("rm", "--force", name))
+        if return_code != 0:
+            raise CompletionWorkerError("worker container force-removal failed")
+        if self._container_label(name) is not None:
+            raise CompletionWorkerError("worker container removal could not be verified")
+
+    def _container_label(self, name: str) -> str | None:
+        return_code, stdout = self._runtime_control(
+            (
+                "container",
+                "ls",
+                "--all",
+                "--filter",
+                f"name=^/{name}$",
+                "--format",
+                '{{.Names}}|{{.Label "director.completion-job"}}',
+            )
+        )
+        if return_code != 0:
+            raise CompletionWorkerError("worker container state could not be verified")
+        lines = [line for line in stdout.decode("utf-8", errors="strict").splitlines() if line]
+        if not lines:
+            return None
+        if len(lines) != 1:
+            raise CompletionWorkerError("worker container state was ambiguous")
+        container_name, separator, label = lines[0].partition("|")
+        if separator != "|" or container_name != name or not label:
+            raise CompletionWorkerError("worker container identity was ambiguous")
+        return label
+
+    def _runtime_control(self, argv: Sequence[str]) -> tuple[int, bytes]:
+        self.binding.authenticate()
+        process, tree_guard = launch_contained_process(
+            (self.binding.path, *argv),
+            cwd=self._trusted_cwd(),
+            env=_safe_environment(),
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            try:
+                stdout, _ = process.communicate(timeout=15)
+            except subprocess.TimeoutExpired as exc:
+                tree_guard.terminate()
+                self._terminate_posix_group(process)
+                process.wait(timeout=5)
+                raise CompletionWorkerError("worker container control timed out") from exc
+            tree_guard.terminate()
+            self._terminate_posix_group(process)
+            if len(stdout) > 4096:
+                raise CompletionWorkerError("worker container control output was oversized")
+            return int(process.returncode), stdout
+        finally:
+            tree_guard.close()
 
 
 def _repository_root(request: CompletionWorkerRequest) -> Path:
@@ -350,6 +446,94 @@ def _repository_root(request: CompletionWorkerRequest) -> Path:
     if not root.is_dir():
         raise CompletionWorkerError("worker repository root is not a directory")
     return root
+
+
+def _container_name(job_id: str) -> str:
+    return "director-gate-" + hashlib.sha256(job_id.encode("utf-8")).hexdigest()[:20]
+
+
+def _safe_environment() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in {"COMSPEC", "SYSTEMROOT", "TEMP", "TMP", "WINDIR"}
+    }
+
+
+def _command_pair(command: Sequence[str], option: str, expected: str) -> bool:
+    return any(
+        command[index] == option and command[index + 1] == expected
+        for index in range(len(command) - 1)
+    )
+
+
+def _verified_host_controls(
+    command: Sequence[str],
+    spec: AuditedHostProfile,
+    request: CompletionWorkerRequest,
+) -> WorkerBackendCapabilities:
+    required_pairs = (
+        ("--profile", spec.launcher_profile_id),
+        ("--network", "none"),
+        ("--memory-bytes", str(spec.limits.memory_limit_bytes)),
+        ("--cpus", str(spec.limits.cpu_limit)),
+        ("--pids-limit", str(spec.limits.pids_limit)),
+        ("--read-only-repository", request.repository_root),
+        ("--env", f"PYTHONPATH={Path(request.repository_root, 'src')}"),
+        ("--expected-head", request.expected_head_sha),
+    )
+    if not all(_command_pair(command, option, value) for option, value in required_pairs):
+        raise CompletionWorkerError("audited host worker controls are incomplete")
+    if "--" not in command or tuple(command[command.index("--") + 1 :]) != spec.fixed_argv:
+        raise CompletionWorkerError("audited host worker command binding changed")
+    return WorkerBackendCapabilities(
+        tier=WorkerTier.AUDITED_HOST,
+        low_privilege_identity=True,
+        network_isolation=True,
+        resource_limits=True,
+        process_tree_termination=True,
+        read_only_repository=True,
+        disposable_filesystem=False,
+    )
+
+
+def _verified_container_controls(
+    command: Sequence[str],
+    spec: DisposableContainerSpec,
+    request: CompletionWorkerRequest,
+) -> WorkerBackendCapabilities:
+    required_flags = ("--rm", "--read-only")
+    required_pairs = (
+        ("--name", _container_name(request.job_id)),
+        ("--label", f"director.completion-job={request.job_id}"),
+        ("--network", "none"),
+        ("--cap-drop", "ALL"),
+        ("--security-opt", "no-new-privileges"),
+        ("--pids-limit", str(spec.limits.pids_limit)),
+        ("--memory", str(spec.limits.memory_limit_bytes)),
+        ("--cpus", str(spec.limits.cpu_limit)),
+        ("--user", spec.run_as_user),
+        ("--workdir", spec.working_directory),
+        ("--mount", f"type=bind,src={request.repository_root},dst=/workspace,readonly"),
+        ("--env", "PYTHONPATH=/workspace/src"),
+        ("--env", "PYTHONPYCACHEPREFIX=/tmp/pycache"),
+    )
+    if not all(flag in command for flag in required_flags):
+        raise CompletionWorkerError("container worker controls are incomplete")
+    if not all(_command_pair(command, option, value) for option, value in required_pairs):
+        raise CompletionWorkerError("container worker controls are incomplete")
+    image_index = command.index(spec.image)
+    if tuple(command[image_index + 1 :]) != spec.fixed_argv:
+        raise CompletionWorkerError("container worker command binding changed")
+    return WorkerBackendCapabilities(
+        tier=WorkerTier.DISPOSABLE_CONTAINER,
+        low_privilege_identity=spec.run_as_user not in {"0", "0:0", "root"},
+        network_isolation=True,
+        resource_limits=True,
+        process_tree_termination=True,
+        read_only_repository=True,
+        disposable_filesystem=True,
+    )
 
 
 def _repository_state(root: Path) -> tuple[str, bool]:
@@ -381,6 +565,7 @@ def _evidence(
     execution: tuple[int | None, bool, bool, SanitizedWorkerOutput, bool],
     *,
     disposable: bool,
+    controls: WorkerBackendCapabilities,
 ) -> WorkerBackendEvidence:
     exit_code, timed_out, overflow, output, tree_terminated = execution
     return WorkerBackendEvidence(
@@ -401,12 +586,13 @@ def _evidence(
         decisive_output=output.decisive_output,
         redaction_passed=output.redaction_passed,
         secret_scan_passed=output.secret_scan_passed,
-        network_isolated=True,
-        resource_limits_applied=True,
-        low_privilege_identity_applied=True,
-        process_tree_terminated=(tree_terminated or (not timed_out and not overflow)),
-        repository_read_only=True,
-        disposable_filesystem=disposable,
+        network_isolated=controls.network_isolation,
+        resource_limits_applied=controls.resource_limits,
+        low_privilege_identity_applied=controls.low_privilege_identity,
+        process_tree_terminated=(tree_terminated and controls.process_tree_termination),
+        repository_read_only=controls.read_only_repository,
+        disposable_filesystem=(disposable and controls.disposable_filesystem),
     )
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:21 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]

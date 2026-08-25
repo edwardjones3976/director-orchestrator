@@ -1,6 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:27 UTC | BEGIN]]
 from __future__ import annotations
 
+import os
 import sqlite3
 import subprocess
 import sys
@@ -8,9 +10,11 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 from director_orchestrator.completion_gates import domain_digest
 from director_orchestrator.completion_worker_backends import (
+    AuditedHostWorkerBackend,
     DisposableContainerWorkerBackend,
     ExecutableBinding,
     SanitizedWorkerOutput,
@@ -306,7 +310,7 @@ class CompletionWorkerTests(unittest.TestCase):
             worker_spec_digest=self.container.spec_digest,
         )
         command = backend.command(self.container, request)
-        self.assertEqual(sys.executable, command[0])
+        self.assertEqual(Path(sys.executable).resolve(), Path(command[0]).resolve())
         for required in (
             "--network", "none", "--read-only", "--cap-drop", "ALL",
             "no-new-privileges", "--pids-limit", "--memory", "--cpus",
@@ -315,6 +319,68 @@ class CompletionWorkerTests(unittest.TestCase):
             self.assertIn(required, command)
         self.assertEqual(self.container.fixed_argv, command[-len(self.container.fixed_argv):])
         self.assertNotIn("-c", command[: command.index(self.container.image)])
+        self.assertIn("PYTHONPATH=/workspace/src", command)
+        self.assertIn("PYTHONPYCACHEPREFIX=/tmp/pycache", command)
+        expected_cwd = (
+            Path(os.environ["SYSTEMROOT"], "System32") if os.name == "nt" else Path("/")
+        )
+        self.assertEqual(expected_cwd, backend._trusted_cwd())
+
+    def test_host_contract_supplies_pythonpath_and_uses_neutral_cwd(self):
+        backend = AuditedHostWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        command = backend.command(self.host, self.request())
+        self.assertIn("--env", command)
+        self.assertIn(f"PYTHONPATH={self.repository / 'src'}", command)
+        expected_cwd = (
+            Path(os.environ["SYSTEMROOT"], "System32") if os.name == "nt" else Path("/")
+        )
+        self.assertEqual(expected_cwd, backend._trusted_cwd())
+        self.assertNotEqual(self.repository.resolve(), backend._trusted_cwd())
+
+    def test_container_cleanup_is_label_bound_forced_and_verified(self):
+        backend = DisposableContainerWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        backend._runtime_control = Mock(
+            side_effect=[
+                (0, b"director-gate-fixture|worker-job-1\n"),
+                (0, b""),
+                (0, b""),
+            ]
+        )
+        backend._ensure_container_absent("director-gate-fixture", "worker-job-1")
+        self.assertEqual(3, backend._runtime_control.call_count)
+        self.assertEqual(
+            ("rm", "--force", "director-gate-fixture"),
+            backend._runtime_control.call_args_list[1].args[0],
+        )
+
+    def test_container_cleanup_refuses_a_foreign_label(self):
+        backend = DisposableContainerWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        backend._runtime_control = Mock(
+            return_value=(0, b"director-gate-fixture|another-job\n")
+        )
+        with self.assertRaisesRegex(CompletionWorkerError, "another job"):
+            backend._ensure_container_absent("director-gate-fixture", "worker-job-1")
+        self.assertEqual(1, backend._runtime_control.call_count)
+
+    def test_container_cli_exception_still_requires_verified_daemon_cleanup(self):
+        backend = DisposableContainerWorkerBackend(
+            ExecutableBinding.create(sys.executable), StaticSanitizer()
+        )
+        backend._execute_argv = Mock(side_effect=CompletionWorkerError("CLI failed"))
+        backend._ensure_container_absent = Mock()
+        request = self.request(
+            worker_spec_id=self.container.spec_id,
+            worker_spec_digest=self.container.spec_digest,
+        )
+        with self.assertRaisesRegex(CompletionWorkerError, "CLI failed"):
+            backend.execute(self.container, request, lease_token="lease")
+        backend._ensure_container_absent.assert_called_once()
 
     def test_append_only_audit_and_guarded_job_transitions(self):
         request = self.request()
@@ -335,3 +401,4 @@ class CompletionWorkerTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:27 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]

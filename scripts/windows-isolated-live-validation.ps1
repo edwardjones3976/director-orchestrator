@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -413,16 +414,34 @@ if ($ApiOnly -and $EnablePaidRuns -and $ProfileName -ne "long-table") {
     throw "-ApiOnly can combine with -EnablePaidRuns only for the dedicated Long Table canary."
 }
 
+function ConvertTo-StrictBoolean {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if ($Value -is [bool]) { return [bool]$Value }
+    $text = [string]$Value
+    if ($text -ceq "true") { return $true }
+    if ($text -ceq "false") { return $false }
+    throw "$Name must be the exact boolean true or false."
+}
+
 function Assert-LongTableGraduationReady {
-    param([Parameter(Mandatory = $true)]$Health)
+    param(
+        [Parameter(Mandatory = $true)]$Health,
+        [Parameter(Mandatory = $true)][hashtable]$Values
+    )
 
     if ($ProfileName -ne "long-table") { return }
-    if (-not [bool]$Health.langgraph_runtime.task_writer_active -or
-        -not [bool]$Health.parallel_dispatch.active) {
+    $writerActive = ConvertTo-StrictBoolean -Value $Health.langgraph_runtime.task_writer_active -Name "langgraph_runtime.task_writer_active"
+    $parallelActive = ConvertTo-StrictBoolean -Value $Health.parallel_dispatch.active -Name "parallel_dispatch.active"
+    if (-not $writerActive -or -not $parallelActive) {
         throw "Long Table paid activation did not establish the LangGraph task writer and bounded parallel dispatch."
     }
-    if ([bool]$Health.completion_gates.execution_active -and
-        [string]$values["COMPLETION_GATE_ISOLATED_PROOF_ENABLED"] -cne "true") {
+    $workerActive = ConvertTo-StrictBoolean -Value $Health.completion_gates.worker_execution_active -Name "completion_gates.worker_execution_active"
+    $isolatedProofEnabled = ConvertTo-StrictBoolean -Value $Values["COMPLETION_GATE_ISOLATED_PROOF_ENABLED"] -Name "COMPLETION_GATE_ISOLATED_PROOF_ENABLED"
+    if ($workerActive -and -not $isolatedProofEnabled) {
         throw "Long Table paid activation unexpectedly enabled completion workers."
     }
 }
@@ -670,7 +689,7 @@ try {
         }
         if ($LASTEXITCODE -ne 0) { throw "Cooldown evidence accepted, but the complete isolated stack did not start." }
         $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
-        Assert-LongTableGraduationReady -Health $health
+        Assert-LongTableGraduationReady -Health $health -Values $values
         Write-Host "LIVE VALIDATION PASSED. Paid execution is enabled only for the isolated $displayName deployment."
         return
     }
@@ -747,7 +766,7 @@ try {
     }
     if ($LASTEXITCODE -ne 0) { throw "Provider checks passed, but the complete isolated stack did not start." }
     $health = Wait-DirectorHealth -Port $hostPort -Timeout ([Math]::Min($TimeoutSeconds, 180))
-    Assert-LongTableGraduationReady -Health $health
+    Assert-LongTableGraduationReady -Health $health -Values $values
 }
 catch {
     $failure = $_
@@ -819,3 +838,4 @@ finally {
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]

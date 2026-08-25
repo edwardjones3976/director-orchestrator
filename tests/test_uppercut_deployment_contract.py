@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 from __future__ import annotations
@@ -366,6 +367,18 @@ class LongTableDeploymentContractTests(unittest.TestCase):
         self.assertIn('"LANGGRAPH_RUNTIME_WRITER_SECRET"', self.script)
         self.assertIn('Assert-Configured -Values $values -Names @("LANGGRAPH_RUNTIME_WRITER_SECRET")', self.script)
 
+    def test_long_table_readiness_uses_strict_booleans_and_passed_values(self):
+        readiness = self.script[
+            self.script.index("function ConvertTo-StrictBoolean") :
+            self.script.index("function Assert-LongTableSnapshot")
+        ]
+        self.assertIn("worker_execution_active", readiness)
+        self.assertNotIn("completion_gates.execution_active", readiness)
+        self.assertIn('$Values["COMPLETION_GATE_ISOLATED_PROOF_ENABLED"]', readiness)
+        self.assertIn('$text -ceq "true"', readiness)
+        self.assertIn('$text -ceq "false"', readiness)
+        self.assertIn("-Values $values", self.script)
+
     def test_snapshot_identity_matches_the_shipped_profile(self):
         snapshot_line = next(
             line
@@ -419,3 +432,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]

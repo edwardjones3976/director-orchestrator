@@ -1,3 +1,4 @@
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:01 UTC | BEGIN]]
@@ -578,11 +579,18 @@ class OrchestrationEngine:
             return False
         if outcome.status == RuntimeExecutionStatus.OWNER_DECISION_REQUIRED:
             latest = self.store.get(record.task_id) or record
+            current_correlation_id = str(
+                work_packet["correlation"]["correlation_id"]
+            )
             authenticated_readbacks = [
                 item
                 for item in latest.provider_runs
                 if item.assignment_sequence == assignment.sequence
                 and item.evidence_source == "provider_authenticated"
+                and item.interaction_id is not None
+                and hmac.compare_digest(
+                    item.interaction_id, current_correlation_id
+                )
                 and item.status != "WAITING_CALLBACK"
                 and item.result
                 and not item.raw.get("packet_result_digest")
@@ -5222,3 +5230,4 @@ class OrchestrationEngine:
 # [[Codex | GPT-5.6 | 2026-08-25 | 02:01 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]

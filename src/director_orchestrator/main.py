@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
@@ -23,7 +24,11 @@ from .approvals import (
     clarification_required,
     owner_identity_matches,
     reserve_task_effect,
+    SLACK_INTAKE_ISSUED_AT_HEADER,
+    SLACK_INTAKE_NONCE_HEADER,
+    SLACK_INTAKE_SIGNATURE_HEADER,
     task_effect_key,
+    verify_slack_intake_attestation,
     verify_slack_gateway_proof,
 )
 from .callbacks import (
@@ -79,7 +84,6 @@ from .packet_transports import (
 )
 from .providers import provider_registry
 from .parallel_dispatch import (
-    DailyTaskBudgetExceeded,
     DailyTaskBudgetLedger,
 )
 
@@ -449,23 +453,34 @@ def chatgpt_bridge_delivery_ambiguous(
 
 
 @app.post("/v1/intake", response_model=TaskRecord, status_code=202, dependencies=[Depends(require_auth)])
-def intake(payload: SlackIntake, background: BackgroundTasks) -> TaskRecord:
+def intake(
+    payload: SlackIntake,
+    background: BackgroundTasks,
+    intake_issued_at: str | None = Header(
+        default=None, alias=SLACK_INTAKE_ISSUED_AT_HEADER
+    ),
+    intake_nonce: str | None = Header(default=None, alias=SLACK_INTAKE_NONCE_HEADER),
+    intake_signature: str | None = Header(
+        default=None, alias=SLACK_INTAKE_SIGNATURE_HEADER
+    ),
+) -> TaskRecord:
+    if settings.allow_paid_runs:
+        try:
+            verify_slack_intake_attestation(
+                settings.slack_gateway_secret,
+                settings.shared_secret,
+                payload,
+                expected_owner_user_id=settings.slack_owner_user_id,
+                expected_channel_id=settings.slack_channel_id,
+                issued_at=intake_issued_at,
+                nonce=intake_nonce,
+                signature=intake_signature,
+            )
+        except StaleApproval as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
     task_id = f"DIR-{secrets.token_hex(5).upper()}"
     record = TaskRecord(task_id=task_id, status=TaskStatus.QUEUED, intake=payload)
     stored, created = store.create(record)
-    if daily_task_budget is not None:
-        try:
-            daily_task_budget.reserve(
-                task_id=stored.task_id,
-                task_budget_usd=settings.max_task_budget_usd,
-                daily_budget_usd=settings.max_daily_provider_budget_usd,
-            )
-        except DailyTaskBudgetExceeded as exc:
-            if created:
-                stored.status = TaskStatus.BLOCKED
-                stored.message = str(exc)[:2_000]
-                store.save(stored)
-            raise HTTPException(status_code=429, detail=str(exc)) from exc
     if created:
         background.add_task(engine.run, stored.task_id)
     return stored
@@ -718,3 +733,4 @@ def complete_run(
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | END]]

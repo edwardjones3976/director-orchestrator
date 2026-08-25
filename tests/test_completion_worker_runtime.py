@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:14 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from pathlib import Path
 from director_orchestrator.completion_worker_runtime import (
     ClosedVocabularyWorkerSanitizer,
 )
+from director_orchestrator.completion_workers import CompletionWorkerError
 from director_orchestrator.config import Settings
 from director_orchestrator.runtime_activation import RuntimeActivation
 
@@ -57,11 +59,13 @@ class CompletionWorkerRuntimeTests(unittest.TestCase):
         self.assertTrue((self.root / "workers.sqlite3").is_file())
 
         host = runtime.worker_registry.resolve("host.python_unittest.discover-tests")
-        container = runtime.worker_registry.resolve(
-            "container.python_unittest.discover-tests"
-        )
+        container = runtime.worker_registry.resolve("container.python_compileall.src-tests")
         self.assertNotIn("-c", host.fixed_argv)
         self.assertNotIn("-c", container.fixed_argv)
+        with self.assertRaises(CompletionWorkerError):
+            runtime.worker_registry.resolve("container.python_unittest.discover-tests")
+        with self.assertRaises(CompletionWorkerError):
+            runtime.worker_registry.resolve("container.pip_check.environment")
         self.assertRegex(container.image, r"@sha256:[0-9a-f]{64}$")
         self.assertEqual("none", host.network_mode)
         self.assertEqual("none", container.network_mode)
@@ -118,8 +122,13 @@ class CompletionWorkerRuntimeTests(unittest.TestCase):
         self.assertRegex(output.output_digest, r"^sha256:[0-9a-f]{64}$")
         different = sanitizer.sanitize(b"other-value!", b"private failure")
         self.assertNotEqual(output.output_digest, different.output_digest)
+        self.assertTrue(output.redaction_passed)
+        self.assertTrue(output.secret_scan_passed)
+        detected = sanitizer.sanitize(b"api_key=not-a-real-secret-value", b"")
+        self.assertFalse(detected.secret_scan_passed)
 
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]

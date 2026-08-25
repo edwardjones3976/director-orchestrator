@@ -28,6 +28,18 @@
               "value": "={{ $json.headers.authorization }}"
             },
             {
+              "name": "X-Director-Intake-Issued-At",
+              "value": "={{ $json.headers['x-director-intake-issued-at'] }}"
+            },
+            {
+              "name": "X-Director-Intake-Nonce",
+              "value": "={{ $json.headers['x-director-intake-nonce'] }}"
+            },
+            {
+              "name": "X-Director-Intake-Signature",
+              "value": "={{ $json.headers['x-director-intake-signature'] }}"
+            },
+            {
               "name": "Content-Type",
               "value": "application/json"
             }

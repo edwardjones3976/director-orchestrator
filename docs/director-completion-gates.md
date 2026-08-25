@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
@@ -105,6 +106,24 @@ replays the stored outcome; a backend exception becomes
 `RECONCILIATION_REQUIRED` and is not automatically redispatched. This worker lane
 produces evidence only. It cannot become a second provider dispatcher, task-state
 writer, GitHub/Slack writer, merger, deployer, or project-completion authority.
+
+Windows worker processes are created suspended, assigned to a mandatory
+kill-on-close Job Object, and resumed only after assignment succeeds. POSIX
+workers run in a separately owned session. Both tiers launch from an OS-owned
+neutral directory rather than repository-controlled current working data.
+The audited host-broker contract receives the repository path explicitly and a
+literal `--env PYTHONPATH=<repository>/src` argument; it must apply that value
+inside its low-privilege sandbox without shell interpretation.
+
+The disposable-container backend always supplies
+`PYTHONPATH=/workspace/src` and redirects bytecode caches to the `/tmp` tmpfs.
+The shipped bare Python image is registered only for dependency-free
+`compileall`; unit tests and `pip check` remain audited-host specs until a
+separately reviewed dependency-bearing image is configured. Every container has
+a deterministic job-bound name and label. After every CLI outcome—including
+timeout, overflow, or ambiguity—the runtime authenticates the Docker executable,
+forces removal only when the label matches, and verifies daemon-side absence.
+Unverifiable cleanup becomes reconciliation-required evidence, never success.
 
 ## Applicability
 
@@ -467,3 +486,4 @@ an execution or external effect.
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]] -->

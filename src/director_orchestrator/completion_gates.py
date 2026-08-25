@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
@@ -23,7 +24,7 @@ from typing import Any, Mapping, Sequence
 
 import rfc8785
 from jsonschema import Draft202012Validator
-from .process_isolation import ProcessTreeGuard
+from .process_isolation import launch_contained_process
 
 
 JsonObject = dict[str, Any]
@@ -1023,14 +1024,7 @@ class RunnerRegistry:
         timeout_seconds: int,
         output_limit_bytes: int,
     ) -> tuple[int | None, bool, bool, bytes, bytes]:
-        process_group: dict[str, Any]
-        if os.name == "nt":
-            process_group = {
-                "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            }
-        else:
-            process_group = {"start_new_session": True}
-        process = subprocess.Popen(
+        process, tree_guard = launch_contained_process(
             tuple(argv),
             cwd=cwd,
             env=dict(environment),
@@ -1038,22 +1032,24 @@ class RunnerRegistry:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            **process_group,
         )
-        tree_guard = ProcessTreeGuard(process)
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         lock = threading.Lock()
         output_limit_exceeded = threading.Event()
         termination_started = threading.Event()
         termination_lock = threading.Lock()
+        termination_errors: list[BaseException] = []
 
         def terminate_tree_once() -> None:
             with termination_lock:
                 if termination_started.is_set():
                     return
                 termination_started.set()
-            tree_guard.terminate()
-            RunnerRegistry._terminate_process_tree(process)
+            try:
+                tree_guard.terminate()
+                RunnerRegistry._terminate_process_tree(process)
+            except BaseException as exc:
+                termination_errors.append(exc)
 
         def drain(name: str, stream: Any) -> None:
             try:
@@ -1095,6 +1091,9 @@ class RunnerRegistry:
                     "runner process tree did not terminate after timeout"
                 ) from exc
             exit_code = None
+        # Even a successful parent may have spawned a detached descendant.
+        # The mandatory Job/session group is closed before evidence is returned.
+        terminate_tree_once()
         # A child can inherit a pipe and outlive a normally exited parent. Give
         # ordinary drains a short grace period, then close the complete tree so
         # no descendant can keep proof execution alive or mutate after return.
@@ -1115,6 +1114,8 @@ class RunnerRegistry:
                 thread.join(timeout=1)
         if any(thread.is_alive() for thread in threads):
             raise CompletionGateError("runner output drain did not terminate")
+        if termination_errors:
+            raise CompletionGateError("runner process containment failed") from termination_errors[0]
         tree_guard.close()
         return (
             exit_code,
@@ -1174,3 +1175,4 @@ class RunnerRegistry:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]

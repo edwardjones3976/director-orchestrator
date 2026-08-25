@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -18,6 +19,7 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from .approvals import (
+    build_slack_intake_attestation,
     build_slack_gateway_proof,
     failed_retry_decision_digest,
     parse_approval_button_value,
@@ -35,7 +37,7 @@ from .chatgpt_bridge import (
 )
 # [[Codex | GPT-5.6 | 2026-08-23 19:17 UTC | END]]
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
-from .models import OwnerApproval, TaskRecord, TaskStatus
+from .models import OwnerApproval, SlackIntake, TaskRecord, TaskStatus
 
 
 settings = Settings()
@@ -498,19 +500,28 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
     source_event_id = event.get("client_msg_id") or event.get("event_ts") or event.get("ts")
     if not source_event_id or not thread_ts or not _claim_event(source_event_id):
         return
-    payload = {
-        "source_event_id": source_event_id,
-        "channel_id": event["channel"],
-        "thread_ts": thread_ts,
-        "user_id": event["user"],
-        "text": text,
-        "received_at": datetime.now(timezone.utc).isoformat(),
+    intake = SlackIntake(
+        source_event_id=source_event_id,
+        channel_id=event["channel"],
+        thread_ts=thread_ts,
+        user_id=event["user"],
+        text=text,
+        received_at=datetime.now(timezone.utc),
+    )
+    payload = intake.model_dump(mode="json")
+    headers = {
+        "Authorization": f"Bearer {settings.shared_secret}",
+        **build_slack_intake_attestation(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            intake,
+        ),
     }
     target = settings.n8n_webhook_url or f"{settings.orchestrator_base_url}/v1/intake"
     try:
         response = httpx.post(
             target,
-            headers={"Authorization": f"Bearer {settings.shared_secret}"},
+            headers=headers,
             json=payload,
             timeout=20,
         )
@@ -677,3 +688,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
