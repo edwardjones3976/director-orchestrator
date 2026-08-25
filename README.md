@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:44 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | BEGIN]] -->
@@ -20,6 +21,8 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - A FastAPI orchestration service with idempotent task intake and durable SQLite state.
 - Deterministic approval gates that model output cannot remove.
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
+- Authenticated local Gemini/Antigravity CLI access through `agy` in PowerShell,
+  launched only from the named worktree for the pertaining GitHub repository.
 - An OpenAI Director planner/reviewer using Structured Outputs.
 - A primary OpenAI–Claude–Cursor team, with Claude Pro 20x as the coding/general workhorse and Gemini/Perplexity retained as optional specialists.
 - Standing project roles with flexible capacity targets: OpenAI Director, Claude Chief Programmer, Cursor Project Secretary, Gemini/Antigravity Specialist and Backup Programmer, and Perplexity.ai Research Programmers.
@@ -238,3 +241,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:44 UTC | END]] -->

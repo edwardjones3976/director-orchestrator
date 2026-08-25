@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:44 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
 # Provider Setup Matrix
@@ -184,6 +185,28 @@ npx skills add google-gemini/gemini-skills --skill gemini-interactions-api --glo
 Restart the coding-agent session after installation so it discovers the new MCP
 server and skill. Confirm the MCP is enabled with `codex mcp get gemini-docs`.
 
+## Local Gemini / Antigravity CLI route
+
+Gemini/Antigravity is also available locally through the authenticated `agy`
+CLI in PowerShell. For GitHub work, start `agy` only from the explicit named
+worktree for the pertaining repository; never start it from `System32`, a generic
+home directory, or another project's checkout. Verify the repository and branch
+before every launch:
+
+```powershell
+Set-Location C:\path\to\the\named-worktree
+git remote -v
+git branch --show-current
+Get-Command agy
+agy --sandbox --mode plan --print="<bounded assignment>"
+```
+
+The CLI is an execution route, not new authority. Its assignment must retain the
+same repository, data, tool, budget, and external-action boundaries as the
+Director's Gemini lane. CLI availability does not enable the REST adapter, paid
+runs, usage checks, merge, deployment, or acceptance authority, and any produced
+artifact still requires independent primary-provider verification.
+
 ## Label-triggered Codex security review
 
 The optional `.github/workflows/codex-security-review.yml` lane runs only when
@@ -229,3 +252,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 02:44 UTC | END]] -->
