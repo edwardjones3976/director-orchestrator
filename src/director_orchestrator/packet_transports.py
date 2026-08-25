@@ -1,3 +1,4 @@
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -59,6 +60,7 @@ _SIDE_EFFECT_EVIDENCE_KEYS = {
     "starting_ref",
     "provider",
     "provider_run_id",
+    "result_digest",
     "effects",
 }
 _ISOLATED_BRANCH_PREFIXES = (
@@ -335,6 +337,11 @@ class LegacyProviderPacketTransport:
                 for kind in packet["allowed_external_effects"]
             },
             "target_authority_prefix": f"{repository}@{starting_ref}",
+            "terminal_result_binding": {
+                "field": "result_digest",
+                "algorithm": "sha256",
+                "input": "UTF-8 bytes of the exact terminal callback result",
+            },
             "isolated_branch_prefixes": list(_ISOLATED_BRANCH_PREFIXES),
             "completed_pull_request_target": (
                 f"{repository}@{starting_ref}#<pull-request-number>"
@@ -424,6 +431,28 @@ class LegacyProviderPacketTransport:
             return [], None
         if run.evidence_source != "provider_authenticated":
             return [], "Provider side-effect evidence is not authenticated."
+        if run.provider == ProviderName.CLAUDE:
+            callback_evidence_digest = run.raw.get(
+                "claude_callback_side_effect_evidence_digest"
+            )
+            callback_result_digest = run.raw.get("claude_callback_result_digest")
+            if (
+                not isinstance(callback_evidence_digest, str)
+                or not isinstance(callback_result_digest, str)
+                or run.result is None
+                or not hmac.compare_digest(
+                    callback_evidence_digest,
+                    hashlib.sha256(canonical_json_bytes(raw_evidence)).hexdigest(),
+                )
+                or not hmac.compare_digest(
+                    callback_result_digest,
+                    hashlib.sha256(run.result.encode("utf-8")).hexdigest(),
+                )
+            ):
+                return [], (
+                    "Claude side-effect evidence is not bound to the authenticated "
+                    "terminal callback."
+                )
         if not isinstance(raw_evidence, Mapping):
             return [], "Authenticated provider side-effect evidence is missing."
         evidence = dict(raw_evidence)
@@ -440,6 +469,9 @@ class LegacyProviderPacketTransport:
             "starting_ref": str(packet["starting_ref"]),
             "provider": run.provider.value,
             "provider_run_id": run.run_id,
+            "result_digest": hashlib.sha256(
+                (run.result or "").encode("utf-8")
+            ).hexdigest(),
         }
         for field, expected in expected_bindings.items():
             observed = evidence.get(field)
@@ -634,3 +666,4 @@ def build_primary_packet_adapters(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]

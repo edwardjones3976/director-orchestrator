@@ -1,3 +1,4 @@
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | BEGIN]]
 from __future__ import annotations
@@ -14,6 +15,7 @@ from .models import (
     AmbiguousDispatchResolution,
     Assignment,
     AssignmentOutcome,
+    IntakeAuthentication,
     MAX_SLACK_INTAKE_TEXT,
     OracleRecoveryApproval,
     OracleRecoveryState,
@@ -745,6 +747,30 @@ def failed_retry_decision_digest(record: TaskRecord) -> str:
 def _slack_gateway_decision(record: TaskRecord) -> tuple[str, str]:
     if record.status == TaskStatus.FAILED:
         return "failed_predispatch_retry", failed_retry_decision_digest(record)
+    if (
+        record.status == TaskStatus.OWNER_DECISION_REQUIRED
+        and record.intake_authentication
+        != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+    ):
+        return (
+            "paid_rearm",
+            "sha256:"
+            + _canonical_digest(
+                {
+                    "task_id": record.task_id,
+                    "kind": "paid_rearm",
+                    "plan_generation": record.plan_generation,
+                    "intake_digest": _canonical_digest(
+                        record.intake.model_dump(mode="json")
+                    ),
+                    "plan_digest": (
+                        plan_approval_digest(record)
+                        if record.plan is not None
+                        else None
+                    ),
+                }
+            ),
+        )
     decision = current_owner_decision(record)
     if decision is None:
         raise StaleApproval("Task is not awaiting an owner decision")
@@ -1337,3 +1363,4 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
     record.message = note
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]

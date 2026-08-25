@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
@@ -16,7 +17,13 @@ from .interactions import (
     ProviderInteractionEvent,
     append_interaction_event,
 )
-from .models import TaskEffectEvidence, TaskRecord, TaskStatus, UsageCheckRecord
+from .models import (
+    IntakeAuthentication,
+    TaskEffectEvidence,
+    TaskRecord,
+    TaskStatus,
+    UsageCheckRecord,
+)
 
 
 _INTENT_KINDS = frozenset(
@@ -867,11 +874,22 @@ class TaskStore:
         persisted.provider_interaction_ledger = []
         return persisted.model_dump_json()
 
+    @staticmethod
+    def _task_record_from_persisted_json(record_json: str) -> TaskRecord:
+        payload = json.loads(record_json)
+        if not isinstance(payload, dict):
+            raise ValueError("Persisted task record must be an object")
+        payload.setdefault(
+            "intake_authentication",
+            IntakeAuthentication.BEARER_DRY_RUN.value,
+        )
+        return TaskRecord.model_validate(payload)
+
     def _record_from_row(
         self, connection: sqlite3.Connection, row: sqlite3.Row
     ) -> TaskRecord:
         self._require_effect_migration(row)
-        record = TaskRecord.model_validate_json(row["record_json"])
+        record = self._task_record_from_persisted_json(row["record_json"])
         record._store_version = int(row["record_version"])
         self._hydrate_effects(connection, record)
         self._hydrate_provider_interactions(connection, record)
@@ -1053,7 +1071,7 @@ class TaskStore:
         ).fetchall()
         for row in rows:
             try:
-                record = TaskRecord.model_validate_json(row["record_json"])
+                record = self._task_record_from_persisted_json(row["record_json"])
                 self._append_effects(
                     connection,
                     record.task_id,
@@ -1163,3 +1181,4 @@ class TaskStore:
         ]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]

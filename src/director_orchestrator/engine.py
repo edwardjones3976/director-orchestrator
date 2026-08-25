@@ -1,3 +1,4 @@
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -65,6 +66,7 @@ from .models import (
     CollaborationTurn,
     DebateActorRole,
     DiscussionPhase,
+    IntakeAuthentication,
     ProviderName,
     ProviderContactAttempt,
     ReviewDecision,
@@ -1492,6 +1494,22 @@ class OrchestrationEngine:
                 record.message = _DRY_RUN_PREVIEW_MESSAGE
                 self.store.save(record)
                 await self._status_post(record, f"*{task_id} — OWNER DECISION REQUIRED*\nDry-run plan created; no paid provider was called. Suggested first specialist: `{record.plan.assignments[0].agent.value}`. Enable live execution only after credentials and spend limits are verified.")
+                return
+
+            if (
+                record.intake_authentication
+                != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+            ):
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.owner_approved = False
+                record.message = (
+                    "Paid execution requires a fresh authenticated Slack gateway proof."
+                )
+                self.store.save(record)
+                await self._status_post(
+                    record,
+                    f"*{task_id} — OWNER DECISION REQUIRED*\n{record.message}",
+                )
                 return
 
             if self.daily_task_budget is None:
@@ -5231,3 +5249,4 @@ class OrchestrationEngine:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]

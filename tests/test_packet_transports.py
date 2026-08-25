@@ -1,14 +1,16 @@
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from director_orchestrator.callbacks import apply_claude_callback
+from director_orchestrator.callbacks import CallbackConflict, apply_claude_callback
 from director_orchestrator.interactions import (
     ProviderInteractionState,
     TransportEvidenceSource,
@@ -204,7 +206,9 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
         return record, packet
 
     @staticmethod
-    def _effect_evidence(packet, run_id: str, effects, *, provider="cursor"):
+    def _effect_evidence(
+        packet, run_id: str, effects, *, provider="cursor", result="bounded result"
+    ):
         return {
             "schema_version": "1.0",
             "task_id": packet["task_id"],
@@ -216,6 +220,7 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
             "starting_ref": packet["starting_ref"],
             "provider": provider,
             "provider_run_id": run_id,
+            "result_digest": hashlib.sha256(result.encode("utf-8")).hexdigest(),
             "effects": effects,
         }
 
@@ -606,9 +611,240 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                 ).state,
             )
 
+    def test_claude_initial_response_effects_never_become_terminal_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            record, packet = self._packet(root, store, ProviderName.CLAUDE)
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CLAUDE),
+                task_store=store,
+                poll_seconds=1,
+            )
+            result_text = "bounded completion evidence"
+            effects = [
+                {
+                    "kind": "WRITE_ISOLATED_BRANCH",
+                    "target": f"example/demo@{packet['starting_ref']}:claude/focused",
+                    "status": "COMPLETED",
+                    "idempotency_key": (
+                        f"{packet['idempotency_key']}:effect:write_isolated_branch"
+                    ),
+                    "external_id": "claude/focused",
+                },
+                {
+                    "kind": "OPEN_DRAFT_PULL_REQUEST",
+                    "target": f"example/demo@{packet['starting_ref']}#123",
+                    "status": "COMPLETED",
+                    "idempotency_key": (
+                        f"{packet['idempotency_key']}:effect:open_draft_pull_request"
+                    ),
+                    "external_id": "123",
+                },
+            ]
+            run_id = "claude-predeclared-effects"
+            initial_evidence = self._effect_evidence(
+                packet,
+                run_id,
+                effects,
+                provider="claude",
+                result=result_text,
+            )
+            transport._record_claude_dispatch(
+                packet,
+                self._context(record, packet),
+                record.plan.assignments[0],
+                ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    run_id=run_id,
+                    status="WAITING_CALLBACK",
+                    raw={"side_effect_evidence": initial_evidence},
+                ),
+            )
+            persisted = store.get(record.task_id)
+
+            self.assertTrue(
+                apply_claude_callback(
+                    persisted,
+                    ClaudeCallback(
+                        run_id=run_id,
+                        status="completed",
+                        result=result_text,
+                    ),
+                )
+            )
+            terminal_run = persisted.provider_runs[-1]
+            self.assertNotIn("side_effect_evidence", terminal_run.raw)
+            normalized = transport._result(packet, terminal_run)
+            self.assertEqual("OWNER_DECISION_REQUIRED", normalized["status"])
+            self.assertEqual([], normalized["side_effects"])
+
+    def test_claude_terminal_callback_effects_are_bound_and_replay_exactly(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            record, packet = self._packet(root, store, ProviderName.CLAUDE)
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CLAUDE),
+                task_store=store,
+                poll_seconds=1,
+            )
+            run_id = "claude-terminal-effects"
+            result_text = "bounded completion evidence"
+            effects = [
+                {
+                    "kind": "WRITE_ISOLATED_BRANCH",
+                    "target": f"example/demo@{packet['starting_ref']}:claude/focused",
+                    "status": "COMPLETED",
+                    "idempotency_key": (
+                        f"{packet['idempotency_key']}:effect:write_isolated_branch"
+                    ),
+                    "external_id": "claude/focused",
+                },
+                {
+                    "kind": "OPEN_DRAFT_PULL_REQUEST",
+                    "target": f"example/demo@{packet['starting_ref']}#123",
+                    "status": "COMPLETED",
+                    "idempotency_key": (
+                        f"{packet['idempotency_key']}:effect:open_draft_pull_request"
+                    ),
+                    "external_id": "123",
+                },
+            ]
+            evidence = self._effect_evidence(
+                packet,
+                run_id,
+                effects,
+                provider="claude",
+                result=result_text,
+            )
+            transport._record_claude_dispatch(
+                packet,
+                self._context(record, packet),
+                record.plan.assignments[0],
+                ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    run_id=run_id,
+                    status="WAITING_CALLBACK",
+                ),
+            )
+            persisted = store.get(record.task_id)
+            callback = ClaudeCallback(
+                run_id=run_id,
+                status="completed",
+                result=result_text,
+                side_effect_evidence=evidence,
+            )
+
+            self.assertTrue(apply_claude_callback(persisted, callback))
+            normalized = transport._result(packet, persisted.provider_runs[-1])
+            self.assertEqual("SUCCEEDED", normalized["status"])
+            self.assertEqual(effects, normalized["side_effects"])
+            self.assertFalse(apply_claude_callback(persisted, callback))
+
+            changed = callback.model_copy(deep=True)
+            changed.side_effect_evidence.effects[0].status = "FAILED"
+            with self.assertRaisesRegex(CallbackConflict, "different terminal result"):
+                apply_claude_callback(persisted, changed)
+
+    def test_claude_callback_effect_binding_mismatches_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+            record, packet = self._packet(root, store, ProviderName.CLAUDE)
+            transport = LegacyProviderPacketTransport(
+                CapturingProvider(ProviderName.CLAUDE),
+                task_store=store,
+                poll_seconds=1,
+            )
+            run_id = "claude-mismatched-effects"
+            result_text = "bounded completion evidence"
+            effect = {
+                "kind": "WRITE_ISOLATED_BRANCH",
+                "target": f"example/demo@{packet['starting_ref']}:claude/focused",
+                "status": "COMPLETED",
+                "idempotency_key": (
+                    f"{packet['idempotency_key']}:effect:write_isolated_branch"
+                ),
+                "external_id": "claude/focused",
+            }
+            second_effect = {
+                "kind": "OPEN_DRAFT_PULL_REQUEST",
+                "target": f"example/demo@{packet['starting_ref']}#123",
+                "status": "COMPLETED",
+                "idempotency_key": (
+                    f"{packet['idempotency_key']}:effect:open_draft_pull_request"
+                ),
+                "external_id": "123",
+            }
+            valid = self._effect_evidence(
+                packet,
+                run_id,
+                [effect, second_effect],
+                provider="claude",
+                result=result_text,
+            )
+            transport._record_claude_dispatch(
+                packet,
+                self._context(record, packet),
+                record.plan.assignments[0],
+                ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    run_id=run_id,
+                    status="WAITING_CALLBACK",
+                ),
+            )
+            persisted = store.get(record.task_id)
+
+            for field, value in (
+                ("provider_run_id", "other-run"),
+                ("correlation_id", "other-correlation"),
+                ("result_digest", "0" * 64),
+            ):
+                with self.subTest(field=field):
+                    mismatched = {**valid, field: value}
+                    with self.assertRaisesRegex(
+                        CallbackConflict, "does not match its terminal run"
+                    ):
+                        apply_claude_callback(
+                            persisted,
+                            ClaudeCallback(
+                                run_id=run_id,
+                                status="completed",
+                                result=result_text,
+                                side_effect_evidence=mismatched,
+                            ),
+                        )
+                    self.assertEqual(
+                        "WAITING_CALLBACK", persisted.provider_runs[-1].status
+                    )
+                    self.assertEqual(
+                        "unverified", persisted.provider_runs[-1].evidence_source
+                    )
+
+            outside = {
+                **valid,
+                "effects": [
+                    {**effect, "target": "other/repo@main:claude/focused"},
+                    second_effect,
+                ],
+            }
+            self.assertTrue(
+                apply_claude_callback(
+                    persisted,
+                    ClaudeCallback(
+                        run_id=run_id,
+                        status="completed",
+                        result=result_text,
+                        side_effect_evidence=outside,
+                    ),
+                )
+            )
+            normalized = transport._result(packet, persisted.provider_runs[-1])
+            self.assertEqual("OWNER_DECISION_REQUIRED", normalized["status"])
+            self.assertEqual([], normalized["side_effects"])
+
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]

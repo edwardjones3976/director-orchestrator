@@ -1,3 +1,4 @@
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -23,6 +24,7 @@ from .approvals import (
     apply_owner_clarification,
     clarification_required,
     owner_identity_matches,
+    reset_for_owner_clarification,
     reserve_task_effect,
     SLACK_INTAKE_ISSUED_AT_HEADER,
     SLACK_INTAKE_NONCE_HEADER,
@@ -55,6 +57,7 @@ from .engine import OrchestrationEngine
 from .models import (
     AmbiguousDispatchResolution,
     ClaudeCallback,
+    IntakeAuthentication,
     ManualRunCompletion,
     OracleRecoveryApproval,
     OwnerApproval,
@@ -464,6 +467,7 @@ def intake(
         default=None, alias=SLACK_INTAKE_SIGNATURE_HEADER
     ),
 ) -> TaskRecord:
+    intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
     if settings.allow_paid_runs:
         try:
             verify_slack_intake_attestation(
@@ -478,8 +482,14 @@ def intake(
             )
         except StaleApproval as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
     task_id = f"DIR-{secrets.token_hex(5).upper()}"
-    record = TaskRecord(task_id=task_id, status=TaskStatus.QUEUED, intake=payload)
+    record = TaskRecord(
+        task_id=task_id,
+        status=TaskStatus.QUEUED,
+        intake=payload,
+        intake_authentication=intake_authentication,
+    )
     stored, created = store.create(record)
     if created:
         background.add_task(engine.run, stored.task_id)
@@ -517,10 +527,19 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
     current, expected_version = versioned
     gateway_nonce_digest: str | None = None
     gateway_nonce_expires_at: int | None = None
+    is_paid_rearm = False
     if approval.source in {
         OwnerApprovalSource.SLACK_BUTTON,
         OwnerApprovalSource.SLACK_COMMAND,
     }:
+        is_paid_rearm = (
+            current.intake_authentication
+            != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+        )
+        if is_paid_rearm and approval.source != OwnerApprovalSource.SLACK_COMMAND:
+            raise StaleApproval(
+                "Paid rearm requires a fresh authenticated Slack command"
+            )
         gateway_nonce_digest, gateway_nonce_expires_at = verify_slack_gateway_proof(
             settings.slack_gateway_secret,
             settings.shared_secret,
@@ -536,10 +555,32 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
         raise StaleApproval(
             "Failed retry requires an authenticated Slack gateway proof"
         )
+    elif (
+        settings.allow_paid_runs
+        and current.intake_authentication
+        != IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+    ):
+        raise StaleApproval(
+            "Paid rearm requires a fresh authenticated Slack gateway proof"
+        )
+
+    def apply_verified_owner_decision(record: TaskRecord) -> None:
+        if is_paid_rearm:
+            reset_for_owner_clarification(record)
+            record.intake_authentication = (
+                IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+            )
+            record.status = TaskStatus.QUEUED
+            record.message = (
+                "Authenticated paid rearm accepted; a fresh live plan is required."
+            )
+            return
+        _apply_owner_decision(record, approval)
+
     stored = task_store.mutate_if_version(
         task_id,
         expected_version,
-        lambda current: _apply_owner_decision(current, approval),
+        apply_verified_owner_decision,
         gateway_nonce_digest=gateway_nonce_digest,
         gateway_nonce_expires_at=gateway_nonce_expires_at,
     )
@@ -734,3 +775,4 @@ def complete_run(
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]

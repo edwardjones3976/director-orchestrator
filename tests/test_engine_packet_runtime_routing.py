@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 11:58 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -32,6 +33,7 @@ from director_orchestrator.langgraph_runtime import (
 from director_orchestrator.models import (
     Assignment,
     DirectorPlan,
+    IntakeAuthentication,
     ProviderName,
     ProviderRun,
     RiskLevel,
@@ -498,6 +500,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         first.plan_interaction_id = None
         first.task_effect_ledger = []
         first.provider_interaction_ledger = []
+        first.intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
         second, _ = self._record()
         second.task_id = "DIR-PAID-OFF-SECOND"
         second.intake.source_event_id = "evt-paid-off-second"
@@ -506,6 +509,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         second.plan_interaction_id = None
         second.task_effect_ledger = []
         second.provider_interaction_ledger = []
+        second.intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
         store.create(first)
         store.create(second)
         engine.daily_task_budget.reserve(
@@ -630,3 +634,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 11:58 UTC | END]]

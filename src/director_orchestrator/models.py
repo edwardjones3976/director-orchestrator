@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
@@ -80,6 +83,11 @@ class OwnerApprovalSource(StrEnum):
     API = "api"
     SLACK_COMMAND = "slack_command"
     SLACK_BUTTON = "slack_button"
+
+
+class IntakeAuthentication(StrEnum):
+    BEARER_DRY_RUN = "bearer_dry_run"
+    SLACK_GATEWAY_ATTESTED = "slack_gateway_attested"
 
 
 class RiskLevel(StrEnum):
@@ -766,6 +774,12 @@ class TaskRecord(BaseModel):
     task_id: str
     status: TaskStatus
     intake: SlackIntake
+    # Production intake always supplies this value explicitly. The constructor
+    # default preserves trusted internal/test fixtures; TaskStore injects the
+    # fail-closed bearer class when persisted legacy JSON omits the field.
+    intake_authentication: IntakeAuthentication = (
+        IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+    )
     plan: DirectorPlan | None = None
     # Monotonically increases whenever the engine installs a newly generated
     # plan. Slack approval buttons bind to this generation and the plan digest.
@@ -971,6 +985,39 @@ class AmbiguousDispatchResolution(BaseModel):
         return self
 
 
+class ClaudeCallbackSideEffect(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(min_length=1, max_length=100)
+    target: str = Field(min_length=1, max_length=2_000)
+    status: Literal["NOT_ATTEMPTED", "ATTEMPTED", "COMPLETED", "FAILED"]
+    idempotency_key: str = Field(min_length=1, max_length=2_000)
+    external_id: str | None = Field(default=None, max_length=2_000)
+
+
+class ClaudeCallbackSideEffectEvidence(BaseModel):
+    """Bounded terminal effect attestation delivered by the callback itself."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"]
+    task_id: str = Field(min_length=1, max_length=64)
+    assignment_id: str = Field(min_length=1, max_length=128)
+    packet_idempotency_key: str = Field(min_length=1, max_length=2_000)
+    authority_snapshot_digest: str = Field(
+        min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$"
+    )
+    correlation_id: str = Field(min_length=1, max_length=255)
+    repository: str = Field(min_length=1, max_length=255)
+    starting_ref: str = Field(min_length=1, max_length=255)
+    provider: Literal["claude"]
+    provider_run_id: str = Field(min_length=1, max_length=255)
+    result_digest: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    effects: list[ClaudeCallbackSideEffect] = Field(max_length=20)
+
+
 class ClaudeCallback(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -978,6 +1025,7 @@ class ClaudeCallback(BaseModel):
     status: Literal["completed", "failed", "cancelled"]
     result: str = Field(min_length=1, max_length=50_000)
     session_url: str | None = Field(default=None, max_length=2_000)
+    side_effect_evidence: ClaudeCallbackSideEffectEvidence | None = None
 
 
 class ManualRunCompletion(BaseModel):
@@ -990,3 +1038,6 @@ class ManualRunCompletion(BaseModel):
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:07 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]

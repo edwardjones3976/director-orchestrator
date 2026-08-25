@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:10 UTC | BEGIN]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:53 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | BEGIN]]
@@ -67,6 +69,7 @@ from director_orchestrator.models import (
     DirectorPlan,
     DebateSynthesis,
     DebateTieJudgment,
+    IntakeAuthentication,
     OracleRecoveryApproval,
     OpaqueEvidenceDigest,
     OwnerApproval,
@@ -2897,6 +2900,10 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
                 )
 
             self.assertEqual(202, response.status_code)
+            self.assertEqual(
+                IntakeAuthentication.BEARER_DRY_RUN,
+                response.json()["intake_authentication"],
+            )
             run.assert_awaited_once_with(response.json()["task_id"])
             with sqlite3.connect(database) as connection:
                 self.assertEqual(
@@ -2927,6 +2934,10 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
                 response = client.post("/v1/intake", headers=headers, json=payload)
 
             self.assertEqual(202, response.status_code)
+            self.assertEqual(
+                IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                response.json()["intake_authentication"],
+            )
             self.assertEqual([], self._budget_rows(database))
             run.assert_awaited_once_with(response.json()["task_id"])
 
@@ -3080,6 +3091,7 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
                 task_id="DIR-AUTHORIZED-BUDGET",
                 status=TaskStatus.QUEUED,
                 intake=SlackIntake.model_validate(self._payload("evt-authorized-budget")),
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
                 owner_approved=True,
             )
             task_store.create(record)
@@ -3104,6 +3116,283 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
 
             self.assertEqual([(record.task_id, 1.0)], first_rows)
             self.assertEqual(first_rows, replay_rows)
+
+    def test_bearer_dry_run_cannot_be_rearmed_through_api_after_paid_mode_enabled(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            record = _record()
+            record.task_id = "DIR-DRY-API-REARM"
+            record.intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
+            task_store.create(record)
+            ledger = DailyTaskBudgetLedger(database)
+            test_settings = replace(
+                self._settings(),
+                slack_owner_user_id="U0B9UJ86D27",
+            )
+            run = AsyncMock(return_value=None)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main, "daily_task_budget", ledger),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                response = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json={
+                        "owner_user_id": "U0B9UJ86D27",
+                        "source": "api",
+                        "note": "Attempt paid rearm with the shared bearer only",
+                    },
+                )
+
+            self.assertEqual(409, response.status_code)
+            self.assertIn("authenticated Slack gateway proof", response.json()["detail"])
+            stored = task_store.get(record.task_id)
+            self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, stored.status)
+            self.assertFalse(stored.owner_approved)
+            self.assertEqual(
+                IntakeAuthentication.BEARER_DRY_RUN,
+                stored.intake_authentication,
+            )
+            self.assertEqual([], self._budget_rows(database))
+            run.assert_not_awaited()
+
+    def test_signed_slack_approval_durably_rearms_a_dry_run_record(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            record = _record()
+            record.task_id = "DIR-DRY-SLACK-REARM"
+            record.intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
+            task_store.create(record)
+            current, version = task_store.get_versioned(record.task_id)
+            test_settings = replace(
+                self._settings(),
+                slack_owner_user_id="U0B9UJ86D27",
+            )
+            approval = _signed_slack_approval(
+                current,
+                version,
+                OwnerApproval(
+                    owner_user_id="U0B9UJ86D27",
+                    source=OwnerApprovalSource.SLACK_COMMAND,
+                    note="Fresh authenticated paid rearm",
+                ),
+                secret=test_settings.slack_gateway_secret,
+                shared_secret=test_settings.shared_secret,
+                channel_id=test_settings.slack_channel_id,
+            )
+            run = AsyncMock(return_value=None)
+
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main.engine, "run", new=run),
+            ):
+                client = TestClient(main.app)
+                response = client.post(
+                    f"/v1/tasks/{record.task_id}/approve",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json=approval.model_dump(mode="json"),
+                )
+
+            self.assertEqual(200, response.status_code)
+            self.assertEqual(
+                IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                response.json()["intake_authentication"],
+            )
+            restarted = TaskStore(database).get(record.task_id)
+            self.assertEqual(
+                IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                restarted.intake_authentication,
+            )
+            self.assertEqual(TaskStatus.QUEUED, restarted.status)
+            run.assert_awaited_once_with(record.task_id)
+
+    def test_many_bearer_dry_run_records_cannot_exhaust_paid_task_budget(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            records: list[TaskRecord] = []
+            for index in range(5):
+                record = TaskRecord(
+                    task_id=f"DIR-DRY-EXHAUST-{index}",
+                    status=TaskStatus.QUEUED,
+                    intake=SlackIntake.model_validate(
+                        self._payload(f"evt-dry-exhaust-{index}")
+                    ),
+                    intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+                    owner_approved=True,
+                )
+                task_store.create(record)
+                records.append(record)
+            test_settings = replace(
+                main.settings,
+                allow_paid_runs=True,
+                openai_api_key="",
+                slack_bot_token="",
+                max_task_budget_usd=1.0,
+                max_daily_provider_budget_usd=2.0,
+                langgraph_runtime_enabled=False,
+                langgraph_runtime_live_dispatch_enabled=False,
+                langgraph_runtime_task_writer_enabled=False,
+            )
+            paid_engine = OrchestrationEngine(test_settings, task_store)
+
+            for record in records:
+                asyncio.run(paid_engine.run(record.task_id))
+
+            self.assertEqual([], self._budget_rows(database))
+            for record in records:
+                stored = task_store.get(record.task_id)
+                self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, stored.status)
+                self.assertFalse(stored.owner_approved)
+                self.assertEqual(
+                    IntakeAuthentication.BEARER_DRY_RUN,
+                    stored.intake_authentication,
+                )
+
+    def test_real_dry_preview_requires_signed_rearm_then_builds_one_fresh_live_plan(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            dry_settings = replace(
+                self._settings(),
+                allow_paid_runs=False,
+                sqlite_path=database,
+                openai_api_key="",
+                slack_bot_token="",
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                allowed_starting_refs=("main",),
+                langgraph_runtime_enabled=False,
+                langgraph_runtime_live_dispatch_enabled=False,
+                langgraph_runtime_task_writer_enabled=False,
+            )
+            dry_engine = OrchestrationEngine(dry_settings, task_store)
+
+            with (
+                patch.object(main, "settings", dry_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main.engine, "run", new=dry_engine.run),
+            ):
+                client = TestClient(main.app)
+                intake_response = client.post(
+                    "/v1/intake",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json=self._payload("evt-real-dry-rearm"),
+                )
+
+            self.assertEqual(202, intake_response.status_code)
+            task_id = intake_response.json()["task_id"]
+            preview, preview_version = task_store.get_versioned(task_id)
+            self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, preview.status)
+            self.assertEqual(
+                IntakeAuthentication.BEARER_DRY_RUN,
+                preview.intake_authentication,
+            )
+            self.assertIsNotNone(preview.plan)
+            preview_plan_dump = preview.plan.model_dump(mode="json")
+
+            paid_settings = replace(
+                dry_settings,
+                allow_paid_runs=True,
+                openai_api_key="test-openai-key",
+            )
+            fresh_plan = preview.plan.model_copy(
+                update={
+                    "project": "demo",
+                    "approval_required": True,
+                    "approval_reasons": ["Focused live-plan acceptance gate"],
+                    "assignments": [
+                        assignment.model_copy(
+                            update={"repository": "example/demo", "starting_ref": "main"}
+                        )
+                        for assignment in preview.plan.assignments
+                    ],
+                },
+                deep=True,
+            )
+            live_engine = OrchestrationEngine(paid_settings, task_store)
+            live_engine.director.plan = AsyncMock(return_value=fresh_plan)
+            approval = _signed_slack_approval(
+                preview,
+                preview_version,
+                OwnerApproval(
+                    owner_user_id="U-OWNER",
+                    source=OwnerApprovalSource.SLACK_COMMAND,
+                    note="Authenticate and rebuild the live plan",
+                ),
+                secret=paid_settings.slack_gateway_secret,
+                shared_secret=paid_settings.shared_secret,
+                channel_id=paid_settings.slack_channel_id,
+            )
+
+            with (
+                patch.object(main, "settings", paid_settings),
+                patch.object(main, "store", task_store),
+                patch.object(main.engine, "run", new=live_engine.run),
+            ):
+                client = TestClient(main.app)
+                accepted = client.post(
+                    f"/v1/tasks/{task_id}/approve",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json=approval.model_dump(mode="json"),
+                )
+                replay = client.post(
+                    f"/v1/tasks/{task_id}/approve",
+                    headers={"Authorization": "Bearer test-secret"},
+                    json=approval.model_dump(mode="json"),
+                )
+
+            self.assertEqual(200, accepted.status_code)
+            self.assertEqual(409, replay.status_code)
+            final = TaskStore(database).get(task_id)
+            self.assertEqual(
+                IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                final.intake_authentication,
+            )
+            self.assertEqual(
+                TaskStatus.OWNER_DECISION_REQUIRED,
+                final.status,
+                final.model_dump_json(),
+            )
+            self.assertIsNotNone(final.plan_interaction_id)
+            self.assertGreater(final.plan_generation, preview.plan_generation)
+            self.assertNotEqual(preview_plan_dump, final.plan.model_dump(mode="json"))
+            self.assertEqual([(task_id, 1.0)], self._budget_rows(database))
+            live_engine.director.plan.assert_awaited_once()
+
+
+    def test_persisted_legacy_record_without_authentication_fails_closed(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "director.sqlite3")
+            task_store = TaskStore(database)
+            record = _record()
+            task_store.create(record)
+            with sqlite3.connect(database) as connection:
+                stored = json.loads(
+                    connection.execute(
+                        "SELECT record_json FROM tasks WHERE task_id = ?",
+                        (record.task_id,),
+                    ).fetchone()[0]
+                )
+                stored.pop("intake_authentication")
+                connection.execute(
+                    "UPDATE tasks SET record_json = ? WHERE task_id = ?",
+                    (json.dumps(stored), record.task_id),
+                )
+
+            loaded = TaskStore(database).get(record.task_id)
+
+            self.assertEqual(
+                IntakeAuthentication.BEARER_DRY_RUN,
+                loaded.intake_authentication,
+            )
 
 
 class SlackGatewayProofTests(unittest.TestCase):
@@ -3312,3 +3601,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:21 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:53 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 09:57 UTC | END]]
+# [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:10 UTC | END]]
