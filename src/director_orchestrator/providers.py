@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -1112,43 +1113,60 @@ class GrokAdapter(ProviderAdapter):
             raise ProviderError("Grok CLI process containment failed") from exc
 
         terminated = False
+        termination_errors: list[BaseException] = []
 
         def terminate_tree() -> None:
             nonlocal terminated
             if terminated:
                 return
             terminated = True
-            if os.name == "nt":
-                tree_guard.terminate()
-                return
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+                if os.name == "nt":
+                    tree_guard.terminate()
+                    return
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            except BaseException as exc:
+                termination_errors.append(exc)
 
+        timeout_error: subprocess.TimeoutExpired | None = None
+        cleanup_timeout: subprocess.TimeoutExpired | None = None
+        stdout = b""
+        stderr = b""
         try:
             try:
                 stdout, stderr = process.communicate(
                     timeout=self.settings.grok_cli_timeout_seconds
                 )
             except subprocess.TimeoutExpired as exc:
+                timeout_error = exc
                 terminate_tree()
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired as cleanup_exc:
-                    raise ProviderError(
-                        "Grok CLI process tree did not terminate after timeout"
-                    ) from cleanup_exc
-                raise ProviderError("Grok CLI assignment timed out") from exc
+                    cleanup_timeout = cleanup_exc
             terminate_tree()
-            if process.returncode is None:
-                raise ProviderError("Grok CLI exited without a terminal return code")
-            return process.returncode, stdout, stderr
         finally:
             try:
                 terminate_tree()
             finally:
-                tree_guard.close()
+                try:
+                    tree_guard.close()
+                except BaseException as exc:
+                    termination_errors.append(exc)
+        if cleanup_timeout is not None:
+            raise ProviderError(
+                "Grok CLI process tree did not terminate after timeout"
+            ) from cleanup_timeout
+        if termination_errors:
+            raise ProviderError("Grok CLI process containment failed") from termination_errors[0]
+        if timeout_error is not None:
+            raise ProviderError("Grok CLI assignment timed out") from timeout_error
+        if process.returncode is None:
+            raise ProviderError("Grok CLI exited without a terminal return code")
+        return process.returncode, stdout, stderr
 
     async def _dispatch_cli(
         self,
@@ -1428,3 +1446,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -31,6 +32,7 @@ from director_orchestrator.providers import (
     PostSubmitAmbiguityError,
     ProviderError,
 )
+from director_orchestrator.process_isolation import ProcessContainmentError
 
 
 class FakeResponse:
@@ -961,6 +963,43 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(timeout_guard.close_calls, 1)
         self.assertEqual(timed_out.wait_calls, 1)
 
+        class FailingGuard(FakeGuard):
+            def terminate(self):
+                super().terminate()
+                raise ProcessContainmentError("job termination failed")
+
+        completed_after_termination_error = FakeProcess()
+        failing_completed_guard = FailingGuard()
+        with (
+            patch(
+                "director_orchestrator.providers.launch_contained_process",
+                return_value=(completed_after_termination_error, failing_completed_guard),
+            ),
+            patch("director_orchestrator.providers.os.name", "nt"),
+            self.assertRaisesRegex(ProviderError, "process containment failed"),
+        ):
+            adapter._run_contained_cli(["grok", "fixture"], Path("."))
+        self.assertEqual(failing_completed_guard.terminate_calls, 1)
+        self.assertEqual(failing_completed_guard.close_calls, 1)
+
+        timed_out_after_termination_error = FakeProcess(timeout=True)
+        failing_timeout_guard = FailingGuard()
+        with (
+            patch(
+                "director_orchestrator.providers.launch_contained_process",
+                return_value=(
+                    timed_out_after_termination_error,
+                    failing_timeout_guard,
+                ),
+            ),
+            patch("director_orchestrator.providers.os.name", "nt"),
+            self.assertRaisesRegex(ProviderError, "process containment failed"),
+        ):
+            adapter._run_contained_cli(["grok", "fixture"], Path("."))
+        self.assertEqual(failing_timeout_guard.terminate_calls, 1)
+        self.assertEqual(failing_timeout_guard.close_calls, 1)
+        self.assertEqual(timed_out_after_termination_error.wait_calls, 1)
+
     def test_grok_cli_environment_excludes_provider_secrets(self):
         with patch.dict(
             "director_orchestrator.providers.os.environ",
@@ -1260,3 +1299,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
