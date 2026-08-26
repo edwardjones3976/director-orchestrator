@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -9,6 +10,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -900,13 +903,13 @@ class GrokAdapter(ProviderAdapter):
             repository = canonical_repository(assignment.repository or "")
             if (
                 not self.settings.grok_cli_enabled
-                or not self.settings.grok_cli_executable
                 or repository not in self.settings.grok_cli_repository_map()
             ):
                 raise ProviderError(
                     "Grok repository work requires an enabled CLI and an explicit "
                     "repository-to-worktree mapping"
                 )
+            self._verified_cli_executable()
 
     @staticmethod
     def _requires_cli(assignment: Assignment) -> bool:
@@ -1094,6 +1097,45 @@ class GrokAdapter(ProviderAdapter):
         }
         return {key: value for key, value in os.environ.items() if key.upper() in allowed}
 
+    def _verified_cli_executable(self) -> str:
+        """Resolve and digest-bind the configured CLI immediately before execution."""
+
+        configured = Path(self.settings.grok_cli_executable).expanduser()
+        expected = self.settings.grok_cli_executable_sha256.lower()
+        if not configured.is_absolute():
+            raise ProviderError("GROK_CLI_EXECUTABLE must be an absolute path")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ProviderError("GROK_CLI_EXECUTABLE_SHA256 must be an exact sha256 digest")
+        try:
+            executable = configured.resolve(strict=True)
+            before = executable.stat()
+            if not executable.is_file():
+                raise ProviderError("GROK_CLI_EXECUTABLE must name a regular file")
+            digest = hashlib.sha256()
+            with executable.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            after = executable.stat()
+        except (OSError, RuntimeError) as exc:
+            raise ProviderError("GROK_CLI_EXECUTABLE could not be verified") from exc
+        identity_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+        identity_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if identity_before != identity_after:
+            raise ProviderError("GROK_CLI_EXECUTABLE changed during verification")
+        if not hmac.compare_digest(digest.hexdigest(), expected):
+            raise ProviderError("GROK_CLI_EXECUTABLE digest does not match configuration")
+        return str(executable)
+
     def _run_contained_cli(
         self, argv: list[str], root: Path
     ) -> tuple[int, bytes, bytes]:
@@ -1213,7 +1255,7 @@ class GrokAdapter(ProviderAdapter):
                 prompt_path = Path(handle.name)
             permission_mode = "plan" if evidence["read_only"] else "auto"
             argv = [
-                self.settings.grok_cli_executable,
+                self._verified_cli_executable(),
                 "--prompt-file",
                 str(prompt_path),
                 "--output-format",
@@ -1447,3 +1489,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]

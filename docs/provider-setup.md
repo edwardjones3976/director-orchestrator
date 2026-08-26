@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]] -->
@@ -84,7 +85,8 @@ GROK_ALLOW_TOOLS=false
 GROK_ALLOW_REPOSITORY_WRITE=false
 GROK_ALLOW_REVIEW_VERDICT=false
 GROK_CLI_ENABLED=false
-GROK_CLI_EXECUTABLE=grok
+GROK_CLI_EXECUTABLE=
+GROK_CLI_EXECUTABLE_SHA256=
 GROK_CLI_REPOSITORY_MAP_JSON={}
 GROK_CLI_TIMEOUT_SECONDS=3600
 GROK_CLI_MAX_TURNS=20
@@ -93,6 +95,9 @@ GROK_CLI_MAX_TURNS=20
 Readiness fails closed unless the endpoint is exactly `https://api.x.ai/v1`,
 tools remain disabled for the API contact, every bound is valid, and any enabled
 repository-write or review authority has a nonempty explicit CLI worktree map.
+The CLI executable must be an absolute regular-file path and its exact SHA-256
+must be recorded in `GROK_CLI_EXECUTABLE_SHA256`; the adapter revalidates that
+digest immediately before every repository-capable dispatch.
 The CLI transport is a native-host capability: a containerized Director cannot
 use a Windows executable or host worktree path unless an authenticated host
 runner is explicitly provided. The checked-in examples therefore keep CLI,
@@ -290,3 +295,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]] -->

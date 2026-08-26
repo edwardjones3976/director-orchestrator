@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -5,8 +6,10 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -1017,6 +1020,32 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             {"PATH": "safe-path", "USERPROFILE": "safe-home"},
         )
 
+    def test_grok_cli_executable_requires_absolute_digest_bound_regular_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory, "grok-test.exe")
+            executable.write_bytes(b"trusted grok fixture")
+            digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+            settings = replace(
+                Settings(),
+                grok_cli_executable=str(executable.resolve()),
+                grok_cli_executable_sha256=digest,
+            )
+            adapter = GrokAdapter(settings)
+            self.assertEqual(adapter._verified_cli_executable(), str(executable.resolve()))
+
+            executable.write_bytes(b"replaced grok fixture")
+            with self.assertRaisesRegex(ProviderError, "digest does not match"):
+                adapter._verified_cli_executable()
+
+        with self.assertRaisesRegex(ProviderError, "absolute path"):
+            GrokAdapter(
+                replace(
+                    Settings(),
+                    grok_cli_executable="grok",
+                    grok_cli_executable_sha256="0" * 64,
+                )
+            )._verified_cli_executable()
+
     async def test_grok_rejects_missing_nonterminal_and_unknown_statuses(self):
         settings = replace(
             Settings(),
@@ -1300,3 +1329,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]

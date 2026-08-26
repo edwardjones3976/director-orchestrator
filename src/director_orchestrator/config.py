@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
@@ -15,6 +16,7 @@ import hmac
 import json
 import math
 import os
+from pathlib import Path
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 import re
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
@@ -515,7 +517,10 @@ class Settings:
     grok_allow_repository_write: bool = _bool("GROK_ALLOW_REPOSITORY_WRITE", False)
     grok_allow_review_verdict: bool = _bool("GROK_ALLOW_REVIEW_VERDICT", False)
     grok_cli_enabled: bool = _bool("GROK_CLI_ENABLED", False)
-    grok_cli_executable: str = os.getenv("GROK_CLI_EXECUTABLE", "grok").strip()
+    grok_cli_executable: str = os.getenv("GROK_CLI_EXECUTABLE", "").strip()
+    grok_cli_executable_sha256: str = os.getenv(
+        "GROK_CLI_EXECUTABLE_SHA256", ""
+    ).strip().lower()
     grok_cli_repository_roots: tuple[tuple[str, str], ...] = field(
         default_factory=lambda: _repository_path_map("GROK_CLI_REPOSITORY_MAP_JSON")
     )
@@ -586,6 +591,9 @@ class Settings:
         repository_transport_ready = (
             self.grok_cli_enabled
             and bool(self.grok_cli_executable)
+            and Path(self.grok_cli_executable).expanduser().is_absolute()
+            and Path(self.grok_cli_executable).expanduser().is_file()
+            and bool(re.fullmatch(r"[0-9a-f]{64}", self.grok_cli_executable_sha256))
             and bool(self.grok_cli_repository_roots)
             and 30 <= self.grok_cli_timeout_seconds <= 7_200
             and 1 <= self.grok_cli_max_turns <= 100
@@ -1290,3 +1298,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
