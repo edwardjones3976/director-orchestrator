@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
@@ -296,6 +297,12 @@ def _work_kind(assignment: Assignment) -> WorkKind:
     ):
         return WorkKind.RESEARCH
     return WorkKind.COORDINATION
+
+
+def trusted_work_kind(assignment: Assignment) -> WorkKind:
+    """Return the single deterministic workload classification used at every gate."""
+
+    return _work_kind(assignment)
 
 
 _WORK_SIZE_RANK = {
@@ -1233,3 +1240,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]

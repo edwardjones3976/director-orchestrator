@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
@@ -34,6 +35,19 @@ from director_orchestrator.workload_policy import (
 
 
 class WorkloadPolicyActivationTests(unittest.TestCase):
+    def test_runtime_uses_the_same_trusted_work_kind_as_plan_enforcement(self) -> None:
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CLAUDE,
+            task="Develop a bounded implementation without relying on its type label",
+            acceptance=["Implementation evidence is recorded"],
+        )
+
+        self.assertIs(
+            OrchestrationEngine._workload_kind(assignment),
+            WorkKind.IMPLEMENTATION,
+        )
+
     def test_default_configuration_is_enabled_and_enforced(self) -> None:
         with patch.dict(
             os.environ,
@@ -270,3 +284,4 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]

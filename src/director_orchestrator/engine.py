@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | BEGIN]]
@@ -119,6 +120,7 @@ from .policy import (
     estimated_plan_cost_usd,
     execution_policy_errors,
     preview_plan,
+    trusted_work_kind,
     trusted_openai_debate_phase_cost_usd,
 )
 from .providers import (
@@ -345,23 +347,7 @@ class OrchestrationEngine:
 
     @staticmethod
     def _workload_kind(assignment: Assignment) -> WorkloadKind:
-        if assignment.agent == ProviderName.PERPLEXITY:
-            return WorkloadKind.RESEARCH
-        if assignment.kind in {
-            AssignmentKind.IMPLEMENTATION,
-            AssignmentKind.BOILERPLATE,
-            AssignmentKind.SCAFFOLDING,
-            AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
-        }:
-            return WorkloadKind.IMPLEMENTATION
-        if assignment.kind in {
-            AssignmentKind.INDEPENDENT_REVIEW,
-            AssignmentKind.EXACT_SHA_REVIEW,
-        }:
-            return WorkloadKind.REVIEW
-        if assignment.kind == AssignmentKind.RESEARCH:
-            return WorkloadKind.RESEARCH
-        return WorkloadKind.COORDINATION
+        return trusted_work_kind(assignment)
 
     def _available_workload_primary_providers(
         self, record: TaskRecord
@@ -6249,3 +6235,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
