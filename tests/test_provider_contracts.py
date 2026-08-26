@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
@@ -8,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -1046,6 +1048,39 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
                 )
             )._verified_cli_executable()
 
+    async def test_grok_git_validation_uses_secret_free_noninteractive_config(self):
+        adapter = GrokAdapter(Settings())
+        process = AsyncMock()
+        process.returncode = 0
+        process.communicate.return_value = (b"", b"")
+        with (
+            patch.dict(
+                "director_orchestrator.providers.os.environ",
+                {
+                    "PATH": "safe-path",
+                    "USERPROFILE": "safe-home",
+                    "OPENAI_API_KEY": "secret-openai",
+                    "SLACK_BOT_TOKEN": "secret-slack",
+                },
+                clear=True,
+            ),
+            patch(
+                "director_orchestrator.providers.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=process),
+            ) as spawn,
+        ):
+            await adapter._git(Path("/tmp/example"), "status", "--porcelain")
+
+        argv = spawn.await_args.args
+        environment = spawn.await_args.kwargs["env"]
+        self.assertIn("core.fsmonitor=false", argv)
+        self.assertIn(f"core.hooksPath={os.devnull}", argv)
+        self.assertEqual(environment["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(environment["GIT_CONFIG_GLOBAL"], os.devnull)
+        self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
+        self.assertNotIn("OPENAI_API_KEY", environment)
+        self.assertNotIn("SLACK_BOT_TOKEN", environment)
+
     async def test_grok_rejects_missing_nonterminal_and_unknown_statuses(self):
         settings = replace(
             Settings(),
@@ -1330,3 +1365,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]

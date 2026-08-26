@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
@@ -991,11 +992,26 @@ class GrokAdapter(ProviderAdapter):
         return json.dumps(packet, ensure_ascii=True, separators=(",", ":"))
 
     async def _git(self, root: Path, *args: str) -> str:
+        environment = self._cli_environment()
+        environment.update(
+            {
+                "GCM_INTERACTIVE": "Never",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_TERMINAL_PROMPT": "0",
+            }
+        )
         process = await asyncio.create_subprocess_exec(
             "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            f"core.hooksPath={os.devnull}",
             "-C",
             str(root),
             *args,
+            env=environment,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -1109,14 +1125,17 @@ class GrokAdapter(ProviderAdapter):
         try:
             executable = configured.resolve(strict=True)
             before = executable.stat()
-            if not executable.is_file():
-                raise ProviderError("GROK_CLI_EXECUTABLE must name a regular file")
+        except (OSError, RuntimeError) as exc:
+            raise ProviderError("GROK_CLI_EXECUTABLE could not be verified") from exc
+        if not executable.is_file():
+            raise ProviderError("GROK_CLI_EXECUTABLE must name a regular file")
+        try:
             digest = hashlib.sha256()
             with executable.open("rb") as handle:
                 for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                     digest.update(chunk)
             after = executable.stat()
-        except (OSError, RuntimeError) as exc:
+        except OSError as exc:
             raise ProviderError("GROK_CLI_EXECUTABLE could not be verified") from exc
         identity_before = (
             before.st_dev,
@@ -1490,3 +1509,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
