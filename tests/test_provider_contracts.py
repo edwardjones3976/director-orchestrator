@@ -1,11 +1,14 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -853,7 +856,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(settings=settings):
                 with self.assertRaises(ProviderError):
                     await GrokAdapter(settings).dispatch(assignment, "context")
-        with self.assertRaisesRegex(ProviderError, "repository-to-worktree mapping"):
+        with self.assertRaisesRegex(ProviderError, "GROK_ALLOW_REPOSITORY_WRITE"):
             await GrokAdapter(base).dispatch(
                 assignment.model_copy(
                     update={
@@ -864,7 +867,116 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 "context",
             )
+
+        cli_base = replace(
+            base,
+            grok_cli_enabled=True,
+            grok_cli_repository_roots=(("example/demo", "/tmp/example-demo"),),
+        )
+        with self.assertRaisesRegex(ProviderError, "GROK_ALLOW_REPOSITORY_WRITE"):
+            GrokAdapter(cli_base)._require_profile(
+                assignment.model_copy(
+                    update={
+                        "allow_draft_pr": True,
+                        "repository": "example/demo",
+                    }
+                )
+            )
+        with self.assertRaisesRegex(ProviderError, "GROK_ALLOW_REVIEW_VERDICT"):
+            GrokAdapter(cli_base)._require_profile(
+                assignment.model_copy(
+                    update={
+                        "kind": AssignmentKind.EXACT_SHA_REVIEW,
+                        "repository": "example/demo",
+                    }
+                )
+            )
         self.assertEqual(RecordingAsyncClient.calls, [])
+
+    def test_grok_cli_process_tree_is_terminated_on_success_and_timeout(self):
+        settings = replace(
+            Settings(),
+            grok_cli_timeout_seconds=30,
+        )
+        adapter = GrokAdapter(settings)
+
+        class FakeGuard:
+            def __init__(self):
+                self.terminate_calls = 0
+                self.close_calls = 0
+
+            def terminate(self):
+                self.terminate_calls += 1
+
+            def close(self):
+                self.close_calls += 1
+
+        class FakeProcess:
+            pid = 12345
+
+            def __init__(self, *, timeout=False):
+                self.returncode = 0
+                self.timeout = timeout
+                self.wait_calls = 0
+
+            def communicate(self, *, timeout):
+                if self.timeout:
+                    raise subprocess.TimeoutExpired("grok", timeout)
+                return b'{"result":"ok"}', b""
+
+            def wait(self, *, timeout):
+                self.wait_calls += 1
+                self.returncode = -9
+                return self.returncode
+
+        completed = FakeProcess()
+        completed_guard = FakeGuard()
+        with (
+            patch(
+                "director_orchestrator.providers.launch_contained_process",
+                return_value=(completed, completed_guard),
+            ),
+            patch("director_orchestrator.providers.os.name", "nt"),
+        ):
+            returncode, stdout, stderr = adapter._run_contained_cli(
+                ["grok", "--prompt-file", "fixture"],
+                Path("."),
+            )
+        self.assertEqual((returncode, stdout, stderr), (0, b'{"result":"ok"}', b""))
+        self.assertEqual(completed_guard.terminate_calls, 1)
+        self.assertEqual(completed_guard.close_calls, 1)
+
+        timed_out = FakeProcess(timeout=True)
+        timeout_guard = FakeGuard()
+        with (
+            patch(
+                "director_orchestrator.providers.launch_contained_process",
+                return_value=(timed_out, timeout_guard),
+            ),
+            patch("director_orchestrator.providers.os.name", "nt"),
+            self.assertRaisesRegex(ProviderError, "timed out"),
+        ):
+            adapter._run_contained_cli(["grok", "fixture"], Path("."))
+        self.assertEqual(timeout_guard.terminate_calls, 1)
+        self.assertEqual(timeout_guard.close_calls, 1)
+        self.assertEqual(timed_out.wait_calls, 1)
+
+    def test_grok_cli_environment_excludes_provider_secrets(self):
+        with patch.dict(
+            "director_orchestrator.providers.os.environ",
+            {
+                "PATH": "safe-path",
+                "USERPROFILE": "safe-home",
+                "OPENAI_API_KEY": "secret-openai",
+                "PERPLEXITY_API_KEY": "secret-perplexity",
+            },
+            clear=True,
+        ):
+            environment = GrokAdapter._cli_environment()
+        self.assertEqual(
+            environment,
+            {"PATH": "safe-path", "USERPROFILE": "safe-home"},
+        )
 
     async def test_grok_rejects_missing_nonterminal_and_unknown_statuses(self):
         settings = replace(
@@ -1147,3 +1259,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]

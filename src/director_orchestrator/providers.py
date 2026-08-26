@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -8,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import secrets
+import signal
 import sqlite3
+import subprocess
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
@@ -28,6 +32,7 @@ from .antigravity import (
 from .config import Settings
 from .models import Assignment, AssignmentKind, DiscussionPhase, ProviderName, ProviderRun
 from .policy import antigravity_assignment_errors, canonical_repository
+from .process_isolation import ProcessContainmentError, launch_contained_process
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
@@ -880,6 +885,17 @@ class GrokAdapter(ProviderAdapter):
                 "Grok assignment estimate exceeds the configured daily budget ceiling"
             )
         if self._requires_cli(assignment):
+            if assignment.allow_draft_pr and not self.settings.grok_allow_repository_write:
+                raise ProviderError(
+                    "Grok draft-PR work requires GROK_ALLOW_REPOSITORY_WRITE=true"
+                )
+            if (
+                assignment.kind == AssignmentKind.EXACT_SHA_REVIEW
+                and not self.settings.grok_allow_review_verdict
+            ):
+                raise ProviderError(
+                    "Grok exact-SHA review requires GROK_ALLOW_REVIEW_VERDICT=true"
+                )
             repository = canonical_repository(assignment.repository or "")
             if (
                 not self.settings.grok_cli_enabled
@@ -1056,6 +1072,84 @@ class GrokAdapter(ProviderAdapter):
                 return value.strip()
         return None
 
+    @staticmethod
+    def _cli_environment() -> dict[str, str]:
+        """Pass only OS/runtime variables needed by the locally authenticated CLI."""
+
+        allowed = {
+            "APPDATA",
+            "COMSPEC",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "LOCALAPPDATA",
+            "PATH",
+            "PATHEXT",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "WINDIR",
+        }
+        return {key: value for key, value in os.environ.items() if key.upper() in allowed}
+
+    def _run_contained_cli(
+        self, argv: list[str], root: Path
+    ) -> tuple[int, bytes, bytes]:
+        """Run one CLI process inside a mandatory kill-on-timeout tree boundary."""
+
+        try:
+            process, tree_guard = launch_contained_process(
+                argv,
+                cwd=root,
+                env=self._cli_environment(),
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except (OSError, ProcessContainmentError) as exc:
+            raise ProviderError("Grok CLI process containment failed") from exc
+
+        terminated = False
+
+        def terminate_tree() -> None:
+            nonlocal terminated
+            if terminated:
+                return
+            terminated = True
+            if os.name == "nt":
+                tree_guard.terminate()
+                return
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        try:
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=self.settings.grok_cli_timeout_seconds
+                )
+            except subprocess.TimeoutExpired as exc:
+                terminate_tree()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired as cleanup_exc:
+                    raise ProviderError(
+                        "Grok CLI process tree did not terminate after timeout"
+                    ) from cleanup_exc
+                raise ProviderError("Grok CLI assignment timed out") from exc
+            terminate_tree()
+            if process.returncode is None:
+                raise ProviderError("Grok CLI exited without a terminal return code")
+            return process.returncode, stdout, stderr
+        finally:
+            try:
+                terminate_tree()
+            finally:
+                tree_guard.close()
+
     async def _dispatch_cli(
         self,
         assignment: Assignment,
@@ -1100,7 +1194,7 @@ class GrokAdapter(ProviderAdapter):
                 handle.write(prompt)
                 prompt_path = Path(handle.name)
             permission_mode = "plan" if evidence["read_only"] else "auto"
-            process = await asyncio.create_subprocess_exec(
+            argv = [
                 self.settings.grok_cli_executable,
                 "--prompt-file",
                 str(prompt_path),
@@ -1115,18 +1209,13 @@ class GrokAdapter(ProviderAdapter):
                 "--permission-mode",
                 permission_mode,
                 "--verbatim",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            ]
+            returncode, stdout, stderr = await asyncio.to_thread(
+                self._run_contained_cli,
+                argv,
+                root,
             )
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=self.settings.grok_cli_timeout_seconds
-                )
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-                raise ProviderError("Grok CLI assignment timed out")
-            if process.returncode != 0:
+            if returncode != 0:
                 detail = stderr.decode("utf-8", errors="replace").strip()[:1_000]
                 raise ProviderError(f"Grok CLI assignment failed: {detail}")
             try:
@@ -1338,3 +1427,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]
