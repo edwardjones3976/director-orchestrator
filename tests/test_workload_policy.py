@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | BEGIN]]
 """Tests for deterministic provider-workload policy enforcement."""
@@ -40,6 +41,7 @@ from director_orchestrator.workload_policy import (
     evaluate_assignment,
     evaluate_efficiency,
     evaluate_retry,
+    is_direct_production_kind,
 )
 
 
@@ -70,6 +72,44 @@ def records(*providers: Provider) -> tuple[WorkloadRecord, ...]:
     return tuple(
         WorkloadRecord(f"ASSIGN-{index:02d}", provider)
         for index, provider in enumerate(providers, start=1)
+    )
+
+
+def balanced_direct_history(
+    excluded: DirectProductionProvider, *, total_units: int
+) -> tuple[DirectProductionRecord, ...]:
+    """Build nineteen valid records whose aggregate effort is ``total_units``."""
+
+    providers = tuple(
+        provider for provider in DirectProductionProvider if provider is not excluded
+    )
+    record_providers = tuple(providers[index % len(providers)] for index in range(19))
+    efforts = [1] * len(record_providers)
+    remaining = total_units - len(efforts)
+    for provider in providers:
+        provider_indices = [
+            index
+            for index, record_provider in enumerate(record_providers)
+            if record_provider is provider
+        ]
+        capacity = (
+            DEFAULT_POLICY.direct_production_hard_threshold(provider)
+            - len(provider_indices)
+        )
+        added = min(remaining, capacity)
+        efforts[provider_indices[0]] += added
+        remaining -= added
+        if remaining == 0:
+            break
+    if remaining:
+        raise AssertionError("direct-history fixture exceeds valid provider capacity")
+    return tuple(
+        DirectProductionRecord(
+            f"DIRECT-OTHER-{index:02d}",
+            provider,
+            effort_units=efforts[index],
+        )
+        for index, provider in enumerate(record_providers)
     )
 
 
@@ -313,7 +353,10 @@ class AssignmentRoutingTests(unittest.TestCase):
     def test_claude_is_allowed_at_exactly_forty_five_percent(self):
         history = records(
             *([Provider.CLAUDE] * 8),
-            *([Provider.GEMINI] * 11),
+            *([Provider.CURSOR] * 4),
+            *([Provider.GROK] * 4),
+            *([Provider.GEMINI] * 2),
+            Provider.PERPLEXITY,
         )
         result = evaluate_assignment(assignment(Provider.CLAUDE), history=history)
 
@@ -331,12 +374,33 @@ class AssignmentRoutingTests(unittest.TestCase):
         self.assertIn("overall_hard_threshold_exceeded:claude:45", result.violations)
         self.assertIn("absolute_primary_ceiling_exceeded:claude:45", result.violations)
 
+    def test_complete_window_checks_warmup_providers_not_only_final_provider(self):
+        history = tuple(
+            WorkloadRecord(f"CLAUDE-{index:02d}", Provider.CLAUDE)
+            for index in range(19)
+        )
+
+        result = evaluate_assignment(
+            assignment(Provider.CURSOR, assignment_id="CURSOR-20"),
+            history=history,
+        )
+
+        self.assertFalse(result.allowed)
+        self.assertIn("overall_hard_threshold_exceeded:claude:45", result.violations)
+        self.assertIn("absolute_primary_ceiling_exceeded:claude:45", result.violations)
+
     def test_cursor_and_grok_are_allowed_at_twenty_five_and_blocked_at_thirty(self):
         for provider in (Provider.CURSOR, Provider.GROK):
             with self.subTest(provider=provider, share="25"):
+                other_primary = (
+                    Provider.GROK if provider is Provider.CURSOR else Provider.CURSOR
+                )
                 history = records(
                     *([provider] * 4),
-                    *([Provider.GEMINI] * 15),
+                    *([Provider.CLAUDE] * 8),
+                    *([other_primary] * 4),
+                    *([Provider.GEMINI] * 2),
+                    Provider.PERPLEXITY,
                 )
                 allowed = evaluate_assignment(assignment(provider), history=history)
                 self.assertTrue(allowed.allowed)
@@ -363,14 +427,20 @@ class AssignmentRoutingTests(unittest.TestCase):
     def test_openai_hard_threshold_blocks_before_its_absolute_ceiling(self):
         allowed_history = records(
             Provider.OPENAI,
-            *([Provider.GEMINI] * 18),
+            *([Provider.CLAUDE] * 8),
+            *([Provider.CURSOR] * 4),
+            *([Provider.GROK] * 4),
+            *([Provider.GEMINI] * 2),
         )
         allowed = evaluate_assignment(
             assignment(Provider.OPENAI), history=allowed_history
         )
         blocked_history = records(
             *([Provider.OPENAI] * 2),
-            *([Provider.GEMINI] * 17),
+            *([Provider.CLAUDE] * 8),
+            *([Provider.CURSOR] * 4),
+            *([Provider.GROK] * 3),
+            *([Provider.GEMINI] * 2),
         )
         blocked = evaluate_assignment(
             assignment(Provider.OPENAI), history=blocked_history
@@ -484,16 +554,23 @@ class AssignmentRoutingTests(unittest.TestCase):
 
     def test_only_the_latest_nineteen_history_records_are_used(self):
         stale = records(*([Provider.CURSOR] * 30))
+        recent_providers = (
+            *([Provider.CLAUDE] * 8),
+            *([Provider.CURSOR] * 3),
+            *([Provider.GROK] * 4),
+            *([Provider.GEMINI] * 2),
+            *([Provider.PERPLEXITY] * 2),
+        )
         recent = tuple(
-            WorkloadRecord(f"RECENT-{index}", Provider.GEMINI)
-            for index in range(19)
+            WorkloadRecord(f"RECENT-{index}", provider)
+            for index, provider in enumerate(recent_providers)
         )
         result = evaluate_assignment(
             assignment(Provider.CURSOR), history=stale + recent
         )
 
         self.assertTrue(result.allowed)
-        self.assertIn("prospective_rolling_share:cursor:1/20", result.advisories)
+        self.assertIn("prospective_rolling_share:cursor:4/20", result.advisories)
 
     def test_short_history_is_advisory_instead_of_a_false_cap_violation(self):
         result = evaluate_assignment(
@@ -552,27 +629,16 @@ class DirectProductionRoutingTests(unittest.TestCase):
             threshold = DEFAULT_POLICY.direct_production_hard_threshold(
                 direct_provider
             )
-            other_provider = (
-                DirectProductionProvider.GEMINI
-                if direct_provider is not DirectProductionProvider.GEMINI
-                else DirectProductionProvider.PERPLEXITY
-            )
-            exact_history = (
-                DirectProductionRecord(
-                    "DIRECT-OTHER-00",
-                    other_provider,
-                    effort_units=100 - threshold - 18,
-                ),
-            ) + tuple(
-                DirectProductionRecord(
-                    f"DIRECT-OTHER-{index:02d}",
-                    other_provider,
-                )
-                for index in range(1, 19)
+            exact_history = balanced_direct_history(
+                direct_provider, total_units=100 - threshold
             )
             with self.subTest(provider=direct_provider, state="exact"):
                 exact = evaluate_assignment(
-                    assignment(runtime_provider, effort_units=threshold),
+                    assignment(
+                        runtime_provider,
+                        kind=WorkKind.IMPLEMENTATION,
+                        effort_units=threshold,
+                    ),
                     direct_production_history=exact_history,
                 )
                 self.assertTrue(exact.allowed)
@@ -582,15 +648,16 @@ class DirectProductionRoutingTests(unittest.TestCase):
                     exact.advisories,
                 )
 
-            over_history = (
-                dataclasses.replace(
-                    exact_history[0],
-                    effort_units=100 - (threshold + 1) - 18,
-                ),
-            ) + exact_history[1:]
+            over_history = balanced_direct_history(
+                direct_provider, total_units=100 - (threshold + 1)
+            )
             with self.subTest(provider=direct_provider, state="over"):
                 over = evaluate_assignment(
-                    assignment(runtime_provider, effort_units=threshold + 1),
+                    assignment(
+                        runtime_provider,
+                        kind=WorkKind.IMPLEMENTATION,
+                        effort_units=threshold + 1,
+                    ),
                     direct_production_history=over_history,
                 )
                 self.assertFalse(over.allowed)
@@ -616,7 +683,7 @@ class DirectProductionRoutingTests(unittest.TestCase):
         )
 
         result = evaluate_assignment(
-            assignment(Provider.CURSOR),
+            assignment(Provider.CURSOR, kind=WorkKind.IMPLEMENTATION),
             direct_production_history=history,
         )
 
@@ -629,6 +696,54 @@ class DirectProductionRoutingTests(unittest.TestCase):
             "direct_production_hard_threshold_exceeded:cursor:19",
             result.violations,
         )
+
+    def test_complete_direct_window_checks_warmup_providers(self):
+        history = tuple(
+            DirectProductionRecord(
+                f"CLAUDE-DIRECT-{index:02d}",
+                DirectProductionProvider.CLAUDE,
+            )
+            for index in range(19)
+        )
+
+        result = evaluate_assignment(
+            assignment(
+                Provider.CURSOR,
+                assignment_id="CURSOR-DIRECT-20",
+                kind=WorkKind.IMPLEMENTATION,
+            ),
+            direct_production_history=history,
+        )
+
+        self.assertFalse(result.allowed)
+        self.assertIn(
+            "direct_production_hard_threshold_exceeded:claude:65",
+            result.violations,
+        )
+
+    def test_only_implementation_enters_prospective_direct_production(self):
+        history = tuple(
+            DirectProductionRecord(
+                f"CURSOR-DIRECT-{index:02d}",
+                DirectProductionProvider.CURSOR,
+            )
+            for index in range(19)
+        )
+
+        for kind in (WorkKind.REVIEW, WorkKind.RESEARCH, WorkKind.VALIDATION):
+            with self.subTest(kind=kind):
+                result = evaluate_assignment(
+                    assignment(Provider.CURSOR, kind=kind),
+                    direct_production_history=history,
+                )
+                self.assertTrue(result.allowed)
+                self.assertNotIn(
+                    "prospective_direct_production_share",
+                    " ".join(result.advisories),
+                )
+                self.assertFalse(is_direct_production_kind(kind))
+
+        self.assertTrue(is_direct_production_kind(WorkKind.IMPLEMENTATION))
 
     def test_ordinary_openai_does_not_map_to_external_openai_production(self):
         self.assertIsNone(direct_production_provider(Provider.OPENAI))
@@ -890,11 +1005,41 @@ class PrestagePacketTests(unittest.TestCase):
     def test_packet_rejects_duplicate_or_conflicting_scope(self):
         with self.assertRaisesRegex(WorkloadPolicyError, "must not contain duplicates"):
             prestage(owned_paths=("src/a.py", "src/a.py"))
-        with self.assertRaisesRegex(WorkloadPolicyError, "must be disjoint"):
+        with self.assertRaisesRegex(WorkloadPolicyError, "must not overlap"):
             prestage(
                 owned_paths=("private/",),
                 prohibited_paths=("private/",),
             )
+
+    def test_packet_normalizes_paths_and_rejects_scope_aliases(self):
+        packet = prestage(
+            owned_paths=("src//module.py", "tests/./test_module.py"),
+            prohibited_paths=("private/",),
+        )
+        self.assertEqual(packet.owned_paths, ("src/module.py", "tests/test_module.py"))
+        self.assertEqual(packet.prohibited_paths, ("private",))
+
+        for owned, prohibited in (
+            (("src",), ("src/private",)),
+            (("SRC/private",), ("src",)),
+        ):
+            with self.subTest(owned=owned, prohibited=prohibited):
+                with self.assertRaisesRegex(WorkloadPolicyError, "must not overlap"):
+                    prestage(owned_paths=owned, prohibited_paths=prohibited)
+
+        for invalid in (
+            "../private",
+            "/absolute/path",
+            r"C:\absolute\path",
+            r"C:drive-relative\path",
+            "src/**",
+            "src/private. ",
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(
+                    WorkloadPolicyError, "repository-relative"
+                ):
+                    prestage(owned_paths=(invalid,))
 
     def test_packet_requires_tests_security_merge_and_stop_evidence(self):
         for field_name in (
@@ -932,3 +1077,4 @@ class InputValidationTests(unittest.TestCase):
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]

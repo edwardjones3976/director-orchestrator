@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 from __future__ import annotations
@@ -275,23 +276,68 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             execution_policy_errors(guarded, self.settings),
         )
 
-    def test_bounded_low_level_and_antigravity_implementation_remain_short(self) -> None:
-        for agent, kind in (
-            (ProviderName.CURSOR, AssignmentKind.LOW_LEVEL_IMPLEMENTATION),
-            (ProviderName.GEMINI, AssignmentKind.IMPLEMENTATION),
-        ):
-            with self.subTest(agent=agent, kind=kind):
-                assignment = self._valid_plan().assignments[0].model_copy(
-                    update={
-                        "agent": agent,
-                        "kind": kind,
-                        "workload_size": WorkSize.SIMPLE,
-                        "effort_points": 1,
-                    }
-                )
-                trusted = policy_module._trusted_v1_assignment(assignment)
-                self.assertEqual(trusted.workload_size, WorkSize.SHORT)
-                self.assertEqual(trusted.effort_points, 2)
+    def test_only_antigravity_implementation_may_remain_short(self) -> None:
+        direct = self._valid_plan().assignments[0].model_copy(
+            update={
+                "agent": ProviderName.CURSOR,
+                "kind": AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+                "workload_size": WorkSize.SIMPLE,
+                "effort_points": 1,
+                "task": "Replace the complete authentication subsystem",
+            }
+        )
+        trusted_direct = policy_module._trusted_v1_assignment(direct)
+        self.assertEqual(trusted_direct.workload_size, WorkSize.MEDIUM)
+        self.assertEqual(trusted_direct.effort_points, 5)
+
+        antigravity = direct.model_copy(
+            update={
+                "agent": ProviderName.GEMINI,
+                "kind": AssignmentKind.IMPLEMENTATION,
+                "task": "Generate bounded scaffolding",
+            }
+        )
+        trusted_antigravity = policy_module._trusted_v1_assignment(antigravity)
+        self.assertEqual(trusted_antigravity.workload_size, WorkSize.SHORT)
+        self.assertEqual(trusted_antigravity.effort_points, 2)
+
+    def test_perplexity_cannot_relabel_implementation_or_review_as_research(self) -> None:
+        implementation = self._valid_plan().assignments[0].model_copy(
+            update={
+                "agent": ProviderName.PERPLEXITY,
+                "kind": AssignmentKind.IMPLEMENTATION,
+                "workload_size": WorkSize.SIMPLE,
+                "model_label": None,
+                "task": "Produce a complete standalone Python module",
+                "repository": None,
+                "public_research_query": "public module design references",
+                "requires_approval": True,
+            }
+        )
+        self.assertEqual(
+            policy_module._work_kind(implementation),
+            policy_module.WorkKind.IMPLEMENTATION,
+        )
+        trusted = policy_module._trusted_v1_assignment(implementation)
+        self.assertEqual(trusted.workload_size, WorkSize.MEDIUM)
+
+        review = self._valid_plan().assignments[1].model_copy(
+            update={
+                "agent": ProviderName.PERPLEXITY,
+                "repository": None,
+                "public_research_query": "public review methods",
+                "requires_approval": True,
+            }
+        )
+        plan = self._valid_plan()
+        plan.assignments[1] = review
+        plan.prestage = self._prestage(reviewer=ProviderName.PERPLEXITY)
+        guarded = enforce_plan(plan, "bounded implementation", self.settings)
+        errors = execution_policy_errors(guarded, self.settings)
+        self.assertTrue(
+            any("Perplexity is research-only" in error for error in errors),
+            errors,
+        )
 
     def test_prestage_scope_is_canonical_and_digest_bound(self) -> None:
         plan = self._valid_plan()
@@ -533,3 +579,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]

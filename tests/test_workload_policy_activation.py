@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 from __future__ import annotations
@@ -23,6 +24,13 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.store import TaskStore, WorkloadAttemptOutcome
+from director_orchestrator.workload_policy import (
+    EnforcementMode,
+    PRIMARY_PROVIDERS,
+    Provider,
+    WorkKind,
+    WorkSize,
+)
 
 
 class WorkloadPolicyActivationTests(unittest.TestCase):
@@ -68,6 +76,46 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
         settings.validate_workload_policy_configuration()
         self.assertTrue(settings.workload_policy_readiness()["shadow"])
         self.assertFalse(settings.workload_policy_readiness()["enforced"])
+
+    def test_health_readiness_uses_persisted_shadow_promotion(self) -> None:
+        settings = replace(
+            Settings(),
+            workload_policy_enabled=True,
+            workload_policy_mode="shadow",
+            workload_policy_shadow_assignments=5,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(Path(directory) / "director.sqlite3")
+            for sequence in range(1, 6):
+                reservation = store.reserve_workload_assignment(
+                    reservation_key=f"health-shadow-{sequence}",
+                    task_id="DIR-HEALTH-SHADOW",
+                    assignment_id=f"DIR-HEALTH-SHADOW:{sequence}",
+                    phase="dispatch",
+                    provider=Provider.CLAUDE,
+                    effort_units=1,
+                    kind=WorkKind.COORDINATION,
+                    size=WorkSize.SIMPLE,
+                    model_label=None,
+                    available_primary_providers=PRIMARY_PROVIDERS,
+                    mode=EnforcementMode.SHADOW,
+                    shadow_assignment_limit=5,
+                )
+                store.finalize_workload_reservation(
+                    reservation.reservation_key, WorkloadAttemptOutcome.INVOKED
+                )
+
+            effective = store.effective_workload_mode(
+                configured_mode=EnforcementMode.SHADOW,
+                shadow_assignment_limit=5,
+            )
+            readiness = settings.workload_policy_readiness(
+                effective_mode=effective.value
+            )
+
+        self.assertEqual(effective, EnforcementMode.ENFORCED)
+        self.assertTrue(readiness["enforced"])
+        self.assertFalse(readiness["shadow"])
 
     def test_disabled_policy_reports_no_active_enforced_or_shadow_mode(self) -> None:
         for mode in ("enforced", "shadow"):
@@ -221,3 +269,4 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]

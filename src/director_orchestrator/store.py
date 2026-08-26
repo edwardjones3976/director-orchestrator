@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
@@ -50,6 +51,7 @@ from .workload_policy import (
     WorkloadRecord,
     direct_production_provider,
     evaluate_assignment,
+    is_direct_production_kind,
 )
 
 
@@ -1111,6 +1113,42 @@ class TaskStore:
                 # Ordinary OpenAI is the control plane. The separately
                 # owner-authorized external OpenAI lane is never inferred here.
                 continue
+            assignment_id = (
+                f"{record.task_id}:{record.plan_generation}:"
+                f"{assignment.sequence}"
+            )
+            workload_authority = connection.execute(
+                """SELECT reservation.task_id, reservation.provider,
+                          reservation.effort_units, reservation.work_kind
+                FROM workload_assignment_reservations AS reservation
+                JOIN workload_assignment_events AS event
+                  ON event.reservation_key = reservation.reservation_key
+                WHERE reservation.assignment_id = ?
+                  AND event.outcome = 'invoked'
+                ORDER BY reservation.ledger_id ASC
+                LIMIT 1""",
+                (assignment_id,),
+            ).fetchone()
+            if workload_authority is None:
+                raise WorkloadReservationConflict(
+                    "accepted direct-production outcome lacks invoked workload authority"
+                )
+            try:
+                authoritative_kind = WorkKind(str(workload_authority["work_kind"]))
+            except ValueError as exc:
+                raise WorkloadReservationConflict(
+                    "accepted direct-production workload authority is malformed"
+                ) from exc
+            if (
+                str(workload_authority["task_id"]) != record.task_id
+                or str(workload_authority["provider"]) != provider.value
+                or int(workload_authority["effort_units"]) != assignment.effort_points
+            ):
+                raise WorkloadReservationConflict(
+                    "accepted direct-production workload authority binding changed"
+                )
+            if not is_direct_production_kind(authoritative_kind):
+                continue
             if not outcome.interaction_id or not outcome.director_review_interaction_id:
                 raise WorkloadReservationConflict(
                     "accepted direct-production outcome lacks authenticated review evidence"
@@ -1192,10 +1230,6 @@ class TaskStore:
                 raise WorkloadReservationConflict(
                     "accepted direct-production outcome evidence binding changed"
                 )
-            assignment_id = (
-                f"{record.task_id}:{record.plan_generation}:"
-                f"{assignment.sequence}"
-            )
             identity = (
                 record.task_id,
                 record.plan_generation,
@@ -1590,15 +1624,11 @@ class TaskStore:
                     )
                 effective_mode = EnforcementMode(str(unit_authority["mode"]))
             elif mode is EnforcementMode.SHADOW:
-                completed_shadow = connection.execute(
-                    """SELECT COUNT(DISTINCT reservation.assignment_id) AS count
-                    FROM workload_assignment_reservations AS reservation
-                    JOIN workload_assignment_events AS event
-                      ON event.reservation_key = reservation.reservation_key
-                    WHERE reservation.mode = 'shadow'"""
-                ).fetchone()
-                if int(completed_shadow["count"]) >= shadow_assignment_limit:
-                    effective_mode = EnforcementMode.ENFORCED
+                effective_mode = self._effective_workload_mode(
+                    connection,
+                    configured_mode=mode,
+                    shadow_assignment_limit=shadow_assignment_limit,
+                )
 
             effective_rows = connection.execute(
                 """SELECT reservation.reservation_key, reservation.provider,
@@ -1624,7 +1654,7 @@ class TaskStore:
             direct_provider = direct_production_provider(provider)
             if (
                 direct_provider is not None
-                and kind is not WorkKind.COORDINATION
+                and is_direct_production_kind(kind)
             ):
                 direct_rows = connection.execute(
                     """SELECT assignment_id, provider, effort_units
@@ -1643,7 +1673,7 @@ class TaskStore:
                           ON event.reservation_key = reservation.reservation_key
                         WHERE event.outcome IS NULL
                           AND reservation.provider = ?
-                          AND reservation.work_kind <> 'coordination'
+                          AND reservation.work_kind = 'implementation'
                           AND NOT EXISTS (
                               SELECT 1 FROM direct_production_credits AS credit
                               WHERE credit.assignment_id = reservation.assignment_id
@@ -1657,7 +1687,7 @@ class TaskStore:
                               WHERE candidate.assignment_id =
                                     reservation.assignment_id
                                 AND candidate.provider = reservation.provider
-                                AND candidate.work_kind <> 'coordination'
+                                AND candidate.work_kind = 'implementation'
                                 AND candidate_event.outcome IS NULL
                           )
                     )
@@ -1691,6 +1721,61 @@ class TaskStore:
                 available_primary_providers=available,
                 policy=DEFAULT_POLICY,
                 mode=effective_mode,
+            )
+            unresolved_overall = connection.execute(
+                """SELECT
+                    SUM(CASE WHEN event.outcome = 'invoked'
+                                  OR event.outcome IS NULL THEN 1 ELSE 0 END)
+                        AS potential_count,
+                    SUM(CASE WHEN event.outcome IS NULL THEN 1 ELSE 0 END)
+                        AS unresolved_count
+                FROM workload_assignment_reservations AS reservation
+                LEFT JOIN workload_assignment_events AS event
+                  ON event.reservation_key = reservation.reservation_key"""
+            ).fetchone()
+            extra_violations: list[str] = []
+            if (
+                int(unresolved_overall["unresolved_count"] or 0) > 0
+                and int(unresolved_overall["potential_count"] or 0)
+                >= DEFAULT_POLICY.rolling_window_size - 1
+            ):
+                extra_violations.append("workload_rollover_pending_unresolved")
+            if direct_provider is not None and is_direct_production_kind(kind):
+                direct_uncertainty = connection.execute(
+                    """SELECT
+                        (SELECT COUNT(*) FROM direct_production_credits)
+                        + COUNT(DISTINCT reservation.assignment_id)
+                            AS potential_count,
+                        COUNT(DISTINCT reservation.assignment_id)
+                            AS unresolved_count
+                    FROM workload_assignment_reservations AS reservation
+                    LEFT JOIN workload_assignment_events AS event
+                      ON event.reservation_key = reservation.reservation_key
+                    LEFT JOIN tasks AS task ON task.task_id = reservation.task_id
+                    WHERE reservation.work_kind = 'implementation'
+                      AND reservation.provider <> 'openai'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM direct_production_credits AS credit
+                          WHERE credit.assignment_id = reservation.assignment_id
+                      )
+                      AND (
+                          event.outcome IS NULL
+                          OR (
+                              event.outcome = 'invoked'
+                              AND COALESCE(task.status, '') NOT IN ('DONE', 'FAILED')
+                          )
+                      )"""
+                ).fetchone()
+                if (
+                    int(direct_uncertainty["unresolved_count"] or 0) > 0
+                    and int(direct_uncertainty["potential_count"] or 0)
+                    >= DEFAULT_POLICY.rolling_window_size - 1
+                ):
+                    extra_violations.append(
+                        "direct_production_rollover_pending_unresolved"
+                    )
+            decision = self._decision_with_violations(
+                decision, extra_violations
             )
             recorded_at = datetime.now(timezone.utc)
             connection.execute(
@@ -1741,6 +1826,72 @@ class TaskStore:
             if persisted is None:  # Defensive: insertion and read share a transaction.
                 raise RuntimeError("workload reservation disappeared during commit")
             return self._workload_reservation_from_row(persisted, created=True)
+
+    @staticmethod
+    def _decision_with_violations(
+        decision: DecisionResult, violations: list[str]
+    ) -> DecisionResult:
+        merged = tuple(dict.fromkeys((*decision.violations, *violations)))
+        if merged == decision.violations:
+            return decision
+        if decision.mode is EnforcementMode.SHADOW:
+            return DecisionResult(
+                mode=decision.mode,
+                outcome=DecisionOutcome.SHADOW_WOULD_BLOCK,
+                allowed=True,
+                violations=merged,
+                advisories=decision.advisories,
+            )
+        return DecisionResult(
+            mode=decision.mode,
+            outcome=DecisionOutcome.BLOCK,
+            allowed=False,
+            violations=merged,
+            advisories=decision.advisories,
+        )
+
+    @staticmethod
+    def _effective_workload_mode(
+        connection: sqlite3.Connection,
+        *,
+        configured_mode: EnforcementMode,
+        shadow_assignment_limit: int,
+    ) -> EnforcementMode:
+        if configured_mode is EnforcementMode.ENFORCED:
+            return configured_mode
+        completed_shadow = connection.execute(
+            """SELECT COUNT(DISTINCT reservation.assignment_id) AS count
+            FROM workload_assignment_reservations AS reservation
+            JOIN workload_assignment_events AS event
+              ON event.reservation_key = reservation.reservation_key
+            WHERE reservation.mode = 'shadow'"""
+        ).fetchone()
+        if int(completed_shadow["count"]) >= shadow_assignment_limit:
+            return EnforcementMode.ENFORCED
+        return EnforcementMode.SHADOW
+
+    def effective_workload_mode(
+        self,
+        *,
+        configured_mode: EnforcementMode,
+        shadow_assignment_limit: int = 5,
+    ) -> EnforcementMode:
+        """Return the persisted mode that the next assignment will enforce."""
+
+        if not isinstance(configured_mode, EnforcementMode):
+            raise ValueError("workload mode must be enforced or shadow")
+        if (
+            isinstance(shadow_assignment_limit, bool)
+            or not isinstance(shadow_assignment_limit, int)
+            or shadow_assignment_limit <= 0
+        ):
+            raise ValueError("workload shadow assignment limit must be positive")
+        with self._lock, self._connect() as connection:
+            return self._effective_workload_mode(
+                connection,
+                configured_mode=configured_mode,
+                shadow_assignment_limit=shadow_assignment_limit,
+            )
 
     def finalize_workload_reservation(
         self,
@@ -2190,3 +2341,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]

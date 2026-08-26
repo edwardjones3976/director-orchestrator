@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -47,6 +48,7 @@ from .workload_policy import (
     WorkloadRecord,
     direct_production_provider,
     evaluate_assignment,
+    is_direct_production_kind,
 )
 
 
@@ -276,8 +278,6 @@ def _workload_provider(provider: ProviderName) -> Provider:
 
 
 def _work_kind(assignment: Assignment) -> WorkKind:
-    if assignment.agent == ProviderName.PERPLEXITY:
-        return WorkKind.RESEARCH
     if assignment.kind in {
         AssignmentKind.IMPLEMENTATION,
         AssignmentKind.BOILERPLATE,
@@ -290,7 +290,10 @@ def _work_kind(assignment: Assignment) -> WorkKind:
         AssignmentKind.EXACT_SHA_REVIEW,
     }:
         return WorkKind.REVIEW
-    if assignment.kind == AssignmentKind.RESEARCH:
+    if (
+        assignment.agent == ProviderName.PERPLEXITY
+        or assignment.kind == AssignmentKind.RESEARCH
+    ):
         return WorkKind.RESEARCH
     return WorkKind.COORDINATION
 
@@ -315,18 +318,12 @@ def _trusted_v1_assignment(assignment: Assignment) -> Assignment:
 
     kind = _work_kind(assignment)
     if kind == WorkKind.IMPLEMENTATION:
-        # The owner permits genuinely bounded implementation/prototype lanes to
-        # remain short.  General implementation and prose that deterministically
-        # implies coding are medium at minimum and therefore Claude/FABLE-only.
+        # Antigravity is the only short implementation lane because its output is
+        # non-authoritative and must be independently reproduced by a primary-team
+        # consumer. Model-selected subordinate labels cannot downgrade direct work.
         minimum_size = (
             WorkSize.SHORT
             if assignment.agent == ProviderName.GEMINI
-            or assignment.kind
-            in {
-                AssignmentKind.BOILERPLATE,
-                AssignmentKind.SCAFFOLDING,
-                AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
-            }
             else WorkSize.MEDIUM
         )
     elif assignment.agent == ProviderName.OPENAI and kind == WorkKind.COORDINATION:
@@ -420,7 +417,7 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
             )
         )
         direct_provider = direct_production_provider(provider)
-        if direct_provider is not None and request.kind is not WorkKind.COORDINATION:
+        if direct_provider is not None and is_direct_production_kind(request.kind):
             direct_history.append(
                 DirectProductionRecord(
                     assignment_id=request.assignment_id,
@@ -825,6 +822,10 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                     f"assignment {assignment.sequence}: Grok has no web-grounded research lane"
                 )
         if assignment.agent == ProviderName.PERPLEXITY:
+            if assignment.kind != AssignmentKind.RESEARCH:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity is research-only and requires research kind"
+                )
             if not assignment.requires_approval:
                 errors.add(
                     f"assignment {assignment.sequence}: Perplexity research requires exact-query owner approval"
@@ -1231,3 +1232,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | BEGIN]]
 """Deterministic provider-workload policy and pre-staging contracts.
@@ -541,6 +542,14 @@ def direct_production_provider(
     return DirectProductionProvider(provider.value)
 
 
+def is_direct_production_kind(kind: WorkKind) -> bool:
+    """Return whether a canonical work kind can create production credit."""
+
+    if not isinstance(kind, WorkKind):
+        raise WorkloadPolicyError("direct-production kind must be a WorkKind")
+    return kind is WorkKind.IMPLEMENTATION
+
+
 @dataclass(frozen=True)
 class AssignmentRequest:
     assignment_id: str
@@ -654,33 +663,47 @@ def evaluate_assignment(
             f"rolling_window_warming_up:{len(window)}/{policy.rolling_window_size}"
         )
     else:
-        hard_threshold = policy.hard_threshold(request.provider)
-        absolute_cap = policy.primary_cap(request.provider)
         total_units = sum(record.effort_units for record in window)
-        provider_units = sum(
+        requested_provider_units = sum(
             record.effort_units
             for record in window
             if record.provider is request.provider
         )
         advisories.append(
-            f"prospective_rolling_share:{request.provider.value}:{provider_units}/{total_units}"
+            "prospective_rolling_share:"
+            f"{request.provider.value}:{requested_provider_units}/{total_units}"
         )
-        if provider_units * 100 > hard_threshold * total_units:
-            violations.append(
-                f"overall_hard_threshold_exceeded:{request.provider.value}:{hard_threshold}"
+        # Check the complete window, not only the final provider. During warm-up
+        # no provider has yet been measured against a complete window, and the
+        # model controls which provider appears in the twentieth position.
+        for provider in Provider:
+            provider_units = sum(
+                record.effort_units
+                for record in window
+                if record.provider is provider
             )
-        # The absolute primary ceiling remains active even in degraded mode; the
-        # availability violation above prevents fallback from bypassing it.
-        if (
-            absolute_cap is not None
-            and provider_units * 100 > absolute_cap * total_units
-        ):
-            violations.append(
-                f"absolute_primary_ceiling_exceeded:{request.provider.value}:{absolute_cap}"
-            )
+            if provider_units == 0:
+                continue
+            hard_threshold = policy.hard_threshold(provider)
+            if provider_units * 100 > hard_threshold * total_units:
+                violations.append(
+                    "overall_hard_threshold_exceeded:"
+                    f"{provider.value}:{hard_threshold}"
+                )
+            # The absolute primary ceiling remains active even in degraded mode;
+            # the availability violation above prevents fallback from bypassing it.
+            absolute_cap = policy.primary_cap(provider)
+            if (
+                absolute_cap is not None
+                and provider_units * 100 > absolute_cap * total_units
+            ):
+                violations.append(
+                    "absolute_primary_ceiling_exceeded:"
+                    f"{provider.value}:{absolute_cap}"
+                )
 
     direct_provider = direct_production_provider(request.provider)
-    if direct_provider is not None and request.kind is not WorkKind.COORDINATION:
+    if direct_provider is not None and is_direct_production_kind(request.kind):
         direct_prior = direct_records[-(policy.rolling_window_size - 1) :]
         direct_candidate = DirectProductionRecord(
             assignment_id=(
@@ -700,23 +723,32 @@ def evaluate_assignment(
             )
         else:
             direct_total = sum(record.effort_units for record in direct_window)
-            direct_provider_units = sum(
+            requested_direct_provider_units = sum(
                 record.effort_units
                 for record in direct_window
                 if record.provider is direct_provider
             )
-            direct_threshold = policy.direct_production_hard_threshold(
-                direct_provider
-            )
             advisories.append(
                 "prospective_direct_production_share:"
-                f"{direct_provider.value}:{direct_provider_units}/{direct_total}"
+                f"{direct_provider.value}:"
+                f"{requested_direct_provider_units}/{direct_total}"
             )
-            if direct_provider_units * 100 > direct_threshold * direct_total:
-                violations.append(
-                    "direct_production_hard_threshold_exceeded:"
-                    f"{direct_provider.value}:{direct_threshold}"
+            for provider in DirectProductionProvider:
+                provider_units = sum(
+                    record.effort_units
+                    for record in direct_window
+                    if record.provider is provider
                 )
+                if provider_units == 0:
+                    continue
+                direct_threshold = policy.direct_production_hard_threshold(
+                    provider
+                )
+                if provider_units * 100 > direct_threshold * direct_total:
+                    violations.append(
+                        "direct_production_hard_threshold_exceeded:"
+                        f"{provider.value}:{direct_threshold}"
+                    )
 
     return _decision(mode, violations, advisories)
 
@@ -905,9 +937,21 @@ class PrestagePacket:
         if self.producer is self.independent_reviewer:
             raise WorkloadPolicyError("prestage producer and reviewer must be independent")
 
+        path_collection_names = ("owned_paths", "prohibited_paths")
+        for name in path_collection_names:
+            raw = tuple(getattr(self, name))
+            normalized = tuple(
+                _canonical_repository_relative_path(item, field_name=name)
+                for item in raw
+            )
+            aliases = [item.casefold() for item in normalized]
+            if len(set(aliases)) != len(aliases):
+                raise WorkloadPolicyError(
+                    f"prestage {name} must not contain duplicates"
+                )
+            object.__setattr__(self, name, tuple(sorted(normalized)))
+
         collection_names = (
-            "owned_paths",
-            "prohibited_paths",
             "required_tests",
             "required_security_evidence",
             "merge_eligibility_conditions",
@@ -932,10 +976,12 @@ class PrestagePacket:
         ):
             if not getattr(self, required_name):
                 raise WorkloadPolicyError(f"prestage {required_name} must not be empty")
-        if set(self.owned_paths).intersection(self.prohibited_paths):
-            raise WorkloadPolicyError(
-                "prestage owned and prohibited paths must be disjoint"
-            )
+        for owned in self.owned_paths:
+            for prohibited in self.prohibited_paths:
+                if _repository_path_scopes_overlap(owned, prohibited):
+                    raise WorkloadPolicyError(
+                        "prestage owned and prohibited paths must not overlap"
+                    )
 
         _positive_int(self.budget_units, "prestage budget units")
         _positive_int(self.timeout_seconds, "prestage timeout seconds")
@@ -993,5 +1039,50 @@ class PrestagePacket:
         return payload
 
 
+_WINDOWS_DRIVE_PATH = re.compile(r"^[a-zA-Z]:")
+
+
+def _canonical_repository_relative_path(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise WorkloadPolicyError(
+            f"prestage {field_name} must contain only non-blank strings"
+        )
+    candidate = value.strip().replace("\\", "/")
+    if candidate.startswith("/") or _WINDOWS_DRIVE_PATH.match(candidate):
+        raise WorkloadPolicyError(
+            f"prestage {field_name} paths must be repository-relative"
+        )
+    parts: list[str] = []
+    for part in candidate.split("/"):
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            raise WorkloadPolicyError(
+                f"prestage {field_name} paths must be repository-relative"
+            )
+        if any(character in part for character in "*?[]"):
+            raise WorkloadPolicyError(
+                f"prestage {field_name} paths must be literal repository-relative paths"
+            )
+        if part.endswith((" ", ".")):
+            raise WorkloadPolicyError(
+                f"prestage {field_name} paths must be portable repository-relative paths"
+            )
+        parts.append(part)
+    if not parts:
+        raise WorkloadPolicyError(
+            f"prestage {field_name} paths must be repository-relative"
+        )
+    return "/".join(parts)
+
+
+def _repository_path_scopes_overlap(left: str, right: str) -> bool:
+    left_parts = tuple(part.casefold() for part in left.split("/"))
+    right_parts = tuple(part.casefold() for part in right.split("/"))
+    common = min(len(left_parts), len(right_parts))
+    return left_parts[:common] == right_parts[:common]
+
+
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:39 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]

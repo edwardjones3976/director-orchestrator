@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
@@ -676,17 +677,22 @@ class Settings:
             "perplexity": readiness["perplexity"],
         }
 
-    def workload_policy_readiness(self) -> dict[str, bool]:
+    def workload_policy_readiness(
+        self, *, effective_mode: str | None = None
+    ) -> dict[str, bool]:
         """Expose only non-sensitive workload-enforcement readiness booleans."""
 
+        if effective_mode is not None and effective_mode not in {"enforced", "shadow"}:
+            raise ValueError("effective workload mode must be enforced or shadow")
+        active_mode = effective_mode or self.workload_policy_mode
         return {
             "enabled": self.workload_policy_enabled,
             "enforced": (
                 self.workload_policy_enabled
-                and self.workload_policy_mode == "enforced"
+                and active_mode == "enforced"
             ),
             "shadow": (
-                self.workload_policy_enabled and self.workload_policy_mode == "shadow"
+                self.workload_policy_enabled and active_mode == "shadow"
             ),
             "mode_valid": self.workload_policy_mode in {"enforced", "shadow"},
             "window_valid": self.workload_policy_window_assignments == 20,
@@ -1352,3 +1358,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]

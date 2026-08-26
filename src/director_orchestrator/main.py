@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
@@ -96,6 +97,7 @@ from .providers import provider_registry
 from .parallel_dispatch import (
     DailyTaskBudgetLedger,
 )
+from .workload_policy import EnforcementMode
 
 
 def _build_github_effect_verifier(
@@ -373,6 +375,10 @@ def require_claude_callback_auth(
 
 @app.get("/health")
 def health() -> dict:
+    effective_workload_mode = store.effective_workload_mode(
+        configured_mode=EnforcementMode(settings.workload_policy_mode),
+        shadow_assignment_limit=settings.workload_policy_shadow_assignments,
+    )
     return {
         "ok": True,
         "version": __version__,
@@ -383,7 +389,9 @@ def health() -> dict:
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
         "execution_profile": settings.execution_profile_readiness(),
-        "workload_policy": settings.workload_policy_readiness(),
+        "workload_policy": settings.workload_policy_readiness(
+            effective_mode=effective_workload_mode.value
+        ),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
         "langgraph": settings.langgraph_shadow_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
@@ -823,3 +831,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]

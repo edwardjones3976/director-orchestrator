@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
@@ -504,11 +505,15 @@ class OrchestrationEngine:
 
         existing = reservation.final_outcome
         if existing is not None:
-            # A cached runtime readback never replaces the first invocation's
-            # classification. Every other mismatch is contradictory evidence.
-            if outcome is WorkloadAttemptOutcome.CACHED_REPLAY:
-                return True
             if existing is outcome:
+                return True
+            # A cached runtime readback is compatible only with a previously
+            # counted invocation.  It must not conceal contradictory pre-submit
+            # or blocked evidence for an effect the runtime actually completed.
+            if (
+                outcome is WorkloadAttemptOutcome.CACHED_REPLAY
+                and existing is WorkloadAttemptOutcome.INVOKED
+            ):
                 return True
             await self._stop_for_owner(
                 record,
@@ -544,6 +549,39 @@ class OrchestrationEngine:
         # conservative: ambiguous or incomplete readback still consumed one
         # actual provider attempt and must influence the rolling ledger.
         return WorkloadAttemptOutcome.INVOKED
+
+    async def _finalize_workload_pre_submit_stop(
+        self,
+        record: TaskRecord,
+        assignment: Assignment,
+        reservation: WorkloadLedgerReservation,
+        *,
+        effect_key: str,
+        reserved_by_caller: bool = True,
+        runtime_idempotency_key: str | None = None,
+        parallel_member_effect_key: str | None = None,
+    ) -> bool:
+        """Record pre-submit only after the exact runtime effect is closed."""
+
+        closed_pre_submit = self._close_failed_pre_submit_after_publication(
+            record,
+            assignment,
+            effect_key=effect_key,
+            reserved_by_caller=reserved_by_caller,
+            runtime_idempotency_key=runtime_idempotency_key,
+            parallel_member_effect_key=parallel_member_effect_key,
+        )
+        current = self.store.get(record.task_id) or record
+        finalized = await self._finalize_workload_dispatch(
+            current,
+            reservation,
+            (
+                WorkloadAttemptOutcome.FAILED_PRE_SUBMIT
+                if closed_pre_submit
+                else WorkloadAttemptOutcome.INVOKED
+            ),
+        )
+        return closed_pre_submit and finalized
 
     # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
     async def _stop_for_owner(
@@ -768,29 +806,6 @@ class OrchestrationEngine:
                 error=f"{type(exc).__name__}: {exc}",
             )
             return False
-        try:
-            self._reserve_provider_daily_spend(
-                assignment,
-                effect_key=task_effect_key,
-            )
-        except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
-            self._record_packet_effect_outcome(
-                record,
-                assignment,
-                effect_key=task_effect_key,
-                outcome=(
-                    "ambiguous"
-                    if isinstance(exc, ProviderReservationIdentityConflict)
-                    else "failed_pre_submit"
-                ),
-            )
-            record.status = TaskStatus.BLOCKED
-            record.message = str(exc)[:2_000]
-            self.store.save(record)
-            await self._status_post(
-                record, f"*{record.task_id} — BLOCKED*\n{record.message}"
-            )
-            return False
         workload_reservation = None
         if self._workload_policy_applies(record):
             workload_reservation = await self._reserve_workload_dispatch(
@@ -801,36 +816,76 @@ class OrchestrationEngine:
             )
             if workload_reservation is None:
                 return False
-        if not await self._publish_delegation(record, assignment):
-            if workload_reservation is not None:
-                await self._finalize_workload_dispatch(
-                    record,
-                    workload_reservation,
-                    WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
-                )
+        try:
+            self._reserve_provider_daily_spend(
+                assignment,
+                effect_key=task_effect_key,
+            )
+        except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
+            identity_conflict = isinstance(
+                exc, ProviderReservationIdentityConflict
+            )
+            if workload_reservation is not None and not await self._finalize_workload_dispatch(
+                record,
+                workload_reservation,
+                (
+                    WorkloadAttemptOutcome.INVOKED
+                    if identity_conflict
+                    else WorkloadAttemptOutcome.FAILED_PRE_SUBMIT
+                ),
+            ):
+                return False
             self._record_packet_effect_outcome(
                 record,
                 assignment,
                 effect_key=task_effect_key,
-                outcome="failed_pre_submit",
+                outcome=("ambiguous" if identity_conflict else "failed_pre_submit"),
             )
+            record.status = TaskStatus.BLOCKED
+            record.message = str(exc)[:2_000]
+            self.store.save(record)
+            await self._status_post(
+                record, f"*{record.task_id} — BLOCKED*\n{record.message}"
+            )
+            return False
+        if not await self._publish_delegation(record, assignment):
+            if workload_reservation is not None:
+                await self._finalize_workload_pre_submit_stop(
+                    record,
+                    assignment,
+                    workload_reservation,
+                    effect_key=task_effect_key,
+                    reserved_by_caller=task_effect_reserved_here,
+                    runtime_idempotency_key=str(work_packet["idempotency_key"]),
+                )
+            else:
+                self._record_packet_effect_outcome(
+                    record,
+                    assignment,
+                    effect_key=task_effect_key,
+                    outcome="failed_pre_submit",
+                )
             return False
         published_record = record
         record = self._revalidated_plan_after_publication(published_record)
         if record is None:
             if workload_reservation is not None:
-                await self._finalize_workload_dispatch(
+                await self._finalize_workload_pre_submit_stop(
                     published_record,
+                    assignment,
                     workload_reservation,
-                    WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                    effect_key=task_effect_key,
+                    reserved_by_caller=task_effect_reserved_here,
+                    runtime_idempotency_key=str(work_packet["idempotency_key"]),
                 )
-            self._close_failed_pre_submit_after_publication(
-                published_record,
-                assignment,
-                effect_key=task_effect_key,
-                reserved_by_caller=task_effect_reserved_here,
-                runtime_idempotency_key=str(work_packet["idempotency_key"]),
-            )
+            else:
+                self._close_failed_pre_submit_after_publication(
+                    published_record,
+                    assignment,
+                    effect_key=task_effect_key,
+                    reserved_by_caller=task_effect_reserved_here,
+                    runtime_idempotency_key=str(work_packet["idempotency_key"]),
+                )
             return False
         try:
             outcome = await asyncio.to_thread(
@@ -842,21 +897,39 @@ class OrchestrationEngine:
                 writer_token=writer_token,
             )
         except Exception as exc:
-            # `run_packet` refuses an unauthorized or unresolved execution before
-            # contacting a provider. A refusal is never retried here and never
-            # falls back to the legacy lane.
-            self._record_packet_effect_outcome(
-                record,
-                assignment,
-                effect_key=task_effect_key,
-                outcome="ambiguous",
-            )
+            # An exception escaping `run_packet` can occur on either side of its
+            # durable runtime claim. Close the exact runtime key before calling it
+            # pre-submit; otherwise retain ambiguous/invoked evidence and never
+            # retry through the legacy lane.
             if workload_reservation is not None:
-                await self._finalize_workload_dispatch(
+                closed_pre_submit = await self._finalize_workload_pre_submit_stop(
                     record,
+                    assignment,
                     workload_reservation,
-                    WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                    effect_key=task_effect_key,
+                    reserved_by_caller=task_effect_reserved_here,
+                    runtime_idempotency_key=str(work_packet["idempotency_key"]),
                 )
+            else:
+                closed_pre_submit = self._close_failed_pre_submit_after_publication(
+                    record,
+                    assignment,
+                    effect_key=task_effect_key,
+                    reserved_by_caller=task_effect_reserved_here,
+                    runtime_idempotency_key=str(work_packet["idempotency_key"]),
+                )
+            if not closed_pre_submit:
+                current = self.store.get(record.task_id) or record
+                self._record_packet_effect_outcome(
+                    current,
+                    assignment,
+                    effect_key=task_effect_key,
+                    outcome="ambiguous",
+                )
+                self.store.save(current)
+                record = current
+            else:
+                record = self.store.get(record.task_id) or record
             await self._stop_for_owner(
                 record,
                 "The packet coordinator refused to execute assignment "
@@ -1179,7 +1252,7 @@ class OrchestrationEngine:
             await self._status_post(record, record.message)
             return False
 
-        dispatchable: list[
+        prepared: list[
             tuple[
                 DispatchCandidate,
                 Assignment,
@@ -1188,6 +1261,7 @@ class OrchestrationEngine:
                 object,
                 MemberState,
                 str,
+                bool,
                 WorkloadLedgerReservation | None,
             ]
         ] = []
@@ -1204,9 +1278,7 @@ class OrchestrationEngine:
                     stored,
                     task_effect_key,
                     task_effect_reserved_here,
-                ) = self._reserve_packet_effect(
-                    record, assignment
-                )
+                ) = self._reserve_packet_effect(record, assignment)
                 for field_name in type(record).model_fields:
                     setattr(
                         record,
@@ -1230,6 +1302,107 @@ class OrchestrationEngine:
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 return False
+            workload_reservation = None
+            if self._workload_policy_applies(record):
+                workload_reservation = await self._reserve_workload_dispatch(
+                    record,
+                    assignment,
+                    phase="parallel_packet_dispatch",
+                    effect_key=task_effect_key,
+                )
+                if workload_reservation is None:
+                    for (
+                        prepared_member,
+                        prepared_assignment,
+                        prepared_work,
+                        _prepared_adapter,
+                        _prepared_token,
+                        prepared_state,
+                        prepared_effect_key,
+                        prepared_effect_reserved_here,
+                        prepared_workload_reservation,
+                    ) in prepared:
+                        if prepared_workload_reservation is None:
+                            continue
+                        if prepared_state == MemberState.RESERVED:
+                            closed_pre_submit = (
+                                await self._finalize_workload_pre_submit_stop(
+                                    record,
+                                    prepared_assignment,
+                                    prepared_workload_reservation,
+                                    effect_key=prepared_effect_key,
+                                    reserved_by_caller=(
+                                        prepared_effect_reserved_here
+                                    ),
+                                    runtime_idempotency_key=str(
+                                        prepared_work["idempotency_key"]
+                                    ),
+                                    parallel_member_effect_key=(
+                                        prepared_member.effect_key
+                                    ),
+                                )
+                            )
+                            if not closed_pre_submit:
+                                ledger.record(
+                                    batch_id,
+                                    prepared_member.effect_key,
+                                    MemberState.AMBIGUOUS,
+                                    detail="workload_policy_batch_stop_ambiguous",
+                                )
+                        else:
+                            await self._finalize_workload_dispatch(
+                                self.store.get(record.task_id) or record,
+                                prepared_workload_reservation,
+                                WorkloadAttemptOutcome.INVOKED,
+                            )
+                            if prepared_state == MemberState.DISPATCHING:
+                                ledger.record(
+                                    batch_id,
+                                    prepared_member.effect_key,
+                                    MemberState.AMBIGUOUS,
+                                    detail="workload_policy_batch_stop",
+                                )
+                    ledger.cancel_unstarted(
+                        batch_id, reason="workload_policy_blocked"
+                    )
+                    return False
+            prepared.append(
+                (
+                    member,
+                    assignment,
+                    work,
+                    adapter,
+                    token,
+                    state,
+                    task_effect_key,
+                    task_effect_reserved_here,
+                    workload_reservation,
+                )
+            )
+
+        dispatchable: list[
+            tuple[
+                DispatchCandidate,
+                Assignment,
+                dict[str, object],
+                object,
+                object,
+                MemberState,
+                str,
+                WorkloadLedgerReservation | None,
+            ]
+        ] = []
+        for (
+            member,
+            assignment,
+            work,
+            adapter,
+            token,
+            state,
+            task_effect_key,
+            task_effect_reserved_here,
+            workload_reservation,
+        ) in prepared:
             if state == MemberState.RESERVED:
                 if not ledger.claim(
                     batch_id,
@@ -1248,63 +1421,97 @@ class OrchestrationEngine:
                     assignment, effect_key=task_effect_key
                 )
             except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
+                identity_conflict = isinstance(
+                    exc, ProviderReservationIdentityConflict
+                )
+                if workload_reservation is not None:
+                    finalized = await self._finalize_workload_dispatch(
+                        self.store.get(record.task_id) or record,
+                        workload_reservation,
+                        (
+                            WorkloadAttemptOutcome.INVOKED
+                            if identity_conflict
+                            else WorkloadAttemptOutcome.FAILED_PRE_SUBMIT
+                        ),
+                    )
+                    if not finalized:
+                        if state == MemberState.DISPATCHING:
+                            ledger.record(
+                                batch_id,
+                                member.effect_key,
+                                MemberState.AMBIGUOUS,
+                                detail="workload_evidence_conflict",
+                            )
+                        ledger.cancel_unstarted(
+                            batch_id, reason="workload_evidence_conflict"
+                        )
+                        return False
                 self._record_packet_effect_outcome(
                     record,
                     assignment,
                     effect_key=task_effect_key,
-                    outcome=(
-                        "ambiguous"
-                        if isinstance(exc, ProviderReservationIdentityConflict)
-                        else "failed_pre_submit"
-                    ),
+                    outcome=("ambiguous" if identity_conflict else "failed_pre_submit"),
                 )
                 if state == MemberState.DISPATCHING:
                     ledger.record(
                         batch_id,
                         member.effect_key,
-                        MemberState.FAILED,
+                        (
+                            MemberState.AMBIGUOUS
+                            if identity_conflict
+                            else MemberState.FAILED
+                        ),
                         detail=type(exc).__name__,
                     )
-                continue
-            workload_reservation = None
-            if self._workload_policy_applies(record):
-                workload_reservation = await self._reserve_workload_dispatch(
-                    record,
-                    assignment,
-                    phase="parallel_packet_dispatch",
-                    effect_key=task_effect_key,
-                )
-                if workload_reservation is None:
-                    if state == MemberState.DISPATCHING:
-                        ledger.record(
-                            batch_id,
-                            member.effect_key,
-                            MemberState.FAILED,
-                            detail="workload_policy_blocked",
-                        )
+                if identity_conflict:
                     ledger.cancel_unstarted(
-                        batch_id, reason="workload_policy_blocked"
+                        batch_id, reason="provider_reservation_identity_conflict"
+                    )
+                    await self._stop_for_owner(
+                        record,
+                        "Parallel provider spend reservation identity conflict; "
+                        "paid dispatch remains stopped pending reconciliation.",
+                        error=f"{type(exc).__name__}: {exc}",
                     )
                     return False
+                continue
             if state == MemberState.DISPATCHING:
                 if not await self._publish_delegation(record, assignment):
                     if workload_reservation is not None:
-                        await self._finalize_workload_dispatch(
-                            record,
-                            workload_reservation,
-                            WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                        closed_pre_submit = (
+                            await self._finalize_workload_pre_submit_stop(
+                                record,
+                                assignment,
+                                workload_reservation,
+                                effect_key=task_effect_key,
+                                reserved_by_caller=task_effect_reserved_here,
+                                runtime_idempotency_key=str(
+                                    work["idempotency_key"]
+                                ),
+                                parallel_member_effect_key=member.effect_key,
+                            )
                         )
-                    self._record_packet_effect_outcome(
-                        record,
-                        assignment,
-                        effect_key=task_effect_key,
-                        outcome="failed_pre_submit",
-                    )
+                    else:
+                        closed_pre_submit = True
+                        self._record_packet_effect_outcome(
+                            record,
+                            assignment,
+                            effect_key=task_effect_key,
+                            outcome="failed_pre_submit",
+                        )
                     ledger.record(
                         batch_id,
                         member.effect_key,
-                        MemberState.FAILED,
-                        detail="delegation_not_published",
+                        (
+                            MemberState.FAILED
+                            if closed_pre_submit
+                            else MemberState.AMBIGUOUS
+                        ),
+                        detail=(
+                            "delegation_not_published"
+                            if closed_pre_submit
+                            else "delegation_not_published_ambiguous"
+                        ),
                     )
                     ledger.cancel_unstarted(
                         batch_id, reason="delegation_not_published"
@@ -1316,21 +1523,32 @@ class OrchestrationEngine:
                 )
                 if revalidated is None:
                     if workload_reservation is not None:
-                        await self._finalize_workload_dispatch(
-                            published_record,
-                            workload_reservation,
-                            WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                        closed_pre_submit = (
+                            await self._finalize_workload_pre_submit_stop(
+                                published_record,
+                                assignment,
+                                workload_reservation,
+                                effect_key=task_effect_key,
+                                reserved_by_caller=task_effect_reserved_here,
+                                runtime_idempotency_key=str(
+                                    work["idempotency_key"]
+                                ),
+                                parallel_member_effect_key=member.effect_key,
+                            )
                         )
-                    closed_pre_submit = (
-                        self._close_failed_pre_submit_after_publication(
-                            published_record,
-                            assignment,
-                            effect_key=task_effect_key,
-                            reserved_by_caller=task_effect_reserved_here,
-                            runtime_idempotency_key=str(work["idempotency_key"]),
-                            parallel_member_effect_key=member.effect_key,
+                    else:
+                        closed_pre_submit = (
+                            self._close_failed_pre_submit_after_publication(
+                                published_record,
+                                assignment,
+                                effect_key=task_effect_key,
+                                reserved_by_caller=task_effect_reserved_here,
+                                runtime_idempotency_key=str(
+                                    work["idempotency_key"]
+                                ),
+                                parallel_member_effect_key=member.effect_key,
+                            )
                         )
-                    )
                     ledger.record(
                         batch_id,
                         member.effect_key,
@@ -5285,6 +5503,16 @@ class OrchestrationEngine:
             if reservation is None:
                 return False
             record, effect_key = reservation
+            workload_reservation = None
+            if self._workload_policy_applies(record):
+                workload_reservation = await self._reserve_workload_dispatch(
+                    record,
+                    assignment,
+                    phase="dispatch",
+                    effect_key=effect_key,
+                )
+                if workload_reservation is None:
+                    return False
             try:
                 self._reserve_provider_daily_spend(
                     assignment,
@@ -5296,6 +5524,13 @@ class OrchestrationEngine:
                 # refusal. Preserve the unresolved intent and require an owner
                 # decision; recording failed_pre_submit would incorrectly allow
                 # a later plan generation to mint a different paid effect key.
+                if workload_reservation is not None:
+                    if not await self._finalize_workload_dispatch(
+                        self.store.get(record.task_id) or record,
+                        workload_reservation,
+                        WorkloadAttemptOutcome.INVOKED,
+                    ):
+                        return False
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = (
                     "Provider spend reservation identity conflict; paid dispatch "
@@ -5309,6 +5544,13 @@ class OrchestrationEngine:
                 )
                 return False
             except ProviderDailyLimitExceeded as exc:
+                if workload_reservation is not None:
+                    if not await self._finalize_workload_dispatch(
+                        self.store.get(record.task_id) or record,
+                        workload_reservation,
+                        WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                    ):
+                        return False
                 record_provider_effect_observation(
                     record,
                     assignment,
@@ -5323,46 +5565,40 @@ class OrchestrationEngine:
                     record, f"*{record.task_id} — BLOCKED*\n{record.message}"
                 )
                 return False
-            workload_reservation = None
-            if self._workload_policy_applies(record):
-                workload_reservation = await self._reserve_workload_dispatch(
-                    record,
-                    assignment,
-                    phase="dispatch",
-                    effect_key=effect_key,
-                )
-                if workload_reservation is None:
-                    return False
             if not await self._publish_delegation(record, assignment):
                 if workload_reservation is not None:
-                    await self._finalize_workload_dispatch(
+                    await self._finalize_workload_pre_submit_stop(
                         record,
+                        assignment,
                         workload_reservation,
-                        WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                        effect_key=effect_key,
                     )
-                record_provider_effect_observation(
-                    record,
-                    assignment,
-                    effect_key=effect_key,
-                    phase="dispatch",
-                    outcome="failed_pre_submit",
-                )
-                self.store.save(record)
+                else:
+                    record_provider_effect_observation(
+                        record,
+                        assignment,
+                        effect_key=effect_key,
+                        phase="dispatch",
+                        outcome="failed_pre_submit",
+                    )
+                    self.store.save(record)
                 return False
             published_record = record
             record = self._revalidated_plan_after_publication(published_record)
             if record is None:
                 if workload_reservation is not None:
-                    await self._finalize_workload_dispatch(
+                    await self._finalize_workload_pre_submit_stop(
                         published_record,
+                        assignment,
                         workload_reservation,
-                        WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                        effect_key=effect_key,
                     )
-                self._close_failed_pre_submit_after_publication(
-                    published_record,
-                    assignment,
-                    effect_key=effect_key,
-                )
+                else:
+                    self._close_failed_pre_submit_after_publication(
+                        published_record,
+                        assignment,
+                        effect_key=effect_key,
+                    )
                 return False
             interaction_id = self._begin_provider_interaction(
                 record,
@@ -6012,3 +6248,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
