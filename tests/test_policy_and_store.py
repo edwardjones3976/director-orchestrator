@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -499,6 +500,7 @@ class PolicyTests(unittest.TestCase):
                 Assignment(
                     sequence=1,
                     agent=ProviderName.PERPLEXITY,
+                    kind=AssignmentKind.RESEARCH,
                     task="Find authoritative sources about calibration methodology",
                     acceptance=["Report URLs, provenance, contradictions, and unknowns"],
                 public_research_query="authoritative calibration methodology sources",
@@ -706,3 +708,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
@@ -51,6 +52,7 @@ from director_orchestrator.interactions import (
 )
 from director_orchestrator.models import (
     Assignment,
+    AssignmentKind,
     AssignmentOutcome,
     DirectorPlan,
     IntakeAuthentication,
@@ -2068,6 +2070,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             assignment = Assignment(
                 sequence=1,
                 agent=ProviderName.PERPLEXITY,
+                kind=AssignmentKind.RESEARCH,
                 task="Find public methodology sources",
                 acceptance=["Return source URLs"],
                 requires_approval=True,
@@ -2136,4 +2139,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:54 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]
 

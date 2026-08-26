@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | BEGIN]]
@@ -38,6 +39,7 @@ from .models import (
     TaskStatus,
     UsageCheckRecord,
 )
+from .policy import trusted_work_kind
 from .workload_policy import (
     DEFAULT_POLICY,
     AssignmentRequest,
@@ -1112,6 +1114,10 @@ class TaskStore:
             if direct_provider is None:
                 # Ordinary OpenAI is the control plane. The separately
                 # owner-authorized external OpenAI lane is never inferred here.
+                continue
+            if not is_direct_production_kind(trusted_work_kind(assignment)):
+                # Accepted research, review, debate, and coordination outcomes
+                # are real provider work, but they are not production credits.
                 continue
             assignment_id = (
                 f"{record.task_id}:{record.plan_generation}:"
@@ -2342,3 +2348,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]
