@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
@@ -284,7 +285,7 @@ def _work_kind(assignment: Assignment) -> WorkKind:
         AssignmentKind.BOILERPLATE,
         AssignmentKind.SCAFFOLDING,
         AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
-    } or _IMPLEMENTATION_SCOPE.search(assignment.task):
+    }:
         return WorkKind.IMPLEMENTATION
     if assignment.kind in {
         AssignmentKind.INDEPENDENT_REVIEW,
@@ -296,6 +297,8 @@ def _work_kind(assignment: Assignment) -> WorkKind:
         or assignment.kind == AssignmentKind.RESEARCH
     ):
         return WorkKind.RESEARCH
+    if _IMPLEMENTATION_SCOPE.search(assignment.task):
+        return WorkKind.IMPLEMENTATION
     return WorkKind.COORDINATION
 
 
@@ -1241,3 +1244,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | END]]

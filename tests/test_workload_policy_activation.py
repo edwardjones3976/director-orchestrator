@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
@@ -17,6 +18,7 @@ from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.langgraph_runtime import RuntimeExecutionStatus
 from director_orchestrator.models import (
     Assignment,
+    AssignmentKind,
     DirectorPlan,
     ProviderName,
     RiskLevel,
@@ -46,6 +48,20 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
         self.assertIs(
             OrchestrationEngine._workload_kind(assignment),
             WorkKind.IMPLEMENTATION,
+        )
+
+    def test_typed_review_precedes_incidental_implementation_prose(self) -> None:
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            kind=AssignmentKind.EXACT_SHA_REVIEW,
+            task="Review the exact implementation SHA without changing it",
+            acceptance=["Return independent review evidence"],
+        )
+
+        self.assertIs(
+            OrchestrationEngine._workload_kind(assignment),
+            WorkKind.REVIEW,
         )
 
     def test_default_configuration_is_enabled_and_enforced(self) -> None:
@@ -285,3 +301,4 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | END]]
