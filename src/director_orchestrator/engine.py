@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
@@ -74,6 +75,7 @@ from .approvals import (
 )
 from .models import (
     Assignment,
+    AssignmentKind,
     AssignmentOutcome,
     CollaborationTurn,
     DebateActorRole,
@@ -1296,8 +1298,10 @@ class OrchestrationEngine:
             assignment.agent,
             repository_capable=(
                 assignment.agent == ProviderName.GROK
-                and assignment.kind
-                in {AssignmentKind.DRAFT_PR, AssignmentKind.EXACT_SHA_REVIEW}
+                and (
+                    assignment.allow_draft_pr
+                    or assignment.kind == AssignmentKind.EXACT_SHA_REVIEW
+                )
             ),
         )
 
@@ -5652,3 +5656,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:55 UTC | BEGIN]]
@@ -50,6 +51,7 @@ from director_orchestrator.interactions import (
 from director_orchestrator.providers import PostSubmitAmbiguityError, ProviderError
 from director_orchestrator.models import (
     Assignment,
+    AssignmentKind,
     AssignmentOutcome,
     DirectorPlan,
     IntakeAuthentication,
@@ -733,6 +735,41 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertEqual(TEAM_CHARTER_MAX_BYTES, 12_512)
         self.assertLessEqual(len(payload), TEAM_CHARTER_MAX_BYTES)
         self.assertGreater(TEAM_CHARTER_MAX_BYTES - len(payload), 256)
+
+
+class GrokTransportSelectionTests(unittest.TestCase):
+    def test_repository_assignments_use_cli_and_general_work_uses_api(self):
+        general = Assignment(
+            sequence=1,
+            agent=ProviderName.GROK,
+            task="Analyze a bounded question",
+            acceptance=["Return evidence"],
+        )
+        draft = general.model_copy(
+            update={
+                "allow_draft_pr": True,
+                "repository": "example/demo",
+            }
+        )
+        review = general.model_copy(
+            update={
+                "kind": AssignmentKind.EXACT_SHA_REVIEW,
+                "repository": "example/demo",
+            }
+        )
+
+        self.assertEqual(
+            OrchestrationEngine._assignment_transport(general),
+            ProviderTransport.XAI_RESPONSES_API,
+        )
+        self.assertEqual(
+            OrchestrationEngine._assignment_transport(draft),
+            ProviderTransport.GROK_CLI,
+        )
+        self.assertEqual(
+            OrchestrationEngine._assignment_transport(review),
+            ProviderTransport.GROK_CLI,
+        )
 
 
 class ReviewHandoffTests(unittest.TestCase):
@@ -1857,3 +1894,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]
