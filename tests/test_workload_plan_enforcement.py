@@ -1,9 +1,11 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 from __future__ import annotations
 
 import unittest
 from dataclasses import replace
 
+from director_orchestrator import policy as policy_module
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
     Assignment,
@@ -45,7 +47,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             terminal_condition="Exact candidate accepted",
             repository="example/demo",
             worktree="C:/worktrees/demo-plan-1",
-            branch="feature/demo-plan-1",
+            branch="main",
             base_sha="a" * 40,
             candidate_sha=None,
             producer=producer,
@@ -215,29 +217,171 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             execution_policy_errors(changed, self.settings),
         )
 
-    def test_medium_long_implementation_requires_claude_and_model_floor(self) -> None:
+    def test_underclassified_workload_is_raised_to_trusted_size_and_effort(self) -> None:
+        plan = self._valid_plan()
+        plan.assignments[0] = plan.assignments[0].model_copy(
+            update={
+                "workload_size": WorkSize.SHORT,
+                "effort_points": 1,
+                "model_label": "lower-than-required",
+            }
+        )
+        plan.assignments[1] = plan.assignments[1].model_copy(
+            update={"workload_size": WorkSize.SIMPLE, "effort_points": 100}
+        )
+
+        guarded = enforce_plan(plan, "bounded implementation", self.settings)
+
+        self.assertEqual(guarded.assignments[0].workload_size, WorkSize.MEDIUM)
+        self.assertEqual(guarded.assignments[0].effort_points, 5)
+        self.assertEqual(guarded.assignments[0].model_label, FABLE_MODEL_FLOOR)
+        self.assertEqual(guarded.assignments[1].workload_size, WorkSize.SHORT)
+        self.assertEqual(guarded.assignments[1].effort_points, 2)
+        self.assertEqual(execution_policy_errors(guarded, self.settings), [])
+
+    def test_explicit_larger_size_remains_and_derives_effort_and_fable_floor(self) -> None:
+        plan = self._valid_plan()
+        plan.assignments[0] = plan.assignments[0].model_copy(
+            update={
+                "workload_size": WorkSize.LONG,
+                "effort_points": 1,
+                "model_label": None,
+            }
+        )
+        plan.prestage = self._prestage(budget_units=10)
+
+        guarded = enforce_plan(plan, "bounded implementation", self.settings)
+
+        self.assertEqual(guarded.assignments[0].workload_size, WorkSize.LONG)
+        self.assertEqual(guarded.assignments[0].effort_points, 8)
+        self.assertEqual(guarded.assignments[0].model_label, FABLE_MODEL_FLOOR)
+        self.assertEqual(execution_policy_errors(guarded, self.settings), [])
+
+    def test_underclassified_implementation_cannot_bypass_claude_route(self) -> None:
         wrong_provider = self._valid_plan()
         wrong_provider.assignments[0] = wrong_provider.assignments[0].model_copy(
-            update={"agent": ProviderName.GROK}
+            update={
+                "agent": ProviderName.GROK,
+                "workload_size": WorkSize.SHORT,
+                "effort_points": 1,
+            }
         )
         wrong_provider.prestage = self._prestage(producer=ProviderName.GROK)
         guarded = enforce_plan(wrong_provider, "bounded implementation", self.settings)
+        self.assertEqual(guarded.assignments[0].workload_size, WorkSize.MEDIUM)
+        self.assertEqual(guarded.assignments[0].effort_points, 5)
         self.assertIn(
             "assignment 1: workload policy medium_long_implementation_requires_claude",
             execution_policy_errors(guarded, self.settings),
         )
 
-        missing_floor = self._valid_plan()
-        missing_floor.assignments[0] = missing_floor.assignments[0].model_copy(
-            update={"model_label": None}
+    def test_bounded_low_level_and_antigravity_implementation_remain_short(self) -> None:
+        for agent, kind in (
+            (ProviderName.CURSOR, AssignmentKind.LOW_LEVEL_IMPLEMENTATION),
+            (ProviderName.GEMINI, AssignmentKind.IMPLEMENTATION),
+        ):
+            with self.subTest(agent=agent, kind=kind):
+                assignment = self._valid_plan().assignments[0].model_copy(
+                    update={
+                        "agent": agent,
+                        "kind": kind,
+                        "workload_size": WorkSize.SIMPLE,
+                        "effort_points": 1,
+                    }
+                )
+                trusted = policy_module._trusted_v1_assignment(assignment)
+                self.assertEqual(trusted.workload_size, WorkSize.SHORT)
+                self.assertEqual(trusted.effort_points, 2)
+
+    def test_prestage_scope_is_canonical_and_digest_bound(self) -> None:
+        plan = self._valid_plan()
+        plan.prestage = plan.prestage.model_copy(
+            update={"repository": "https://github.com/Example/Demo.git"}
         )
-        guarded = enforce_plan(missing_floor, "bounded implementation", self.settings)
-        self.assertTrue(
-            any(
-                "medium_long_implementation_requires_model_floor" in error
-                for error in execution_policy_errors(guarded, self.settings)
+
+        guarded = enforce_plan(plan, "bounded implementation", self.settings)
+
+        self.assertEqual(guarded.prestage.repository, "example/demo")
+        self.assertTrue(guarded.prestage.digest.startswith("sha256:"))
+        self.assertEqual(execution_policy_errors(guarded, self.settings), [])
+
+    def test_prestage_rejects_forged_repository_branch_and_candidate_sha(self) -> None:
+        cases = (
+            (
+                {"repository": "attacker/forged-repository"},
+                "pre-stage repository must match the single canonical assignment repository",
+            ),
+            (
+                {"branch": "feature/unbound"},
+                "pre-stage branch must match the single assignment starting ref",
+            ),
+            (
+                {"candidate_sha": "b" * 40},
+                "initial pre-stage candidate SHA must be absent before production",
+            ),
+        )
+        for updates, expected in cases:
+            with self.subTest(updates=updates):
+                plan = self._valid_plan()
+                plan.prestage = plan.prestage.model_copy(update=updates)
+                guarded = enforce_plan(plan, "bounded implementation", self.settings)
+                self.assertIn(expected, execution_policy_errors(guarded, self.settings))
+
+    def test_prestage_rejects_unbound_or_multiple_assignment_scope(self) -> None:
+        unbound = self._valid_plan()
+        unbound.assignments = [
+            assignment.model_copy(update={"repository": None})
+            for assignment in unbound.assignments
+        ]
+        guarded = enforce_plan(unbound, "bounded implementation", self.settings)
+        self.assertIn(
+            "v1 pre-stage repository scope is unbound",
+            execution_policy_errors(guarded, self.settings),
+        )
+
+        repositories = self._valid_plan()
+        repositories.assignments[1] = repositories.assignments[1].model_copy(
+            update={"repository": "example/other"}
+        )
+        guarded = enforce_plan(repositories, "bounded implementation", self.settings)
+        self.assertIn(
+            "v1 pre-stage repository scope spans multiple canonical assignment repositories",
+            execution_policy_errors(guarded, self.settings),
+        )
+
+        refs = self._valid_plan()
+        refs.assignments[1] = refs.assignments[1].model_copy(
+            update={"starting_ref": "release-2026"}
+        )
+        guarded = enforce_plan(refs, "bounded implementation", self.settings)
+        self.assertIn(
+            "v1 pre-stage starting-ref scope spans multiple assignment starting refs",
+            execution_policy_errors(guarded, self.settings),
+        )
+
+    def test_repository_free_supplemental_plan_does_not_claim_write_scope(self) -> None:
+        plan = self._valid_plan()
+        plan.assignments = [
+            plan.assignments[1].model_copy(
+                update={
+                    "agent": ProviderName.PERPLEXITY,
+                    "kind": AssignmentKind.RESEARCH,
+                    "repository": None,
+                    "allow_draft_pr": False,
+                    "public_research_query": "public evidence only",
+                }
             )
+        ]
+        plan.prestage = self._prestage(
+            producer=ProviderName.PERPLEXITY,
+            reviewer=ProviderName.OPENAI,
+            budget_units=2,
         )
+
+        guarded = enforce_plan(plan, "public research only", self.settings)
+
+        errors = execution_policy_errors(guarded, self.settings)
+        self.assertNotIn("v1 pre-stage repository scope is unbound", errors)
 
     def test_v1_provider_plan_is_team_first(self) -> None:
         plan = self._valid_plan()
@@ -359,7 +503,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             workload_target_variance_reason=(
                 "This bounded plan follows dependency ownership; targets are rolling goals"
             ),
-            prestage=self._prestage(budget_units=20),
+            prestage=self._prestage(budget_units=40),
         )
 
         guarded = enforce_plan(plan, "bounded coordinated work", self.settings)
@@ -388,3 +532,4 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]

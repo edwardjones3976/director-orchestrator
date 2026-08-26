@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
@@ -18,8 +19,16 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .interactions import (
+    CommunicationEvidenceFailure,
+    InteractionProvider,
     ProviderInteractionEvent,
+    ProviderInteractionPhase,
+    ProviderInteractionState,
+    TransportEvidenceSource,
     append_interaction_event,
+    canonical_content_digest,
+    canonical_identifier_digest,
+    project_interaction,
 )
 from .models import (
     IntakeAuthentication,
@@ -33,11 +42,13 @@ from .workload_policy import (
     AssignmentRequest,
     DecisionOutcome,
     DecisionResult,
+    DirectProductionRecord,
     EnforcementMode,
     Provider,
     WorkKind,
     WorkSize,
     WorkloadRecord,
+    direct_production_provider,
     evaluate_assignment,
 )
 
@@ -91,6 +102,8 @@ class WorkloadLedgerReservation:
     size: WorkSize
     model_label: str | None
     available_primary_providers: frozenset[Provider]
+    configured_mode: EnforcementMode
+    shadow_assignment_limit: int
     decision: DecisionResult
     created: bool
     final_outcome: WorkloadAttemptOutcome | None
@@ -346,6 +359,9 @@ class TaskStore:
                     work_size TEXT NOT NULL,
                     model_label TEXT,
                     available_primary_json TEXT NOT NULL,
+                    configured_mode TEXT NOT NULL,
+                    shadow_assignment_limit INTEGER NOT NULL
+                        CHECK(shadow_assignment_limit > 0),
                     mode TEXT NOT NULL,
                     decision_outcome TEXT NOT NULL,
                     allowed INTEGER NOT NULL CHECK(allowed IN (0, 1)),
@@ -355,6 +371,31 @@ class TaskStore:
                 )
                 """
             )
+            reservation_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(workload_assignment_reservations)"
+                ).fetchall()
+            }
+            if "configured_mode" not in reservation_columns:
+                connection.execute(
+                    "DROP TRIGGER IF EXISTS workload_reservations_no_update"
+                )
+                connection.execute(
+                    "ALTER TABLE workload_assignment_reservations "
+                    "ADD COLUMN configured_mode TEXT NOT NULL DEFAULT 'enforced'"
+                )
+                connection.execute(
+                    "UPDATE workload_assignment_reservations SET configured_mode = mode"
+                )
+            if "shadow_assignment_limit" not in reservation_columns:
+                connection.execute(
+                    "DROP TRIGGER IF EXISTS workload_reservations_no_update"
+                )
+                connection.execute(
+                    "ALTER TABLE workload_assignment_reservations "
+                    "ADD COLUMN shadow_assignment_limit INTEGER NOT NULL DEFAULT 5"
+                )
             connection.execute(
                 """CREATE INDEX IF NOT EXISTS idx_workload_reservations_order
                 ON workload_assignment_reservations(ledger_id DESC)"""
@@ -399,6 +440,45 @@ class TaskStore:
                 CREATE TRIGGER IF NOT EXISTS workload_events_no_delete
                 BEFORE DELETE ON workload_assignment_events
                 BEGIN SELECT RAISE(ABORT, 'workload events are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS direct_production_credits (
+                    credit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    credit_key TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL,
+                    plan_generation INTEGER NOT NULL CHECK(plan_generation >= 0),
+                    assignment_sequence INTEGER NOT NULL
+                        CHECK(assignment_sequence BETWEEN 1 AND 20),
+                    assignment_id TEXT NOT NULL UNIQUE,
+                    provider TEXT NOT NULL,
+                    effort_units INTEGER NOT NULL CHECK(effort_units > 0),
+                    provider_event_digest TEXT NOT NULL,
+                    provider_result_digest TEXT NOT NULL,
+                    review_event_digest TEXT NOT NULL,
+                    review_result_digest TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                )
+                """
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_direct_production_order
+                ON direct_production_credits(credit_id DESC)"""
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS direct_production_credits_no_update
+                BEFORE UPDATE ON direct_production_credits
+                BEGIN SELECT RAISE(ABORT, 'direct-production credits are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS direct_production_credits_no_delete
+                BEFORE DELETE ON direct_production_credits
+                BEGIN SELECT RAISE(ABORT, 'direct-production credits are append-only'); END
                 """
             )
             connection.execute(
@@ -819,6 +899,7 @@ class TaskStore:
             self._append_provider_interactions(
                 connection, record.task_id, record.provider_interaction_ledger
             )
+            self._append_direct_production_credits(connection, record)
             self._hydrate_effects(connection, record)
             self._hydrate_provider_interactions(connection, record)
             connection.execute(
@@ -1000,6 +1081,169 @@ class TaskStore:
             ).fetchall()
             return [self._record_from_row(connection, row) for row in rows]
 
+    @staticmethod
+    def _append_direct_production_credits(
+        connection: sqlite3.Connection, record: TaskRecord
+    ) -> None:
+        """Project authenticated accepted outcomes into an append-only ledger."""
+
+        plan = record.plan
+        if plan is None or plan.workload_policy_version != "v1":
+            return
+        assignments = {item.sequence: item for item in plan.assignments}
+        persisted_events = TaskStore._load_provider_interactions(
+            connection, record.task_id
+        )
+        for outcome in record.assignment_outcomes:
+            assignment = assignments.get(outcome.assignment_sequence)
+            if assignment is None or assignment.agent != outcome.provider:
+                raise WorkloadReservationConflict(
+                    "accepted direct-production outcome is not bound to its assignment"
+                )
+            try:
+                provider = Provider(outcome.provider.value)
+            except ValueError as exc:
+                raise WorkloadReservationConflict(
+                    "accepted outcome provider is outside workload accounting"
+                ) from exc
+            direct_provider = direct_production_provider(provider)
+            if direct_provider is None:
+                # Ordinary OpenAI is the control plane. The separately
+                # owner-authorized external OpenAI lane is never inferred here.
+                continue
+            if not outcome.interaction_id or not outcome.director_review_interaction_id:
+                raise WorkloadReservationConflict(
+                    "accepted direct-production outcome lacks authenticated review evidence"
+                )
+            expected_provider_result_digest = canonical_content_digest(outcome.result)
+            expected_run_id_digest = canonical_identifier_digest(outcome.run_id)
+            try:
+                provider_projection = project_interaction(
+                    persisted_events, outcome.interaction_id
+                )
+                review_projection = project_interaction(
+                    persisted_events, outcome.director_review_interaction_id
+                )
+            except CommunicationEvidenceFailure as exc:
+                raise WorkloadReservationConflict(
+                    "accepted direct-production outcome interaction evidence is invalid"
+                ) from exc
+            provider_event = next(
+                (
+                    item
+                    for item in persisted_events
+                    if item.interaction_id == outcome.interaction_id
+                    and item.event_digest
+                    == outcome.verified_interaction_event_digest
+                ),
+                None,
+            )
+            review_event = next(
+                (
+                    item
+                    for item in persisted_events
+                    if item.interaction_id
+                    == outcome.director_review_interaction_id
+                    and item.event_digest
+                    == outcome.verified_director_review_event_digest
+                ),
+                None,
+            )
+            provider_binding_valid = (
+                provider_event is not None
+                and provider_projection.task_id == record.task_id
+                and provider_projection.provider.value == outcome.provider.value
+                and provider_projection.assignment_sequence == assignment.sequence
+                and provider_projection.state is ProviderInteractionState.VERIFIED
+                and provider_projection.latest_event_digest
+                == outcome.verified_interaction_event_digest
+                and provider_projection.verified_result_digest
+                == expected_provider_result_digest
+                and outcome.provider_result_digest
+                == expected_provider_result_digest
+                and provider_event.plan_generation == record.plan_generation
+                and provider_event.phase
+                in {
+                    ProviderInteractionPhase.DISPATCH,
+                    ProviderInteractionPhase.REVISION,
+                }
+                and provider_event.transport_evidence.source
+                is TransportEvidenceSource.AUTHENTICATED_PROVIDER
+                and provider_event.transport_evidence.provider_run_id_digest
+                == expected_run_id_digest
+            )
+            review_binding_valid = (
+                review_event is not None
+                and review_projection.task_id == record.task_id
+                and review_projection.provider is InteractionProvider.OPENAI
+                and review_projection.assignment_sequence is None
+                and review_projection.state is ProviderInteractionState.VERIFIED
+                and review_projection.latest_event_digest
+                == outcome.verified_director_review_event_digest
+                and review_projection.verified_result_digest
+                == outcome.director_review_result_digest
+                and review_event.plan_generation == record.plan_generation
+                and review_event.phase
+                is ProviderInteractionPhase.ACCEPTANCE_REVIEW
+                and review_event.transport_evidence.source
+                is TransportEvidenceSource.AUTHENTICATED_PROVIDER
+            )
+            if not provider_binding_valid or not review_binding_valid:
+                raise WorkloadReservationConflict(
+                    "accepted direct-production outcome evidence binding changed"
+                )
+            assignment_id = (
+                f"{record.task_id}:{record.plan_generation}:"
+                f"{assignment.sequence}"
+            )
+            identity = (
+                record.task_id,
+                record.plan_generation,
+                assignment.sequence,
+                assignment_id,
+                direct_provider.value,
+                assignment.effort_points,
+                provider_event.event_digest,
+                expected_provider_result_digest,
+                review_event.event_digest,
+                outcome.director_review_result_digest,
+            )
+            existing = connection.execute(
+                """SELECT task_id, plan_generation, assignment_sequence,
+                          assignment_id, provider, effort_units,
+                          provider_event_digest, provider_result_digest,
+                          review_event_digest, review_result_digest
+                FROM direct_production_credits WHERE credit_key = ?""",
+                (assignment_id,),
+            ).fetchone()
+            if existing is not None:
+                persisted = (
+                    str(existing["task_id"]),
+                    int(existing["plan_generation"]),
+                    int(existing["assignment_sequence"]),
+                    str(existing["assignment_id"]),
+                    str(existing["provider"]),
+                    int(existing["effort_units"]),
+                    str(existing["provider_event_digest"]),
+                    str(existing["provider_result_digest"]),
+                    str(existing["review_event_digest"]),
+                    str(existing["review_result_digest"]),
+                )
+                if persisted != identity:
+                    raise WorkloadReservationConflict(
+                        "accepted direct-production credit identity changed"
+                    )
+                continue
+            connection.execute(
+                """INSERT INTO direct_production_credits(
+                    credit_key, task_id, plan_generation, assignment_sequence,
+                    assignment_id, provider, effort_units,
+                    provider_event_digest, provider_result_digest,
+                    review_event_digest, review_result_digest, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (assignment_id, *identity, record.updated_at.isoformat()),
+            )
+
     def save(self, record: TaskRecord) -> TaskRecord:
         self._attempt_privacy_cleanup()
         with self._lock, self._connect() as connection:
@@ -1026,6 +1270,7 @@ class TaskStore:
             self._append_provider_interactions(
                 connection, record.task_id, record.provider_interaction_ledger
             )
+            self._append_direct_production_credits(connection, record)
             self._hydrate_effects(connection, record)
             self._hydrate_provider_interactions(connection, record)
             replacement_json = self._record_json_without_effect_projection(record)
@@ -1108,9 +1353,10 @@ class TaskStore:
             self._append_provider_interactions(
                 connection, task_id, record.provider_interaction_ledger
             )
+            record.updated_at = datetime.now(timezone.utc)
+            self._append_direct_production_credits(connection, record)
             self._hydrate_effects(connection, record)
             self._hydrate_provider_interactions(connection, record)
-            record.updated_at = datetime.now(timezone.utc)
             replacement_json = self._record_json_without_effect_projection(record)
             updated = connection.execute(
                 """
@@ -1165,6 +1411,10 @@ class TaskStore:
             violations_payload = json.loads(str(row["violations_json"]))
             advisories_payload = json.loads(str(row["advisories_json"]))
             available = frozenset(Provider(str(item)) for item in available_payload)
+            configured_mode = EnforcementMode(str(row["configured_mode"]))
+            shadow_assignment_limit = int(row["shadow_assignment_limit"])
+            if shadow_assignment_limit <= 0:
+                raise ValueError("persisted shadow assignment limit is invalid")
             decision = DecisionResult(
                 mode=EnforcementMode(str(row["mode"])),
                 outcome=DecisionOutcome(str(row["decision_outcome"])),
@@ -1199,6 +1449,8 @@ class TaskStore:
                 str(row["model_label"]) if row["model_label"] is not None else None
             ),
             available_primary_providers=available,
+            configured_mode=configured_mode,
+            shadow_assignment_limit=shadow_assignment_limit,
             decision=decision,
             created=created,
             final_outcome=final_outcome,
@@ -1219,6 +1471,7 @@ class TaskStore:
         model_label: str | None,
         available_primary_providers: frozenset[Provider],
         mode: EnforcementMode,
+        shadow_assignment_limit: int = 5,
     ) -> WorkloadLedgerReservation:
         """Atomically evaluate and reserve one prospective provider invocation.
 
@@ -1247,6 +1500,12 @@ class TaskStore:
             raise ValueError("workload reservation key is too long")
         if not isinstance(mode, EnforcementMode):
             raise ValueError("workload mode must be enforced or shadow")
+        if (
+            isinstance(shadow_assignment_limit, bool)
+            or not isinstance(shadow_assignment_limit, int)
+            or shadow_assignment_limit <= 0
+        ):
+            raise ValueError("workload shadow assignment limit must be positive")
         available = frozenset(available_primary_providers)
         request = AssignmentRequest(
             assignment_id=reservation_key,
@@ -1294,7 +1553,52 @@ class TaskStore:
                     raise WorkloadReservationConflict(
                         "workload reservation key was reused with different assignment identity"
                     )
-                return self._workload_reservation_from_row(existing, created=False)
+                persisted = self._workload_reservation_from_row(
+                    existing, created=False
+                )
+                if persisted.final_outcome is not None:
+                    return persisted
+                if (
+                    persisted.configured_mode is not mode
+                    or persisted.shadow_assignment_limit
+                    != shadow_assignment_limit
+                    or persisted.available_primary_providers != available
+                ):
+                    raise WorkloadReservationConflict(
+                        "pending workload reservation authority changed before dispatch"
+                    )
+                return persisted
+
+            effective_mode = mode
+            unit_authority = connection.execute(
+                """SELECT configured_mode, shadow_assignment_limit, mode
+                FROM workload_assignment_reservations
+                WHERE assignment_id = ?
+                ORDER BY ledger_id ASC
+                LIMIT 1""",
+                (assignment_id,),
+            ).fetchone()
+            if unit_authority is not None:
+                if (
+                    EnforcementMode(str(unit_authority["configured_mode"]))
+                    is not mode
+                    or int(unit_authority["shadow_assignment_limit"])
+                    != shadow_assignment_limit
+                ):
+                    raise WorkloadReservationConflict(
+                        "workload assignment unit authority changed between phases"
+                    )
+                effective_mode = EnforcementMode(str(unit_authority["mode"]))
+            elif mode is EnforcementMode.SHADOW:
+                completed_shadow = connection.execute(
+                    """SELECT COUNT(DISTINCT reservation.assignment_id) AS count
+                    FROM workload_assignment_reservations AS reservation
+                    JOIN workload_assignment_events AS event
+                      ON event.reservation_key = reservation.reservation_key
+                    WHERE reservation.mode = 'shadow'"""
+                ).fetchone()
+                if int(completed_shadow["count"]) >= shadow_assignment_limit:
+                    effective_mode = EnforcementMode.ENFORCED
 
             effective_rows = connection.execute(
                 """SELECT reservation.reservation_key, reservation.provider,
@@ -1302,10 +1606,11 @@ class TaskStore:
                 FROM workload_assignment_reservations AS reservation
                 LEFT JOIN workload_assignment_events AS event
                   ON event.reservation_key = reservation.reservation_key
-                WHERE event.outcome = 'invoked' OR event.outcome IS NULL
+                WHERE event.outcome = 'invoked'
+                   OR (event.outcome IS NULL AND reservation.provider = ?)
                 ORDER BY reservation.ledger_id DESC
                 LIMIT ?""",
-                (DEFAULT_POLICY.rolling_window_size - 1,),
+                (provider.value, DEFAULT_POLICY.rolling_window_size - 1),
             ).fetchall()
             history = [
                 WorkloadRecord(
@@ -1315,21 +1620,87 @@ class TaskStore:
                 )
                 for row in reversed(effective_rows)
             ]
+            direct_history: list[DirectProductionRecord] = []
+            direct_provider = direct_production_provider(provider)
+            if (
+                direct_provider is not None
+                and kind is not WorkKind.COORDINATION
+            ):
+                direct_rows = connection.execute(
+                    """SELECT assignment_id, provider, effort_units
+                    FROM (
+                        SELECT assignment_id, provider, effort_units,
+                               recorded_at, credit_id AS ordinal
+                        FROM direct_production_credits
+                        UNION ALL
+                        SELECT reservation.assignment_id,
+                               reservation.provider,
+                               reservation.effort_units,
+                               reservation.recorded_at,
+                               reservation.ledger_id AS ordinal
+                        FROM workload_assignment_reservations AS reservation
+                        LEFT JOIN workload_assignment_events AS event
+                          ON event.reservation_key = reservation.reservation_key
+                        WHERE event.outcome IS NULL
+                          AND reservation.provider = ?
+                          AND reservation.work_kind <> 'coordination'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM direct_production_credits AS credit
+                              WHERE credit.assignment_id = reservation.assignment_id
+                          )
+                          AND reservation.ledger_id = (
+                              SELECT MAX(candidate.ledger_id)
+                              FROM workload_assignment_reservations AS candidate
+                              LEFT JOIN workload_assignment_events AS candidate_event
+                                ON candidate_event.reservation_key =
+                                   candidate.reservation_key
+                              WHERE candidate.assignment_id =
+                                    reservation.assignment_id
+                                AND candidate.provider = reservation.provider
+                                AND candidate.work_kind <> 'coordination'
+                                AND candidate_event.outcome IS NULL
+                          )
+                    )
+                    ORDER BY recorded_at DESC, ordinal DESC
+                    LIMIT ?""",
+                    (
+                        provider.value,
+                        DEFAULT_POLICY.rolling_window_size - 1,
+                    ),
+                ).fetchall()
+                for row in reversed(direct_rows):
+                    mapped_provider = direct_production_provider(
+                        Provider(str(row["provider"]))
+                    )
+                    if mapped_provider is None:
+                        raise WorkloadReservationConflict(
+                            "ordinary OpenAI cannot enter direct-production history"
+                        )
+                    direct_history.append(
+                        DirectProductionRecord(
+                            assignment_id=str(row["assignment_id"]),
+                            provider=mapped_provider,
+                            effort_units=int(row["effort_units"]),
+                        )
+                    )
             decision = evaluate_assignment(
                 request,
                 history=history,
+                direct_production_history=direct_history,
+                direct_production_assignment_id=assignment_id,
                 available_primary_providers=available,
                 policy=DEFAULT_POLICY,
-                mode=mode,
+                mode=effective_mode,
             )
             recorded_at = datetime.now(timezone.utc)
             connection.execute(
                 """INSERT INTO workload_assignment_reservations(
                     reservation_key, task_id, assignment_id, phase, provider,
                     effort_units, work_kind, work_size, model_label,
-                    available_primary_json, mode, decision_outcome, allowed,
+                    available_primary_json, configured_mode,
+                    shadow_assignment_limit, mode, decision_outcome, allowed,
                     violations_json, advisories_json, recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     reservation_key,
                     task_id,
@@ -1342,6 +1713,8 @@ class TaskStore:
                     model_label,
                     available_json,
                     mode.value,
+                    shadow_assignment_limit,
+                    effective_mode.value,
                     decision.outcome.value,
                     int(decision.allowed),
                     json.dumps(
@@ -1444,6 +1817,34 @@ class TaskStore:
             WorkloadRecord(
                 assignment_id=str(row["reservation_key"]),
                 provider=Provider(str(row["provider"])),
+                effort_units=int(row["effort_units"]),
+            )
+            for row in reversed(rows)
+        ]
+
+    def list_recent_direct_production(
+        self, *, limit: int = 19
+    ) -> list[DirectProductionRecord]:
+        """Return authenticated accepted-production credits, oldest to newest."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError(
+                "direct-production credit limit must be between 1 and 100"
+            )
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """SELECT assignment_id, provider, effort_units
+                FROM direct_production_credits
+                ORDER BY credit_id DESC
+                LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [
+            DirectProductionRecord(
+                assignment_id=str(row["assignment_id"]),
+                provider=direct_production_provider(
+                    Provider(str(row["provider"]))
+                ),
                 effort_units=int(row["effort_units"]),
             )
             for row in reversed(rows)
@@ -1788,3 +2189,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:42 UTC | END]]

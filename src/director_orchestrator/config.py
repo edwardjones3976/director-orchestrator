@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -680,8 +681,13 @@ class Settings:
 
         return {
             "enabled": self.workload_policy_enabled,
-            "enforced": self.workload_policy_mode == "enforced",
-            "shadow": self.workload_policy_mode == "shadow",
+            "enforced": (
+                self.workload_policy_enabled
+                and self.workload_policy_mode == "enforced"
+            ),
+            "shadow": (
+                self.workload_policy_enabled and self.workload_policy_mode == "shadow"
+            ),
             "mode_valid": self.workload_policy_mode in {"enforced", "shadow"},
             "window_valid": self.workload_policy_window_assignments == 20,
             "shadow_sample_valid": self.workload_policy_shadow_assignments == 5,
@@ -1345,3 +1351,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]

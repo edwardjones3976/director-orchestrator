@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -34,6 +35,7 @@ from .models import (
 )
 from .workload_policy import (
     AssignmentRequest,
+    DirectProductionRecord,
     EnforcementMode,
     FABLE_MODEL_FLOOR,
     PrestagePacket,
@@ -43,6 +45,7 @@ from .workload_policy import (
     WorkloadPolicy,
     WorkloadPolicyError,
     WorkloadRecord,
+    direct_production_provider,
     evaluate_assignment,
 )
 
@@ -292,6 +295,63 @@ def _work_kind(assignment: Assignment) -> WorkKind:
     return WorkKind.COORDINATION
 
 
+_WORK_SIZE_RANK = {
+    WorkSize.SIMPLE: 0,
+    WorkSize.SHORT: 1,
+    WorkSize.MEDIUM: 2,
+    WorkSize.LONG: 3,
+}
+
+_WORK_SIZE_EFFORT_POINTS = {
+    WorkSize.SIMPLE: 1,
+    WorkSize.SHORT: 2,
+    WorkSize.MEDIUM: 5,
+    WorkSize.LONG: 8,
+}
+
+
+def _trusted_v1_assignment(assignment: Assignment) -> Assignment:
+    """Derive trusted workload fields without accepting model under-classification."""
+
+    kind = _work_kind(assignment)
+    if kind == WorkKind.IMPLEMENTATION:
+        # The owner permits genuinely bounded implementation/prototype lanes to
+        # remain short.  General implementation and prose that deterministically
+        # implies coding are medium at minimum and therefore Claude/FABLE-only.
+        minimum_size = (
+            WorkSize.SHORT
+            if assignment.agent == ProviderName.GEMINI
+            or assignment.kind
+            in {
+                AssignmentKind.BOILERPLATE,
+                AssignmentKind.SCAFFOLDING,
+                AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+            }
+            else WorkSize.MEDIUM
+        )
+    elif assignment.agent == ProviderName.OPENAI and kind == WorkKind.COORDINATION:
+        # Only genuinely simple work kept local by OpenAI may stay in this lane.
+        minimum_size = WorkSize.SIMPLE
+    else:
+        minimum_size = WorkSize.SHORT
+
+    effective_size = assignment.workload_size
+    if _WORK_SIZE_RANK[effective_size] < _WORK_SIZE_RANK[minimum_size]:
+        effective_size = minimum_size
+
+    updates: dict[str, object] = {
+        "workload_size": effective_size,
+        # Effort is a deterministic consequence of trusted size, never model input.
+        "effort_points": _WORK_SIZE_EFFORT_POINTS[effective_size],
+    }
+    if assignment.agent == ProviderName.CLAUDE and effective_size in {
+        WorkSize.MEDIUM,
+        WorkSize.LONG,
+    }:
+        updates["model_label"] = FABLE_MODEL_FLOOR
+    return assignment.model_copy(update=updates)
+
+
 def _canonical_prestage_record(record: PlanPrestageRecord) -> PlanPrestageRecord:
     """Rebuild a proposed packet through the immutable canonical contract."""
 
@@ -299,7 +359,7 @@ def _canonical_prestage_record(record: PlanPrestageRecord) -> PlanPrestageRecord
         packet_id=record.packet_id,
         goal=record.goal,
         terminal_condition=record.terminal_condition,
-        repository=record.repository,
+        repository=canonical_repository(record.repository),
         worktree=record.worktree,
         branch=record.branch,
         base_sha=record.base_sha,
@@ -327,6 +387,7 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
 
     errors: set[str] = set()
     history: list[WorkloadRecord] = []
+    direct_history: list[DirectProductionRecord] = []
     for assignment in sorted(plan.assignments, key=lambda item: item.sequence):
         try:
             provider = _workload_provider(assignment.agent)
@@ -344,6 +405,7 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         decision = evaluate_assignment(
             request,
             history=history,
+            direct_production_history=direct_history,
             mode=EnforcementMode.ENFORCED,
         )
         errors.update(
@@ -357,6 +419,15 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
                 effort_units=assignment.effort_points,
             )
         )
+        direct_provider = direct_production_provider(provider)
+        if direct_provider is not None and request.kind is not WorkKind.COORDINATION:
+            direct_history.append(
+                DirectProductionRecord(
+                    assignment_id=request.assignment_id,
+                    provider=direct_provider,
+                    effort_units=assignment.effort_points,
+                )
+            )
 
     # A genuinely simple request that needs no external opinion may stay local.
     # Every short, medium, or long provider plan is team work.
@@ -412,6 +483,49 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         errors.add("pre-stage retry limit must match the plan route-attempt limit")
     if prestage.budget_units < sum(item.effort_points for item in plan.assignments):
         errors.add("pre-stage budget units do not cover planned assignment effort")
+
+    repository_scope: list[tuple[str, str]] = []
+    repository_scope_unbound = False
+    for assignment in plan.assignments:
+        if assignment.repository is None:
+            continue
+        repository = canonical_repository(assignment.repository)
+        if not repository:
+            repository_scope_unbound = True
+            continue
+        repository_scope.append((repository, assignment.starting_ref.strip()))
+    repository_binding_required = any(
+        assignment.agent
+        in {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK}
+        or assignment.allow_draft_pr
+        for assignment in plan.assignments
+    )
+    if repository_scope_unbound or (repository_binding_required and not repository_scope):
+        errors.add("v1 pre-stage repository scope is unbound")
+    elif repository_scope:
+        repositories = {repository for repository, _ in repository_scope}
+        if len(repositories) > 1:
+            errors.add(
+                "v1 pre-stage repository scope spans multiple canonical assignment repositories"
+            )
+        elif canonical_repository(prestage.repository) != next(iter(repositories)):
+            errors.add(
+                "pre-stage repository must match the single canonical assignment repository"
+            )
+
+        starting_refs = {starting_ref for _, starting_ref in repository_scope}
+        if not starting_refs or "" in starting_refs:
+            errors.add("v1 pre-stage starting-ref scope is unbound")
+        elif len(starting_refs) > 1:
+            errors.add(
+                "v1 pre-stage starting-ref scope spans multiple assignment starting refs"
+            )
+        elif prestage.branch != next(iter(starting_refs)):
+            errors.add(
+                "pre-stage branch must match the single assignment starting ref"
+            )
+    if prestage.candidate_sha is not None:
+        errors.add("initial pre-stage candidate SHA must be absent before production")
 
     assignment_agents = {item.agent for item in plan.assignments}
     if prestage.producer not in assignment_agents:
@@ -855,38 +969,6 @@ def enforce_plan(
     # The enforcement outcome is deterministic trusted metadata, never a value the
     # planning model may preserve or select.
     safe.workload_enforcement = None
-    if workload_v1:
-        normalized_assignments: list[Assignment] = []
-        for item in safe.assignments:
-            updates: dict[str, object] = {}
-            if "workload_size" not in item.model_fields_set:
-                kind = _work_kind(item)
-                if item.agent in {ProviderName.GEMINI, ProviderName.PERPLEXITY}:
-                    updates["workload_size"] = WorkSize.SHORT
-                elif kind == WorkKind.IMPLEMENTATION:
-                    updates["workload_size"] = WorkSize.MEDIUM
-                elif kind in {WorkKind.REVIEW, WorkKind.RESEARCH}:
-                    updates["workload_size"] = WorkSize.SHORT
-                else:
-                    updates["workload_size"] = WorkSize.SHORT
-            effective_size = updates.get("workload_size", item.workload_size)
-            if "effort_points" not in item.model_fields_set:
-                updates["effort_points"] = {
-                    WorkSize.SIMPLE: 1,
-                    WorkSize.SHORT: 2,
-                    WorkSize.MEDIUM: 5,
-                    WorkSize.LONG: 8,
-                }[effective_size]
-            if (
-                item.agent == ProviderName.CLAUDE
-                and effective_size in {WorkSize.MEDIUM, WorkSize.LONG}
-                and "model_label" not in item.model_fields_set
-            ):
-                updates["model_label"] = FABLE_MODEL_FLOOR
-            normalized_assignments.append(
-                item.model_copy(update=updates) if updates else item
-            )
-        safe.assignments = normalized_assignments
     safe.max_hops = min(safe.max_hops, settings.max_agent_hops)
     safe.max_revisions = min(safe.max_revisions, settings.max_revisions)
     if safe.debate is not None:
@@ -965,6 +1047,12 @@ def enforce_plan(
             and set(item.depends_on) & antigravity_work
             else item
             for item in safe.assignments
+        ]
+    if workload_v1:
+        # Normalize after structural rewrites so a generated implementation lane
+        # cannot retain a pre-rewrite short/simple classification.
+        safe.assignments = [
+            _trusted_v1_assignment(item) for item in safe.assignments
         ]
     if (
         safe.workload_policy_version == "v1"
@@ -1113,7 +1201,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             terminal_condition="\n".join(final_acceptance),
             repository=preview_repository,
             worktree="DRY-RUN-NO-WORKTREE",
-            branch="dry-run",
+            branch="main",
             base_sha="0" * 40,
             candidate_sha=None,
             producer=producer,
@@ -1142,3 +1230,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]

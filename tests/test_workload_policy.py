@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | BEGIN]]
 """Tests for deterministic provider-workload policy enforcement."""
 
@@ -17,6 +18,7 @@ from director_orchestrator.workload_policy import (
     PRIMARY_PROVIDERS,
     AssignmentRequest,
     DecisionOutcome,
+    DirectProductionRecord,
     DirectProductionProvider,
     DirectProductionTarget,
     EfficiencySnapshot,
@@ -34,6 +36,7 @@ from director_orchestrator.workload_policy import (
     WorkloadPolicy,
     WorkloadPolicyError,
     WorkloadRecord,
+    direct_production_provider,
     evaluate_assignment,
     evaluate_efficiency,
     evaluate_retry,
@@ -525,6 +528,135 @@ class AssignmentRoutingTests(unittest.TestCase):
         self.assertEqual(result.to_dict()["outcome"], "shadow_would_block")
 
 
+class DirectProductionRoutingTests(unittest.TestCase):
+    PROVIDER_CASES = (
+        (Provider.CLAUDE, DirectProductionProvider.CLAUDE),
+        (Provider.CURSOR, DirectProductionProvider.CURSOR),
+        (Provider.GROK, DirectProductionProvider.GROK),
+        (Provider.GEMINI, DirectProductionProvider.GEMINI),
+        (Provider.PERPLEXITY, DirectProductionProvider.PERPLEXITY),
+    )
+
+    def test_direct_production_thresholds_are_target_plus_five(self):
+        for _, direct_provider in self.PROVIDER_CASES:
+            with self.subTest(provider=direct_provider):
+                self.assertEqual(
+                    DEFAULT_POLICY.direct_production_hard_threshold(
+                        direct_provider
+                    ),
+                    DEFAULT_POLICY.direct_production_target(direct_provider) + 5,
+                )
+
+    def test_direct_production_thresholds_apply_to_twenty_assignment_window(self):
+        for runtime_provider, direct_provider in self.PROVIDER_CASES:
+            threshold = DEFAULT_POLICY.direct_production_hard_threshold(
+                direct_provider
+            )
+            other_provider = (
+                DirectProductionProvider.GEMINI
+                if direct_provider is not DirectProductionProvider.GEMINI
+                else DirectProductionProvider.PERPLEXITY
+            )
+            exact_history = (
+                DirectProductionRecord(
+                    "DIRECT-OTHER-00",
+                    other_provider,
+                    effort_units=100 - threshold - 18,
+                ),
+            ) + tuple(
+                DirectProductionRecord(
+                    f"DIRECT-OTHER-{index:02d}",
+                    other_provider,
+                )
+                for index in range(1, 19)
+            )
+            with self.subTest(provider=direct_provider, state="exact"):
+                exact = evaluate_assignment(
+                    assignment(runtime_provider, effort_units=threshold),
+                    direct_production_history=exact_history,
+                )
+                self.assertTrue(exact.allowed)
+                self.assertIn(
+                    "prospective_direct_production_share:"
+                    f"{direct_provider.value}:{threshold}/100",
+                    exact.advisories,
+                )
+
+            over_history = (
+                dataclasses.replace(
+                    exact_history[0],
+                    effort_units=100 - (threshold + 1) - 18,
+                ),
+            ) + exact_history[1:]
+            with self.subTest(provider=direct_provider, state="over"):
+                over = evaluate_assignment(
+                    assignment(runtime_provider, effort_units=threshold + 1),
+                    direct_production_history=over_history,
+                )
+                self.assertFalse(over.allowed)
+                self.assertIn(
+                    "direct_production_hard_threshold_exceeded:"
+                    f"{direct_provider.value}:{threshold}",
+                    over.violations,
+                )
+
+    def test_same_provider_direct_history_adds_prospective_pressure(self):
+        history = tuple(
+            DirectProductionRecord(
+                f"DIRECT-CURSOR-{index}",
+                DirectProductionProvider.CURSOR,
+            )
+            for index in range(4)
+        ) + tuple(
+            DirectProductionRecord(
+                f"DIRECT-GEMINI-{index}",
+                DirectProductionProvider.GEMINI,
+            )
+            for index in range(15)
+        )
+
+        result = evaluate_assignment(
+            assignment(Provider.CURSOR),
+            direct_production_history=history,
+        )
+
+        self.assertFalse(result.allowed)
+        self.assertIn(
+            "prospective_direct_production_share:cursor:5/20",
+            result.advisories,
+        )
+        self.assertIn(
+            "direct_production_hard_threshold_exceeded:cursor:19",
+            result.violations,
+        )
+
+    def test_ordinary_openai_does_not_map_to_external_openai_production(self):
+        self.assertIsNone(direct_production_provider(Provider.OPENAI))
+        for runtime_provider, direct_provider in self.PROVIDER_CASES:
+            with self.subTest(provider=runtime_provider):
+                self.assertIs(
+                    direct_production_provider(runtime_provider), direct_provider
+                )
+
+        result = evaluate_assignment(
+            assignment(Provider.OPENAI),
+            direct_production_history=tuple(
+                DirectProductionRecord(
+                    f"EXTERNAL-OPENAI-{index}",
+                    DirectProductionProvider.EXTERNAL_OPENAI,
+                )
+                for index in range(19)
+            ),
+        )
+        self.assertNotIn(
+            "prospective_direct_production_share", " ".join(result.advisories)
+        )
+        self.assertNotIn(
+            "direct_production_hard_threshold_exceeded",
+            " ".join(result.violations),
+        )
+
+
 class RetryPolicyTests(unittest.TestCase):
     def test_primary_attempt_is_allowed(self):
         result = evaluate_retry(RetryRequest(attempt_number=1))
@@ -799,3 +931,4 @@ class InputValidationTests(unittest.TestCase):
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:45 UTC | END]]

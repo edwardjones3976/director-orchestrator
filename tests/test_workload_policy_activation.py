@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from unittest.mock import patch
 from director_orchestrator.approvals import reserve_provider_effect
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.langgraph_runtime import RuntimeExecutionStatus
 from director_orchestrator.models import (
     Assignment,
     DirectorPlan,
@@ -20,7 +22,7 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.store import TaskStore
+from director_orchestrator.store import TaskStore, WorkloadAttemptOutcome
 
 
 class WorkloadPolicyActivationTests(unittest.TestCase):
@@ -66,6 +68,22 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
         settings.validate_workload_policy_configuration()
         self.assertTrue(settings.workload_policy_readiness()["shadow"])
         self.assertFalse(settings.workload_policy_readiness()["enforced"])
+
+    def test_disabled_policy_reports_no_active_enforced_or_shadow_mode(self) -> None:
+        for mode in ("enforced", "shadow"):
+            with self.subTest(mode=mode):
+                settings = replace(
+                    Settings(),
+                    workload_policy_enabled=False,
+                    workload_policy_mode=mode,
+                )
+
+                readiness = settings.workload_policy_readiness()
+
+                self.assertFalse(readiness["enabled"])
+                self.assertFalse(readiness["enforced"])
+                self.assertFalse(readiness["shadow"])
+                self.assertTrue(readiness["mode_valid"])
 
     def test_invalid_runtime_mode_fails_closed(self) -> None:
         with patch.dict(
@@ -169,5 +187,37 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
         self.assertEqual(record.task_effect_ledger[-1].phase, "dispatch")
         self.assertEqual(record.task_effect_ledger[-1].outcome, "failed_pre_submit")
 
+    def test_packet_runtime_outcome_counts_unresolved_dispatch_conservatively(
+        self,
+    ) -> None:
+        cases = (
+            (
+                RuntimeExecutionStatus.COMPLETED,
+                WorkloadAttemptOutcome.INVOKED,
+            ),
+            (
+                RuntimeExecutionStatus.REPLAYED,
+                WorkloadAttemptOutcome.CACHED_REPLAY,
+            ),
+            (
+                RuntimeExecutionStatus.REJECTED,
+                WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+            ),
+            (
+                RuntimeExecutionStatus.OWNER_DECISION_REQUIRED,
+                WorkloadAttemptOutcome.INVOKED,
+            ),
+        )
+        for status, expected in cases:
+            with self.subTest(status=status):
+                self.assertIs(
+                    OrchestrationEngine._packet_workload_outcome(
+                        status,
+                        "dispatch state is unresolved",
+                    ),
+                    expected,
+                )
+
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | BEGIN]]
 """Deterministic provider-workload policy and pre-staging contracts.
 
@@ -208,6 +209,7 @@ class WorkloadPolicy:
     hard_thresholds: tuple[HardThreshold, ...] = HARD_THRESHOLDS
     primary_caps: tuple[PrimaryCap, ...] = PRIMARY_CAPS
     rolling_window_size: int = 20
+    direct_production_hard_overage_points: int = 5
     claude_model_floor: str = FABLE_MODEL_FLOOR
     approved_claude_model_labels: tuple[str, ...] = (FABLE_MODEL_FLOOR,)
     primary_attempt_limit: int = 1
@@ -310,6 +312,10 @@ class WorkloadPolicy:
         _positive_int(self.rolling_window_size, "rolling window size")
         if self.rolling_window_size != 20:
             raise WorkloadPolicyError("rolling window size must be 20 assignments")
+        if self.direct_production_hard_overage_points != 5:
+            raise WorkloadPolicyError(
+                "direct-production hard overage must remain target plus 5 points"
+            )
         if not self.claude_model_floor.strip():
             raise WorkloadPolicyError("Claude model floor must not be blank")
         if self.claude_model_floor not in self.approved_claude_model_labels:
@@ -374,6 +380,15 @@ class WorkloadPolicy:
         self, provider: DirectProductionProvider
     ) -> int:
         return _lookup_percent(self.direct_production_targets, provider)
+
+    def direct_production_hard_threshold(
+        self, provider: DirectProductionProvider
+    ) -> int:
+        return min(
+            100,
+            self.direct_production_target(provider)
+            + self.direct_production_hard_overage_points,
+        )
 
     def primary_cap(self, provider: Provider) -> int | None:
         for cap in self.primary_caps:
@@ -490,6 +505,43 @@ class WorkloadRecord:
 
 
 @dataclass(frozen=True)
+class DirectProductionRecord:
+    """One authenticated, Director-accepted production credit."""
+
+    assignment_id: str
+    provider: DirectProductionProvider
+    effort_units: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.provider, DirectProductionProvider):
+            raise WorkloadPolicyError(
+                "direct-production record provider must be a DirectProductionProvider"
+            )
+        if not self.assignment_id.strip():
+            raise WorkloadPolicyError(
+                "direct-production record assignment id must not be blank"
+            )
+        _positive_int(
+            self.effort_units, "direct-production record effort units"
+        )
+
+
+def direct_production_provider(
+    provider: Provider,
+) -> DirectProductionProvider | None:
+    """Map runtime providers into accepted-production accounting.
+
+    Ordinary OpenAI assignments are control-plane work. The separately
+    owner-authorized external OpenAI production lane is not a runtime assignment
+    target and therefore cannot be manufactured here.
+    """
+
+    if provider is Provider.OPENAI:
+        return None
+    return DirectProductionProvider(provider.value)
+
+
+@dataclass(frozen=True)
 class AssignmentRequest:
     assignment_id: str
     provider: Provider
@@ -516,6 +568,8 @@ def evaluate_assignment(
     request: AssignmentRequest,
     *,
     history: Sequence[WorkloadRecord] = (),
+    direct_production_history: Sequence[DirectProductionRecord] = (),
+    direct_production_assignment_id: str | None = None,
     available_primary_providers: frozenset[Provider] = PRIMARY_PROVIDERS,
     policy: WorkloadPolicy = DEFAULT_POLICY,
     mode: EnforcementMode = EnforcementMode.ENFORCED,
@@ -532,6 +586,21 @@ def evaluate_assignment(
     records = tuple(history)
     if any(not isinstance(record, WorkloadRecord) for record in records):
         raise WorkloadPolicyError("history must contain only WorkloadRecord values")
+    direct_records = tuple(direct_production_history)
+    if any(
+        not isinstance(record, DirectProductionRecord)
+        for record in direct_records
+    ):
+        raise WorkloadPolicyError(
+            "direct-production history must contain only DirectProductionRecord values"
+        )
+    if direct_production_assignment_id is not None and not (
+        isinstance(direct_production_assignment_id, str)
+        and direct_production_assignment_id.strip()
+    ):
+        raise WorkloadPolicyError(
+            "direct-production assignment id must be a non-empty string"
+        )
     available = frozenset(available_primary_providers)
     if any(not isinstance(provider, Provider) for provider in available):
         raise WorkloadPolicyError(
@@ -609,6 +678,45 @@ def evaluate_assignment(
             violations.append(
                 f"absolute_primary_ceiling_exceeded:{request.provider.value}:{absolute_cap}"
             )
+
+    direct_provider = direct_production_provider(request.provider)
+    if direct_provider is not None and request.kind is not WorkKind.COORDINATION:
+        direct_prior = direct_records[-(policy.rolling_window_size - 1) :]
+        direct_candidate = DirectProductionRecord(
+            assignment_id=(
+                direct_production_assignment_id or request.assignment_id
+            ),
+            provider=direct_provider,
+            effort_units=request.effort_units,
+        )
+        direct_window = direct_prior + (direct_candidate,)
+        direct_ids = [record.assignment_id for record in direct_window]
+        if len(direct_ids) != len(set(direct_ids)):
+            violations.append("direct_production_assignment_ids_not_unique")
+        if len(direct_window) < policy.rolling_window_size:
+            advisories.append(
+                "direct_production_window_warming_up:"
+                f"{len(direct_window)}/{policy.rolling_window_size}"
+            )
+        else:
+            direct_total = sum(record.effort_units for record in direct_window)
+            direct_provider_units = sum(
+                record.effort_units
+                for record in direct_window
+                if record.provider is direct_provider
+            )
+            direct_threshold = policy.direct_production_hard_threshold(
+                direct_provider
+            )
+            advisories.append(
+                "prospective_direct_production_share:"
+                f"{direct_provider.value}:{direct_provider_units}/{direct_total}"
+            )
+            if direct_provider_units * 100 > direct_threshold * direct_total:
+                violations.append(
+                    "direct_production_hard_threshold_exceeded:"
+                    f"{direct_provider.value}:{direct_threshold}"
+                )
 
     return _decision(mode, violations, advisories)
 
@@ -886,3 +994,4 @@ class PrestagePacket:
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:39 UTC | END]]

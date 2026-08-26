@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -438,9 +439,11 @@ class OrchestrationEngine:
             reservation = self.store.reserve_workload_assignment(
                 reservation_key=f"{record.task_id}:{effect_key}",
                 task_id=record.task_id,
+                # Stable assignment identity keeps retries/phases from consuming
+                # multiple shadow or direct-production units.
                 assignment_id=(
                     f"{record.task_id}:{record.plan_generation}:"
-                    f"{assignment.sequence}:{phase}:{effect_key}"
+                    f"{assignment.sequence}"
                 ),
                 phase=phase,
                 provider=provider,
@@ -452,6 +455,9 @@ class OrchestrationEngine:
                     self._available_workload_primary_providers(record)
                 ),
                 mode=mode,
+                shadow_assignment_limit=(
+                    self.settings.workload_policy_shadow_assignments
+                ),
             )
         except (ValueError, WorkloadReservationConflict) as exc:
             self._record_workload_pre_submit_stop(
@@ -530,21 +536,10 @@ class OrchestrationEngine:
     ) -> WorkloadAttemptOutcome:
         if status == RuntimeExecutionStatus.COMPLETED:
             return WorkloadAttemptOutcome.INVOKED
-        if status in {
-            RuntimeExecutionStatus.REPLAYED,
-            RuntimeExecutionStatus.REJECTED,
-        }:
-            return (
-                WorkloadAttemptOutcome.CACHED_REPLAY
-                if status == RuntimeExecutionStatus.REPLAYED
-                else WorkloadAttemptOutcome.FAILED_PRE_SUBMIT
-            )
-        normalized = reason.casefold()
-        if (
-            "dispatch state is unresolved" in normalized
-            or "previously" in normalized
-        ):
+        if status == RuntimeExecutionStatus.REPLAYED:
             return WorkloadAttemptOutcome.CACHED_REPLAY
+        if status == RuntimeExecutionStatus.REJECTED:
+            return WorkloadAttemptOutcome.FAILED_PRE_SUBMIT
         # Runtime owner-decision outcomes after submission are deliberately
         # conservative: ambiguous or incomplete readback still consumed one
         # actual provider attempt and must influence the rolling ledger.
@@ -6016,3 +6011,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:35 UTC | END]]
