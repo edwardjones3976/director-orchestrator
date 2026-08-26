@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
 # Provider Setup Matrix
@@ -25,17 +28,17 @@ An absent project allowlist blocks every live plan. Cursor cannot use an implici
 
 ## Owner account and routing context
 
-- **The primary team is OpenAI, Claude, and Cursor.** These receive the routine periodic checks and should cover planning, implementation, review, and repository execution.
+- **The primary team is OpenAI, Claude, Cursor, and Grok.** These should cover planning, implementation, review, and repository execution; periodic-check membership remains independently configurable.
 - **Claude Pro 20x is the primary workhorse.** Route coding implementation, repository-scale reasoning, code/document review, and Claude-strong analysis there first when its routine is configured and healthy.
 - **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
-- **Cursor is the third primary teammate.** Use it for repository automation, coding overflow, and independent implementation or review passes.
-- **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from the consumer subscription, and they are not included in the default periodic-check list.
+- **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.
+- **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.
 
 Practical operating patterns:
 
 1. **Claude-first coding lane:** Claude implements and tests; OpenAI reviews the acceptance evidence; the owner approves any gated action.
 2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
-3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate boilerplate, scaffolding, low-level mechanical implementation, or alternate ideas. Both return non-authoritative evidence, and a primary model independently verifies and integrates or rejects it.
+3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate artifacts. A primary model independently verifies and integrates or rejects their evidence.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
 
 ## Trusted OpenAI debate-turn accounting
@@ -53,8 +56,66 @@ non-positive or non-finite configured value prevents the service from starting.
 | Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
+| Primary — Cursor-family teammate | xAI Responses API plus separately authorized Grok Build/Bot contacts | `GROK_ENABLED`, `XAI_API_KEY`, `GROK_MODEL` and the fail-closed controls below | Synchronous API response or named-worktree CLI/Bot evidence |
 | Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
+
+## Grok primary Cursor-family profile
+
+The Grok adapter has two explicit transports. General analysis and debate use
+the synchronous, tool-free xAI Responses API. Repository implementation and
+exact-SHA review use the locally authenticated Grok Build CLI in an
+operator-mapped clean named worktree. The Director never promotes API-only
+output into repository or review authority. Keep both transports disabled until
+their dedicated credentials, paths, and budgets are configured:
+
+```dotenv
+GROK_ENABLED=false
+XAI_API_KEY=
+GROK_API_BASE=https://api.x.ai/v1
+GROK_MODEL=grok-4.6
+GROK_MODE=cursor_family_primary
+GROK_TIMEOUT_SECONDS=180
+GROK_MAX_OUTPUT_TOKENS=4096
+GROK_MAX_CONTEXT_CHARS=262144
+GROK_DAILY_BUDGET_USD=2.00
+GROK_DAILY_REQUEST_LIMIT=50
+GROK_REQUEST_COST_FLOOR_USD=0.01
+GROK_ALLOW_TOOLS=false
+GROK_ALLOW_REPOSITORY_WRITE=false
+GROK_ALLOW_REVIEW_VERDICT=false
+GROK_CLI_ENABLED=false
+GROK_CLI_EXECUTABLE=
+GROK_CLI_EXECUTABLE_SHA256=
+GROK_CLI_REPOSITORY_MAP_JSON={}
+GROK_CLI_TIMEOUT_SECONDS=3600
+GROK_CLI_MAX_TURNS=20
+```
+
+Readiness fails closed unless the endpoint is exactly `https://api.x.ai/v1`,
+tools remain disabled for the API contact, every bound is valid, and any enabled
+repository-write or review authority has a nonempty explicit CLI worktree map.
+The CLI executable must be an absolute regular-file path and its exact SHA-256
+must be recorded in `GROK_CLI_EXECUTABLE_SHA256`; the adapter revalidates that
+digest immediately before every repository-capable dispatch.
+The CLI transport is a native-host capability: a containerized Director cannot
+use a Windows executable or host worktree path unless an authenticated host
+runner is explicitly provided. The checked-in examples therefore keep CLI,
+repository-write, and review authority disabled; operators enable them only in
+an ignored native-host environment with an absolute named-worktree map.
+Before the first
+paid request in a process, the adapter authenticates `GET /models` and requires
+the configured model ID to be present. Requests use `POST /responses` with
+`tools=[]`, `store=false`, complete-or-rejected context, and no repository-write,
+branch, pull-request, merge, or deployment lane. Grok Build CLI repository work
+is dispatched only from an exact configured clean worktree. Exact-SHA review
+verifies that both commit objects exist locally, that base is an ancestor of
+head, runs in read-only plan mode, and binds that repository/base/head evidence
+to the returned review artifact. Draft-PR work requires an isolated `grok/*`
+worktree and may create one draft PR but may not merge it. These are transport
+controls, not provider-rank limits. The synchronous API adapter never polls.
+Assignment and usage-check requests share one atomic durable daily ledger, and
+every Grok request reserves at least `GROK_REQUEST_COST_FLOOR_USD`.
 
 ## Perplexity research-only profile
 
@@ -118,7 +179,7 @@ Deterministic policy admits an Antigravity work assignment only when its
 `abstract_ideation`, its task names that subordinate scope explicitly, it
 requests no review, acceptance, merge, contract, or methodology authority, and
 it does not create a draft pull request. Every admitted work assignment also
-requires a later Claude or Cursor assignment that directly depends on it and
+requires a later Claude, Cursor, or Grok assignment that directly depends on it and
 carries the runtime-bound wording to independently reproduce the artifact and
 integrate only the verified portions or reject it.
 
@@ -224,8 +285,14 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 - Gemini Antigravity Agent: https://ai.google.dev/gemini-api/docs/antigravity-agent
 - Gemini coding-agent setup: https://ai.google.dev/gemini-api/docs/coding-agents
 - Gemini `generateContent` migration: https://ai.google.dev/gemini-api/docs/migrate-to-interactions
+- xAI API quickstart: https://docs.x.ai/developers/quickstart
+- xAI model catalog: https://docs.x.ai/developers/rest-api-reference/inference/models
+- Grok Build CLI: https://docs.x.ai/build/overview
 - Perplexity Search API: https://docs.perplexity.ai/api-reference/search-post
 - Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart
 - Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]] -->

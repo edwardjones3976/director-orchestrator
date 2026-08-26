@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
@@ -2566,8 +2567,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 turn.interaction_id = interaction_id
                 turn.verified_interaction_event_digest = verified.event_digest
                 turn.provider_result_digest = canonical_content_digest(provider_result)
-                if turn.provider in {ProviderName.CLAUDE, ProviderName.CURSOR}:
-                    bind_reviewed_contribution(task, turn)
+                bind_reviewed_contribution(task, turn)
             store.create(task)
             engine = OrchestrationEngine(settings, store)
             director = DebateDirector()
@@ -2579,7 +2579,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 captured_votes.extend(votes)
                 self.assertTrue(material_risk)
                 return AdvisoryVoteTally(
-                    configured_weight_total=7.0,
+                    configured_weight_total=8.5,
                     cast_weight_total=6.0,
                     option_weights={"A": 3.0, "B": 3.0},
                     abstaining=[],
@@ -2604,7 +2604,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(stopped.debate_tally["authorizes_external_action"])
             self.assertEqual(
                 [vote.member for vote in captured_votes],
-                ["claude", "cursor", "openai"],
+                ["claude", "cursor", "antigravity", "openai"],
             )
             self.assertIsNone(stopped.debate_tie_judgment)
             self.assertEqual(getattr(director, "tie_judgment_calls", 0), 0)
@@ -2689,7 +2689,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 captured_votes.extend(votes)
                 self.assertFalse(material_risk)
                 return AdvisoryVoteTally(
-                    configured_weight_total=7.0,
+                    configured_weight_total=8.5,
                     cast_weight_total=6.0,
                     option_weights={"A": 3.0, "B": 3.0},
                     abstaining=[],
@@ -2712,7 +2712,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 persisted.debate_tally,
                 {
-                    "configured_weight_total": 7.0,
+                    "configured_weight_total": 8.5,
                     "cast_weight_total": 6.0,
                     "option_weights": {"A": 3.0, "B": 3.0},
                     "abstaining": [],
@@ -2787,3 +2787,4 @@ if __name__ == "__main__":
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]

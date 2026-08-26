@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | BEGIN]]
@@ -241,8 +243,8 @@ def _is_antigravity_consumer(assignment: Assignment) -> bool:
 
 def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]:
     errors: set[str] = set()
-    if tuple(settings.primary_team) != ("openai", "claude", "cursor"):
-        errors.add("primary team must be exactly openai, claude, cursor")
+    if tuple(settings.primary_team) != ("openai", "claude", "cursor", "grok"):
+        errors.add("primary team must be exactly openai, claude, cursor, grok")
     allowed_projects = {item.strip().lower() for item in settings.project_allowlist}
     project = plan.project.strip().lower()
     if not allowed_projects:
@@ -309,7 +311,12 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
         # debate turn whose invitation does not match the persisted assignment.
         # OpenAI remains the synthesizing Director and Perplexity stays
         # research-only, so neither is seatable here.
-        eligible = {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GEMINI}
+        eligible = {
+            ProviderName.CLAUDE,
+            ProviderName.CURSOR,
+            ProviderName.GEMINI,
+            ProviderName.GROK,
+        }
         position_providers: set[ProviderName] = set()
         positions = set(position_sequences)
         for sequence in position_sequences:
@@ -400,19 +407,23 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 later
                 for later in plan.assignments
                 if later.sequence > assignment.sequence
-                and later.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+                and later.agent in {
+                    ProviderName.CLAUDE,
+                    ProviderName.CURSOR,
+                    ProviderName.GROK,
+                }
                 and later.discussion_phase == DiscussionPhase.WORK
                 and assignment.sequence in later.depends_on
             ]
             if not consumers:
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
-                    "Claude or Cursor integration assignment with a direct dependency"
+                    "Claude, Cursor, or Grok integration assignment with a direct dependency"
                 )
             elif not any(_is_antigravity_consumer(item) for item in consumers):
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
-                    "Claude or Cursor implementation assignment that explicitly independently "
+                    "Claude, Cursor, or Grok implementation assignment that explicitly independently "
                     "verifies and integrates or rejects the artifact"
                 )
         if (
@@ -442,6 +453,11 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
             if assignment.public_research_query is not None:
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity debate cannot receive a public research query"
+                )
+        if assignment.agent == ProviderName.GROK:
+            if assignment.public_research_query is not None:
+                errors.add(
+                    f"assignment {assignment.sequence}: Grok has no web-grounded research lane"
                 )
         if assignment.agent == ProviderName.PERPLEXITY:
             if not assignment.requires_approval:
@@ -485,12 +501,16 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 candidate
                 for candidate in plan.assignments
                 if candidate.depends_on == [assignment.sequence]
-                and candidate.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+                and candidate.agent in {
+                    ProviderName.CLAUDE,
+                    ProviderName.CURSOR,
+                    ProviderName.GROK,
+                }
                 and candidate.agent != assignment.agent
             ]
             if len(reviewers) != 1:
                 errors.add(
-                    f"assignment {assignment.sequence}: draft PR work requires exactly one pre-budgeted independent Claude or Cursor review"
+                    f"assignment {assignment.sequence}: draft PR work requires exactly one pre-budgeted independent Claude, Cursor, or Grok review"
                 )
             elif reviewers[0].allow_draft_pr:
                 errors.add(
@@ -641,7 +661,8 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
                     "acceptance": list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
                 }
             )
-            if item.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+            if item.agent
+            in {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK}
             and item.discussion_phase == DiscussionPhase.WORK
             and set(item.depends_on) & antigravity_work
             else item
@@ -718,3 +739,5 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Cursor | Cursor Grok 4.6 | 2026-08-24 | 19:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]

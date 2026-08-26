@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]]
@@ -10,8 +13,10 @@
 from __future__ import annotations
 
 import hmac
+import json
 import math
 import os
+from pathlib import Path
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 import re
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
@@ -48,6 +53,30 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
 def _csv_exact(name: str, default: str) -> tuple[str, ...]:
     value = os.getenv(name, default)
     return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _repository_path_map(name: str) -> tuple[tuple[str, str], ...]:
+    """Parse an explicit repository-to-worktree map without guessing local paths."""
+
+    raw = os.getenv(name, "{}").strip() or "{}"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    pairs: list[tuple[str, str]] = []
+    for repository, path in payload.items():
+        if not isinstance(repository, str) or not isinstance(path, str):
+            return ()
+        normalized_repository = repository.strip().lower().removesuffix(".git")
+        normalized_path = path.strip()
+        if not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", normalized_repository):
+            return ()
+        if not normalized_path or not os.path.isabs(normalized_path):
+            return ()
+        pairs.append((normalized_repository, normalized_path))
+    return tuple(sorted(pairs))
 
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
@@ -300,6 +329,9 @@ class Settings:
     langgraph_parallel_gemini_cap: int = field(
         default_factory=lambda: _int("LANGGRAPH_PARALLEL_GEMINI_CAP", 1)
     )
+    langgraph_parallel_grok_cap: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PARALLEL_GROK_CAP", 1)
+    )
     langgraph_parallel_perplexity_cap: int = field(
         default_factory=lambda: _int("LANGGRAPH_PARALLEL_PERPLEXITY_CAP", 1)
     )
@@ -346,6 +378,9 @@ class Settings:
     oracle_automerge_cursor_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_CURSOR_ACTORS", ""
     )
+    oracle_automerge_grok_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_GROK_ACTORS", ""
+    )
     oracle_automerge_gemini_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_GEMINI_ACTORS", ""
     )
@@ -357,10 +392,12 @@ class Settings:
     usage_check_timeout_seconds: int = _int("USAGE_CHECK_TIMEOUT_SECONDS", 300)
     usage_check_max_output_tokens: int = _int("USAGE_CHECK_MAX_OUTPUT_TOKENS", 96)
     usage_check_providers: tuple[str, ...] = _csv(
-        "USAGE_CHECK_PROVIDERS", "openai,claude,cursor"
+        "USAGE_CHECK_PROVIDERS", "openai,claude,cursor,grok"
     )
 
-    primary_team: tuple[str, ...] = _csv("PRIMARY_TEAM", "openai,claude,cursor")
+    primary_team: tuple[str, ...] = _csv(
+        "PRIMARY_TEAM", "openai,claude,cursor,grok"
+    )
     primary_workhorse: str = os.getenv("PRIMARY_WORKHORSE", "claude").strip().lower()
     claude_account_context: str = os.getenv("CLAUDE_ACCOUNT_CONTEXT", "Claude Pro 20x")
     openai_account_context: str = os.getenv(
@@ -463,6 +500,33 @@ class Settings:
         "GEMINI_ALLOW_PRIMARY_AUTHORITY", False
     )
 
+    grok_enabled: bool = _bool("GROK_ENABLED", False)
+    grok_api_key: str = os.getenv("XAI_API_KEY", "")
+    grok_api_base: str = os.getenv("GROK_API_BASE", "https://api.x.ai/v1").rstrip("/")
+    grok_model: str = os.getenv("GROK_MODEL", "grok-4.6").strip()
+    grok_mode: str = os.getenv("GROK_MODE", "cursor_family_primary").strip().lower()
+    grok_timeout_seconds: int = _int("GROK_TIMEOUT_SECONDS", 180)
+    grok_max_output_tokens: int = _int("GROK_MAX_OUTPUT_TOKENS", 4_096)
+    grok_max_context_chars: int = _int("GROK_MAX_CONTEXT_CHARS", 262_144)
+    grok_daily_budget_usd: float = _float("GROK_DAILY_BUDGET_USD", 2.0)
+    grok_daily_request_limit: int = _int("GROK_DAILY_REQUEST_LIMIT", 50)
+    grok_request_cost_floor_usd: float = _positive_float(
+        "GROK_REQUEST_COST_FLOOR_USD", 0.01
+    )
+    grok_allow_tools: bool = _bool("GROK_ALLOW_TOOLS", False)
+    grok_allow_repository_write: bool = _bool("GROK_ALLOW_REPOSITORY_WRITE", False)
+    grok_allow_review_verdict: bool = _bool("GROK_ALLOW_REVIEW_VERDICT", False)
+    grok_cli_enabled: bool = _bool("GROK_CLI_ENABLED", False)
+    grok_cli_executable: str = os.getenv("GROK_CLI_EXECUTABLE", "").strip()
+    grok_cli_executable_sha256: str = os.getenv(
+        "GROK_CLI_EXECUTABLE_SHA256", ""
+    ).strip().lower()
+    grok_cli_repository_roots: tuple[tuple[str, str], ...] = field(
+        default_factory=lambda: _repository_path_map("GROK_CLI_REPOSITORY_MAP_JSON")
+    )
+    grok_cli_timeout_seconds: int = _int("GROK_CLI_TIMEOUT_SECONDS", 3_600)
+    grok_cli_max_turns: int = _int("GROK_CLI_MAX_TURNS", 20)
+
     perplexity_enabled: bool = _bool("PERPLEXITY_ENABLED", False)
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
     perplexity_api_base: str = os.getenv("PERPLEXITY_API_BASE", "https://api.perplexity.ai")
@@ -520,6 +584,44 @@ class Settings:
             "review_verdict_disabled": not self.perplexity_allow_review_verdict,
         }
 
+    def grok_primary_readiness(self) -> dict[str, bool]:
+        repository_transport_required = (
+            self.grok_allow_repository_write or self.grok_allow_review_verdict
+        )
+        repository_transport_ready = (
+            self.grok_cli_enabled
+            and bool(self.grok_cli_executable)
+            and Path(self.grok_cli_executable).expanduser().is_absolute()
+            and Path(self.grok_cli_executable).expanduser().is_file()
+            and bool(re.fullmatch(r"[0-9a-f]{64}", self.grok_cli_executable_sha256))
+            and bool(self.grok_cli_repository_roots)
+            and 30 <= self.grok_cli_timeout_seconds <= 7_200
+            and 1 <= self.grok_cli_max_turns <= 100
+        )
+        return {
+            "enabled": self.grok_enabled,
+            "credential_configured": bool(self.grok_api_key),
+            "official_api_endpoint": self.grok_api_base == "https://api.x.ai/v1",
+            "model_configured": bool(self.grok_model)
+            and "/" not in self.grok_model
+            and not any(character.isspace() for character in self.grok_model),
+            "cursor_family_primary_mode": self.grok_mode == "cursor_family_primary",
+            "timeout_valid": 1 <= self.grok_timeout_seconds <= 1_800,
+            "output_limit_valid": 16 <= self.grok_max_output_tokens <= 32_768,
+            "context_limit_valid": 1_000 <= self.grok_max_context_chars <= 262_144,
+            "budget_valid": 0 < self.grok_daily_budget_usd <= 1_000,
+            "daily_request_limit_valid": 1 <= self.grok_daily_request_limit <= 100_000,
+            "request_cost_floor_valid": 0 < self.grok_request_cost_floor_usd
+            <= self.grok_daily_budget_usd,
+            "tools_disabled": not self.grok_allow_tools,
+            "repository_transport_ready": (
+                repository_transport_ready or not repository_transport_required
+            ),
+        }
+
+    def grok_cli_repository_map(self) -> dict[str, str]:
+        return dict(self.grok_cli_repository_roots)
+
     def readiness(self) -> dict[str, bool]:
         slack_gateway_ready = bool(
             len(self.slack_gateway_secret) >= 32
@@ -540,6 +642,7 @@ class Settings:
             "cursor": bool(self.cursor_api_key),
             "claude": bool(self.claude_routine_url and self.claude_routine_token),
             "gemini": all(self.gemini_supplemental_readiness().values()),
+            "grok": all(self.grok_primary_readiness().values()),
             "perplexity": all(self.perplexity_research_readiness().values()),
         }
 
@@ -550,6 +653,7 @@ class Settings:
             "cursor": readiness["cursor"],
             "claude": readiness["claude"],
             "gemini": readiness["gemini"],
+            "grok": readiness["grok"],
             "perplexity": readiness["perplexity"],
         }
 
@@ -1040,6 +1144,7 @@ class Settings:
             "claude": self.langgraph_parallel_claude_cap,
             "cursor": self.langgraph_parallel_cursor_cap,
             "gemini": self.langgraph_parallel_gemini_cap,
+            "grok": self.langgraph_parallel_grok_cap,
             "perplexity": self.langgraph_parallel_perplexity_cap,
         }
     # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
@@ -1075,6 +1180,7 @@ class Settings:
         return {
             "claude": frozenset(item.lower() for item in self.oracle_automerge_claude_actors),
             "cursor": frozenset(item.lower() for item in self.oracle_automerge_cursor_actors),
+            "grok": frozenset(item.lower() for item in self.oracle_automerge_grok_actors),
             "gemini": frozenset(item.lower() for item in self.oracle_automerge_gemini_actors),
         }
 
@@ -1104,7 +1210,7 @@ class Settings:
                 "team": "primary",
                 "priority": "primary_full_spectrum_repository_partner",
                 "account_context": self.other_provider_account_context,
-                "capability_parity_target": 0.9,
+                "capability_parity_target": 1.0,
                 "eligible_complexity": ["low", "medium", "high", "critical"],
                 "strengths": [
                     "research and evidence verification",
@@ -1129,7 +1235,7 @@ class Settings:
                 ],
                 "constraints": [
                     "supplemental only; never a primary-team substitute",
-                    "work assignments must feed a later Claude or Cursor integration assignment",
+                    "work assignments must feed a later Claude, Cursor, or Grok integration assignment",
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
                     "cannot initiate, self-route, widen, or autonomously continue a conversation",
@@ -1138,6 +1244,41 @@ class Settings:
                     "ordinary work receives no prose: no task, acceptance, objective, dependency result, Slack text, or repository context",
                     "dispatch is driven by antigravity_directive, a closed fixture lane plus bounded numeric controls",
                     "repository, starting_ref, allow_draft_pr, and public_research_query must stay unset",
+                ],
+            },
+            "grok": {
+                "team": "primary",
+                "family": "cursor",
+                "priority": "primary_cursor_family_repository_partner",
+                "account_context": self.other_provider_account_context,
+                "capability_parity_target": 1.0,
+                "eligible_complexity": ["low", "medium", "high", "critical"],
+                "eligible_responsibilities": [
+                    "research",
+                    "evidence_verification",
+                    "programming",
+                    "deep_reasoning",
+                    "innovation",
+                    "development",
+                    "quality_assurance",
+                    "leadership",
+                ],
+                "strengths": [
+                    "full-spectrum repository implementation",
+                    "independent technical reasoning and planning",
+                    "architecture, reliability, and security-adjacent analysis",
+                    "cross-platform quality assurance and exact-candidate review",
+                    "technical leadership and coordination",
+                ],
+                "separation_of_duties": [
+                    "cannot independently accept or merge its own candidate",
+                    "cannot replace OpenAI's in-process Director acceptance role",
+                    "external writes still require the assigned execution surface and current deterministic gates",
+                ],
+                "current_transport_constraints": [
+                    "the in-process Responses API contact is synchronous and tool-free",
+                    "repository execution uses the separately authenticated Grok Build or Grok Bot contact",
+                    "the configured API model must appear in the authenticated xAI model catalog before the first paid request in each process",
                 ],
             },
             "perplexity": {
@@ -1155,3 +1296,6 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]

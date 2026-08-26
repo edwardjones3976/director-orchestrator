@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
@@ -27,7 +29,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .config import Settings
 from .models import Assignment, ClaudeCallback, ProviderName, ProviderRun, TaskRecord
-from .interactions import CommunicationEvidenceFailure, require_verified_result
+from .interactions import (
+    CommunicationEvidenceFailure,
+    ProviderTransport,
+    require_verified_result,
+)
 from .oracle_diff import (
     GITHUB_DIFF_MEDIA_TYPE,
     MAX_COMPARE_DIFF_BYTES,
@@ -141,12 +147,17 @@ def authenticate_provider_review_artifact(
     *,
     review_assignment: Assignment | None = None,
 ) -> OracleReviewArtifact | None:
-    """Bind one Claude or Cursor result to its stored exact-SHA review assignment."""
-    if run.provider not in {ProviderName.CLAUDE, ProviderName.CURSOR}:
+    """Bind one eligible provider result to its stored exact-SHA review assignment."""
+    if run.provider not in {
+        ProviderName.CLAUDE,
+        ProviderName.CURSOR,
+        ProviderName.GROK,
+    }:
         return None
     successful_statuses = {
         ProviderName.CLAUDE: {"completed"},
         ProviderName.CURSOR: {"FINISHED", "completed"},
+        ProviderName.GROK: {"completed"},
     }
     if not run.result:
         return None
@@ -166,6 +177,18 @@ def authenticate_provider_review_artifact(
         raise ValueError("provider review output must not supply an authentication signature")
     payload["signature"] = "0" * 64
     artifact = OracleReviewArtifact.model_validate(payload)
+    if run.provider == ProviderName.GROK:
+        raw = run.raw if isinstance(run.raw, dict) else {}
+        if raw.get("transport") != "grok_cli" or raw.get("mode") != "exact_sha_review":
+            raise ValueError(
+                "Grok review authority requires the repository-capable CLI transport"
+            )
+        if not raw.get("read_only"):
+            raise ValueError("Grok exact-SHA review did not run in read-only mode")
+        if raw.get("repository") != canonical_repository(artifact.repository):
+            raise ValueError("Grok CLI review repository evidence does not match")
+        if raw.get("base_sha") != artifact.base_sha or raw.get("head_sha") != artifact.head_sha:
+            raise ValueError("Grok CLI review SHA evidence does not match the artifact")
 
     matching_runs = [
         stored
@@ -181,6 +204,8 @@ def authenticate_provider_review_artifact(
         raise ValueError("provider review result lacks authenticated provider evidence")
     if stored_run.status not in successful_statuses[run.provider]:
         raise ValueError("stored provider review run is not successful")
+    if run.provider == ProviderName.GROK and stored_run.raw != run.raw:
+        raise ValueError("stored Grok CLI evidence does not match the review run")
     if not hmac.compare_digest(stored_run.result or "", run.result):
         raise ValueError("provider review result does not match the stored run")
     sequence = stored_run.assignment_sequence
@@ -282,13 +307,21 @@ def authenticate_provider_review_artifact(
     if not run.interaction_id:
         raise ValueError("review completion lacks immutable interaction evidence")
     try:
-        require_verified_result(
+        verified_event = require_verified_result(
             record.provider_interaction_ledger,
             interaction_id=run.interaction_id,
             result=run.result,
         )
     except CommunicationEvidenceFailure as exc:
         raise ValueError(str(exc)) from exc
+    if (
+        run.provider == ProviderName.GROK
+        and verified_event.transport_evidence.transport
+        != ProviderTransport.GROK_CLI
+    ):
+        raise ValueError(
+            "Grok review completion is not bound to verified CLI transport evidence"
+        )
     return artifact.sign(secret)
 
 
@@ -527,8 +560,8 @@ class OracleMergePolicy:
             serious.append("reviewer returned SERIOUS_SAFETY_STOP")
         elif artifact.verdict != OracleReviewVerdict.ACCEPT:
             errors.append("reviewer did not accept the reviewed commit")
-        if artifact.reviewer_provider.lower() not in {"claude", "cursor"}:
-            errors.append("the exact-SHA reviewer must be Claude or Cursor")
+        if artifact.reviewer_provider.lower() not in {"claude", "cursor", "grok"}:
+            errors.append("the exact-SHA reviewer must be Claude, Cursor, or Grok")
         if artifact.reviewer_provider.lower() == artifact.implementation_provider.lower():
             errors.append("the implementation author cannot accept its own work")
         producer_actors = self.provider_actor_map.get(
@@ -2741,3 +2774,5 @@ class GitHubOracleGateway:
         return pull_request.get("isDraft") is False
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]

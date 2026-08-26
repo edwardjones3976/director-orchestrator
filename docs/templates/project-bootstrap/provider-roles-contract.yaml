@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | BEGIN]]
@@ -58,9 +59,9 @@ providers:
     eligible_complexity: ["low", "medium", "high", "critical"]
     may_handle_critical_work: true
     routing_policy:
-      capability_parity_target: 0.9
+      capability_parity_target: 1.0
       comparison_peers: ["claude", "openai_codex"]
-      statement: "Route Cursor at approximately 90% capability parity with Claude and Codex, by fit, independence, capacity, and evidence needs."
+      statement: "Route Cursor at full task-capability parity with Claude and Codex, by fit, independence, capacity, and evidence needs."
       parity_is_not:
         - "a benchmark, score, ranking, or measured performance claim"
         - "permission, access, or credential expansion"
@@ -72,7 +73,33 @@ providers:
       - "Cursor cannot perform OpenAI's Director acceptance role."
       - "Cursor does not replace mandatory Codex Security."
       - "Cursor cannot review or approve its own work."
-      - "Parity expands no access, credential, merge, deployment, or publication authority."
+      - "Capability parity does not bypass assignment scope or deterministic gates."
+
+  grok:
+    provider: "xai"
+    family: "cursor"
+    team: "primary"
+    eligible_responsibility_areas:
+      - "research"
+      - "evidence_verification"
+      - "programming"
+      - "deep_reasoning"
+      - "innovation"
+      - "development"
+      - "quality_assurance"
+      - "leadership"
+    eligible_complexity: ["low", "medium", "high", "critical"]
+    may_handle_critical_work: true
+    routing_policy:
+      capability_parity_target: 1.0
+      comparison_peers: ["claude", "openai_codex", "cursor"]
+      statement: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
+    contact_boundary: "The xAI API, Grok Build CLI, and Grok Bot are separate contacts; use only the capabilities and authority actually available on the assigned contact."
+    non_substitution_rules:
+      - "Grok cannot perform OpenAI's Director acceptance role."
+      - "Grok does not replace mandatory Codex Security."
+      - "Grok cannot review or approve its own work."
+      - "Capability parity does not bypass assignment scope or deterministic gates."
 
   antigravity:
     provider: "gemini"
@@ -94,8 +121,8 @@ providers:
     # Sandbox output is never complete on its own.
     mandatory_downstream_verification:
       required: true
-      assignee: "claude_or_cursor"
-      rule: "Every Antigravity work assignment must feed a later Claude or Cursor assignment that independently verifies and integrates or rejects it."
+      assignee: "claude_cursor_or_grok"
+      rule: "Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
       planner_rule: "A plan that routes work to Antigravity without that later verifying assignment is incomplete."
     outbound_work_packet:
       permitted_value_kinds:
@@ -241,3 +268,4 @@ project_local_bindings:
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:05 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]

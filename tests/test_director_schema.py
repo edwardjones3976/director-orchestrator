@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]]
@@ -285,7 +286,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 name: member["voting_power"]
                 for name, member in charter["committee"]["members"].items()
             },
-            {"antigravity": 1.0, "cursor": 1.5, "openai": 2.0, "claude": 2.5},
+            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.0, "claude": 2.5},
         )
         self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
@@ -293,7 +294,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         browser = charter["browser_communication_policy"]
         self.assertEqual(browser["primary"], "chrome")
         self.assertEqual(browser["fallback"], "microsoft_edge")
-        self.assertEqual(browser["eligible_providers"], ["claude", "cursor", "gemini"])
+        self.assertEqual(browser["eligible_providers"], ["claude", "cursor", "gemini", "grok"])
         self.assertEqual(
             browser["owner_authorizable_actions"],
             [
@@ -308,7 +309,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             any("applicable deterministic gate" in rule for rule in browser["rules"])
         )
         cursor = charter["role_profiles"]["cursor"]
-        self.assertEqual(cursor["capability_parity_target"], 0.9)
+        self.assertEqual(cursor["capability_parity_target"], 1.0)
         self.assertEqual(cursor["comparison_peers"], ["claude", "openai_codex"])
         self.assertEqual(cursor["eligible_complexity"], ["low", "medium", "high", "critical"])
         self.assertEqual(
@@ -316,6 +317,11 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             [area["name"] for area in charter["responsibility_areas"]],
         )
         self.assertTrue(any("own work" in rule for rule in cursor["non_substitution_rules"]))
+        grok = charter["role_profiles"]["grok"]
+        self.assertEqual(grok["family"], "cursor")
+        self.assertEqual(grok["capability_parity_target"], 1.0)
+        self.assertEqual(grok["eligible_responsibilities"], cursor["eligible_responsibilities"])
+        self.assertTrue(any("own work" in rule for rule in grok["non_substitution_rules"]))
         self.assertTrue(
             any(
                 "deterministic policy" in rule.lower()
@@ -603,6 +609,11 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                     rationale="Conflict prevents a vote.",
                 ),
                 AdvisoryVote(
+                    member="grok",
+                    disposition="unavailable",
+                    rationale="Three safe attempts received no response.",
+                ),
+                AdvisoryVote(
                     member="antigravity",
                     disposition="unavailable",
                     rationale="Three safe attempts received no response.",
@@ -612,7 +623,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(tally.option_weights, {"A": 2.5})
         self.assertEqual(tally.cast_weight_total, 2.5)
-        self.assertEqual(tally.configured_weight_total, 7.0)
+        self.assertEqual(tally.configured_weight_total, 8.5)
         self.assertFalse(tally.authorizes_external_action)
 
     def test_ties_route_to_openai_or_owner_without_authorizing_action(self):
@@ -763,9 +774,9 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         self.assertIn('artifact_status: "non_authoritative_evidence"', contract)
         self.assertIn("mandatory_downstream_verification:", contract)
         self.assertIn("required: true", contract)
-        self.assertIn('assignee: "claude_or_cursor"', contract)
+        self.assertIn('assignee: "claude_cursor_or_grok"', contract)
         self.assertIn(
-            "must feed a later Claude or Cursor assignment that independently "
+            "must feed a later Claude, Cursor, or Grok assignment that independently "
             "verifies and integrates or rejects it",
             contract,
         )
@@ -918,3 +929,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]

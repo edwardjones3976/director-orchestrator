@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 18:06 UTC | BEGIN]]
 """Outbound contracts for Gemini Antigravity work and invited debate.
@@ -71,7 +72,7 @@ ANTIGRAVITY_DEBATE_CONTRACT_VERSION = "antigravity-debate-contract/v1"
 
 NON_AUTHORITATIVE_NOTICE = (
     "NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT: This output is subordinate input. "
-    "Claude or Cursor must independently verify and integrate or reject it before use."
+    "Claude, Cursor, or Grok must independently verify and integrate or reject it before use."
 )
 
 DEBATE_NOTICE = (
@@ -414,7 +415,7 @@ class AntigravityDebateTurn(BaseModel):
 
     assignment_sequence: int = Field(ge=1, le=20)
     discussion_round: int = Field(ge=0, le=3)
-    provider: Literal["claude", "cursor", "gemini"]
+    provider: Literal["claude", "cursor", "grok", "gemini"]
     phase: Literal["position", "rebuttal"]
     position: str = Field(min_length=1, max_length=2_000)
     evidence: list[str] = Field(default_factory=list, max_length=10)
@@ -795,3 +796,4 @@ def antigravity_wire_input(
     )
 # [[Codex | GPT-5.6 | 2026-08-24 | 18:06 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]

@@ -1,3 +1,9 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -5,9 +11,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
+import os
 import re
+import secrets
+import signal
 import sqlite3
+import subprocess
+import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -22,8 +35,9 @@ from .antigravity import (
     antigravity_wire_input,
 )
 from .config import Settings
-from .models import Assignment, DiscussionPhase, ProviderName, ProviderRun
-from .policy import antigravity_assignment_errors
+from .models import Assignment, AssignmentKind, DiscussionPhase, ProviderName, ProviderRun
+from .policy import antigravity_assignment_errors, canonical_repository
+from .process_isolation import ProcessContainmentError, launch_contained_process
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
@@ -63,7 +77,7 @@ class ProviderDailySpendLedger:
     """
 
     _EFFECT_KEY = re.compile(r"^[0-9a-f]{64}$")
-    _SUPPORTED = {ProviderName.GEMINI, ProviderName.PERPLEXITY}
+    _SUPPORTED = {ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY}
 
     def __init__(self, sqlite_path: str):
         self.path = sqlite_path
@@ -107,7 +121,9 @@ class ProviderDailySpendLedger:
         now: datetime | None = None,
     ) -> tuple[int, float]:
         if provider not in self._SUPPORTED:
-            raise ValueError("daily assignment spend applies only to Gemini and Perplexity")
+            raise ValueError(
+                "daily assignment spend applies only to Gemini, Grok, and Perplexity"
+            )
         if not self._EFFECT_KEY.fullmatch(effect_key):
             raise ValueError("provider spend reservation requires a canonical effect key")
         if request_limit < 1 or budget_usd <= 0 or estimated_cost_usd < 0:
@@ -159,6 +175,26 @@ class ProviderDailySpendLedger:
                 FROM provider_daily_spend_reservations
                 WHERE provider = ? AND utc_day = ?""",
                 (provider.value, utc_day),
+            ).fetchone()
+            return int(count), float(reserved)
+
+    def totals(
+        self,
+        provider: ProviderName,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[int, float]:
+        """Return the single durable accounting total shared by work and probes."""
+
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend totals apply only to supplemental providers")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with self._connect() as connection:
+            count, reserved = connection.execute(
+                """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
+                FROM provider_daily_spend_reservations
+                WHERE provider = ? AND utc_day = ?""",
+                (provider.value, observed_at.date().isoformat()),
             ).fetchone()
         return int(count), float(reserved)
 
@@ -814,6 +850,523 @@ class GeminiAdapter(ProviderAdapter):
             ) from exc
 
 
+class GrokAdapter(ProviderAdapter):
+    """Primary Grok teammate with API and repository-capable CLI transports."""
+
+    name = ProviderName.GROK
+
+    def __init__(self, settings: Settings):
+        super().__init__(settings)
+        self._catalog_verified = False
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.settings.grok_api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _require_profile(self, assignment: Assignment | None = None) -> None:
+        failed = [
+            name
+            for name, ready in self.settings.grok_primary_readiness().items()
+            if not ready
+        ]
+        if failed:
+            raise ProviderError(
+                "Grok primary API contact is not ready: "
+                + ", ".join(failed)
+            )
+        if assignment is None:
+            return
+        if assignment.public_research_query is not None:
+            raise ProviderError("Grok has no web-grounded research lane")
+        trusted_estimate = max(
+            assignment.estimated_cost_usd,
+            self.settings.grok_request_cost_floor_usd,
+        )
+        if trusted_estimate > self.settings.grok_daily_budget_usd:
+            raise ProviderError(
+                "Grok assignment estimate exceeds the configured daily budget ceiling"
+            )
+        if self._requires_cli(assignment):
+            if assignment.allow_draft_pr and not self.settings.grok_allow_repository_write:
+                raise ProviderError(
+                    "Grok draft-PR work requires GROK_ALLOW_REPOSITORY_WRITE=true"
+                )
+            if (
+                assignment.kind == AssignmentKind.EXACT_SHA_REVIEW
+                and not self.settings.grok_allow_review_verdict
+            ):
+                raise ProviderError(
+                    "Grok exact-SHA review requires GROK_ALLOW_REVIEW_VERDICT=true"
+                )
+            repository = canonical_repository(assignment.repository or "")
+            if (
+                not self.settings.grok_cli_enabled
+                or repository not in self.settings.grok_cli_repository_map()
+            ):
+                raise ProviderError(
+                    "Grok repository work requires an enabled CLI and an explicit "
+                    "repository-to-worktree mapping"
+                )
+            self._verified_cli_executable()
+
+    @staticmethod
+    def _requires_cli(assignment: Assignment) -> bool:
+        return assignment.allow_draft_pr or assignment.kind == AssignmentKind.EXACT_SHA_REVIEW
+
+    @staticmethod
+    def _output_text(payload: dict[str, Any]) -> str | None:
+        if isinstance(payload.get("output_text"), str):
+            return payload["output_text"]
+        chunks: list[str] = []
+        for item in payload.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content", []):
+                if isinstance(content, dict) and isinstance(content.get("text"), str):
+                    chunks.append(content["text"])
+        return "".join(chunks) or None
+
+    def _run(self, payload: dict[str, Any]) -> ProviderRun:
+        if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
+            raise ProviderError("Grok response did not include a valid response ID")
+        status = payload.get("status")
+        if not isinstance(status, str) or status != "completed":
+            raise ProviderError(
+                "Grok response did not include an explicit terminal-success status"
+            )
+        return ProviderRun(
+            provider=self.name,
+            run_id=payload["id"],
+            status=status,
+            result=self._output_text(payload),
+            raw=payload,
+        )
+
+    async def _ensure_model_allowed(self, client: httpx.AsyncClient) -> None:
+        if self._catalog_verified:
+            return
+        response = await client.get(
+            f"{self.settings.grok_api_base}/models", headers=self.headers
+        )
+        response.raise_for_status()
+        payload = response.json()
+        models = {
+            item.get("id")
+            for item in payload.get("data", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if self.settings.grok_model not in models:
+            raise ProviderError(
+                "Configured Grok model is unavailable to the authenticated xAI key"
+            )
+        self._catalog_verified = True
+
+    def _input(
+        self,
+        assignment: Assignment,
+        context: str,
+        *,
+        revision_prompt: str | None = None,
+    ) -> str:
+        if len(context) > self.settings.grok_max_context_chars:
+            raise ProviderError(
+                "Grok context exceeds the configured complete-packet limit; "
+                "partial packet transmission is prohibited"
+            )
+        packet: dict[str, Any] = {
+            "role": "primary_cursor_family_teammate",
+            "task": assignment.task,
+            "acceptance": assignment.acceptance,
+            "context": context,
+            "constraints": [
+                "Complete the bounded assignment with concise evidence and an explicit result.",
+                "Do not browse, call tools, write repositories, create branches or pull requests, merge, deploy, publish, purchase, or change access.",
+                "Do not claim an external action that this API contact did not perform.",
+            ],
+        }
+        if revision_prompt is not None:
+            packet["revision_request"] = revision_prompt[:8_000]
+        return json.dumps(packet, ensure_ascii=True, separators=(",", ":"))
+
+    async def _git(self, root: Path, *args: str) -> str:
+        environment = self._cli_environment()
+        environment.update(
+            {
+                "GCM_INTERACTIVE": "Never",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_TERMINAL_PROMPT": "0",
+            }
+        )
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "-C",
+            str(root),
+            *args,
+            env=environment,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            detail = stderr.decode("utf-8", errors="replace").strip()[:500]
+            raise ProviderError(f"Grok CLI worktree validation failed: {detail}")
+        return stdout.decode("utf-8", errors="replace").strip()
+
+    async def _validated_cli_worktree(
+        self, assignment: Assignment
+    ) -> tuple[Path, dict[str, Any]]:
+        repository = canonical_repository(assignment.repository or "")
+        configured = self.settings.grok_cli_repository_map().get(repository)
+        if configured is None:
+            raise ProviderError("Grok CLI repository mapping is missing")
+        root = Path(configured).expanduser().resolve()
+        if not root.is_dir():
+            raise ProviderError("Grok CLI mapped worktree does not exist")
+        actual_root = Path(await self._git(root, "rev-parse", "--show-toplevel")).resolve()
+        if actual_root != root:
+            raise ProviderError("Grok CLI mapping must name the exact Git worktree root")
+        if await self._git(root, "status", "--porcelain"):
+            raise ProviderError("Grok CLI worktree must be clean before dispatch")
+        branch = await self._git(root, "branch", "--show-current")
+        evidence: dict[str, Any] = {
+            "repository": repository,
+            "worktree": str(root),
+            "branch": branch,
+        }
+        if assignment.kind == AssignmentKind.EXACT_SHA_REVIEW:
+            try:
+                handoff = json.loads(assignment.task)
+            except json.JSONDecodeError as exc:
+                raise ProviderError("Grok exact-SHA review requires a structured handoff") from exc
+            if not isinstance(handoff, dict):
+                raise ProviderError("Grok exact-SHA review handoff must be an object")
+            base_sha = handoff.get("base_sha")
+            head_sha = handoff.get("head_sha")
+            if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+                raise ProviderError("Grok review handoff has no valid base SHA")
+            if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+                raise ProviderError("Grok review handoff has no valid head SHA")
+            if canonical_repository(str(handoff.get("repository", ""))) != repository:
+                raise ProviderError("Grok review handoff repository does not match the worktree")
+            await self._git(root, "cat-file", "-e", f"{base_sha}^{{commit}}")
+            await self._git(root, "cat-file", "-e", f"{head_sha}^{{commit}}")
+            await self._git(root, "merge-base", "--is-ancestor", base_sha, head_sha)
+            evidence.update(
+                {
+                    "mode": "exact_sha_review",
+                    "base_sha": base_sha,
+                    "head_sha": head_sha,
+                    "read_only": True,
+                }
+            )
+        elif assignment.allow_draft_pr:
+            if not branch.startswith("grok/"):
+                raise ProviderError(
+                    "Grok draft-PR work requires a clean isolated grok/* worktree"
+                )
+            evidence.update({"mode": "draft_pr", "read_only": False})
+        else:
+            raise ProviderError("Grok CLI transport was selected for an unsupported assignment")
+        return root, evidence
+
+    @staticmethod
+    def _cli_result(payload: Any) -> str | None:
+        if isinstance(payload, dict) and payload.get("artifact_type"):
+            return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        if not isinstance(payload, dict):
+            return None
+        for key in ("result", "output_text", "text", "message"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _cli_environment() -> dict[str, str]:
+        """Pass only OS/runtime variables needed by the locally authenticated CLI."""
+
+        allowed = {
+            "APPDATA",
+            "COMSPEC",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "LOCALAPPDATA",
+            "PATH",
+            "PATHEXT",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "WINDIR",
+        }
+        return {key: value for key, value in os.environ.items() if key.upper() in allowed}
+
+    def _verified_cli_executable(self) -> str:
+        """Resolve and digest-bind the configured CLI immediately before execution."""
+
+        configured = Path(self.settings.grok_cli_executable).expanduser()
+        expected = self.settings.grok_cli_executable_sha256.lower()
+        if not configured.is_absolute():
+            raise ProviderError("GROK_CLI_EXECUTABLE must be an absolute path")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ProviderError("GROK_CLI_EXECUTABLE_SHA256 must be an exact sha256 digest")
+        try:
+            executable = configured.resolve(strict=True)
+            before = executable.stat()
+        except (OSError, RuntimeError) as exc:
+            raise ProviderError("GROK_CLI_EXECUTABLE could not be verified") from exc
+        if not executable.is_file():
+            raise ProviderError("GROK_CLI_EXECUTABLE must name a regular file")
+        try:
+            digest = hashlib.sha256()
+            with executable.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            after = executable.stat()
+        except OSError as exc:
+            raise ProviderError("GROK_CLI_EXECUTABLE could not be verified") from exc
+        identity_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+        identity_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if identity_before != identity_after:
+            raise ProviderError("GROK_CLI_EXECUTABLE changed during verification")
+        if not hmac.compare_digest(digest.hexdigest(), expected):
+            raise ProviderError("GROK_CLI_EXECUTABLE digest does not match configuration")
+        return str(executable)
+
+    def _run_contained_cli(
+        self, argv: list[str], root: Path
+    ) -> tuple[int, bytes, bytes]:
+        """Run one CLI process inside a mandatory kill-on-timeout tree boundary."""
+
+        try:
+            process, tree_guard = launch_contained_process(
+                argv,
+                cwd=root,
+                env=self._cli_environment(),
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except (OSError, ProcessContainmentError) as exc:
+            raise ProviderError("Grok CLI process containment failed") from exc
+
+        terminated = False
+        termination_errors: list[BaseException] = []
+
+        def terminate_tree() -> None:
+            nonlocal terminated
+            if terminated:
+                return
+            terminated = True
+            try:
+                if os.name == "nt":
+                    tree_guard.terminate()
+                    return
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            except BaseException as exc:
+                termination_errors.append(exc)
+
+        timeout_error: subprocess.TimeoutExpired | None = None
+        cleanup_timeout: subprocess.TimeoutExpired | None = None
+        stdout = b""
+        stderr = b""
+        try:
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=self.settings.grok_cli_timeout_seconds
+                )
+            except subprocess.TimeoutExpired as exc:
+                timeout_error = exc
+                terminate_tree()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired as cleanup_exc:
+                    cleanup_timeout = cleanup_exc
+            terminate_tree()
+        finally:
+            try:
+                terminate_tree()
+            finally:
+                try:
+                    tree_guard.close()
+                except BaseException as exc:
+                    termination_errors.append(exc)
+        if cleanup_timeout is not None:
+            raise ProviderError(
+                "Grok CLI process tree did not terminate after timeout"
+            ) from cleanup_timeout
+        if termination_errors:
+            raise ProviderError("Grok CLI process containment failed") from termination_errors[0]
+        if timeout_error is not None:
+            raise ProviderError("Grok CLI assignment timed out") from timeout_error
+        if process.returncode is None:
+            raise ProviderError("Grok CLI exited without a terminal return code")
+        return process.returncode, stdout, stderr
+
+    async def _dispatch_cli(
+        self,
+        assignment: Assignment,
+        context: str,
+        *,
+        revision_prompt: str | None = None,
+    ) -> ProviderRun:
+        root, evidence = await self._validated_cli_worktree(assignment)
+        run_id = f"grok-cli-{secrets.token_hex(12)}"
+        instructions = [
+            "Operate only in the explicit worktree and assignment scope.",
+            "Do not expose credentials, widen access, deploy, publish, purchase, or merge.",
+            "Return the exact JSON artifact required by the assignment.",
+        ]
+        if evidence["mode"] == "exact_sha_review":
+            instructions.extend(
+                [
+                    f"Independently inspect git diff {evidence['base_sha']}..{evidence['head_sha']} and the named tests.",
+                    "Do not modify files, refs, branches, remotes, reviews, or pull requests.",
+                    f"Set review_run_id to {run_id} in the returned review artifact.",
+                ]
+            )
+        else:
+            instructions.append(
+                "Create only the authorized isolated branch changes and one draft pull request; never merge it."
+            )
+        prompt = json.dumps(
+            {
+                "assignment": assignment.model_dump(mode="json"),
+                "context": context,
+                "revision_request": revision_prompt,
+                "fixed_instructions": instructions,
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        prompt_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".json", delete=False
+            ) as handle:
+                handle.write(prompt)
+                prompt_path = Path(handle.name)
+            permission_mode = "plan" if evidence["read_only"] else "auto"
+            argv = [
+                self._verified_cli_executable(),
+                "--prompt-file",
+                str(prompt_path),
+                "--output-format",
+                "json",
+                "--cwd",
+                str(root),
+                "--disable-web-search",
+                "--no-subagents",
+                "--max-turns",
+                str(self.settings.grok_cli_max_turns),
+                "--permission-mode",
+                permission_mode,
+                "--verbatim",
+            ]
+            returncode, stdout, stderr = await asyncio.to_thread(
+                self._run_contained_cli,
+                argv,
+                root,
+            )
+            if returncode != 0:
+                detail = stderr.decode("utf-8", errors="replace").strip()[:1_000]
+                raise ProviderError(f"Grok CLI assignment failed: {detail}")
+            try:
+                payload = json.loads(stdout.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ProviderError("Grok CLI returned invalid JSON") from exc
+            result = self._cli_result(payload)
+            if not result:
+                raise ProviderError("Grok CLI returned no reviewable result")
+            return ProviderRun(
+                provider=self.name,
+                run_id=run_id,
+                status="completed",
+                result=result,
+                raw={"transport": "grok_cli", **evidence},
+            )
+        finally:
+            if prompt_path is not None:
+                prompt_path.unlink(missing_ok=True)
+
+    async def _submit(self, input_text: str) -> ProviderRun:
+        body = {
+            "model": self.settings.grok_model,
+            "input": input_text,
+            "max_output_tokens": self.settings.grok_max_output_tokens,
+            "tools": [],
+            "store": False,
+        }
+        async with httpx.AsyncClient(timeout=self.settings.grok_timeout_seconds) as client:
+            await self._ensure_model_allowed(client)
+            response = await client.post(
+                f"{self.settings.grok_api_base}/responses",
+                headers=self.headers,
+                json=body,
+            )
+            response.raise_for_status()
+        return self._run(response.json())
+
+    async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        self._require_profile(assignment)
+        if self._requires_cli(assignment):
+            return await self._dispatch_cli(assignment, context)
+        return await self._submit(self._input(assignment, context))
+
+    async def poll(self, run: ProviderRun) -> ProviderRun:
+        raise ProviderError("Grok Responses API calls are synchronous and cannot be polled")
+
+    async def revise(
+        self,
+        run: ProviderRun,
+        prompt: str,
+        *,
+        assignment: Assignment | None = None,
+        context: str | None = None,
+    ) -> ProviderRun:
+        del run
+        if assignment is None or context is None:
+            raise ProviderError("Grok revision requires the bound assignment and context")
+        self._require_profile(assignment)
+        if self._requires_cli(assignment):
+            return await self._dispatch_cli(
+                assignment, context, revision_prompt=prompt
+            )
+        return await self._submit(
+            self._input(assignment, context, revision_prompt=prompt)
+        )
+
+    async def usage_check(self, prompt: str) -> ProviderRun:
+        self._require_profile()
+        return await self._submit(prompt)
+
+
 class PerplexityAdapter(ProviderAdapter):
     name = ProviderName.PERPLEXITY
 
@@ -944,9 +1497,16 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
         ProviderName.CURSOR: CursorAdapter(settings),
         ProviderName.CLAUDE: ClaudeAdapter(settings),
         ProviderName.GEMINI: GeminiAdapter(settings),
+        ProviderName.GROK: GrokAdapter(settings),
         ProviderName.PERPLEXITY: PerplexityAdapter(settings),
     }
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:56 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]

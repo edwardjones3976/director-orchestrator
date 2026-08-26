@@ -1,7 +1,10 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import secrets
 from dataclasses import dataclass
@@ -20,7 +23,12 @@ from .models import (
     UsageCheckRunStatus,
     UsageCheckStatus,
 )
-from .providers import GeminiAdapter, ProviderAdapter, provider_registry
+from .providers import (
+    GeminiAdapter,
+    ProviderAdapter,
+    ProviderDailySpendLedger,
+    provider_registry,
+)
 from .store import TaskStore
 
 
@@ -44,7 +52,14 @@ TERMINAL_STATUSES = {
     "prompted",
 }
 SUCCESS_STATUSES = {"FINISHED", "completed", "prompted"}
-SUPPORTED_PROVIDERS = {"openai", "cursor", "claude", "gemini", "perplexity"}
+SUPPORTED_PROVIDERS = {
+    "openai",
+    "cursor",
+    "claude",
+    "gemini",
+    "grok",
+    "perplexity",
+}
 MINIMUM_INTERVAL = timedelta(minutes=15)
 MINIMUM_INTERVAL_MINUTES = 15
 
@@ -132,6 +147,7 @@ class UsageMonitor:
         self.settings = settings
         self.store = store
         self.adapters = adapters or provider_registry(settings)
+        self.provider_spend = ProviderDailySpendLedger(store.path)
         self._lock = asyncio.Lock()
         self._schedule_lock = asyncio.Lock()
         self._reserved: _ManualCycleReservation | None = None
@@ -192,9 +208,17 @@ class UsageMonitor:
         if provider == "gemini":
             request_limit = self.settings.gemini_daily_request_limit
             budget_usd = self.settings.gemini_daily_budget_usd
+        elif provider == "grok":
+            request_limit = self.settings.grok_daily_request_limit
+            budget_usd = self.settings.grok_daily_budget_usd
         elif provider == "perplexity":
             request_limit = self.settings.perplexity_daily_request_limit
             budget_usd = self.settings.perplexity_daily_budget_usd
+        reserved_cost_usd: float | None = None
+        if provider == "grok":
+            request_count, reserved_cost_usd = self.provider_spend.totals(
+                ProviderName.GROK, now=now
+            )
         return {
             "request_count": request_count,
             "retry_count": retry_count,
@@ -205,27 +229,30 @@ class UsageMonitor:
             and len(reported_costs) == len(attempted),
             "daily_request_limit": request_limit,
             "daily_budget_usd": budget_usd,
+            "reserved_cost_usd": reserved_cost_usd,
         }
 
     def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
-        if provider not in {"gemini", "perplexity"}:
+        if provider not in {"gemini", "grok", "perplexity"}:
             return None
         accounting = self._daily_accounting(provider, now)
         request_limit = accounting["daily_request_limit"]
         if isinstance(request_limit, int) and accounting["request_count"] >= request_limit:
             return "Provider daily request limit reached"
         budget = accounting["daily_budget_usd"]
-        if (
-            isinstance(budget, (int, float))
-            and accounting["reported_cost_usd"] >= budget
-        ):
-            return "Provider reported daily cost limit reached"
+        accounted_cost = (
+            accounting["reserved_cost_usd"]
+            if accounting["reserved_cost_usd"] is not None
+            else accounting["reported_cost_usd"]
+        )
+        if isinstance(budget, (int, float)) and accounted_cost >= budget:
+            return "Provider daily cost limit reached"
         return None
 
     def _supplemental_remaining_requests(
         self, provider: str, now: datetime
     ) -> int | None:
-        if provider not in {"gemini", "perplexity"}:
+        if provider not in {"gemini", "grok", "perplexity"}:
             return None
         accounting = self._daily_accounting(provider, now)
         request_limit = accounting["daily_request_limit"]
@@ -485,6 +512,18 @@ class UsageMonitor:
                         )
                     else:
                         try:
+                            if provider == "grok":
+                                effect_key = hashlib.sha256(
+                                    f"usage:{cycle_id}:{provider}".encode("utf-8")
+                                ).hexdigest()
+                                self.provider_spend.reserve(
+                                    provider=ProviderName.GROK,
+                                    effect_key=effect_key,
+                                    estimated_cost_usd=self.settings.grok_request_cost_floor_usd,
+                                    request_limit=self.settings.grok_daily_request_limit,
+                                    budget_usd=self.settings.grok_daily_budget_usd,
+                                    now=now,
+                                )
                             run = await self._prompt(
                                 provider,
                                 remaining_requests=self._supplemental_remaining_requests(
@@ -596,3 +635,5 @@ class UsageMonitor:
             "latest": latest,
         }
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]

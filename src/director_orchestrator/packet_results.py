@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 """Deterministic progression of validated packet results into task evidence."""
@@ -55,6 +56,7 @@ class DirectorPacketResultConsumer:
         ProviderName.CLAUDE: ProviderTransport.CLAUDE_ROUTINE,
         ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
         ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
+        ProviderName.GROK: ProviderTransport.XAI_RESPONSES_API,
         ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
     }
 
@@ -227,6 +229,7 @@ class DirectorPacketResultConsumer:
                     {
                         ProviderName.CURSOR: "FINISHED",
                         ProviderName.CLAUDE: "completed",
+                        ProviderName.GROK: "completed",
                         ProviderName.GEMINI: "completed",
                         ProviderName.PERPLEXITY: "completed",
                         ProviderName.OPENAI: "completed",
@@ -284,3 +287,4 @@ class DirectorPacketResultConsumer:
         )
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

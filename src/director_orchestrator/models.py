@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | BEGIN]]
@@ -102,6 +103,7 @@ class ProviderName(StrEnum):
     CURSOR = "cursor"
     CLAUDE = "claude"
     GEMINI = "gemini"
+    GROK = "grok"
     PERPLEXITY = "perplexity"
     OWNER = "owner"
     # The Director's own runtime. Never a plan assignment target: it is absent from
@@ -1042,3 +1044,4 @@ class ManualRunCompletion(BaseModel):
 # [[Codex Security | GPT-5.6 | 2026-08-25 | 11:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

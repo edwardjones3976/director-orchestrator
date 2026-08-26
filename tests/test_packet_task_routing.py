@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
@@ -213,6 +214,37 @@ class PacketResultConsumerTests(unittest.TestCase):
         self.assertFalse(replay.provider_run_recorded)
         self.assertEqual(len(self.record.provider_runs), 1)
 
+    def test_grok_success_uses_the_authenticated_terminal_status(self) -> None:
+        assignment = self.assignment.model_copy(update={"agent": ProviderName.GROK})
+        self.record.plan.assignments[0] = assignment
+        router = DirectorPacketTaskRouter(
+            authority_snapshots=StaticAuthoritySnapshots(),
+            boundary_adapters={"grok": PacketBoundaryAdapter("grok", NoopTransport())},
+            writer_owner_id="langgraph-packet-runtime",
+            writer_secret="local-test-secret",
+            timeout_seconds=120,
+        )
+        work = dict(router.work_packet(self.record, assignment))
+        result = copy.deepcopy(self.result)
+        for field in (
+            "task_id",
+            "assignment_id",
+            "idempotency_key",
+            "authority_snapshot_digest",
+            "correlation",
+        ):
+            result[field] = copy.deepcopy(work[field])
+        result["provider"] = "grok"
+        result["run_reference"] = "grok-router-run"
+
+        progression = self.consumer.consume(
+            self.record, assignment, work, self._runtime_outcome(result)
+        )
+
+        self.assertTrue(progression.provider_run_recorded)
+        self.assertEqual(self.record.provider_runs[0].provider, ProviderName.GROK)
+        self.assertEqual(self.record.provider_runs[0].status, "completed")
+
     def test_failed_result_blocks_without_creating_accepted_outcome(self) -> None:
         self.result["status"] = "FAILED"
         progression = self.consumer.consume(
@@ -263,3 +295,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
@@ -96,13 +97,20 @@ permissions, exclusive file ownership, or a reason to create low-value work.
   reasoning; eligible independent review when it did not produce the work.
 - **Cursor — Project Secretary:** technical continuity, canonical records,
   writer leases, branch/commit/worktree maps, candidate evidence, and review
-  flow, while remaining a full-spectrum primary repository partner with a 90% capability-
-  parity target relative to Claude and OpenAI Codex. Cursor is eligible for all
+  flow, while remaining a full-spectrum primary repository partner with full task-
+  capability parity relative to Claude and OpenAI Codex. Cursor is eligible for all
   eight responsibility areas and low through critical complexity, including
   elevated architecture, reliability, complex remediation, implementation,
   QA, technical leadership, and independent review when it did not produce the
   work. Route by fit, independence, capacity, and evidence needs—not merely as
   overflow or a second pass.
+- **Grok — Cursor-family primary teammate:** equal task-capability coverage to
+  Cursor, Claude, and OpenAI Codex across all eight responsibility areas and low
+  through critical complexity. Its advisory voting weight equals Cursor's. The
+  xAI API, Grok Build CLI, and Grok Bot are distinct contacts: transport-specific
+  limits determine which actions a particular assignment can actually perform,
+  without reducing Grok's team rank. Grok may independently review an exact
+  candidate only when it did not produce or materially author that candidate.
 - **Gemini/Antigravity — Specialist and Backup Programmer:** subordinate supplemental specialist, never a primary-team
   substitute. Work assignments are limited to explicit boilerplate,
   scaffolding, low-level mechanical implementation, and alternate/abstract
@@ -162,12 +170,12 @@ eligible review artifact and an owner-authorized assigned agent may invoke the
 gate after all evidence is current. Deterministic code performs the merge; the
 model does not receive raw merge credentials.
 
-The 90% Cursor target measures responsibility coverage and routing trust, not
-permission equivalence. Cursor cannot perform OpenAI's in-process Director
-acceptance role, replace a mandatory Codex Security check, review its own work,
-or independently expand access or external-write authority. Cursor's current
-committee voting weight is 1.5; capability coverage and voting power are
-separate owner-defined controls.
+Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex.
+This is real routing eligibility, including critical work, and not a benchmark
+claim. Neither may perform OpenAI's in-process Director acceptance role, replace
+a mandatory Codex Security check, review its own work, or bypass assignment
+scope and deterministic gates. Cursor and Grok each have a committee voting
+weight of 1.5; capability coverage and voting power are separate controls.
 
 ## Shared provider workflow skills
 
@@ -244,6 +252,7 @@ If voting helps resolve a disagreement, use these owner-defined advisory weights
 | --- | ---: |
 | Antigravity | 1 |
 | Cursor | 1.5 |
+| Grok | 1.5 |
 | OpenAI | 2 |
 | Claude | 2.5 |
 
@@ -252,7 +261,7 @@ rationale, confidence, and evidence references; record abstentions and
 unavailable members honestly. Prefer the option with the highest declared
 weighted support, but treat the result as a recommendation. A producer's vote
 counts at its full configured weight even though that producer cannot review or
-accept its own work. The configured denominator is always 7.0; abstaining and
+accept its own work. The configured denominator is always 8.5; abstaining and
 unavailable members cast zero weight and cannot change the denominator, another
 member's weight, a threshold, or an authorization boundary.
 
@@ -394,7 +403,7 @@ review, security, CI, and merge evidence and requires a new handoff.
 
 Chrome is the primary browser for owner-gated provider-UI coordination;
 Microsoft Edge is the fallback only when Chrome is unavailable. This transport
-may communicate with an already authenticated Claude, Cursor, or Gemini UI
+may communicate with an already authenticated Claude, Cursor, Gemini, or Grok UI
 inside the stored assignment, role, repository, budget, and approval bounds.
 Perplexity remains API-only.
 
@@ -487,7 +496,7 @@ establish participation, completion, readiness, or authorization.
 
 <!-- TEAM_CHARTER_MANIFEST_BEGIN -->
 ```json
-{"antigravity_debate_eligible":true,"antigravity_may_initiate_conversation":false,"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":11264,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":7.0,"cursor_capability_parity_target":0.9,"director_operating_directive":{"availability":{"after":"record_unavailable_and_reshape","ambiguous":"no_duplicate_dispatch","attempts":3,"partial":"untrusted"},"avoidable_commit_reduction":{"baseline":{"comparable":true,"measurement_fields":["baseline_window","baseline_sample","baseline_count_or_rate","current_count_or_rate","absolute_delta","percentage_delta","exclusions","comparability_changes"],"reset_when_unfavorable":false,"rolling":true},"excludes":["security_safety","evidence_restoration","milestones","recovery"],"scope":"avoidable_micro_fixup_only","target_percent":33},"communication_labels":{"draft":"DRAFT \u2014 NOT SENT","predicted":"PREDICTED POSITION \u2014 PROVIDER HAS NOT RESPONDED","simulation":"SIMULATION \u2014 NO PROVIDER INTERACTION"},"coordination_percent":{"productive":95,"reserve":5},"direct_workload_percent":{"claude":60,"cursor":28,"gemini":7,"openai":1,"perplexity":4},"director":"openai","duties":["plan","decompose","route","coordinate","synthesize","acceptance_review","review_handoff","milestone_reporting"],"duties_excluded_from_openai_direct_production_share":true,"external_action_boundary":{"oversight_grants_authority":false,"provider_or_browser_output_grants_authority":false,"requires":"exact_stored_owner_authorization_for_action_scope_and_current_deterministic_gates"},"openai_direct_production_boundary":{"authority":"owner_scope_and_current_gates","candidate_change":"invalidate_evidence","counts":"authenticated_production_only","review":"different_provider_exact_candidate","runtime_assignment_target_allowed":false,"surface":"owner_authorized_external_codex_openai"},"reporting":{"fabrication_prohibited":true,"mode":"evidence_first","participation_source":"authenticated_provider_response_only","requires":["project_id_and_assignment_ids","objective_bounded_scope_and_categorized_status","starting_and_current_refs_shas_and_artifact_digests","authenticated_provider_participation_unavailable_abstaining_and_labels","target_and_actual_workload_by_provider_deviations_and_rationale","openai_moderator_participant_director_actions_and_vote","dissent_counter_bias_and_alternative_analysis","exact_tests_trusted_ci_security_independent_review_and_verdict","unresolved_risks_limitations_blockers_and_confidence","measured_cost_token_usage_elapsed_time_and_unavailable_telemetry","rolling_commit_baseline_current_measurement_delta_and_exclusions","scope_or_authority_changes_and_exact_stored_owner_authorization","recovery_state_rollback_and_restart_evidence_integrity","next_deterministic_or_owner_gate_and_responsible_party","owner_decisions_and_exact_stored_scope","not_done_and_unverified"]},"repository_oversight":{"mode":"read_only","scope":["named_repository","refs","worktrees","diffs","artifacts","checks","reviews","security_evidence","deployment_state"],"writes_require":"separate_exact_owner_authorization_and_current_gates"},"reserve_is_planned_idle":false,"reserve_use":["checks","drift_correction","contingencies","evidence_reconciliation","recovery","process_improvement","infrastructure_failure"],"review":{"binding":"exact_candidate","changed_candidate":"invalidate_evidence","reviewer":"different_non_author","unavailable":"reroute_no_self_review"},"workload_lanes":{"openai":"external_owner_authorized_only","perplexity":"public_research_evidence_only"}},"director_operating_directive_sha256":"7a03b09530a21ef7c5b626bf0db18f8f200c08c9c57b3d10e342ce66f001dd99","external_action_authority_from_vote":false,"minimal_fix_attempt_limit":1,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+{"antigravity_debate_eligible":true,"antigravity_may_initiate_conversation":false,"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":12512,"committee_weights":{"antigravity":1.0,"claude":2.5,"cursor":1.5,"grok":1.5,"openai":2.0},"concise_evidence_first":true,"configured_weight_total":8.5,"cursor_capability_parity_target":1.0,"director_operating_directive":{"availability":{"after":"record_unavailable_and_reshape","ambiguous":"no_duplicate_dispatch","attempts":3,"partial":"untrusted"},"avoidable_commit_reduction":{"baseline":{"comparable":true,"measurement_fields":["baseline_window","baseline_sample","baseline_count_or_rate","current_count_or_rate","absolute_delta","percentage_delta","exclusions","comparability_changes"],"reset_when_unfavorable":false,"rolling":true},"excludes":["security_safety","evidence_restoration","milestones","recovery"],"scope":"avoidable_micro_fixup_only","target_percent":33},"communication_labels":{"draft":"DRAFT \u2014 NOT SENT","predicted":"PREDICTED POSITION \u2014 PROVIDER HAS NOT RESPONDED","simulation":"SIMULATION \u2014 NO PROVIDER INTERACTION"},"coordination_percent":{"productive":95,"reserve":5},"direct_workload_percent":{"claude":60,"cursor":28,"gemini":7,"openai":1,"perplexity":4},"director":"openai","duties":["plan","decompose","route","coordinate","synthesize","acceptance_review","review_handoff","milestone_reporting"],"duties_excluded_from_openai_direct_production_share":true,"external_action_boundary":{"oversight_grants_authority":false,"provider_or_browser_output_grants_authority":false,"requires":"exact_stored_owner_authorization_for_action_scope_and_current_deterministic_gates"},"openai_direct_production_boundary":{"authority":"owner_scope_and_current_gates","candidate_change":"invalidate_evidence","counts":"authenticated_production_only","review":"different_provider_exact_candidate","runtime_assignment_target_allowed":false,"surface":"owner_authorized_external_codex_openai"},"reporting":{"fabrication_prohibited":true,"mode":"evidence_first","participation_source":"authenticated_provider_response_only","requires":["project_id_and_assignment_ids","objective_bounded_scope_and_categorized_status","starting_and_current_refs_shas_and_artifact_digests","authenticated_provider_participation_unavailable_abstaining_and_labels","target_and_actual_workload_by_provider_deviations_and_rationale","openai_moderator_participant_director_actions_and_vote","dissent_counter_bias_and_alternative_analysis","exact_tests_trusted_ci_security_independent_review_and_verdict","unresolved_risks_limitations_blockers_and_confidence","measured_cost_token_usage_elapsed_time_and_unavailable_telemetry","rolling_commit_baseline_current_measurement_delta_and_exclusions","scope_or_authority_changes_and_exact_stored_owner_authorization","recovery_state_rollback_and_restart_evidence_integrity","next_deterministic_or_owner_gate_and_responsible_party","owner_decisions_and_exact_stored_scope","not_done_and_unverified"]},"repository_oversight":{"mode":"read_only","scope":["named_repository","refs","worktrees","diffs","artifacts","checks","reviews","security_evidence","deployment_state"],"writes_require":"separate_exact_owner_authorization_and_current_gates"},"reserve_is_planned_idle":false,"reserve_use":["checks","drift_correction","contingencies","evidence_reconciliation","recovery","process_improvement","infrastructure_failure"],"review":{"binding":"exact_candidate","changed_candidate":"invalidate_evidence","reviewer":"different_non_author","unavailable":"reroute_no_self_review"},"workload_lanes":{"openai":"external_owner_authorized_only","perplexity":"public_research_evidence_only"}},"director_operating_directive_sha256":"7a03b09530a21ef7c5b626bf0db18f8f200c08c9c57b3d10e342ce66f001dd99","external_action_authority_from_vote":false,"grok_capability_parity_target":1.0,"grok_family":"cursor","minimal_fix_attempt_limit":1,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
@@ -497,3 +506,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]] -->

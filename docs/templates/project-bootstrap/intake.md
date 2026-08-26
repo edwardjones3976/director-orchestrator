@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 # PROJECT_BOOTSTRAP
@@ -79,7 +80,7 @@ acceptance review are Director duties, not separate functions.
 | Lane | Provider/capability | Shared workflow skill | Why it may fit |
 | --- | --- | --- | --- |
 | Director | OpenAI | none | <Moderator, Participant, and Director kept distinct; only Participant votes> |
-| Primary | <Claude or Cursor> | <skill name or none> | <bounded contribution> |
+| Primary | <Claude, Cursor, or Grok> | <skill name or none> | <bounded contribution> |
 | Independent | <different provider> | <skill name or none> | <research, reproduction, QA, or review> |
 | Supplemental | <Antigravity, Perplexity, Firecrawl, or none> | <skill name or none> | <bounded contribution> |
 
@@ -111,3 +112,4 @@ Ask the owner one focused question only when the unresolved choice materially
 changes authority, scope, cost, privacy, repository target, or risk.
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->

@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
@@ -72,6 +75,7 @@ from .approvals import (
 )
 from .models import (
     Assignment,
+    AssignmentKind,
     AssignmentOutcome,
     CollaborationTurn,
     DebateActorRole,
@@ -169,6 +173,7 @@ _STANDING_PROVIDER_ROLES = {
     ProviderName.CLAUDE: "Chief Programmer",
     ProviderName.CURSOR: "Project Secretary",
     ProviderName.GEMINI: "Specialist and Backup Programmer",
+    ProviderName.GROK: "Cursor-Family Primary Teammate",
     ProviderName.PERPLEXITY: "Research Programmers",
     ProviderName.OWNER: "Owner",
 }
@@ -1273,14 +1278,43 @@ class OrchestrationEngine:
     # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 
     @staticmethod
-    def _provider_transport(provider: ProviderName) -> ProviderTransport:
+    def _provider_transport(
+        provider: ProviderName, *, repository_capable: bool = False
+    ) -> ProviderTransport:
+        if provider == ProviderName.GROK and repository_capable:
+            return ProviderTransport.GROK_CLI
         return {
             ProviderName.OPENAI: ProviderTransport.OPENAI_RESPONSES_API,
             ProviderName.CLAUDE: ProviderTransport.CLAUDE_ROUTINE,
             ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
             ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
+            ProviderName.GROK: ProviderTransport.XAI_RESPONSES_API,
             ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
         }.get(provider, ProviderTransport.DIRECTOR_BACKEND)
+
+    @classmethod
+    def _assignment_transport(cls, assignment: Assignment) -> ProviderTransport:
+        return cls._provider_transport(
+            assignment.agent,
+            repository_capable=(
+                assignment.agent == ProviderName.GROK
+                and (
+                    assignment.allow_draft_pr
+                    or assignment.kind == AssignmentKind.EXACT_SHA_REVIEW
+                )
+            ),
+        )
+
+    @classmethod
+    def _run_transport(cls, run: ProviderRun) -> ProviderTransport:
+        raw = run.raw if isinstance(run.raw, dict) else {}
+        return cls._provider_transport(
+            run.provider,
+            repository_capable=(
+                run.provider == ProviderName.GROK
+                and raw.get("transport") == ProviderTransport.GROK_CLI.value
+            ),
+        )
 
     @staticmethod
     def _interaction_result_text(value: object) -> str:
@@ -1436,7 +1470,7 @@ class OrchestrationEngine:
         ):
             return interaction_id
         evidence = build_transport_evidence(
-            transport=self._provider_transport(assignment.agent),
+            transport=self._assignment_transport(assignment),
             source=TransportEvidenceSource.BACKEND_OBSERVATION,
             idempotency_key=effect_key,
         )
@@ -1484,6 +1518,7 @@ class OrchestrationEngine:
             provider=run.provider,
             state=state,
             source=source,
+            transport=self._run_transport(run),
             run_id=run.run_id,
             session_id=run.session_id,
             native_status=run.status,
@@ -1501,6 +1536,7 @@ class OrchestrationEngine:
         provider: ProviderName,
         state: ProviderInteractionState,
         source: TransportEvidenceSource,
+        transport: ProviderTransport | None = None,
         run_id: str | None = None,
         session_id: str | None = None,
         native_status: str | None = None,
@@ -1510,7 +1546,11 @@ class OrchestrationEngine:
         contact_attempt_ordinal: int | None = None,
     ) -> None:
         evidence = build_transport_evidence(
-            transport=self._provider_transport(provider),
+            transport=(
+                transport
+                if transport is not None
+                else self._provider_transport(provider)
+            ),
             source=source,
             idempotency_key=interaction_id,
             provider_run_id=run_id,
@@ -3605,7 +3645,12 @@ class OrchestrationEngine:
         valid_discussion_sequences = set(
             debate.position_assignments + debate.rebuttal_assignments
         )
-        eligible_participants = {ProviderName.CLAUDE, ProviderName.CURSOR}
+        eligible_participants = {
+            ProviderName.CLAUDE,
+            ProviderName.CURSOR,
+            ProviderName.GROK,
+            ProviderName.GEMINI,
+        }
         latest_by_provider: dict[ProviderName, CollaborationTurn] = {}
         for turn in record.collaboration_turns:
             if turn.provider == ProviderName.OPENAI or turn.phase not in {
@@ -4202,6 +4247,9 @@ class OrchestrationEngine:
         if assignment.agent == ProviderName.GEMINI:
             request_limit = self.settings.gemini_daily_request_limit
             budget_usd = self.settings.gemini_daily_budget_usd
+        elif assignment.agent == ProviderName.GROK:
+            request_limit = self.settings.grok_daily_request_limit
+            budget_usd = self.settings.grok_daily_budget_usd
         elif assignment.agent == ProviderName.PERPLEXITY:
             request_limit = self.settings.perplexity_daily_request_limit
             budget_usd = self.settings.perplexity_daily_budget_usd
@@ -4217,7 +4265,14 @@ class OrchestrationEngine:
         self.provider_spend.reserve(
             provider=assignment.agent,
             effect_key=effect_key,
-            estimated_cost_usd=assignment.estimated_cost_usd,
+            estimated_cost_usd=(
+                max(
+                    assignment.estimated_cost_usd,
+                    self.settings.grok_request_cost_floor_usd,
+                )
+                if assignment.agent == ProviderName.GROK
+                else assignment.estimated_cost_usd
+            ),
             request_limit=request_limit,
             budget_usd=budget_usd,
         )
@@ -5599,3 +5654,6 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]
