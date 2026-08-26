@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
@@ -291,9 +292,60 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
+        directive = charter["director_operating_directive"]
+        self.assertEqual(
+            directive["direct_workload_percent"],
+            {
+                "claude": 60,
+                "cursor": 14,
+                "grok": 14,
+                "gemini": 7,
+                "perplexity": 4,
+                "external_openai": 1,
+            },
+        )
+        self.assertEqual(
+            directive["overall_effort_percent"],
+            {
+                "claude": 36,
+                "cursor": 20,
+                "grok": 20,
+                "openai": 8,
+                "gemini": 11,
+                "perplexity": 5,
+            },
+        )
+        self.assertEqual(
+            directive["coding_routing"]["minimum_model_profile"],
+            "FABLE 5 ULTRA/MAX",
+        )
+        self.assertEqual(
+            directive["coding_routing"]["required_assignment_model_label"],
+            "FABLE 5 ULTRA/MAX",
+        )
+        self.assertTrue(
+            directive["pre_staging"]["required_before_provider_dispatch"]
+        )
+        self.assertEqual(
+            directive["pre_staging"]["revision_mode"],
+            "immutable_canonical_packet_revisions",
+        )
+        self.assertIn(
+            "user_reviews_and_real_world_experience",
+            directive["research_policy"]["triggers"],
+        )
+        self.assertIn(
+            "competitor_solutions_to_similar_issues",
+            directive["research_policy"]["triggers"],
+        )
         browser = charter["browser_communication_policy"]
         self.assertEqual(browser["primary"], "chrome")
         self.assertEqual(browser["fallback"], "microsoft_edge")
+        self.assertEqual(
+            browser["priority"],
+            "lower_than_authenticated_cli_api_callback_or_event_transport",
+        )
+        self.assertIsNone(browser["usage_reduction_target"])
         self.assertEqual(browser["eligible_providers"], ["claude", "cursor", "gemini", "grok"])
         self.assertEqual(
             browser["owner_authorizable_actions"],
@@ -331,6 +383,9 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         efficiency = charter["efficiency_policy"]
         self.assertTrue(efficiency["concise_evidence_first"])
         self.assertTrue(efficiency["repeat_requires_new_information"])
+        self.assertTrue(efficiency["event_driven_status"])
+        self.assertTrue(efficiency["browser_enabled_lower_priority"])
+        self.assertIsNone(efficiency["browser_usage_reduction_target"])
         self.assertTrue(any("information gain" in rule for rule in efficiency["rules"]))
         self.assertTrue(any("safety evidence" in rule for rule in efficiency["rules"]))
         self.assertTrue(any("dependencies" in rule for rule in efficiency["rules"]))
@@ -930,3 +985,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]

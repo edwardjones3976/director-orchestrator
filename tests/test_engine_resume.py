@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | BEGIN]]
@@ -533,6 +534,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             database = str(Path(directory) / "tasks.sqlite3")
             settings = replace(
                 Settings(),
+                workload_policy_enabled=False,
                 allow_paid_runs=True,
                 openai_api_key="test-openai",
                 openai_plan_estimated_cost_usd=0.1,
@@ -2133,4 +2135,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:54 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
 

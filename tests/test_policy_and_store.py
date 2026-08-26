@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -79,7 +80,10 @@ class PolicyTests(unittest.TestCase):
         plan = preview_plan("Project: RootWitness\nResearch current retention requirements with sources", self.settings)
         self.assertEqual(plan.project, "RootWitness")
         self.assertEqual(plan.assignments[0].agent.value, "perplexity")
-        self.assertIsNone(plan.assignments[0].public_research_query)
+        self.assertEqual(
+            plan.assignments[0].public_research_query,
+            "public sources for the owner-defined research topic",
+        )
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
 
@@ -91,7 +95,11 @@ class PolicyTests(unittest.TestCase):
         plan = preview_plan(text, self.settings)
         self.assertEqual(plan.assignments[0].agent.value, "perplexity")
         self.assertEqual(plan.assignments[0].task, text.strip())
-        self.assertIsNone(plan.assignments[0].public_research_query)
+        self.assertNotIn(
+            "github.com/acme/private-repo",
+            plan.assignments[0].public_research_query,
+        )
+        self.assertNotIn("attached patch", plan.assignments[0].public_research_query)
 
     def test_dry_run_uses_claude_as_default_workhorse(self):
         plan = preview_plan("Project: demo\nImplement and test a bounded API change", self.settings)
@@ -129,7 +137,10 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(text=text):
                 plan = preview_plan(text, self.settings)
                 self.assertEqual(plan.assignments[0].agent, ProviderName.CLAUDE)
-                self.assertEqual(len(plan.assignments), 1)
+                self.assertEqual(len(plan.assignments), 2)
+                self.assertEqual(
+                    plan.assignments[1].kind, AssignmentKind.INDEPENDENT_REVIEW
+                )
 
     def antigravity_work(self, **overrides) -> Assignment:
         fields = {
@@ -694,3 +705,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | BEGIN]]
@@ -112,6 +113,7 @@ def _build_github_effect_verifier(
 
 
 settings = Settings()
+settings.validate_workload_policy_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 settings.validate_langgraph_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
@@ -381,6 +383,7 @@ def health() -> dict:
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
         "execution_profile": settings.execution_profile_readiness(),
+        "workload_policy": settings.workload_policy_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
         "langgraph": settings.langgraph_shadow_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
@@ -819,3 +822,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]

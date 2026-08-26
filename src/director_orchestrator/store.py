@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
@@ -12,8 +13,9 @@ import threading
 from dataclasses import dataclass
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 from .interactions import (
     ProviderInteractionEvent,
@@ -25,6 +27,18 @@ from .models import (
     TaskRecord,
     TaskStatus,
     UsageCheckRecord,
+)
+from .workload_policy import (
+    DEFAULT_POLICY,
+    AssignmentRequest,
+    DecisionOutcome,
+    DecisionResult,
+    EnforcementMode,
+    Provider,
+    WorkKind,
+    WorkSize,
+    WorkloadRecord,
+    evaluate_assignment,
 )
 
 
@@ -50,6 +64,37 @@ class PrivacyCleanupPending(RuntimeError):
 
 class SlackIntakeReplayConflict(RuntimeError):
     """A signed Slack nonce or source event was reused with different authority."""
+
+
+class WorkloadReservationConflict(RuntimeError):
+    """A workload idempotency key was reused with different assignment identity."""
+
+
+class WorkloadAttemptOutcome(str, Enum):
+    """Append-only terminal classification for a workload reservation."""
+
+    INVOKED = "invoked"
+    FAILED_PRE_SUBMIT = "failed_pre_submit"
+    CACHED_REPLAY = "cached_replay"
+    BLOCKED = "blocked"
+
+
+@dataclass(frozen=True)
+class WorkloadLedgerReservation:
+    reservation_key: str
+    task_id: str
+    assignment_id: str
+    phase: str
+    provider: Provider
+    effort_units: int
+    kind: WorkKind
+    size: WorkSize
+    model_label: str | None
+    available_primary_providers: frozenset[Provider]
+    decision: DecisionResult
+    created: bool
+    final_outcome: WorkloadAttemptOutcome | None
+    recorded_at: datetime
 
 
 @dataclass(frozen=True)
@@ -285,6 +330,75 @@ class TaskStore:
                 CREATE TRIGGER IF NOT EXISTS provider_interaction_events_no_delete
                 BEFORE DELETE ON provider_interaction_events
                 BEGIN SELECT RAISE(ABORT, 'provider interaction events are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workload_assignment_reservations (
+                    ledger_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reservation_key TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL,
+                    assignment_id TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    effort_units INTEGER NOT NULL CHECK(effort_units > 0),
+                    work_kind TEXT NOT NULL,
+                    work_size TEXT NOT NULL,
+                    model_label TEXT,
+                    available_primary_json TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    decision_outcome TEXT NOT NULL,
+                    allowed INTEGER NOT NULL CHECK(allowed IN (0, 1)),
+                    violations_json TEXT NOT NULL,
+                    advisories_json TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_workload_reservations_order
+                ON workload_assignment_reservations(ledger_id DESC)"""
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS workload_reservations_no_update
+                BEFORE UPDATE ON workload_assignment_reservations
+                BEGIN SELECT RAISE(ABORT, 'workload reservations are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS workload_reservations_no_delete
+                BEFORE DELETE ON workload_assignment_reservations
+                BEGIN SELECT RAISE(ABORT, 'workload reservations are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workload_assignment_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reservation_key TEXT NOT NULL UNIQUE,
+                    outcome TEXT NOT NULL CHECK(outcome IN (
+                        'invoked', 'failed_pre_submit', 'cached_replay', 'blocked'
+                    )),
+                    recorded_at TEXT NOT NULL,
+                    FOREIGN KEY(reservation_key)
+                        REFERENCES workload_assignment_reservations(reservation_key)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS workload_events_no_update
+                BEFORE UPDATE ON workload_assignment_events
+                BEGIN SELECT RAISE(ABORT, 'workload events are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS workload_events_no_delete
+                BEFORE DELETE ON workload_assignment_events
+                BEGIN SELECT RAISE(ABORT, 'workload events are append-only'); END
                 """
             )
             connection.execute(
@@ -1030,6 +1144,319 @@ class TaskStore:
             return self._load_provider_interactions(connection, task_id)
 
     @staticmethod
+    def _workload_row(
+        connection: sqlite3.Connection, reservation_key: str
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """SELECT reservation.*, event.outcome AS final_outcome
+            FROM workload_assignment_reservations AS reservation
+            LEFT JOIN workload_assignment_events AS event
+              ON event.reservation_key = reservation.reservation_key
+            WHERE reservation.reservation_key = ?""",
+            (reservation_key,),
+        ).fetchone()
+
+    @staticmethod
+    def _workload_reservation_from_row(
+        row: sqlite3.Row, *, created: bool
+    ) -> WorkloadLedgerReservation:
+        try:
+            available_payload = json.loads(str(row["available_primary_json"]))
+            violations_payload = json.loads(str(row["violations_json"]))
+            advisories_payload = json.loads(str(row["advisories_json"]))
+            available = frozenset(Provider(str(item)) for item in available_payload)
+            decision = DecisionResult(
+                mode=EnforcementMode(str(row["mode"])),
+                outcome=DecisionOutcome(str(row["decision_outcome"])),
+                allowed=bool(row["allowed"]),
+                violations=tuple(str(item) for item in violations_payload),
+                advisories=tuple(str(item) for item in advisories_payload),
+            )
+            final_outcome = (
+                WorkloadAttemptOutcome(str(row["final_outcome"]))
+                if row["final_outcome"] is not None
+                else None
+            )
+            recorded_at = datetime.fromisoformat(str(row["recorded_at"]))
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            raise WorkloadReservationConflict(
+                "persisted workload reservation is malformed"
+            ) from exc
+        if recorded_at.tzinfo is None:
+            raise WorkloadReservationConflict(
+                "persisted workload reservation timestamp is not timezone-aware"
+            )
+        return WorkloadLedgerReservation(
+            reservation_key=str(row["reservation_key"]),
+            task_id=str(row["task_id"]),
+            assignment_id=str(row["assignment_id"]),
+            phase=str(row["phase"]),
+            provider=Provider(str(row["provider"])),
+            effort_units=int(row["effort_units"]),
+            kind=WorkKind(str(row["work_kind"])),
+            size=WorkSize(str(row["work_size"])),
+            model_label=(
+                str(row["model_label"]) if row["model_label"] is not None else None
+            ),
+            available_primary_providers=available,
+            decision=decision,
+            created=created,
+            final_outcome=final_outcome,
+            recorded_at=recorded_at,
+        )
+
+    def reserve_workload_assignment(
+        self,
+        *,
+        reservation_key: str,
+        task_id: str,
+        assignment_id: str,
+        phase: str,
+        provider: Provider,
+        effort_units: int,
+        kind: WorkKind,
+        size: WorkSize,
+        model_label: str | None,
+        available_primary_providers: frozenset[Provider],
+        mode: EnforcementMode,
+    ) -> WorkloadLedgerReservation:
+        """Atomically evaluate and reserve one prospective provider invocation.
+
+        ``BEGIN IMMEDIATE`` serializes this read-check-append sequence across
+        processes.  The evaluator receives the latest nineteen effective
+        attempts: actual ``invoked`` rows plus unresolved reservations.  Pending
+        rows are conservatively included only while provider-call outcome is
+        unknown, preventing simultaneous workers from both crossing a cap. They
+        disappear from the effective window when append-only evidence classifies
+        them as pre-submit failure, cached replay, or enforced block.
+
+        Reusing the exact reservation key returns its original decision and never
+        appends a second workload row. Reusing it with a different assignment
+        identity fails closed.
+        """
+
+        for value, label in (
+            (reservation_key, "reservation key"),
+            (task_id, "task id"),
+            (assignment_id, "assignment id"),
+            (phase, "phase"),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"workload {label} must not be blank")
+        if len(reservation_key) > 2_000:
+            raise ValueError("workload reservation key is too long")
+        if not isinstance(mode, EnforcementMode):
+            raise ValueError("workload mode must be enforced or shadow")
+        available = frozenset(available_primary_providers)
+        request = AssignmentRequest(
+            assignment_id=reservation_key,
+            provider=provider,
+            kind=kind,
+            size=size,
+            model_label=model_label,
+            effort_units=effort_units,
+        )
+        available_json = json.dumps(
+            sorted(item.value for item in available),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = self._workload_row(connection, reservation_key)
+            if existing is not None:
+                identity = (
+                    str(existing["task_id"]),
+                    str(existing["assignment_id"]),
+                    str(existing["phase"]),
+                    str(existing["provider"]),
+                    int(existing["effort_units"]),
+                    str(existing["work_kind"]),
+                    str(existing["work_size"]),
+                    (
+                        str(existing["model_label"])
+                        if existing["model_label"] is not None
+                        else None
+                    ),
+                )
+                requested_identity = (
+                    task_id,
+                    assignment_id,
+                    phase,
+                    provider.value,
+                    effort_units,
+                    kind.value,
+                    size.value,
+                    model_label,
+                )
+                if identity != requested_identity:
+                    raise WorkloadReservationConflict(
+                        "workload reservation key was reused with different assignment identity"
+                    )
+                return self._workload_reservation_from_row(existing, created=False)
+
+            effective_rows = connection.execute(
+                """SELECT reservation.reservation_key, reservation.provider,
+                          reservation.effort_units
+                FROM workload_assignment_reservations AS reservation
+                LEFT JOIN workload_assignment_events AS event
+                  ON event.reservation_key = reservation.reservation_key
+                WHERE event.outcome = 'invoked' OR event.outcome IS NULL
+                ORDER BY reservation.ledger_id DESC
+                LIMIT ?""",
+                (DEFAULT_POLICY.rolling_window_size - 1,),
+            ).fetchall()
+            history = [
+                WorkloadRecord(
+                    assignment_id=str(row["reservation_key"]),
+                    provider=Provider(str(row["provider"])),
+                    effort_units=int(row["effort_units"]),
+                )
+                for row in reversed(effective_rows)
+            ]
+            decision = evaluate_assignment(
+                request,
+                history=history,
+                available_primary_providers=available,
+                policy=DEFAULT_POLICY,
+                mode=mode,
+            )
+            recorded_at = datetime.now(timezone.utc)
+            connection.execute(
+                """INSERT INTO workload_assignment_reservations(
+                    reservation_key, task_id, assignment_id, phase, provider,
+                    effort_units, work_kind, work_size, model_label,
+                    available_primary_json, mode, decision_outcome, allowed,
+                    violations_json, advisories_json, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    reservation_key,
+                    task_id,
+                    assignment_id,
+                    phase,
+                    provider.value,
+                    effort_units,
+                    kind.value,
+                    size.value,
+                    model_label,
+                    available_json,
+                    mode.value,
+                    decision.outcome.value,
+                    int(decision.allowed),
+                    json.dumps(
+                        list(decision.violations),
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    ),
+                    json.dumps(
+                        list(decision.advisories),
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    ),
+                    recorded_at.isoformat(),
+                ),
+            )
+            if not decision.allowed:
+                connection.execute(
+                    """INSERT INTO workload_assignment_events(
+                        reservation_key, outcome, recorded_at
+                    ) VALUES (?, 'blocked', ?)""",
+                    (reservation_key, recorded_at.isoformat()),
+                )
+            persisted = self._workload_row(connection, reservation_key)
+            if persisted is None:  # Defensive: insertion and read share a transaction.
+                raise RuntimeError("workload reservation disappeared during commit")
+            return self._workload_reservation_from_row(persisted, created=True)
+
+    def finalize_workload_reservation(
+        self,
+        reservation_key: str,
+        outcome: WorkloadAttemptOutcome,
+    ) -> bool:
+        """Append one terminal classification; return False for exact replay."""
+
+        if not isinstance(outcome, WorkloadAttemptOutcome):
+            raise ValueError("workload outcome is invalid")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            reservation = connection.execute(
+                """SELECT 1 FROM workload_assignment_reservations
+                WHERE reservation_key = ?""",
+                (reservation_key,),
+            ).fetchone()
+            if reservation is None:
+                raise KeyError(reservation_key)
+            existing = connection.execute(
+                """SELECT outcome FROM workload_assignment_events
+                WHERE reservation_key = ?""",
+                (reservation_key,),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["outcome"]) == outcome.value:
+                    return False
+                raise WorkloadReservationConflict(
+                    "workload reservation already has a different terminal outcome"
+                )
+            connection.execute(
+                """INSERT INTO workload_assignment_events(
+                    reservation_key, outcome, recorded_at
+                ) VALUES (?, ?, ?)""",
+                (
+                    reservation_key,
+                    outcome.value,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            return True
+
+    def get_workload_reservation(
+        self, reservation_key: str
+    ) -> WorkloadLedgerReservation | None:
+        with self._lock, self._connect() as connection:
+            row = self._workload_row(connection, reservation_key)
+            return (
+                self._workload_reservation_from_row(row, created=False)
+                if row is not None
+                else None
+            )
+
+    def list_recent_workload_attempts(
+        self, *, limit: int = 19
+    ) -> list[WorkloadRecord]:
+        """Return only actual provider invocation attempts, oldest to newest."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("workload attempt limit must be between 1 and 100")
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """SELECT reservation.reservation_key, reservation.provider,
+                          reservation.effort_units
+                FROM workload_assignment_reservations AS reservation
+                JOIN workload_assignment_events AS event
+                  ON event.reservation_key = reservation.reservation_key
+                WHERE event.outcome = 'invoked'
+                ORDER BY reservation.ledger_id DESC
+                LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [
+            WorkloadRecord(
+                assignment_id=str(row["reservation_key"]),
+                provider=Provider(str(row["provider"])),
+                effort_units=int(row["effort_units"]),
+            )
+            for row in reversed(rows)
+        ]
+
+    def workload_reservation_count(self) -> int:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM workload_assignment_reservations"
+            ).fetchone()
+        return int(row["count"])
+
+    @staticmethod
     def _require_effect_migration(row: sqlite3.Row) -> None:
         if row["effect_migration_status"] != "complete":
             raise RuntimeError(
@@ -1360,3 +1787,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:22 UTC | END]]

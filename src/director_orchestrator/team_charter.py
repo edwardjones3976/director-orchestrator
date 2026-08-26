@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
@@ -14,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-TEAM_CHARTER_MAX_BYTES = 12_512
+TEAM_CHARTER_MAX_BYTES = 20_480
 
 
 _TEAM_OPERATING_CHARTER: dict[str, Any] = {
@@ -122,6 +123,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         },
     },
     "director_operating_directive": {
+        "workload_policy_version": "v1",
         "director": "openai",
         "duties": [
             "plan",
@@ -136,14 +138,140 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "duties_excluded_from_openai_direct_production_share": True,
         "direct_workload_percent": {
             "claude": 60,
-            "cursor": 28,
+            "cursor": 14,
+            "grok": 14,
             "gemini": 7,
             "perplexity": 4,
-            "openai": 1,
+            "external_openai": 1,
+        },
+        "overall_effort_percent": {
+            "claude": 36,
+            "cursor": 20,
+            "grok": 20,
+            "openai": 8,
+            "gemini": 11,
+            "perplexity": 5,
         },
         "workload_lanes": {
+            "claude": "all_medium_or_long_programming",
+            "cursor": "primary_review_qa_and_bounded_non_programming",
+            "grok": "primary_review_qa_and_bounded_non_programming",
+            "antigravity": "bounded_subordinate_specialist",
             "perplexity": "public_research_evidence_only",
-            "openai": "external_owner_authorized_only",
+            "openai": "control_plane_and_truly_simple_local_overall_effort_external_owner_authorized_direct_production",
+        },
+        "workload_accounting": {
+            "unit_basis": "immutable_prestaged_effort_points",
+            "workload_size_values": ["simple", "short", "medium", "long"],
+            "effort_points": {"minimum": 1, "maximum": 100},
+            "windows": ["assignment", "rolling_20_completed_assignments"],
+            "ledgers": {
+                "direct_production": "authenticated_accepted_production_only_against_direct_workload_percent",
+                "overall_effort": "all_authenticated_or_directly_observed_provider_effort_against_overall_effort_percent",
+            },
+            "failed_attempt_rule": "overall_effort_only_not_direct_production_credit",
+            "control_plane_rule": "openai_control_plane_counts_only_in_overall_effort",
+        },
+        "workload_enforcement": {
+            "normal_tolerance_percentage_points": 3,
+            "hard_overage_percentage_points": 5,
+            "absolute_non_claude_cap_percent": 27,
+            "claude_cap_percent_with_two_other_primary_available": 45,
+            "hard_thresholds_percent": {
+                "claude": 45,
+                "cursor": 25,
+                "grok": 25,
+                "openai": 13,
+                "gemini": 16,
+                "perplexity": 10,
+            },
+            "primary_caps_percent": {
+                "claude": 45,
+                "cursor": 27,
+                "grok": 27,
+                "openai": 27,
+            },
+            "primary_providers": ["claude", "cursor", "grok", "openai"],
+            "evaluate": ["assignment_plan", "rolling_20_projected_overall_effort"],
+            "soft_action": "route_next_eligible_work_to_an_under_target_provider",
+            "hard_action": "block_dispatch_and_reshape",
+            "automatic_drift_correction": True,
+            "automatic_enforcement_after_shadow": True,
+            "openai_overage_exception": False,
+            "degraded_team_rule": "never_relax_a_cap_or_spill_work_to_openai_implicitly",
+            "filler_work_prohibited": True,
+        },
+        "coding_routing": {
+            "medium_or_long_programming_provider": "claude",
+            "minimum_model_profile": "FABLE 5 ULTRA/MAX",
+            "required_assignment_model_label": "FABLE 5 ULTRA/MAX",
+            "downgrade_allowed": False,
+            "unavailable_action": "stop_and_reshape_without_silent_substitution",
+            "one_writer_lease_per_file_or_error_surface": True,
+            "reviewer_rotation": "least_recent_eligible_under_cap_non_author",
+            "reviewer_must_differ_from_producer_and_material_authors": True,
+        },
+        "team_first": {
+            "default": True,
+            "minimum_distinct_provider_roles": 2,
+            "parallel_nonconflicting_lanes": ["research", "reproduction", "qa", "review"],
+            "simple_local_openai_exception": {
+                "complexity": "simple",
+                "risk": "low",
+                "external_opinion_required": False,
+                "reviewable_artifact": False,
+                "external_action": False,
+                "material_uncertainty": False,
+            },
+        },
+        "pre_staging": {
+            "priority": "high_blocking",
+            "required_before_provider_dispatch": True,
+            "revision_mode": "immutable_canonical_packet_revisions",
+            "required_fields": [
+                "packet_id",
+                "goal",
+                "terminal_condition",
+                "repository",
+                "worktree",
+                "branch",
+                "base_sha",
+                "candidate_sha",
+                "producer",
+                "independent_reviewer",
+                "owned_paths",
+                "prohibited_paths",
+                "required_tests",
+                "required_security_evidence",
+                "budget_units",
+                "timeout_seconds",
+                "retry_limit",
+                "merge_eligibility_conditions",
+                "stopping_conditions",
+            ],
+            "candidate_binding": "new_canonical_packet_revision_then_relay_delta_before_review",
+            "provider_updates": "initial_packet_once_then_relevant_deltas_only",
+            "authority_change": "new_owner_authorized_revision",
+            "execution_limits": "fixed_v1_defaults",
+            "digest": "canonical_by_enforcer",
+            "invalid_or_missing_action": "PRESTAGE_REQUIRED_no_dispatch",
+        },
+        "research_policy": {
+            "default": "research_when_public_evidence_can_materially_improve_the_outcome",
+            "triggers": [
+                "current_or_time_sensitive_claims",
+                "user_reviews_and_real_world_experience",
+                "competitor_solutions_to_similar_issues",
+                "market_customer_and_product_alternatives",
+                "unfamiliar_niche_or_emerging_claims",
+                "material_methodology_or_source_gap",
+            ],
+            "private_context_prohibited": True,
+            "research_evidence_values": [
+                "external_sources",
+                "user_reviews",
+                "competitor_solutions",
+            ],
         },
         "openai_direct_production_boundary": {
             "runtime_assignment_target_allowed": False,
@@ -211,7 +339,9 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "objective_bounded_scope_and_categorized_status",
                 "starting_and_current_refs_shas_and_artifact_digests",
                 "authenticated_provider_participation_unavailable_abstaining_and_labels",
-                "target_and_actual_workload_by_provider_deviations_and_rationale",
+                "target_and_actual_direct_production_and_overall_effort_by_provider_deviations_and_rationale",
+                "prestage_packet_digest_workload_size_effort_points_and_deltas",
+                "status_validation_action_counts_reduction_baselines_and_browser_use",
                 "openai_moderator_participant_director_actions_and_vote",
                 "dissent_counter_bias_and_alternative_analysis",
                 "exact_tests_trusted_ci_security_independent_review_and_verdict",
@@ -229,9 +359,45 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         },
         "availability": {
             "attempts": 3,
+            "primary_attempts": 1,
+            "transient_recovery_attempts": 1,
+            "third_attempt_requires": "materially_different_transport_or_new_information",
             "after": "record_unavailable_and_reshape",
             "partial": "untrusted",
             "ambiguous": "no_duplicate_dispatch",
+        },
+        "efficiency_targets": {
+            "unchanged_status_check_reduction_percent": 80,
+            "duplicate_validation_reduction_percent": 70,
+            "total_task_action_reduction_percent": 60,
+            "browser_handoff_reduction_target": None,
+            "ordinary_review_to_merge_max_major_actions": 5,
+            "required_evidence_preservation_percent": 100,
+        },
+        "status_and_validation": {
+            "status_mode": "event_callback_first",
+            "initial_status_read_limit": 1,
+            "terminal_verification_limit": 1,
+            "unchanged_status_reads": "deduplicate",
+            "validation_cache_key": "candidate_check_environment_and_command_digest",
+            "green_rerun_requires": "candidate_or_environment_change_or_named_coverage_gap",
+            "browser": "enabled_lower_priority_without_a_usage_reduction_target",
+        },
+        "closure": {
+            "ordinary_review_to_merge_major_actions": 5,
+            "parallel_checks_count_as_one_orchestration_wave": True,
+            "raw_provider_and_tool_calls_reported_separately": True,
+            "over_budget_action": "RESHAPED_or_OWNER_DECISION_REQUIRED",
+            "may_skip_required_gate": False,
+        },
+        "shadow_mode": {
+            "assignment_count": 5,
+            "effect": "observe_only_would_route_would_block_and_would_correct",
+            "changes_live_routing": False,
+            "dispatches_provider": False,
+            "writes_externally": False,
+            "counts_as_participation_or_workload": False,
+            "exit": "compare_decisions_then_enable_automatic_enforcement",
         },
         "review": {
             "reviewer": "different_non_author",
@@ -288,10 +454,10 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     "availability_policy": {
         "nonresponse_attempt_limit": 3,
         "requirements": [
-            "Bound, timestamp, and persist each safe contact attempt.",
+            "Make one primary attempt and one recovery attempt only for a plausibly transient failure.",
+            "A third attempt requires materially different transport or new information; after it, mark the route unavailable.",
             "Preserve partial output as untrusted evidence.",
             "Never duplicate an ambiguous paid dispatch.",
-            "After three safe nonresponses, mark the provider unavailable for this cycle.",
             "Continue safe independent work; record effects on scope, confidence, timing, and coverage.",
             "Ambiguous reconciliation binds IDs only; results need provider authentication, and owner recovery text cannot authorize exact-SHA review or merge.",
         ],
@@ -301,6 +467,9 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "repeat_requires_new_information": True,
         "minimal_fix_attempt_limit": 1,
         "minimal_fix_invalidates_evidence": True,
+        "event_driven_status": True,
+        "browser_enabled_lower_priority": True,
+        "browser_usage_reduction_target": None,
         "rules": [
             "Report decisions, evidence, uncertainty, next action.",
             "Correct inaccuracies before dependencies or paid calls.",
@@ -332,6 +501,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     },
     "browser_communication_policy": {
         "mode": "owner_gated_provider_ui_transport",
+        "priority": "lower_than_authenticated_cli_api_callback_or_event_transport",
+        "usage_reduction_target": None,
         "primary": "chrome",
         "fallback": "microsoft_edge",
         "eligible_providers": ["claude", "cursor", "gemini", "grok"],
@@ -359,6 +530,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "source discovery",
             "cross-source fact verification",
             "user-reviewed evidence gathering",
+            "user review and real-world experience research",
+            "competitor solution research for similar issues",
         ],
         "required_evidence": [
             "query",
@@ -594,3 +767,4 @@ def tally_advisory_votes(
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]
