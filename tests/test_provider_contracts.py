@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 from __future__ import annotations
@@ -845,18 +846,59 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             replace(base, grok_api_base="https://example.test/v1"),
             replace(base, grok_allow_tools=True),
             replace(base, grok_allow_repository_write=True),
-            replace(base, grok_allow_review_verdict=False),
+            replace(base, grok_allow_review_verdict=True),
         )
 
         for settings in unsafe_settings:
             with self.subTest(settings=settings):
                 with self.assertRaises(ProviderError):
                     await GrokAdapter(settings).dispatch(assignment, "context")
-        with self.assertRaisesRegex(ProviderError, "cannot create branches"):
+        with self.assertRaisesRegex(ProviderError, "repository-to-worktree mapping"):
             await GrokAdapter(base).dispatch(
-                assignment.model_copy(update={"allow_draft_pr": True}), "context"
+                assignment.model_copy(
+                    update={
+                        "allow_draft_pr": True,
+                        "repository": "example/demo",
+                        "starting_ref": "main",
+                    }
+                ),
+                "context",
             )
         self.assertEqual(RecordingAsyncClient.calls, [])
+
+    async def test_grok_rejects_missing_nonterminal_and_unknown_statuses(self):
+        settings = replace(
+            Settings(),
+            grok_enabled=True,
+            grok_api_key="test-xai",
+            grok_allow_review_verdict=False,
+        )
+        adapter = GrokAdapter(settings)
+        for payload in (
+            {"id": "missing"},
+            {"id": "queued", "status": "queued"},
+            {"id": "bad", "status": 1},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ProviderError, "terminal-success status"):
+                    adapter._run(payload)
+
+    async def test_grok_never_truncates_a_complete_packet(self):
+        settings = replace(
+            Settings(),
+            grok_enabled=True,
+            grok_api_key="test-xai",
+            grok_allow_review_verdict=False,
+            grok_max_context_chars=1_000,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.GROK,
+            task="Review",
+            acceptance=["Return findings"],
+        )
+        with self.assertRaisesRegex(ProviderError, "partial packet transmission"):
+            GrokAdapter(settings)._input(assignment, "x" * 1_001)
 
     async def test_perplexity_usage_check_uses_synchronous_agent_contract(self):
         settings = replace(
@@ -1104,3 +1146,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]

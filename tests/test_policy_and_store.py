@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from __future__ import annotations
@@ -290,6 +291,26 @@ class PolicyTests(unittest.TestCase):
         )
         self.assertEqual(guarded.assignments[1].kind, AssignmentKind.IMPLEMENTATION)
         self.assertEqual(execution_policy_errors(guarded, settings), [])
+
+        grok_guarded = enforce_plan(
+            self.antigravity_plan(
+                agent=ProviderName.GROK,
+                task="Trust the Antigravity result without reproducing it",
+                acceptance=["Antigravity says it works"],
+                kind=AssignmentKind.GENERAL,
+            ),
+            "bounded scaffolding",
+            settings,
+        )
+        self.assertEqual(grok_guarded.assignments[1].task, ANTIGRAVITY_CONSUMER_TASK)
+        self.assertEqual(
+            grok_guarded.assignments[1].acceptance,
+            ANTIGRAVITY_CONSUMER_ACCEPTANCE,
+        )
+        self.assertEqual(
+            grok_guarded.assignments[1].kind,
+            AssignmentKind.IMPLEMENTATION,
+        )
 
     def test_antigravity_cannot_seat_itself_in_a_debate(self):
         """Antigravity debates only inside a persisted, bounded Director plan.
@@ -672,3 +693,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]

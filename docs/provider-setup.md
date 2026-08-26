@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
@@ -60,11 +61,12 @@ non-positive or non-finite configured value prevents the service from starting.
 
 ## Grok primary Cursor-family profile
 
-The Grok runtime contact is the xAI Responses API, not the Grok Bot desktop UI
-or Grok Build CLI. The UI and CLI may support owner-facing continuity or a
-separately assigned local review, but they are not authenticated Director
-callbacks. Keep the API adapter disabled until a dedicated key and provider-side
-budget are configured:
+The Grok adapter has two explicit transports. General analysis and debate use
+the synchronous, tool-free xAI Responses API. Repository implementation and
+exact-SHA review use the locally authenticated Grok Build CLI in an
+operator-mapped clean named worktree. The Director never promotes API-only
+output into repository or review authority. Keep both transports disabled until
+their dedicated credentials, paths, and budgets are configured:
 
 ```dotenv
 GROK_ENABLED=false
@@ -74,26 +76,41 @@ GROK_MODEL=grok-4.6
 GROK_MODE=cursor_family_primary
 GROK_TIMEOUT_SECONDS=180
 GROK_MAX_OUTPUT_TOKENS=4096
-GROK_MAX_CONTEXT_CHARS=30000
+GROK_MAX_CONTEXT_CHARS=262144
 GROK_DAILY_BUDGET_USD=2.00
 GROK_DAILY_REQUEST_LIMIT=50
+GROK_REQUEST_COST_FLOOR_USD=0.01
 GROK_ALLOW_TOOLS=false
 GROK_ALLOW_REPOSITORY_WRITE=false
-GROK_ALLOW_REVIEW_VERDICT=true
+GROK_ALLOW_REVIEW_VERDICT=false
+GROK_CLI_ENABLED=false
+GROK_CLI_EXECUTABLE=grok
+GROK_CLI_REPOSITORY_MAP_JSON={}
+GROK_CLI_TIMEOUT_SECONDS=3600
+GROK_CLI_MAX_TURNS=20
 ```
 
 Readiness fails closed unless the endpoint is exactly `https://api.x.ai/v1`,
-tools and repository writes remain disabled for this API contact, exact-candidate
-review is enabled, and every bound is valid. Before the first
+tools remain disabled for the API contact, every bound is valid, and any enabled
+repository-write or review authority has a nonempty explicit CLI worktree map.
+The CLI transport is a native-host capability: a containerized Director cannot
+use a Windows executable or host worktree path unless an authenticated host
+runner is explicitly provided. The checked-in examples therefore keep CLI,
+repository-write, and review authority disabled; operators enable them only in
+an ignored native-host environment with an absolute named-worktree map.
+Before the first
 paid request in a process, the adapter authenticates `GET /models` and requires
 the configured model ID to be present. Requests use `POST /responses` with
-`tools=[]`, `store=false`, bounded context and output, and no repository-write,
-branch, pull-request, merge, or deployment lane. Those are transport limits of
-this API contact, not provider-rank limits. Grok may debate, vote at Cursor's
-weight, perform critical work, and provide independent exact-candidate review
-when it did not produce the candidate; repository execution uses a separately
-authorized Grok Build or Grok Bot contact launched in the named worktree. The
-synchronous API adapter never polls. Daily reservations are durable.
+`tools=[]`, `store=false`, complete-or-rejected context, and no repository-write,
+branch, pull-request, merge, or deployment lane. Grok Build CLI repository work
+is dispatched only from an exact configured clean worktree. Exact-SHA review
+verifies that both commit objects exist locally, that base is an ancestor of
+head, runs in read-only plan mode, and binds that repository/base/head evidence
+to the returned review artifact. Draft-PR work requires an isolated `grok/*`
+worktree and may create one draft PR but may not merge it. These are transport
+controls, not provider-rank limits. The synchronous API adapter never polls.
+Assignment and usage-check requests share one atomic durable daily ledger, and
+every Grok request reserves at least `GROK_REQUEST_COST_FLOOR_USD`.
 
 ## Perplexity research-only profile
 
@@ -272,3 +289,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]] -->

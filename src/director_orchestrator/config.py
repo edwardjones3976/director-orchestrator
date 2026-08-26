@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
@@ -11,6 +12,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import math
 import os
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
@@ -49,6 +51,30 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
 def _csv_exact(name: str, default: str) -> tuple[str, ...]:
     value = os.getenv(name, default)
     return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _repository_path_map(name: str) -> tuple[tuple[str, str], ...]:
+    """Parse an explicit repository-to-worktree map without guessing local paths."""
+
+    raw = os.getenv(name, "{}").strip() or "{}"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    pairs: list[tuple[str, str]] = []
+    for repository, path in payload.items():
+        if not isinstance(repository, str) or not isinstance(path, str):
+            return ()
+        normalized_repository = repository.strip().lower().removesuffix(".git")
+        normalized_path = path.strip()
+        if not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", normalized_repository):
+            return ()
+        if not normalized_path or not os.path.isabs(normalized_path):
+            return ()
+        pairs.append((normalized_repository, normalized_path))
+    return tuple(sorted(pairs))
 
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
@@ -479,12 +505,22 @@ class Settings:
     grok_mode: str = os.getenv("GROK_MODE", "cursor_family_primary").strip().lower()
     grok_timeout_seconds: int = _int("GROK_TIMEOUT_SECONDS", 180)
     grok_max_output_tokens: int = _int("GROK_MAX_OUTPUT_TOKENS", 4_096)
-    grok_max_context_chars: int = _int("GROK_MAX_CONTEXT_CHARS", 30_000)
+    grok_max_context_chars: int = _int("GROK_MAX_CONTEXT_CHARS", 262_144)
     grok_daily_budget_usd: float = _float("GROK_DAILY_BUDGET_USD", 2.0)
     grok_daily_request_limit: int = _int("GROK_DAILY_REQUEST_LIMIT", 50)
+    grok_request_cost_floor_usd: float = _positive_float(
+        "GROK_REQUEST_COST_FLOOR_USD", 0.01
+    )
     grok_allow_tools: bool = _bool("GROK_ALLOW_TOOLS", False)
     grok_allow_repository_write: bool = _bool("GROK_ALLOW_REPOSITORY_WRITE", False)
-    grok_allow_review_verdict: bool = _bool("GROK_ALLOW_REVIEW_VERDICT", True)
+    grok_allow_review_verdict: bool = _bool("GROK_ALLOW_REVIEW_VERDICT", False)
+    grok_cli_enabled: bool = _bool("GROK_CLI_ENABLED", False)
+    grok_cli_executable: str = os.getenv("GROK_CLI_EXECUTABLE", "grok").strip()
+    grok_cli_repository_roots: tuple[tuple[str, str], ...] = field(
+        default_factory=lambda: _repository_path_map("GROK_CLI_REPOSITORY_MAP_JSON")
+    )
+    grok_cli_timeout_seconds: int = _int("GROK_CLI_TIMEOUT_SECONDS", 3_600)
+    grok_cli_max_turns: int = _int("GROK_CLI_MAX_TURNS", 20)
 
     perplexity_enabled: bool = _bool("PERPLEXITY_ENABLED", False)
     perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "")
@@ -544,6 +580,16 @@ class Settings:
         }
 
     def grok_primary_readiness(self) -> dict[str, bool]:
+        repository_transport_required = (
+            self.grok_allow_repository_write or self.grok_allow_review_verdict
+        )
+        repository_transport_ready = (
+            self.grok_cli_enabled
+            and bool(self.grok_cli_executable)
+            and bool(self.grok_cli_repository_roots)
+            and 30 <= self.grok_cli_timeout_seconds <= 7_200
+            and 1 <= self.grok_cli_max_turns <= 100
+        )
         return {
             "enabled": self.grok_enabled,
             "credential_configured": bool(self.grok_api_key),
@@ -554,13 +600,19 @@ class Settings:
             "cursor_family_primary_mode": self.grok_mode == "cursor_family_primary",
             "timeout_valid": 1 <= self.grok_timeout_seconds <= 1_800,
             "output_limit_valid": 16 <= self.grok_max_output_tokens <= 32_768,
-            "context_limit_valid": 1_000 <= self.grok_max_context_chars <= 200_000,
+            "context_limit_valid": 1_000 <= self.grok_max_context_chars <= 262_144,
             "budget_valid": 0 < self.grok_daily_budget_usd <= 1_000,
             "daily_request_limit_valid": 1 <= self.grok_daily_request_limit <= 100_000,
+            "request_cost_floor_valid": 0 < self.grok_request_cost_floor_usd
+            <= self.grok_daily_budget_usd,
             "tools_disabled": not self.grok_allow_tools,
-            "repository_write_disabled": not self.grok_allow_repository_write,
-            "review_verdict_enabled": self.grok_allow_review_verdict,
+            "repository_transport_ready": (
+                repository_transport_ready or not repository_transport_required
+            ),
         }
+
+    def grok_cli_repository_map(self) -> dict[str, str]:
+        return dict(self.grok_cli_repository_roots)
 
     def readiness(self) -> dict[str, bool]:
         slack_gateway_ready = bool(
@@ -1237,3 +1289,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]

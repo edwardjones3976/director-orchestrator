@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
@@ -660,7 +661,8 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
                     "acceptance": list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
                 }
             )
-            if item.agent in {ProviderName.CLAUDE, ProviderName.CURSOR}
+            if item.agent
+            in {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK}
             and item.discussion_phase == DiscussionPhase.WORK
             and set(item.depends_on) & antigravity_work
             else item
@@ -738,3 +740,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]

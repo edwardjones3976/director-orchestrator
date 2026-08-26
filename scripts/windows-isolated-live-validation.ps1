@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
@@ -545,9 +546,9 @@ $identity = [ordered]@{
     ALLOWED_STARTING_REFS = [string]$selected.ALLOWED_STARTING_REFS
     MAX_AGENT_HOPS = [string]$selected.MAX_AGENT_HOPS
     MAX_TASK_BUDGET_USD = [string]$selected.MAX_TASK_BUDGET_USD
-    PRIMARY_TEAM = "openai,claude,cursor"
+    PRIMARY_TEAM = "openai,claude,cursor,grok"
     PRIMARY_WORKHORSE = "claude"
-    USAGE_CHECK_PROVIDERS = "openai,claude,cursor"
+    USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"
     USAGE_CHECK_INTERVAL_MINUTES = "360"
     ALLOW_PAID_RUNS = "false"
     USAGE_CHECK_ENABLED = "false"
@@ -861,3 +862,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]

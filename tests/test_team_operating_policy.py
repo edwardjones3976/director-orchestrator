@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:55 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | BEGIN]]
@@ -107,15 +108,17 @@ def bind_verified_interaction(
     *,
     label: str,
     account_effect: bool = False,
+    transport_override: ProviderTransport | None = None,
 ) -> None:
     """Attach one backend-built VERIFIED transport chain to an exact test result."""
 
     interaction_id = (
         f"{record.task_id}:{run.assignment_sequence}:{run.provider.value}:{label}"
     )
-    transport = {
+    transport = transport_override or {
         ProviderName.CURSOR: ProviderTransport.CURSOR_AGENTS_API,
         ProviderName.CLAUDE: ProviderTransport.CLAUDE_CALLBACK,
+        ProviderName.GROK: ProviderTransport.GROK_CLI,
     }[run.provider]
     idempotency_key = f"{interaction_id}:idempotency"
     effect_key = None
@@ -826,6 +829,85 @@ class ReviewHandoffTests(unittest.TestCase):
         self.assertEqual(handoff["head_sha"], "b" * 40)
         self.assertEqual(reviewer.estimated_cost_usd, 0.25)
         self.assertFalse(reviewer.allow_draft_pr)
+
+    def test_grok_review_authority_requires_exact_cli_repository_evidence(self):
+        record, producer, run = self.record()
+        record.plan.assignments[1] = record.plan.assignments[1].model_copy(
+            update={"agent": ProviderName.GROK}
+        )
+        record.assignment_outcomes.append(accepted_provider_outcome(record, run))
+        sequence, reviewer = self.bind(record, producer, run) or (None, None)
+        self.assertEqual(sequence, 2)
+        handoff = json.loads(reviewer.task)
+        record.review_handoff_digests[2] = handoff["artifact_digest"]
+        payload = {
+            "artifact_type": "edge_oracle_exact_sha_review/v1",
+            "artifact_id": handoff["required_review_artifact_id"],
+            "assignment_id": handoff["assignment_id"],
+            "project": "demo",
+            "repository": handoff["repository"],
+            "pull_number": handoff["pull_number"],
+            "base_ref": handoff["base_ref"],
+            "base_sha": handoff["base_sha"],
+            "head_ref": handoff["head_ref"],
+            "head_sha": handoff["head_sha"],
+            "implementation_provider": handoff["logical_producer"],
+            "implementation_actor": handoff["implementation_actor"],
+            "reviewer_provider": "grok",
+            "review_run_id": "grok-cli-review-1",
+            "verdict": "ACCEPT",
+            "summary": "Accepted after inspecting the exact local diff.",
+            "evidence": ["Inspected the exact base/head diff."],
+            "acceptance_checks": ["test"],
+            "rollback_instructions": "Revert the merge commit.",
+        }
+        review_run = ProviderRun(
+            provider=ProviderName.GROK,
+            assignment_sequence=2,
+            run_id="grok-cli-review-1",
+            status="completed",
+            evidence_source="provider_authenticated",
+            result=json.dumps(payload),
+            raw={"status": "completed"},
+        )
+        bind_verified_interaction(
+            record,
+            review_run,
+            label="grok-review",
+            transport_override=ProviderTransport.XAI_RESPONSES_API,
+        )
+        record.provider_runs.extend([run, review_run])
+
+        with self.assertRaisesRegex(ValueError, "repository-capable CLI"):
+            authenticate_provider_review_artifact(
+                record, review_run, "secret", review_assignment=reviewer
+            )
+
+        review_run.raw = {
+            "transport": "grok_cli",
+            "mode": "exact_sha_review",
+            "read_only": True,
+            "repository": "example/demo",
+            "base_sha": handoff["base_sha"],
+            "head_sha": handoff["head_sha"],
+        }
+        record.provider_runs[-1] = review_run
+        with self.assertRaisesRegex(ValueError, "verified CLI transport"):
+            authenticate_provider_review_artifact(
+                record, review_run, "secret", review_assignment=reviewer
+            )
+
+        record.provider_interaction_ledger = [
+            event
+            for event in record.provider_interaction_ledger
+            if event.interaction_id != review_run.interaction_id
+        ]
+        review_run.interaction_id = None
+        bind_verified_interaction(record, review_run, label="grok-review")
+        authenticated = authenticate_provider_review_artifact(
+            record, review_run, "secret", review_assignment=reviewer
+        )
+        self.assertIsNotNone(authenticated)
 
     def test_exact_candidate_reconstructs_without_mutating_authenticated_plan(self):
         record, producer, run = self.record()
@@ -1774,3 +1856,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
