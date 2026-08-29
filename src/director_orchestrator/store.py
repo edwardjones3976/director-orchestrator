@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:42 UTC | BEGIN]]
@@ -1728,58 +1729,33 @@ class TaskStore:
                 policy=DEFAULT_POLICY,
                 mode=effective_mode,
             )
-            unresolved_overall = connection.execute(
-                """SELECT
-                    SUM(CASE WHEN event.outcome = 'invoked'
-                                  OR event.outcome IS NULL THEN 1 ELSE 0 END)
-                        AS potential_count,
-                    SUM(CASE WHEN event.outcome IS NULL THEN 1 ELSE 0 END)
-                        AS unresolved_count
-                FROM workload_assignment_reservations AS reservation
-                LEFT JOIN workload_assignment_events AS event
-                  ON event.reservation_key = reservation.reservation_key"""
-            ).fetchone()
+            # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
+            # Unresolved-rollover projection.  Only pending rows that can still
+            # enter the rolling window are relevant: a pending row older than the
+            # nineteen most recent invoked rows can never displace them, so it
+            # must not act as a lifetime global block.  Each relevant pending row
+            # is projected both ways (invoked / not invoked); a sibling is safe
+            # only when every projection agrees it clears the caps.
             extra_violations: list[str] = []
-            if (
-                int(unresolved_overall["unresolved_count"] or 0) > 0
-                and int(unresolved_overall["potential_count"] or 0)
-                >= DEFAULT_POLICY.rolling_window_size - 1
-            ):
-                extra_violations.append("workload_rollover_pending_unresolved")
+            extra_violations.extend(
+                self._overall_rollover_violations(
+                    connection,
+                    request=request,
+                    available=available,
+                    mode=effective_mode,
+                )
+            )
             if direct_provider is not None and is_direct_production_kind(kind):
-                direct_uncertainty = connection.execute(
-                    """SELECT
-                        (SELECT COUNT(*) FROM direct_production_credits)
-                        + COUNT(DISTINCT reservation.assignment_id)
-                            AS potential_count,
-                        COUNT(DISTINCT reservation.assignment_id)
-                            AS unresolved_count
-                    FROM workload_assignment_reservations AS reservation
-                    LEFT JOIN workload_assignment_events AS event
-                      ON event.reservation_key = reservation.reservation_key
-                    LEFT JOIN tasks AS task ON task.task_id = reservation.task_id
-                    WHERE reservation.work_kind = 'implementation'
-                      AND reservation.provider <> 'openai'
-                      AND NOT EXISTS (
-                          SELECT 1 FROM direct_production_credits AS credit
-                          WHERE credit.assignment_id = reservation.assignment_id
-                      )
-                      AND (
-                          event.outcome IS NULL
-                          OR (
-                              event.outcome = 'invoked'
-                              AND COALESCE(task.status, '') NOT IN ('DONE', 'FAILED')
-                          )
-                      )"""
-                ).fetchone()
-                if (
-                    int(direct_uncertainty["unresolved_count"] or 0) > 0
-                    and int(direct_uncertainty["potential_count"] or 0)
-                    >= DEFAULT_POLICY.rolling_window_size - 1
-                ):
-                    extra_violations.append(
-                        "direct_production_rollover_pending_unresolved"
+                extra_violations.extend(
+                    self._direct_rollover_violations(
+                        connection,
+                        request=request,
+                        assignment_id=assignment_id,
+                        available=available,
+                        mode=effective_mode,
                     )
+                )
+            # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
             decision = self._decision_with_violations(
                 decision, extra_violations
             )
@@ -1855,6 +1831,200 @@ class TaskStore:
             violations=merged,
             advisories=decision.advisories,
         )
+
+    # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
+    # Exact two-way projection is exhaustive over in-window pending rows; above
+    # this many siblings the bounded conservative rule applies instead.
+    _ROLLOVER_PROJECTION_LIMIT = 10
+
+    @staticmethod
+    def _projection_disagreement(
+        decisions: list[DecisionResult], tag: str
+    ) -> list[str]:
+        """Merge projected violations; tag the case where resolution decides."""
+
+        blocking = [decision for decision in decisions if decision.violations]
+        if not blocking:
+            return []
+        merged: list[str] = []
+        for decision in blocking:
+            merged.extend(decision.violations)
+        if len(blocking) != len(decisions):
+            merged.append(tag)
+        return list(dict.fromkeys(merged))
+
+    @classmethod
+    def _overall_rollover_violations(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        request: AssignmentRequest,
+        available: frozenset[Provider],
+        mode: EnforcementMode,
+    ) -> list[str]:
+        """Project every in-window pending row as invoked and as not invoked."""
+
+        window = DEFAULT_POLICY.rolling_window_size
+        boundary = connection.execute(
+            """SELECT reservation.ledger_id
+            FROM workload_assignment_reservations AS reservation
+            JOIN workload_assignment_events AS event
+              ON event.reservation_key = reservation.reservation_key
+            WHERE event.outcome = 'invoked'
+            ORDER BY reservation.ledger_id DESC
+            LIMIT 1 OFFSET ?""",
+            (window - 2,),
+        ).fetchone()
+        rows = connection.execute(
+            """SELECT reservation.ledger_id, reservation.reservation_key,
+                      reservation.provider, reservation.effort_units,
+                      event.outcome AS final_outcome
+            FROM workload_assignment_reservations AS reservation
+            LEFT JOIN workload_assignment_events AS event
+              ON event.reservation_key = reservation.reservation_key
+            WHERE (event.outcome = 'invoked' OR event.outcome IS NULL)
+              AND reservation.ledger_id >= ?
+            ORDER BY reservation.ledger_id ASC""",
+            (int(boundary["ledger_id"]) if boundary is not None else 0,),
+        ).fetchall()
+        pending = [row for row in rows if row["final_outcome"] is None]
+        if not pending:
+            return []
+        invoked = [row for row in rows if row["final_outcome"] is not None]
+        if len(pending) > cls._ROLLOVER_PROJECTION_LIMIT:
+            if len(invoked) + len(pending) >= window - 1:
+                return ["workload_rollover_pending_unresolved"]
+            return []
+        decisions: list[DecisionResult] = []
+        for mask in range(1 << len(pending)):
+            chosen = [
+                row for index, row in enumerate(pending) if mask & (1 << index)
+            ]
+            projected = sorted(
+                invoked + chosen, key=lambda row: int(row["ledger_id"])
+            )[-(window - 1) :]
+            history = [
+                WorkloadRecord(
+                    assignment_id=str(row["reservation_key"]),
+                    provider=Provider(str(row["provider"])),
+                    effort_units=int(row["effort_units"]),
+                )
+                for row in projected
+            ]
+            decisions.append(
+                evaluate_assignment(
+                    request,
+                    history=history,
+                    available_primary_providers=available,
+                    policy=DEFAULT_POLICY,
+                    mode=mode,
+                )
+            )
+        return cls._projection_disagreement(
+            decisions, "workload_rollover_pending_unresolved"
+        )
+
+    @classmethod
+    def _direct_rollover_violations(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        request: AssignmentRequest,
+        assignment_id: str,
+        available: frozenset[Provider],
+        mode: EnforcementMode,
+    ) -> list[str]:
+        """Project every uncredited in-flight implementation unit both ways."""
+
+        window = DEFAULT_POLICY.rolling_window_size
+        unresolved_rows = connection.execute(
+            """SELECT reservation.assignment_id, reservation.provider,
+                      reservation.effort_units
+            FROM workload_assignment_reservations AS reservation
+            LEFT JOIN workload_assignment_events AS event
+              ON event.reservation_key = reservation.reservation_key
+            LEFT JOIN tasks AS task ON task.task_id = reservation.task_id
+            WHERE reservation.work_kind = 'implementation'
+              AND reservation.provider <> 'openai'
+              AND reservation.assignment_id <> ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM direct_production_credits AS credit
+                  WHERE credit.assignment_id = reservation.assignment_id
+              )
+              AND (
+                  event.outcome IS NULL
+                  OR (
+                      event.outcome = 'invoked'
+                      AND COALESCE(task.status, '') NOT IN ('DONE', 'FAILED')
+                  )
+              )
+            ORDER BY reservation.ledger_id ASC""",
+            (assignment_id,),
+        ).fetchall()
+        unresolved: dict[str, DirectProductionRecord] = {}
+        for row in unresolved_rows:
+            mapped = direct_production_provider(Provider(str(row["provider"])))
+            if mapped is None:
+                raise WorkloadReservationConflict(
+                    "ordinary OpenAI cannot enter direct-production history"
+                )
+            unresolved[str(row["assignment_id"])] = DirectProductionRecord(
+                assignment_id=str(row["assignment_id"]),
+                provider=mapped,
+                effort_units=int(row["effort_units"]),
+            )
+        if not unresolved:
+            return []
+        units = list(unresolved.values())
+        if len(units) > cls._ROLLOVER_PROJECTION_LIMIT:
+            credit_total = connection.execute(
+                "SELECT COUNT(*) AS count FROM direct_production_credits"
+            ).fetchone()
+            if int(credit_total["count"]) + len(units) >= window - 1:
+                return ["direct_production_rollover_pending_unresolved"]
+            return []
+        credit_rows = connection.execute(
+            """SELECT assignment_id, provider, effort_units
+            FROM direct_production_credits
+            ORDER BY recorded_at DESC, credit_id DESC
+            LIMIT ?""",
+            (window - 1,),
+        ).fetchall()
+        credits: list[DirectProductionRecord] = []
+        for row in reversed(credit_rows):
+            mapped = direct_production_provider(Provider(str(row["provider"])))
+            if mapped is None:
+                raise WorkloadReservationConflict(
+                    "ordinary OpenAI cannot enter direct-production history"
+                )
+            credits.append(
+                DirectProductionRecord(
+                    assignment_id=str(row["assignment_id"]),
+                    provider=mapped,
+                    effort_units=int(row["effort_units"]),
+                )
+            )
+        decisions: list[DecisionResult] = []
+        for mask in range(1 << len(units)):
+            chosen = [
+                unit for index, unit in enumerate(units) if mask & (1 << index)
+            ]
+            # A unit credited later is appended as the newest direct entry.
+            projected = (credits + chosen)[-(window - 1) :]
+            decisions.append(
+                evaluate_assignment(
+                    request,
+                    direct_production_history=projected,
+                    direct_production_assignment_id=assignment_id,
+                    available_primary_providers=available,
+                    policy=DEFAULT_POLICY,
+                    mode=mode,
+                )
+            )
+        return cls._projection_disagreement(
+            decisions, "direct_production_rollover_pending_unresolved"
+        )
+    # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
 
     @staticmethod
     def _effective_workload_mode(
@@ -2349,3 +2519,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]

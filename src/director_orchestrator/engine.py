@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:35 UTC | BEGIN]]
@@ -5856,12 +5857,34 @@ class OrchestrationEngine:
             if reservation is None:
                 return False
             record, revision_effect_key = reservation
+            # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
+            # A paid revision is a provider invocation like dispatch: it must
+            # pass the same atomic workload gate before daily spend and before
+            # adapter.revise, and every outcome must be finalized in the ledger.
+            revision_workload_reservation = None
+            if self._workload_policy_applies(record):
+                revision_workload_reservation = await self._reserve_workload_dispatch(
+                    record,
+                    assignment,
+                    phase="revision",
+                    effect_key=revision_effect_key,
+                )
+                if revision_workload_reservation is None:
+                    return False
+            # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
             try:
                 self._reserve_provider_daily_spend(
                     assignment,
                     effect_key=revision_effect_key,
                 )
             except ProviderReservationIdentityConflict as exc:
+                if revision_workload_reservation is not None:
+                    if not await self._finalize_workload_dispatch(
+                        self.store.get(record.task_id) or record,
+                        revision_workload_reservation,
+                        WorkloadAttemptOutcome.INVOKED,
+                    ):
+                        return False
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.message = (
                     "Provider spend reservation identity conflict; paid revision "
@@ -5875,6 +5898,13 @@ class OrchestrationEngine:
                 )
                 return False
             except ProviderDailyLimitExceeded as exc:
+                if revision_workload_reservation is not None:
+                    if not await self._finalize_workload_dispatch(
+                        self.store.get(record.task_id) or record,
+                        revision_workload_reservation,
+                        WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                    ):
+                        return False
                 record_provider_effect_observation(
                     record,
                     assignment,
@@ -5905,6 +5935,14 @@ class OrchestrationEngine:
                     context=self._handoff_context(record, assignment),
                 )
             except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+                # Ambiguous submission consumed one attempt: count it as
+                # invoked so the ledger never treats it as retryable.
+                if revision_workload_reservation is not None:
+                    await self._finalize_workload_dispatch(
+                        record,
+                        revision_workload_reservation,
+                        WorkloadAttemptOutcome.INVOKED,
+                    )
                 self._advance_interaction_id(
                     record,
                     interaction_id=revision_interaction_id,
@@ -5948,6 +5986,13 @@ class OrchestrationEngine:
                 await self._status_post(record, record.message)
                 return False
             except Exception as exc:
+                if revision_workload_reservation is not None:
+                    if not await self._finalize_workload_dispatch(
+                        record,
+                        revision_workload_reservation,
+                        WorkloadAttemptOutcome.INVOKED,
+                    ):
+                        return False
                 self._advance_interaction_id(
                     record,
                     interaction_id=revision_interaction_id,
@@ -5965,6 +6010,14 @@ class OrchestrationEngine:
                 )
                 self.store.save(record)
                 raise
+            if revision_workload_reservation is not None and not (
+                await self._finalize_workload_dispatch(
+                    record,
+                    revision_workload_reservation,
+                    WorkloadAttemptOutcome.INVOKED,
+                )
+            ):
+                return False
             if not self._verified_plan_or_stop(record):
                 return False
             record.revision_count += 1
@@ -6236,3 +6289,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:49 UTC | BEGIN]]
 from __future__ import annotations
@@ -710,6 +711,123 @@ class WorkloadLedgerTests(unittest.TestCase):
             candidate.decision.violations,
         )
 
+    # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
+    _SIBLING_SEEDS = (
+        [Provider.CURSOR] * 5
+        + [Provider.CLAUDE] * 6
+        + [Provider.GROK] * 4
+        + [Provider.OPENAI]
+        + [Provider.GEMINI] * 2
+        + [Provider.PERPLEXITY]
+    )
+
+    def test_safe_sibling_reservation_is_not_blocked_by_in_window_pending(
+        self,
+    ) -> None:
+        for index, provider in enumerate(self._SIBLING_SEEDS):
+            reservation = self.reserve(f"sibling-seed-{index}", provider)
+            self.assertTrue(reservation.decision.allowed)
+            self.store.finalize_workload_reservation(
+                reservation.reservation_key, WorkloadAttemptOutcome.INVOKED
+            )
+
+        pending = self.reserve("sibling-pending", Provider.CLAUDE)
+        self.assertTrue(pending.decision.allowed)
+        self.assertIsNone(pending.final_outcome)
+
+        # Safe under both projections of the pending row, so it must dispatch.
+        sibling = self.reserve("sibling-candidate", Provider.GEMINI)
+        self.assertTrue(sibling.decision.allowed, sibling.decision.violations)
+        self.assertNotIn(
+            "workload_rollover_pending_unresolved", sibling.decision.violations
+        )
+        self.assertIsNone(sibling.final_outcome)
+
+        # In-flight rows remain conservative pressure for an unsafe sibling.
+        unsafe = self.reserve("sibling-unsafe", Provider.CURSOR)
+        self.assertFalse(unsafe.decision.allowed)
+        self.assertIn(
+            "overall_hard_threshold_exceeded:cursor:25", unsafe.decision.violations
+        )
+
+    def test_stale_pending_row_outside_the_window_is_not_a_lifetime_block(
+        self,
+    ) -> None:
+        stale = self.reserve("stale-pending", Provider.CLAUDE)
+        self.assertIsNone(stale.final_outcome)
+        for index, provider in enumerate(self._SIBLING_SEEDS):
+            reservation = self.reserve(f"stale-seed-{index}", provider)
+            self.assertTrue(reservation.decision.allowed, reservation.decision.violations)
+            self.store.finalize_workload_reservation(
+                reservation.reservation_key, WorkloadAttemptOutcome.INVOKED
+            )
+
+        candidate = self.reserve("stale-candidate", Provider.GEMINI)
+        self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
+        self.assertNotIn(
+            "workload_rollover_pending_unresolved", candidate.decision.violations
+        )
+
+    def test_direct_window_permits_safe_sibling_while_credit_is_unresolved(
+        self,
+    ) -> None:
+        direct_seeds = (
+            [(Provider.CLAUDE, 3)] * 9
+            + [(Provider.CURSOR, 2)] * 4
+            + [(Provider.GROK, 2)] * 4
+            + [(Provider.GEMINI, 1)]
+            + [(Provider.PERPLEXITY, 1)]
+        )
+        self.assertEqual(len(direct_seeds), 19)
+        for index, (provider, effort_units) in enumerate(direct_seeds):
+            record = self.accepted_record(
+                f"DIR-DIRECT-SIBLING-{index}",
+                ProviderName(provider.value),
+                effort_points=effort_units,
+            )
+            self.authorize_accepted_record(record)
+            self.store.create(record)
+        overall_controls = (
+            [(Provider.CLAUDE, 6)]
+            + [(Provider.CLAUDE, 5)] * 6
+            + [(Provider.CURSOR, 5)] * 4
+            + [(Provider.GROK, 5)] * 4
+            + [(Provider.OPENAI, 8)]
+            + [(Provider.GEMINI, 6), (Provider.GEMINI, 5)]
+            + [(Provider.PERPLEXITY, 5)]
+        )
+        for index, (provider, effort_units) in enumerate(overall_controls):
+            control = self.reserve(
+                f"direct-sibling-control-{index}",
+                provider,
+                mode=EnforcementMode.SHADOW,
+                shadow_assignment_limit=100,
+                effort_units=effort_units,
+            )
+            self.store.finalize_workload_reservation(
+                control.reservation_key, WorkloadAttemptOutcome.INVOKED
+            )
+
+        pending = self.reserve(
+            "direct-sibling-pending",
+            Provider.GEMINI,
+            effort_units=1,
+            kind=WorkKind.IMPLEMENTATION,
+        )
+        self.assertTrue(pending.decision.allowed, pending.decision.violations)
+        sibling = self.reserve(
+            "direct-sibling-candidate",
+            Provider.PERPLEXITY,
+            effort_units=1,
+            kind=WorkKind.IMPLEMENTATION,
+        )
+        self.assertTrue(sibling.decision.allowed, sibling.decision.violations)
+        self.assertNotIn(
+            "direct_production_rollover_pending_unresolved",
+            sibling.decision.violations,
+        )
+    # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
+
     def test_sqlite_cas_allows_one_cross_process_creator(self) -> None:
         context = multiprocessing.get_context("spawn")
         barrier = context.Barrier(4)
@@ -740,3 +858,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
