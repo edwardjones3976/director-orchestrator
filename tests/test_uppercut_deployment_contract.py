@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
@@ -318,10 +319,44 @@ class LongTableDeploymentContractTests(unittest.TestCase):
         cls.profile = (ROOT / ".env.long-table.example").read_text(encoding="utf-8")
         cls.dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    def test_wrapper_selects_api_only_long_table_canary(self):
+    def test_wrapper_defaults_to_full_stack_and_preserves_explicit_api_only_canary(self):
         self.assertIn('ProfileName = "long-table"', self.wrapper)
-        self.assertIn("ApiOnly = $true", self.wrapper)
+        self.assertIn("[switch]$ApiOnly", self.wrapper)
+        self.assertIn('[string]$ProviderCredentialSourceEnvPath = ""', self.wrapper)
+        self.assertIn("if ($ApiOnly) { $arguments.ApiOnly = $true }", self.wrapper)
+        self.assertIn(
+            "$arguments.ProviderCredentialSourceEnvPath = $ProviderCredentialSourceEnvPath",
+            self.wrapper,
+        )
+        self.assertNotRegex(self.wrapper, r"(?m)^\s*ApiOnly\s*=\s*\$true\s*$")
         self.assertNotIn("docker compose", self.wrapper)
+
+    def test_provider_seed_source_is_explicit_and_never_prints_secret_values(self):
+        self.assertIn("ProviderCredentialSourceEnvPath", self.script)
+        self.assertIn("Resolve-Path -LiteralPath $providerCredentialSource", self.script)
+        self.assertIn("values were not displayed", self.script)
+        self.assertNotIn('Write-Host $primaryValues', self.script)
+        seed_block = self.script.split("$providerCredentialSource =", 1)[1].split(
+            "$identity =", 1
+        )[0]
+        self.assertNotIn('"GROK_CLI_EXECUTABLE"', seed_block)
+        self.assertNotIn('"GROK_CLI_REPOSITORY_MAP_JSON"', seed_block)
+        self.assertNotIn("GROK_CLI_ENABLED", seed_block)
+
+    def test_full_stack_bootstraps_and_verifies_the_n8n_intake_workflow(self):
+        initializer = self.script.split("function Initialize-N8nIntakeWorkflow", 1)[1]
+        self.assertIn('workflowId = "directorIntake"', initializer)
+        self.assertIn("ConvertFrom-Json", initializer)
+        self.assertIn("$workflowDefinition.id -cne $workflowId", initializer)
+        self.assertIn("up -d --wait --wait-timeout 120 n8n-db", initializer)
+        self.assertIn("n8n import:workflow --input=/workflows/director-intake.json", initializer)
+        self.assertIn("n8n publish:workflow --id=$workflowId", initializer)
+        self.assertIn("n8n list:workflow --active=true --onlyId", initializer)
+        self.assertIn(
+            'if ($ProfileName -eq "long-table" -and -not $ApiOnly)', self.script
+        )
+        self.assertIn("Initialize-N8nIntakeWorkflow", self.script)
+        self.assertIn("$repoRoot = Split-Path -Parent $PSScriptRoot", self.script)
 
     def test_identity_ports_repository_and_stores_are_isolated(self):
         expected = (
@@ -330,7 +365,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "DIRECTOR_HOST_PORT=38080",
             "N8N_HOST_PORT=35678",
             "SQLITE_PATH=/data/long-table.sqlite3",
-            "PROJECT_ALLOWLIST=long-table",
+            "PROJECT_ALLOWLIST=long-table-bid-whist",
             "REPOSITORY_ALLOWLIST=edwardjones3976/long-table-bid-whist",
             "ALLOWED_STARTING_REFS=main",
             "LANGGRAPH_CHECKPOINT_PATH=/data/long-table-langgraph-shadow.sqlite3",
@@ -341,6 +376,30 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "REPOSITORY_SNAPSHOT_ROOT=/repository",
         )
         for line in expected:
+            self.assertIn(line, self.profile)
+
+    def test_full_stack_profile_binds_slack_n8n_and_optional_bridge_to_project_channel(self):
+        for line in (
+            "SLACK_DIRECTOR_CHANNEL_ID=C0BSH9SPPUH",
+            "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake",
+            "CHATGPT_BRIDGE_CHANNEL_IDS=C0BSH9SPPUH",
+        ):
+            self.assertIn(line, self.profile)
+
+    def test_profile_declares_every_provider_credential_and_safety_boundary(self):
+        for line in (
+            "OPENAI_API_KEY=",
+            "CLAUDE_ROUTINE_URL=",
+            "CURSOR_API_KEY=",
+            "GEMINI_API_KEY=",
+            "XAI_API_KEY=",
+            "GROK_ENABLED=false",
+            "GROK_CLI_REPOSITORY_MAP_JSON={}",
+            "PERPLEXITY_API_KEY=",
+            "PERPLEXITY_ENABLED=false",
+            "PERPLEXITY_ALLOW_REPOSITORY_WRITE=false",
+            "PERPLEXITY_ALLOW_REVIEW_VERDICT=false",
+        ):
             self.assertIn(line, self.profile)
 
     def test_canary_budget_and_all_activation_switches_start_closed(self):
@@ -482,3 +541,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]]

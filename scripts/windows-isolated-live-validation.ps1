@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
@@ -15,6 +16,7 @@ param(
     [switch]$EnablePaidRuns,
     [switch]$SkipProviderChecks,
     [switch]$SeedProviderCredentialsFromPrimaryEnv,
+    [string]$ProviderCredentialSourceEnvPath = "",
     [int]$TimeoutSeconds = 900
 )
 
@@ -42,7 +44,8 @@ foreach ($name in $composeEnvironmentNames) {
 }
 
 try {
-Set-Location (Split-Path -Parent $PSScriptRoot)
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $repoRoot
 
 $profiles = @{
     "project-uppercut" = [ordered]@{
@@ -84,7 +87,7 @@ $profiles = @{
         DIRECTOR_HOST_PORT = "38080"
         N8N_HOST_PORT = "35678"
         SQLITE_PATH = "/data/long-table.sqlite3"
-        PROJECT_ALLOWLIST = "long-table"
+        PROJECT_ALLOWLIST = "long-table-bid-whist"
         REPOSITORY_ALLOWLIST = "edwardjones3976/long-table-bid-whist"
         ALLOWED_STARTING_REFS = "main"
         MAX_AGENT_HOPS = "6"
@@ -497,6 +500,60 @@ function Assert-LongTableSnapshot {
         throw "The configured Long Table snapshot is not at the locally verified origin/main commit. No service was started."
     }
 }
+
+function Initialize-N8nIntakeWorkflow {
+    param(
+        [Parameter(Mandatory = $true)][string]$ComposeProject,
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    $workflowId = "directorIntake"
+    $workflowPath = Join-Path $RepositoryRoot "n8n\workflows\director-intake.json"
+    if (-not (Test-Path -LiteralPath $workflowPath -PathType Leaf)) {
+        throw "The n8n intake workflow is missing. Full-stack readiness cannot be established."
+    }
+    try {
+        $workflowDefinition = Get-Content -LiteralPath $workflowPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "The n8n intake workflow is not valid JSON. Full-stack readiness cannot be established."
+    }
+    if ([string]$workflowDefinition.id -cne $workflowId) {
+        throw "The committed n8n intake workflow does not carry the required directorIntake identity."
+    }
+    $workflowMount = "${workflowPath}:/workflows/director-intake.json:ro"
+
+    docker compose --project-name $ComposeProject --env-file $ProfilePath stop n8n
+    if ($LASTEXITCODE -ne 0) { throw "Unable to stop n8n before deterministic workflow import." }
+    docker compose --project-name $ComposeProject --env-file $ProfilePath up -d --wait --wait-timeout 120 n8n-db
+    if ($LASTEXITCODE -ne 0) { throw "Unable to start the isolated n8n database." }
+
+    $existingIds = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n list:workflow --onlyId |
+            Where-Object { [string]$_ -match '^[A-Za-z0-9_-]+$' }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to inspect isolated n8n workflows." }
+    if ($workflowId -in $existingIds) {
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n unpublish:workflow --id=$workflowId
+        if ($LASTEXITCODE -ne 0) { throw "Unable to unpublish the prior n8n intake workflow before replacement." }
+    }
+
+    docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T -v $workflowMount n8n import:workflow --input=/workflows/director-intake.json
+    if ($LASTEXITCODE -ne 0) { throw "Unable to import the n8n intake workflow." }
+    docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n publish:workflow --id=$workflowId
+    if ($LASTEXITCODE -ne 0) { throw "Unable to publish the n8n intake workflow." }
+
+    $activeIds = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n list:workflow --active=true --onlyId |
+            Where-Object { [string]$_ -match '^[A-Za-z0-9_-]+$' }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to verify active isolated n8n workflows." }
+    if (@($activeIds | Where-Object { [string]$_ -ceq $workflowId }).Count -ne 1) {
+        throw "The isolated n8n intake workflow is not uniquely active."
+    }
+    Write-Host "The isolated n8n intake workflow was imported, published, and verified active."
+}
 if ($ApiOnly -and $ProfileName -notin @("edge-oracle", "long-table")) {
     throw "-ApiOnly is limited to the Edge Oracle recovery and Long Table canary profiles."
 }
@@ -522,17 +579,43 @@ foreach ($name in @("ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N
     }
 }
 
-if ($SeedProviderCredentialsFromPrimaryEnv) {
-    if (-not (Test-Path -LiteralPath ".env" -PathType Leaf)) {
-        throw "Cannot seed providers because the primary .env does not exist."
+if ($SeedProviderCredentialsFromPrimaryEnv -and
+    -not [string]::IsNullOrWhiteSpace($ProviderCredentialSourceEnvPath)) {
+    throw "Choose either -SeedProviderCredentialsFromPrimaryEnv or -ProviderCredentialSourceEnvPath, not both."
+}
+$providerCredentialSource = if ($SeedProviderCredentialsFromPrimaryEnv) {
+    ".env"
+}
+else {
+    $ProviderCredentialSourceEnvPath
+}
+if (-not [string]::IsNullOrWhiteSpace($providerCredentialSource)) {
+    if (-not (Test-Path -LiteralPath $providerCredentialSource -PathType Leaf)) {
+        throw "Cannot seed providers because the configured credential source does not exist."
     }
-    $primaryValues = Read-DotEnv -Path ".env"
-    foreach ($name in @("OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN")) {
+    $resolvedCredentialSource = (Resolve-Path -LiteralPath $providerCredentialSource).Path
+    $resolvedProfilePath = (Resolve-Path -LiteralPath $profilePath).Path
+    if ($resolvedCredentialSource -ceq $resolvedProfilePath) {
+        throw "The provider credential source must be different from the target profile."
+    }
+    $primaryValues = Read-DotEnv -Path $resolvedCredentialSource
+    foreach ($name in @(
+        "OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN",
+        "GEMINI_API_KEY", "PERPLEXITY_API_KEY", "XAI_API_KEY"
+    )) {
         if ($primaryValues.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$primaryValues[$name])) {
             $profileText = Set-DotEnvValue -Text $profileText -Name $name -Value ([string]$primaryValues[$name])
         }
     }
-    Write-Host "Provider credentials were copied locally from .env to $profilePath; values were not displayed."
+    if ($primaryValues.ContainsKey("PERPLEXITY_API_KEY") -and
+        -not [string]::IsNullOrWhiteSpace([string]$primaryValues["PERPLEXITY_API_KEY"])) {
+        $profileText = Set-DotEnvValue -Text $profileText -Name "PERPLEXITY_ENABLED" -Value "true"
+    }
+    if ($primaryValues.ContainsKey("XAI_API_KEY") -and
+        -not [string]::IsNullOrWhiteSpace([string]$primaryValues["XAI_API_KEY"])) {
+        $profileText = Set-DotEnvValue -Text $profileText -Name "GROK_ENABLED" -Value "true"
+    }
+    Write-Host "Provider credentials were copied locally from the configured source to $profilePath; values were not displayed."
 }
 
 $identity = [ordered]@{
@@ -618,6 +701,13 @@ foreach ($name in @($composeEnvironmentNames | Where-Object { $_ -ne "DIRECTOR_E
 Write-Host "Using isolated $displayName profile $profilePath, Compose project $composeProject, and host port $hostPort."
 docker compose --project-name $composeProject --env-file $profilePath config --quiet
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose configuration validation failed." }
+
+if ($ProfileName -eq "long-table" -and -not $ApiOnly) {
+    Initialize-N8nIntakeWorkflow `
+        -ComposeProject $composeProject `
+        -ProfilePath $profilePath `
+        -RepositoryRoot $repoRoot
+}
 
 docker compose --project-name $composeProject --env-file $profilePath build orchestrator
 if ($LASTEXITCODE -ne 0) { throw "Unable to build the isolated $displayName Director image." }
@@ -832,9 +922,9 @@ catch {
             }
         }
         if ($null -ne $composeProject -and $composeProject) {
-            docker compose --project-name $composeProject --env-file $profilePath stop orchestrator slackbot | Out-Null
+            docker compose --project-name $composeProject --env-file $profilePath stop orchestrator slackbot n8n n8n-db | Out-Null
             if ($LASTEXITCODE -ne 0) {
-                $outerRollbackErrors.Add("the previously running Long Table writers could not be stopped")
+                $outerRollbackErrors.Add("the previously running Long Table services could not be stopped")
             }
         }
         if ($outerRollbackErrors.Count -gt 0) {
@@ -863,3 +953,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]]

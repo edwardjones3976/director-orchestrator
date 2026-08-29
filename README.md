@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | BEGIN]] -->
@@ -213,6 +214,19 @@ and is reached only through an authenticated, exact-assignment Claude callback o
 local audit CLI rather than a public merge API. See
 [Edge Oracle operations](docs/edge-oracle-operations.md).
 
+The Long Table — Bid Whist uses the dedicated `.env.long-table` profile with
+project ID `long-table-bid-whist`, repository
+`edwardjones3976/long-table-bid-whist`, starting ref `main`, Director port
+`38080`, n8n port `35678`, a separate database/checkpoint namespace, and its
+project Slack channel. Run `scripts/windows-long-table-live-validation.ps1`
+for the complete isolated stack; add `-ApiOnly` only for an intentional
+orchestrator-only canary. Use `-ProviderCredentialSourceEnvPath` to seed only
+named provider credentials from another ignored local profile without printing
+their values. Full-stack startup replaces the project-namespaced n8n intake
+workflow from the committed JSON, publishes it, and verifies that exact workflow
+ID is active before reporting readiness. Paid execution remains fail-closed
+until the script's fresh provider checks succeed.
+
 ## Local validation
 
 ```powershell
@@ -238,3 +252,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
@@ -27,7 +28,7 @@ class GraduationConfigurationTests(unittest.TestCase):
             langgraph_runtime_writer_secret="w" * 32,
             repository_snapshot_root=str(root),
             completion_gate_store_path=str(root / "completion.sqlite3"),
-            project_allowlist=("long-table",),
+            project_allowlist=("long-table-bid-whist",),
             repository_allowlist=("edwardjones3976/long-table-bid-whist",),
             allowed_starting_refs=("main",),
             claude_callback_secret="configured-for-test",
@@ -129,3 +130,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]]
