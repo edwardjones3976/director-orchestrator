@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]]
@@ -11,6 +12,7 @@ schema_version: "director-project-profile/v1"
 project:
   id: "<short-stable-project-id>"
   name: "<working project name>"
+  rollout_packet: "rollout-packet.md"
   proposition: "<what this project may accomplish, learn, decide, or change>"
   state: "exploring" # exploring | framing | building | validating | operating | paused | closed
   owner: "<owner or authorized source>"
@@ -38,10 +40,37 @@ outcomes:
   stopping_point: "<decision, threshold, budget, date, failure, or safety condition>"
 
 surfaces:
+  deployment:
+    intent: "analysis_only" # analysis_only | planned | live
+    concurrently_active: "unknown" # true | false | unknown
+    profile: "<ignored environment-file name or not_created>"
+    compose_namespace: "<project-specific namespace or not_created>"
+    state_namespace: "<project-specific database/volume/checkpoint namespace or not_created>"
+    status: "provisional"
   slack:
+    workspace_id: "<workspace ID or unknown>"
+    owner_user_allowlist:
+      - "<exact Slack owner user ID or pending>"
+    runtime_channel_allowlist:
+      - "<exact project channel ID or pending>"
+    app:
+      display_name: "<project-specific Slack app name or pending>"
+      app_id: "<Slack app ID or pending>"
+      bot_user_id: "<exact Slack bot user ID or pending>"
+      manifest_sha256: "<64-hex manifest digest or pending>"
+      installation_status: "provisional"
+      socket_mode_status: "provisional"
+      credential_references:
+        app_token: "SLACK_APP_TOKEN"
+        bot_token: "SLACK_BOT_TOKEN"
     channel: "<slack channel ID or configured placeholder; not a hardcoded workspace name>"
     thread: "<thread timestamp/link or not_created>"
     status: "provisional"
+    isolation:
+      dedicated_app_per_active_deployment: true
+      dedicated_channel_per_active_deployment: true
+      distinct_profile_and_state_namespace: true
+      concurrent_deployment_collision_check: "pending"
   repositories:
     - name: "<exact owner/name>"
       starting_ref: "<durable ref>"
@@ -173,6 +202,12 @@ fallbacks:
   unavailable_provider: "<replacement, reduced scope, or owner decision>"
   incomplete_evidence: "<research, experiment, pause, or owner decision>"
   ambiguous_paid_dispatch: "reconcile_existing_run_before_retry"
+  slack_delivery:
+    primary_attempt_limit: 1
+    second_attempt_requires: "plausibly_transient_failure"
+    third_attempt_requires: "materially_different_transport_or_new_information"
+    ambiguous_slack_side_effect: "do_not_retry_reconcile_first"
+    exhausted_route: "same_project_durable_transport_never_borrow_another_deployment_surface"
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
@@ -183,3 +218,4 @@ next:
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
@@ -116,6 +117,10 @@ Copy only the artifacts the project needs from
   into a concise `PROJECT_BOOTSTRAP` request.
 - [`project-profile.yaml`](templates/project-bootstrap/project-profile.yaml)
   records the living project-local profile.
+- [`rollout-packet.md`](templates/project-bootstrap/rollout-packet.md) records
+  deployment identity, allowlists, Slack isolation, activation evidence,
+  communication fallback, and rollback for every project presented to the
+  Director.
 - [`workstream-plan.md`](templates/project-bootstrap/workstream-plan.md)
   composes bounded modules, provider assignments, workflow skills, and
   fallbacks.
@@ -220,6 +225,23 @@ project profile (`surfaces.slack.channel`) or runtime configuration—use the
 configured channel ID or an explicit project-local placeholder such as
 `<slack-channel-id-from-profile>`. Do not hardcode workspace channel names or
 assert workspace facts in protocol or template artifacts.
+
+Every presented project receives a rollout packet. When two or more Director
+deployments will be active concurrently, each must have a distinct Slack app,
+distinct project channel, distinct deployment profile, and distinct state
+namespace. Record app and channel identities, installation/readiness status,
+collision evidence, activation checks, and rollback without recording token
+values. Pending, missing, reused, or unverified identities leave the project
+analysis-only and block Slack gateway activation; they do not justify borrowing
+another deployment's Slack surface.
+
+Slack delivery gets one primary attempt. A second attempt is allowed only when
+the failure is plausibly transient. A third attempt is allowed only with a
+materially different transport or new information. Never retry an ambiguous
+Slack side effect; reconcile it first. When the bounded route is exhausted,
+continue through the same project's prior durable SQLite/API state and
+provider-native evidence. Do not route through another deployment's app,
+channel, thread, credentials, profile, or state namespace.
 
 Before any local CLI assignment, verify the named repository, isolated
 worktree, and branch. Never launch a provider from `System32` or a generic
@@ -378,6 +400,9 @@ research-only stopping point while still using the same protocol.
 
 Before a project moves from shaping to live execution, confirm:
 
+- its rollout packet records deployment identity, activation evidence, and rollback;
+- every concurrently active deployment has a verified distinct Slack app,
+  project channel, deployment profile, and state namespace;
 - a project-local proposition, outcome, and stopping point exist;
 - the selected modules and provider roles are useful now;
 - its channel, repositories, refs, budget, data handling, and external effects
@@ -396,3 +421,4 @@ project-specific control.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
