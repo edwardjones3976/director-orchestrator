@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[Cursor Agent | Cursor Agent CLI | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
@@ -1382,7 +1383,8 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def _workload_ledger_rows(database: str) -> list[tuple[str, str | None]]:
         import sqlite3
 
-        with sqlite3.connect(database) as connection:
+        connection = sqlite3.connect(database)
+        try:
             return [
                 (str(phase), outcome)
                 for phase, outcome in connection.execute(
@@ -1393,6 +1395,8 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     ORDER BY reservation.ledger_id ASC"""
                 ).fetchall()
             ]
+        finally:
+            connection.close()
 
     @staticmethod
     def _v1_revision_prestage(*, goal: str, terminal_condition: str) -> PlanPrestageRecord:
@@ -2386,4 +2390,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]
 # [[Cursor Agent | Cursor Agent CLI | 2026-08-29 | 06:14 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | END]]
 
