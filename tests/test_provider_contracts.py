@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
@@ -840,6 +841,52 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(RecordingAsyncClient.calls), 1)
         self.assertEqual(RecordingAsyncClient.calls[0]["method"], "GET")
 
+    async def test_grok_routes_implementation_to_build_model_and_general_to_chat(self):
+        settings = replace(
+            Settings(),
+            grok_enabled=True,
+            grok_api_key="test-xai",
+            grok_model="grok-4.6",
+            grok_code_model="grok-build-0.1",
+        )
+        general = Assignment(
+            sequence=1,
+            agent=ProviderName.GROK,
+            task="Analyze the bounded design",
+            acceptance=["Return a concise recommendation"],
+        )
+        implementation = Assignment(
+            sequence=2,
+            agent=ProviderName.GROK,
+            kind=AssignmentKind.IMPLEMENTATION,
+            task="Produce a bounded implementation artifact without repository writes",
+            acceptance=["Return implementation evidence"],
+        )
+        RecordingAsyncClient.responses = [
+            {"data": [{"id": "grok-4.6"}, {"id": "grok-build-0.1"}]},
+            {"id": "resp-general", "status": "completed", "output_text": "general"},
+            {"id": "resp-code", "status": "completed", "output_text": "code"},
+            {"id": "resp-usage", "status": "completed", "output_text": "usage"},
+        ]
+        adapter = GrokAdapter(settings)
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            await adapter.dispatch(general, "general context")
+            await adapter.dispatch(implementation, "implementation context")
+            await adapter.usage_check("bounded usage check")
+
+        self.assertEqual(
+            [call["method"] for call in RecordingAsyncClient.calls],
+            ["GET", "POST", "POST", "POST"],
+        )
+        self.assertEqual(RecordingAsyncClient.calls[1]["json"]["model"], "grok-4.6")
+        self.assertEqual(
+            RecordingAsyncClient.calls[2]["json"]["model"], "grok-build-0.1"
+        )
+        self.assertEqual(RecordingAsyncClient.calls[2]["json"]["tools"], [])
+        self.assertFalse(RecordingAsyncClient.calls[2]["json"]["store"])
+        self.assertEqual(RecordingAsyncClient.calls[3]["json"]["model"], "grok-4.6")
+
     async def test_grok_profile_and_authority_fail_closed_without_http(self):
         base = replace(
             Settings(),
@@ -1366,3 +1413,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]

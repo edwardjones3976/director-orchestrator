@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
@@ -857,7 +858,16 @@ class GrokAdapter(ProviderAdapter):
 
     def __init__(self, settings: Settings):
         super().__init__(settings)
-        self._catalog_verified = False
+        self._catalog_models: frozenset[str] | None = None
+
+    _CODE_KINDS = frozenset(
+        {
+            AssignmentKind.IMPLEMENTATION,
+            AssignmentKind.BOILERPLATE,
+            AssignmentKind.SCAFFOLDING,
+            AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+        }
+    )
 
     @property
     def headers(self) -> dict[str, str]:
@@ -945,24 +955,29 @@ class GrokAdapter(ProviderAdapter):
             raw=payload,
         )
 
-    async def _ensure_model_allowed(self, client: httpx.AsyncClient) -> None:
-        if self._catalog_verified:
-            return
-        response = await client.get(
-            f"{self.settings.grok_api_base}/models", headers=self.headers
-        )
-        response.raise_for_status()
-        payload = response.json()
-        models = {
-            item.get("id")
-            for item in payload.get("data", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
-        if self.settings.grok_model not in models:
+    def _model_for(self, assignment: Assignment | None) -> str:
+        if assignment is not None and assignment.kind in self._CODE_KINDS:
+            return self.settings.grok_code_model
+        return self.settings.grok_model
+
+    async def _ensure_model_allowed(
+        self, client: httpx.AsyncClient, model: str
+    ) -> None:
+        if self._catalog_models is None:
+            response = await client.get(
+                f"{self.settings.grok_api_base}/models", headers=self.headers
+            )
+            response.raise_for_status()
+            payload = response.json()
+            self._catalog_models = frozenset(
+                item.get("id")
+                for item in payload.get("data", [])
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            )
+        if model not in self._catalog_models:
             raise ProviderError(
                 "Configured Grok model is unavailable to the authenticated xAI key"
             )
-        self._catalog_verified = True
 
     def _input(
         self,
@@ -1315,16 +1330,19 @@ class GrokAdapter(ProviderAdapter):
             if prompt_path is not None:
                 prompt_path.unlink(missing_ok=True)
 
-    async def _submit(self, input_text: str) -> ProviderRun:
+    async def _submit(
+        self, assignment: Assignment | None, input_text: str
+    ) -> ProviderRun:
+        model = self._model_for(assignment)
         body = {
-            "model": self.settings.grok_model,
+            "model": model,
             "input": input_text,
             "max_output_tokens": self.settings.grok_max_output_tokens,
             "tools": [],
             "store": False,
         }
         async with httpx.AsyncClient(timeout=self.settings.grok_timeout_seconds) as client:
-            await self._ensure_model_allowed(client)
+            await self._ensure_model_allowed(client, model)
             response = await client.post(
                 f"{self.settings.grok_api_base}/responses",
                 headers=self.headers,
@@ -1337,7 +1355,7 @@ class GrokAdapter(ProviderAdapter):
         self._require_profile(assignment)
         if self._requires_cli(assignment):
             return await self._dispatch_cli(assignment, context)
-        return await self._submit(self._input(assignment, context))
+        return await self._submit(assignment, self._input(assignment, context))
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         raise ProviderError("Grok Responses API calls are synchronous and cannot be polled")
@@ -1359,12 +1377,13 @@ class GrokAdapter(ProviderAdapter):
                 assignment, context, revision_prompt=prompt
             )
         return await self._submit(
-            self._input(assignment, context, revision_prompt=prompt)
+            assignment,
+            self._input(assignment, context, revision_prompt=prompt),
         )
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         self._require_profile()
-        return await self._submit(prompt)
+        return await self._submit(None, prompt)
 
 
 class PerplexityAdapter(ProviderAdapter):
@@ -1510,3 +1529,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]

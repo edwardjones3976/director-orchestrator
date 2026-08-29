@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
@@ -394,6 +395,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "GEMINI_API_KEY=",
             "XAI_API_KEY=",
             "GROK_ENABLED=false",
+            "GROK_CODE_MODEL=grok-build-0.1",
             "GROK_CLI_REPOSITORY_MAP_JSON={}",
             "PERPLEXITY_API_KEY=",
             "PERPLEXITY_ENABLED=false",
@@ -542,3 +544,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]

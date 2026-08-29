@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]] -->
@@ -56,15 +57,17 @@ non-positive or non-finite configured value prevents the service from starting.
 | Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
 | Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
-| Primary — Cursor-family teammate | xAI Responses API plus separately authorized Grok Build/Bot contacts | `GROK_ENABLED`, `XAI_API_KEY`, `GROK_MODEL` and the fail-closed controls below | Synchronous API response or named-worktree CLI/Bot evidence |
+| Primary — Cursor-family teammate | xAI Responses API plus separately authorized Grok Build/Bot contacts | `GROK_ENABLED`, `XAI_API_KEY`, `GROK_MODEL`, `GROK_CODE_MODEL` and the fail-closed controls below | Synchronous API response or named-worktree CLI/Bot evidence |
 | Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
 
 ## Grok primary Cursor-family profile
 
-The Grok adapter has two explicit transports. General analysis and debate use
-the synchronous, tool-free xAI Responses API. Repository implementation and
-exact-SHA review use the locally authenticated Grok Build CLI in an
+The Grok adapter has two explicit transports and two API model lanes. General
+analysis and debate use `GROK_MODEL`; bounded implementation assignments that
+do not authorize repository writes use `GROK_CODE_MODEL`. Both remain
+synchronous and tool-free. Repository implementation and exact-SHA review use
+the locally authenticated Grok Build CLI in an
 operator-mapped clean named worktree. The Director never promotes API-only
 output into repository or review authority. Keep both transports disabled until
 their dedicated credentials, paths, and budgets are configured:
@@ -74,6 +77,7 @@ GROK_ENABLED=false
 XAI_API_KEY=
 GROK_API_BASE=https://api.x.ai/v1
 GROK_MODEL=grok-4.6
+GROK_CODE_MODEL=grok-build-0.1
 GROK_MODE=cursor_family_primary
 GROK_TIMEOUT_SECONDS=180
 GROK_MAX_OUTPUT_TOKENS=4096
@@ -296,3 +300,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]] -->

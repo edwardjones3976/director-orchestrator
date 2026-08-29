@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -504,6 +505,7 @@ class Settings:
     grok_api_key: str = os.getenv("XAI_API_KEY", "")
     grok_api_base: str = os.getenv("GROK_API_BASE", "https://api.x.ai/v1").rstrip("/")
     grok_model: str = os.getenv("GROK_MODEL", "grok-4.6").strip()
+    grok_code_model: str = os.getenv("GROK_CODE_MODEL", "grok-build-0.1").strip()
     grok_mode: str = os.getenv("GROK_MODE", "cursor_family_primary").strip().lower()
     grok_timeout_seconds: int = _int("GROK_TIMEOUT_SECONDS", 180)
     grok_max_output_tokens: int = _int("GROK_MAX_OUTPUT_TOKENS", 4_096)
@@ -605,6 +607,11 @@ class Settings:
             "model_configured": bool(self.grok_model)
             and "/" not in self.grok_model
             and not any(character.isspace() for character in self.grok_model),
+            "code_model_configured": bool(self.grok_code_model)
+            and "/" not in self.grok_code_model
+            and not any(
+                character.isspace() for character in self.grok_code_model
+            ),
             "cursor_family_primary_mode": self.grok_mode == "cursor_family_primary",
             "timeout_valid": 1 <= self.grok_timeout_seconds <= 1_800,
             "output_limit_valid": 16 <= self.grok_max_output_tokens <= 32_768,
@@ -1299,3 +1306,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]
