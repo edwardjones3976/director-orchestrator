@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:56 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
@@ -1663,47 +1665,16 @@ class TaskStore:
                 direct_provider is not None
                 and is_direct_production_kind(kind)
             ):
+                # Pending and invoked-but-uncredited implementations are handled
+                # symmetrically by _direct_rollover_violations below.  The base
+                # history therefore remains the canonical append-only credit
+                # window instead of mixing unrelated table clocks and ordinals.
                 direct_rows = connection.execute(
                     """SELECT assignment_id, provider, effort_units
-                    FROM (
-                        SELECT assignment_id, provider, effort_units,
-                               recorded_at, credit_id AS ordinal
-                        FROM direct_production_credits
-                        UNION ALL
-                        SELECT reservation.assignment_id,
-                               reservation.provider,
-                               reservation.effort_units,
-                               reservation.recorded_at,
-                               reservation.ledger_id AS ordinal
-                        FROM workload_assignment_reservations AS reservation
-                        LEFT JOIN workload_assignment_events AS event
-                          ON event.reservation_key = reservation.reservation_key
-                        WHERE event.outcome IS NULL
-                          AND reservation.provider = ?
-                          AND reservation.work_kind = 'implementation'
-                          AND NOT EXISTS (
-                              SELECT 1 FROM direct_production_credits AS credit
-                              WHERE credit.assignment_id = reservation.assignment_id
-                          )
-                          AND reservation.ledger_id = (
-                              SELECT MAX(candidate.ledger_id)
-                              FROM workload_assignment_reservations AS candidate
-                              LEFT JOIN workload_assignment_events AS candidate_event
-                                ON candidate_event.reservation_key =
-                                   candidate.reservation_key
-                              WHERE candidate.assignment_id =
-                                    reservation.assignment_id
-                                AND candidate.provider = reservation.provider
-                                AND candidate.work_kind = 'implementation'
-                                AND candidate_event.outcome IS NULL
-                          )
-                    )
-                    ORDER BY recorded_at DESC, ordinal DESC
+                    FROM direct_production_credits
+                    ORDER BY credit_id DESC
                     LIMIT ?""",
-                    (
-                        provider.value,
-                        DEFAULT_POLICY.rolling_window_size - 1,
-                    ),
+                    (DEFAULT_POLICY.rolling_window_size - 1,),
                 ).fetchall()
                 for row in reversed(direct_rows):
                     mapped_provider = direct_production_provider(
@@ -1943,7 +1914,6 @@ class TaskStore:
             FROM workload_assignment_reservations AS reservation
             LEFT JOIN workload_assignment_events AS event
               ON event.reservation_key = reservation.reservation_key
-            LEFT JOIN tasks AS task ON task.task_id = reservation.task_id
             WHERE reservation.work_kind = 'implementation'
               AND reservation.provider <> 'openai'
               AND reservation.assignment_id <> ?
@@ -1953,10 +1923,7 @@ class TaskStore:
               )
               AND (
                   event.outcome IS NULL
-                  OR (
-                      event.outcome = 'invoked'
-                      AND COALESCE(task.status, '') NOT IN ('DONE', 'FAILED')
-                  )
+                  OR event.outcome = 'invoked'
               )
             ORDER BY reservation.ledger_id ASC""",
             (assignment_id,),
@@ -1986,7 +1953,7 @@ class TaskStore:
         credit_rows = connection.execute(
             """SELECT assignment_id, provider, effort_units
             FROM direct_production_credits
-            ORDER BY recorded_at DESC, credit_id DESC
+            ORDER BY credit_id DESC
             LIMIT ?""",
             (window - 1,),
         ).fetchall()
@@ -2520,3 +2487,5 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:56 UTC | END]]

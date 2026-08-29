@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:08 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[Cursor Agent | Cursor Agent CLI | 2026-08-29 | 06:14 UTC | BEGIN]]
@@ -30,11 +32,13 @@ import httpx
 import director_orchestrator.main as main
 from director_orchestrator.config import Settings
 from director_orchestrator.approvals import (
+    EffectAlreadyClaimed,
     apply_oracle_recovery,
     assignment_approval_digest,
     record_task_effect_observation,
     reset_for_owner_clarification,
     record_provider_effect_observation,
+    reserve_provider_effect,
     reserve_task_effect,
     task_effect_key,
 )
@@ -49,6 +53,7 @@ from director_orchestrator.interactions import (
     append_interaction_event,
     build_transport_evidence,
     canonical_content_digest,
+    project_interaction,
     require_verified_result,
     start_interaction,
     transition_interaction,
@@ -77,7 +82,7 @@ from director_orchestrator.oracle_merge import (
     OracleMergeResult,
     OracleMergeStatus,
 )
-from director_orchestrator.providers import ProviderError
+from director_orchestrator.providers import PreSubmitProviderError, ProviderError
 from director_orchestrator.store import TaskStore
 
 
@@ -1616,6 +1621,136 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 self._workload_ledger_rows(database), [("revision", "invoked")]
             )
+
+    async def test_v1_revision_pre_submit_provider_error_finalizes_failed_pre_submit(
+        self,
+    ):
+        class RevisionDirector:
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                return ReviewDecision(
+                    verdict=ReviewVerdict.REVISE,
+                    summary="Revision needed.",
+                    revision_prompt="Add evidence.",
+                )
+
+        class PreSubmitRevisionAdapter:
+            def __init__(self):
+                self.revisions = 0
+
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                raise AssertionError("Recorded original run must not be redispatched")
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal original run must not be polled")
+
+            async def revise(self, run, prompt, *, assignment, context) -> ProviderRun:
+                self.revisions += 1
+                raise PreSubmitProviderError(
+                    "revision rejected before provider I/O"
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = PreSubmitRevisionAdapter()
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, adapter, RevisionDirector()
+            )
+            await engine.run(record.task_id)
+
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.FAILED)
+            self.assertIn("ProviderError", stopped.error or "")
+            self.assertIn(
+                "revision rejected before provider I/O", stopped.error or ""
+            )
+            self.assertEqual(stopped.revision_count, 0)
+            self.assertEqual(adapter.revisions, 1)
+            self.assertEqual(
+                self._workload_ledger_rows(database),
+                [("revision", "failed_pre_submit")],
+            )
+            revision_effects = [
+                item.outcome
+                for item in stopped.task_effect_ledger
+                if item.kind == "provider_observation" and item.phase == "revision"
+            ]
+            self.assertEqual(revision_effects, ["failed_pre_submit"])
+            revision_interaction_id = next(
+                event.interaction_id
+                for event in reversed(stopped.provider_interaction_ledger)
+                if event.phase == ProviderInteractionPhase.REVISION
+            )
+            revision_projection = project_interaction(
+                stopped.provider_interaction_ledger, revision_interaction_id
+            )
+            self.assertEqual(
+                revision_projection.state, ProviderInteractionState.FAILED
+            )
+            self.assertEqual(store.list_recent_direct_production(), [])
+            self.assertEqual(
+                [
+                    run.run_id
+                    for run in stopped.provider_runs
+                    if run.run_id != "claude-original"
+                ],
+                [],
+            )
+
+    async def test_v1_plain_revision_error_is_ambiguous_and_not_retried(self):
+        class RevisionDirector:
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                return ReviewDecision(
+                    verdict=ReviewVerdict.REVISE,
+                    summary="Revision needed.",
+                    revision_prompt="Add evidence.",
+                )
+
+        class UnknownRevisionAdapter:
+            def __init__(self):
+                self.revisions = 0
+
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                raise AssertionError("Recorded original run must not be redispatched")
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal original run must not be polled")
+
+            async def revise(self, run, prompt, *, assignment, context) -> ProviderRun:
+                self.revisions += 1
+                raise ProviderError("submission outcome cannot be established")
+
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = UnknownRevisionAdapter()
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, adapter, RevisionDirector()
+            )
+            await engine.run(record.task_id)
+
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.revision_count, 0)
+            self.assertEqual(adapter.revisions, 1)
+            self.assertEqual(
+                self._workload_ledger_rows(database), [("revision", "invoked")]
+            )
+            revision_effects = [
+                item.outcome
+                for item in stopped.task_effect_ledger
+                if item.kind == "provider_observation" and item.phase == "revision"
+            ]
+            self.assertEqual(revision_effects, ["ambiguous"])
+            self.assertEqual(
+                [item.outcome for item in stopped.provider_contact_attempts],
+                ["ambiguous_dispatch"],
+            )
+
+            with self.assertRaises(EffectAlreadyClaimed):
+                reserve_provider_effect(
+                    stopped,
+                    stopped.plan.assignments[0],
+                    phase="revision",
+                    max_task_budget_usd=engine.settings.max_task_budget_usd,
+                )
+            self.assertEqual(adapter.revisions, 1)
     # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:15 UTC | END]]
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
 
@@ -2391,4 +2526,6 @@ if __name__ == "__main__":
 # [[Cursor Agent | Cursor Agent CLI | 2026-08-29 | 06:14 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:08 UTC | END]]
 

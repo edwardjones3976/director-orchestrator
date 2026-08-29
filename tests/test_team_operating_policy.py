@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -49,7 +50,10 @@ from director_orchestrator.interactions import (
     start_interaction,
     transition_interaction,
 )
-from director_orchestrator.providers import PostSubmitAmbiguityError, ProviderError
+from director_orchestrator.providers import (
+    PostSubmitAmbiguityError,
+    PreSubmitProviderError,
+)
 from director_orchestrator.models import (
     Assignment,
     AssignmentKind,
@@ -1822,12 +1826,14 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                     "remains ambiguous", (store.get(task.task_id).message or "")
                 )
 
-    async def test_plain_provider_error_is_not_misclassified_as_post_submit(self):
+    async def test_known_pre_submit_error_is_not_misclassified_as_post_submit(self):
         class PredispatchAdapter:
             name = ProviderName.CLAUDE
 
             async def dispatch(self, assignment, context):
-                raise ProviderError("bounded public research query is required")
+                raise PreSubmitProviderError(
+                    "bounded public research query is required"
+                )
 
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(
@@ -2066,3 +2072,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:11 UTC | END]]

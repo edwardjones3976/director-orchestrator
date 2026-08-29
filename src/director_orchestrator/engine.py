@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:06 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
@@ -125,7 +127,7 @@ from .policy import (
     trusted_openai_debate_phase_cost_usd,
 )
 from .providers import (
-    PostSubmitAmbiguityError,
+    PreSubmitProviderError,
     ProviderDailyLimitExceeded,
     ProviderDailySpendLedger,
     ProviderError,
@@ -172,14 +174,6 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance only
     from .runtime_activation import RuntimeActivation
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
-
-_POST_SUBMIT_AMBIGUITY_ERRORS = (
-    PostSubmitAmbiguityError,
-    httpx.HTTPError,
-    ValueError,
-    LookupError,
-    TypeError,
-)
 
 _DRY_RUN_PREVIEW_MESSAGE = (
     "Dry-run plan created. Live provider execution remains disabled."
@@ -5600,7 +5594,33 @@ class OrchestrationEngine:
                     assignment,
                     context=self._handoff_context(record, assignment),
                 )
-            except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+            except PreSubmitProviderError as exc:
+                if workload_reservation is not None:
+                    finalized = await self._finalize_workload_dispatch(
+                        record,
+                        workload_reservation,
+                        WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                    )
+                    if not finalized:
+                        return False
+                self._advance_interaction_id(
+                    record,
+                    interaction_id=interaction_id,
+                    provider=assignment.agent,
+                    state=ProviderInteractionState.FAILED,
+                    source=TransportEvidenceSource.BACKEND_OBSERVATION,
+                    error_code=type(exc).__name__,
+                )
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=effect_key,
+                    phase="dispatch",
+                    outcome="failed_pre_submit",
+                )
+                self.store.save(record)
+                raise
+            except Exception as exc:
                 if workload_reservation is not None:
                     await self._finalize_workload_dispatch(
                         record,
@@ -5649,32 +5669,6 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
-            except Exception as exc:
-                if workload_reservation is not None:
-                    finalized = await self._finalize_workload_dispatch(
-                        record,
-                        workload_reservation,
-                        WorkloadAttemptOutcome.INVOKED,
-                    )
-                    if not finalized:
-                        return False
-                self._advance_interaction_id(
-                    record,
-                    interaction_id=interaction_id,
-                    provider=assignment.agent,
-                    state=ProviderInteractionState.FAILED,
-                    source=TransportEvidenceSource.BACKEND_OBSERVATION,
-                    error_code=type(exc).__name__,
-                )
-                record_provider_effect_observation(
-                    record,
-                    assignment,
-                    effect_key=effect_key,
-                    phase="dispatch",
-                    outcome="failed_pre_submit",
-                )
-                self.store.save(record)
-                raise
             if workload_reservation is not None and not await self._finalize_workload_dispatch(
                 record,
                 workload_reservation,
@@ -5934,7 +5928,32 @@ class OrchestrationEngine:
                     assignment=assignment,
                     context=self._handoff_context(record, assignment),
                 )
-            except _POST_SUBMIT_AMBIGUITY_ERRORS as exc:
+            except PreSubmitProviderError as exc:
+                if revision_workload_reservation is not None:
+                    if not await self._finalize_workload_dispatch(
+                        record,
+                        revision_workload_reservation,
+                        WorkloadAttemptOutcome.FAILED_PRE_SUBMIT,
+                    ):
+                        return False
+                self._advance_interaction_id(
+                    record,
+                    interaction_id=revision_interaction_id,
+                    provider=assignment.agent,
+                    state=ProviderInteractionState.FAILED,
+                    source=TransportEvidenceSource.BACKEND_OBSERVATION,
+                    error_code=type(exc).__name__,
+                )
+                record_provider_effect_observation(
+                    record,
+                    assignment,
+                    effect_key=revision_effect_key,
+                    phase="revision",
+                    outcome="failed_pre_submit",
+                )
+                self.store.save(record)
+                raise
+            except Exception as exc:
                 # Ambiguous submission consumed one attempt: count it as
                 # invoked so the ledger never treats it as retryable.
                 if revision_workload_reservation is not None:
@@ -5985,31 +6004,6 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
-            except Exception as exc:
-                if revision_workload_reservation is not None:
-                    if not await self._finalize_workload_dispatch(
-                        record,
-                        revision_workload_reservation,
-                        WorkloadAttemptOutcome.INVOKED,
-                    ):
-                        return False
-                self._advance_interaction_id(
-                    record,
-                    interaction_id=revision_interaction_id,
-                    provider=assignment.agent,
-                    state=ProviderInteractionState.FAILED,
-                    source=TransportEvidenceSource.BACKEND_OBSERVATION,
-                    error_code=type(exc).__name__,
-                )
-                record_provider_effect_observation(
-                    record,
-                    assignment,
-                    effect_key=revision_effect_key,
-                    phase="revision",
-                    outcome="failed_pre_submit",
-                )
-                self.store.save(record)
-                raise
             if revision_workload_reservation is not None and not (
                 await self._finalize_workload_dispatch(
                     record,
@@ -6290,3 +6284,5 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:06 UTC | END]]

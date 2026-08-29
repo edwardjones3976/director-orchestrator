@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:53 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:49 UTC | BEGIN]]
@@ -828,6 +830,218 @@ class WorkloadLedgerTests(unittest.TestCase):
         )
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
 
+    @staticmethod
+    def _minimal_done_task(task_id: str) -> TaskRecord:
+        return TaskRecord(
+            task_id=task_id,
+            status=TaskStatus.DONE,
+            intake=SlackIntake(
+                source_event_id=f"evt-{task_id}",
+                channel_id="C1",
+                thread_ts="1.1",
+                user_id="U1",
+                text="Bounded implementation artifact.",
+            ),
+            plan=DirectorPlan(
+                project="ledger-regression",
+                normalized_outcome="Bounded implementation artifact.",
+                risk_level=RiskLevel.LOW,
+                approval_required=False,
+                max_hops=1,
+                max_revisions=0,
+                assignments=[
+                    Assignment(
+                        sequence=1,
+                        agent=ProviderName.CURSOR,
+                        kind=AssignmentKind.IMPLEMENTATION,
+                        workload_size=WorkSize.SIMPLE,
+                        effort_points=1,
+                        task="Produce one bounded implementation artifact.",
+                        acceptance=["Authenticated accepted result is recorded."],
+                    )
+                ],
+                final_acceptance=["Authenticated accepted result is recorded."],
+                workload_policy_version="v1",
+            ),
+            plan_generation=1,
+        )
+
+    def _insert_raw_direct_credit(
+        self,
+        *,
+        task_id: str,
+        assignment_id: str,
+        provider: Provider,
+        effort_units: int,
+        recorded_at: str,
+    ) -> None:
+        digest = "a" * 64
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute(
+                """INSERT INTO direct_production_credits(
+                    credit_key, task_id, plan_generation, assignment_sequence,
+                    assignment_id, provider, effort_units,
+                    provider_event_digest, provider_result_digest,
+                    review_event_digest, review_result_digest, recorded_at
+                ) VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    assignment_id,
+                    task_id,
+                    assignment_id,
+                    provider.value,
+                    effort_units,
+                    digest,
+                    digest,
+                    digest,
+                    digest,
+                    recorded_at,
+                ),
+            )
+            connection.commit()
+
+    def test_direct_window_projects_invoked_terminal_task_awaiting_credit(self) -> None:
+        direct_seeds = (
+            [(Provider.CURSOR, 8)]
+            + [(Provider.CLAUDE, 5)] * 6
+            + [(Provider.CLAUDE, 1)]
+            + [(Provider.GROK, 2)]
+            + [(Provider.GROK, 1)] * 3
+            + [(Provider.GEMINI, 2)]
+            + [(Provider.GEMINI, 1)] * 2
+            + [(Provider.PERPLEXITY, 1)] * 4
+        )
+        self.assertEqual(len(direct_seeds), 19)
+        for index, (provider, effort_units) in enumerate(direct_seeds):
+            record = self.accepted_record(
+                f"DIR-DIRECT-SEED-{index}",
+                ProviderName(provider.value),
+                effort_points=effort_units,
+            )
+            self.authorize_accepted_record(record)
+            self.store.create(record)
+
+        overall_controls = (
+            [(Provider.CLAUDE, 6)]
+            + [(Provider.CLAUDE, 5)] * 6
+            + [(Provider.CURSOR, 5)] * 4
+            + [(Provider.GROK, 5)] * 4
+            + [(Provider.OPENAI, 8)]
+            + [(Provider.GEMINI, 6), (Provider.GEMINI, 5)]
+            + [(Provider.PERPLEXITY, 5)]
+        )
+        for index, (provider, effort_units) in enumerate(overall_controls):
+            control = self.reserve(
+                f"direct-overall-control-{index}",
+                provider,
+                mode=EnforcementMode.SHADOW,
+                shadow_assignment_limit=100,
+                effort_units=effort_units,
+            )
+            self.store.finalize_workload_reservation(
+                control.reservation_key, WorkloadAttemptOutcome.INVOKED
+            )
+
+        delayed = self._minimal_done_task("DIR-DIRECT-DELAYED")
+        self.store.create(delayed)
+        invoked = self.store.reserve_workload_assignment(
+            reservation_key="delayed-dispatch",
+            task_id=delayed.task_id,
+            assignment_id=f"{delayed.task_id}:1:1",
+            phase="dispatch",
+            provider=Provider.CURSOR,
+            effort_units=1,
+            kind=WorkKind.IMPLEMENTATION,
+            size=WorkSize.SIMPLE,
+            model_label=None,
+            available_primary_providers=PRIMARY_PROVIDERS,
+            mode=EnforcementMode.ENFORCED,
+        )
+        self.assertTrue(invoked.decision.allowed)
+        self.store.finalize_workload_reservation(
+            invoked.reservation_key, WorkloadAttemptOutcome.INVOKED
+        )
+
+        candidate = self.reserve(
+            "direct-candidate",
+            Provider.CLAUDE,
+            effort_units=8,
+            kind=WorkKind.IMPLEMENTATION,
+        )
+
+        self.assertFalse(candidate.decision.allowed)
+        self.assertIn(
+            "direct_production_rollover_pending_unresolved",
+            candidate.decision.violations,
+        )
+
+    def test_direct_rollover_window_uses_credit_id_not_recorded_at(self) -> None:
+        old_recorded_at = "2026-08-01T00:00:00+00:00"
+        new_recorded_at = "2026-08-29T12:00:00+00:00"
+
+        pending_task = self._minimal_done_task("DIR-CREDIT-PENDING")
+        self.store.create(pending_task)
+        pending = self.store.reserve_workload_assignment(
+            reservation_key="credit-order-pending",
+            task_id=pending_task.task_id,
+            assignment_id=f"{pending_task.task_id}:1:1",
+            phase="dispatch",
+            provider=Provider.CURSOR,
+            effort_units=1,
+            kind=WorkKind.IMPLEMENTATION,
+            size=WorkSize.SIMPLE,
+            model_label=None,
+            available_primary_providers=PRIMARY_PROVIDERS,
+            mode=EnforcementMode.ENFORCED,
+        )
+        self.assertTrue(pending.decision.allowed)
+        self.store.finalize_workload_reservation(
+            pending.reservation_key, WorkloadAttemptOutcome.INVOKED
+        )
+
+        canonical_tail = (
+            [Provider.CLAUDE] * 10
+            + [Provider.CURSOR] * 2
+            + [Provider.GROK] * 3
+            + [Provider.GEMINI] * 2
+            + [Provider.PERPLEXITY]
+        )
+        self.assertEqual(len(canonical_tail), 18)
+        for index in range(20):
+            task_id = f"DIR-CREDIT-ORDER-{index}"
+            self.store.create(self._minimal_done_task(task_id))
+            if index == 0:
+                provider = Provider.CLAUDE
+                effort_units = 8
+                recorded_at = new_recorded_at
+            elif index == 1:
+                provider = Provider.CLAUDE
+                effort_units = 1
+                recorded_at = old_recorded_at
+            else:
+                provider = canonical_tail[index - 2]
+                effort_units = 1
+                recorded_at = old_recorded_at
+            self._insert_raw_direct_credit(
+                task_id=task_id,
+                assignment_id=f"{task_id}:1:1",
+                provider=provider,
+                effort_units=effort_units,
+                recorded_at=recorded_at,
+            )
+
+        candidate = self.reserve(
+            "credit-order-candidate",
+            Provider.CLAUDE,
+            effort_units=1,
+            kind=WorkKind.IMPLEMENTATION,
+        )
+
+        self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
+        self.assertNotIn(
+            "direct_production_hard_threshold_exceeded:claude:",
+            candidate.decision.violations,
+        )
+
     def test_sqlite_cas_allows_one_cross_process_creator(self) -> None:
         context = multiprocessing.get_context("spawn")
         barrier = context.Barrier(4)
@@ -859,3 +1073,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:53 UTC | END]]
