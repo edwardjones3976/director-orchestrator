@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
@@ -47,6 +48,9 @@ providers:
 
   cursor:
     team: "primary"
+    surfaces: ["code"]
+    separate_chat_credential: false
+    debate_transport: "cursor_cloud_agents_api"
     eligible_responsibility_areas:
       - "research"
       - "evidence_verification"
@@ -79,6 +83,7 @@ providers:
     provider: "xai"
     family: "cursor"
     team: "primary"
+    surfaces: ["chat", "code"]
     eligible_responsibility_areas:
       - "research"
       - "evidence_verification"
@@ -269,3 +274,4 @@ project_local_bindings:
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]

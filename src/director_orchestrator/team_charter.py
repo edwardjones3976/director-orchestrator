@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]]
@@ -15,6 +16,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 TEAM_CHARTER_MAX_BYTES = 12_512
+
+
+_PROVIDER_SURFACE_CONTRACT: dict[str, list[str]] = {
+    "openai": ["chat", "code"],
+    "claude": ["chat", "code"],
+    "cursor": ["code"],
+    "antigravity": ["chat", "code"],
+    "grok": ["chat", "code"],
+    "perplexity": ["research"],
+}
 
 
 _TEAM_OPERATING_CHARTER: dict[str, Any] = {
@@ -78,7 +89,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "cross-platform QA",
                 "technical coordination",
             ],
-            "routing_rule": "Route Cursor by fit, independence, capacity, and evidence needs.",
+            "routing_rule": "Route Cursor through its repository-bound Agent transport, including debate.",
             "non_substitution_rules": [
                 "Cursor cannot perform OpenAI's Director acceptance role.",
                 "Cursor does not replace mandatory Codex Security.",
@@ -447,6 +458,8 @@ def team_charter_manifest() -> dict[str, Any]:
             name: member["voting_power"]
             for name, member in charter["committee"]["members"].items()
         },
+        "provider_surfaces": deepcopy(_PROVIDER_SURFACE_CONTRACT),
+        "cursor_debate_transport": "cursor_cloud_agents_api",
         "configured_weight_total": charter["committee"]["voting"][
             "configured_weight_total"
         ],
@@ -594,3 +607,4 @@ def tally_advisory_votes(
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]

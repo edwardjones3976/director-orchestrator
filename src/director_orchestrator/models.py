@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
@@ -128,6 +129,35 @@ class AssignmentKind(StrEnum):
     SCAFFOLDING = "scaffolding"
     LOW_LEVEL_IMPLEMENTATION = "low_level_implementation"
     ABSTRACT_IDEATION = "abstract_ideation"
+
+
+class ProviderSurface(StrEnum):
+    CHAT = "chat"
+    CODE = "code"
+    RESEARCH = "research"
+
+
+CODE_ASSIGNMENT_KINDS = frozenset(
+    {
+        AssignmentKind.IMPLEMENTATION,
+        AssignmentKind.INDEPENDENT_REVIEW,
+        AssignmentKind.EXACT_SHA_REVIEW,
+        AssignmentKind.BOILERPLATE,
+        AssignmentKind.SCAFFOLDING,
+        AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+    }
+)
+
+
+PROVIDER_SURFACES: dict[ProviderName, frozenset[ProviderSurface]] = {
+    ProviderName.OPENAI: frozenset({ProviderSurface.CHAT, ProviderSurface.CODE}),
+    ProviderName.CLAUDE: frozenset({ProviderSurface.CHAT, ProviderSurface.CODE}),
+    ProviderName.CURSOR: frozenset({ProviderSurface.CODE}),
+    ProviderName.GEMINI: frozenset({ProviderSurface.CHAT, ProviderSurface.CODE}),
+    ProviderName.GROK: frozenset({ProviderSurface.CHAT, ProviderSurface.CODE}),
+    ProviderName.PERPLEXITY: frozenset({ProviderSurface.RESEARCH}),
+    ProviderName.OWNER: frozenset(),
+}
 
 
 class ReviewVerdict(StrEnum):
@@ -1045,3 +1075,4 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]

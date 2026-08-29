@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -100,6 +101,7 @@ class PolicyTests(unittest.TestCase):
     def test_dry_run_can_request_cursor_second_pass_explicitly(self):
         plan = preview_plan("Project: demo\nRun an independent coding pass in Cursor", self.settings)
         self.assertEqual(plan.assignments[0].agent.value, "cursor")
+        self.assertEqual(plan.assignments[0].kind, AssignmentKind.IMPLEMENTATION)
 
     def test_dry_run_routes_antigravity_only_for_the_subordinate_lane(self):
         for text, kind in (
@@ -370,6 +372,19 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(strategy["cursor"]["eligible_complexity"], ["low", "medium", "high", "critical"])
         self.assertEqual(strategy["cursor"]["priority"], "primary_full_spectrum_repository_partner")
         self.assertIn("technical leadership and coordination", strategy["cursor"]["strengths"])
+        self.assertEqual(strategy["openai"]["surfaces"], {
+            "chat": "in_process_openai_responses_director",
+            "code": "owner_authorized_external_codex",
+        })
+        self.assertEqual(strategy["claude"]["surfaces"], {
+            "chat": "claude_routine_conversation_and_debate",
+            "code": "claude_routine_and_claude_code",
+        })
+        self.assertEqual(strategy["cursor"]["surfaces"], {"code": "cursor_cloud_agents_api"})
+        self.assertFalse(strategy["cursor"]["chat_surface"])
+        self.assertEqual(strategy["cursor"]["debate_transport"], "cursor_cloud_agents_api")
+        self.assertEqual(set(strategy["gemini"]["surfaces"]), {"chat", "code"})
+        self.assertEqual(set(strategy["grok"]["surfaces"]), {"chat", "code", "repository_code"})
 
     def test_perplexity_readiness_requires_the_complete_research_only_profile(self):
         key_only = replace(self.settings, perplexity_api_key="test-perplexity")
@@ -525,6 +540,7 @@ class PolicyTests(unittest.TestCase):
                 Assignment(
                     sequence=2,
                     agent=ProviderName.CURSOR,
+                    kind=AssignmentKind.INDEPENDENT_REVIEW,
                     task="Review",
                     acceptance=["Evidence reviewed"],
                     repository="edwardjones3976/Project-Uppercut",
@@ -563,6 +579,33 @@ class PolicyTests(unittest.TestCase):
             execution_policy_errors(plan, settings),
         )
 
+    def test_cursor_general_work_uses_repository_bound_agent_transport(self):
+        settings = replace(
+            self.settings,
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+        )
+        general = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            kind=AssignmentKind.GENERAL,
+            task="Discuss the architecture",
+            acceptance=["Return a position"],
+            repository="example/demo",
+        )
+        plan = DirectorPlan(
+            project="demo",
+            normalized_outcome="Discuss the architecture",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[general],
+            final_acceptance=["Position recorded"],
+        )
+
+        self.assertEqual(execution_policy_errors(plan, settings), [])
+
     def test_cursor_working_branch_starting_ref_is_rejected_unless_allowlisted(self):
         settings = replace(
             self.settings,
@@ -581,6 +624,7 @@ class PolicyTests(unittest.TestCase):
                 Assignment(
                     sequence=1,
                     agent=ProviderName.CURSOR,
+                    kind=AssignmentKind.IMPLEMENTATION,
                     task="Continue research",
                     acceptance=["Evidence exists"],
                     repository="edwardjones3976/edge_engine",
@@ -611,6 +655,7 @@ class PolicyTests(unittest.TestCase):
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.CURSOR,
+            kind=AssignmentKind.IMPLEMENTATION,
             task="Create a draft PR",
             acceptance=["Draft PR exists"],
             repository="example/demo",
@@ -694,3 +739,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]

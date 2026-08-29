@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -688,7 +689,9 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         project = match.group(1).strip()[:255]
 
     assignment_kind = AssignmentKind.GENERAL
-    if provider == ProviderName.GEMINI:
+    if provider == ProviderName.CURSOR:
+        assignment_kind = AssignmentKind.IMPLEMENTATION
+    elif provider == ProviderName.GEMINI:
         if re.search(r"\bboilerplate\b", text, re.I):
             assignment_kind = AssignmentKind.BOILERPLATE
         elif re.search(r"\bscaffold(?:ing)?\b", text, re.I):
@@ -741,3 +744,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]

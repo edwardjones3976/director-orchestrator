@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
@@ -107,11 +108,50 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.status, "FINISHED")
         self.assertIn("2 models", run.result)
 
+    async def test_cursor_uses_code_agent_transport_for_general_work_and_debate(self):
+        settings = replace(Settings(), cursor_api_key="test-cursor")
+        assignments = [
+            Assignment(
+                sequence=1,
+                agent=ProviderName.CURSOR,
+                kind=AssignmentKind.GENERAL,
+                task="Discuss the architecture",
+                acceptance=["Return a position"],
+                repository="example/demo",
+            ),
+            Assignment(
+                sequence=2,
+                agent=ProviderName.CURSOR,
+                kind=AssignmentKind.GENERAL,
+                discussion_phase="position",
+                discussion_round=0,
+                task="Debate the architecture",
+                acceptance=["Return a position"],
+                repository="example/demo",
+            ),
+        ]
+        RecordingAsyncClient.responses = [
+            {"run": {"id": "run-general", "status": "RUNNING"}, "agent": {"id": "agent-general"}},
+            {"run": {"id": "run-debate", "status": "RUNNING"}, "agent": {"id": "agent-debate"}},
+        ]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            for assignment in assignments:
+                await CursorAdapter(settings).dispatch(assignment, "context")
+            with self.assertRaisesRegex(ProviderError, "explicit repository"):
+                await CursorAdapter(settings).dispatch(
+                    assignments[0].model_copy(update={"repository": None}), "context"
+                )
+
+        self.assertEqual(len(RecordingAsyncClient.calls), 2)
+        self.assertTrue(all(call["url"].endswith("/v1/agents") for call in RecordingAsyncClient.calls))
+
     async def test_cursor_dispatch_denies_draft_pr_unless_assignment_explicitly_allows_it(self):
         settings = replace(Settings(), cursor_api_key="test-cursor")
         base = Assignment(
             sequence=1,
             agent=ProviderName.CURSOR,
+            kind=AssignmentKind.INDEPENDENT_REVIEW,
             task="Review the repository without changing it",
             acceptance=["Report evidence"],
             repository="example/demo",
@@ -147,6 +187,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.CURSOR,
+            kind=AssignmentKind.EXACT_SHA_REVIEW,
             task="Review exact SHA",
             acceptance=["Return evidence"],
             repository="example/demo",
@@ -182,6 +223,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.CURSOR,
+            kind=AssignmentKind.EXACT_SHA_REVIEW,
             task="Review exact SHA",
             acceptance=["Return evidence"],
             repository="example/demo",
@@ -208,6 +250,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.CURSOR,
+            kind=AssignmentKind.IMPLEMENTATION,
             task="Continue Edge Oracle research",
             acceptance=["Return evidence"],
             repository="edwardjones3976/edge_engine",
@@ -252,6 +295,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.CURSOR,
+            kind=AssignmentKind.EXACT_SHA_REVIEW,
             task="Review exact SHA",
             acceptance=["Return evidence"],
             repository="edwardjones3976/edge_engine",
@@ -285,6 +329,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         assignment = Assignment(
             sequence=1,
             agent=ProviderName.CURSOR,
+            kind=AssignmentKind.IMPLEMENTATION,
             task="Continue Edge Oracle research",
             acceptance=["Return evidence"],
             repository="edwardjones3976/edge_engine",
@@ -1414,3 +1459,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]] -->
@@ -32,7 +33,7 @@ An absent project allowlist blocks every live plan. Cursor cannot use an implici
 - **The primary team is OpenAI, Claude, Cursor, and Grok.** These should cover planning, implementation, review, and repository execution; periodic-check membership remains independently configurable.
 - **Claude Pro 20x is the primary workhorse.** Route coding implementation, repository-scale reasoning, code/document review, and Claude-strong analysis there first when its routine is configured and healthy.
 - **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
-- **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.
+- **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work inside their available surfaces. Cursor has one repository-bound code-agent contact, which also carries invited debate turns; it does not need a separate chat credential. Grok has both chat and code contacts. Producer/reviewer separation and deterministic gates remain unchanged.
 - **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.
 
 Practical operating patterns:
@@ -60,6 +61,21 @@ non-positive or non-finite configured value prevents the service from starting.
 | Primary — Cursor-family teammate | xAI Responses API plus separately authorized Grok Build/Bot contacts | `GROK_ENABLED`, `XAI_API_KEY`, `GROK_MODEL`, `GROK_CODE_MODEL` and the fail-closed controls below | Synchronous API response or named-worktree CLI/Bot evidence |
 | Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
+
+### Provider surface matrix
+
+| Provider | Chat side | Code side |
+| --- | --- | --- |
+| OpenAI | Responses Director planning, synthesis, and acceptance | Separately owner-authorized Codex work; not a runtime specialist assignment |
+| Claude | Routine conversation, general work, and debate | Routine and Claude Code repository work |
+| Cursor | No separate chat credential | Cursor Cloud Agents API repository implementation, review, technical discussion, and invited debate |
+| Gemini/Antigravity | Persisted Director-invited typed debate | Closed-fixture Antigravity sandbox work with primary-provider integration |
+| Grok | `GROK_MODEL` through the xAI Responses API | `GROK_CODE_MODEL` for typed non-writing code work; Grok Build CLI for repository work |
+
+The Director rejects repository-free Cursor assignments before an API call.
+Cursor debate positions and rebuttals remain valid when they use the same
+repository-bound Agent transport. This is a credential and transport distinction,
+not a reduction in Cursor's capability or responsibility.
 
 ## Grok primary Cursor-family profile
 
@@ -301,3 +317,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]] -->

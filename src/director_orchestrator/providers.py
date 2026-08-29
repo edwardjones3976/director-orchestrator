@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
@@ -36,7 +37,14 @@ from .antigravity import (
     antigravity_wire_input,
 )
 from .config import Settings
-from .models import Assignment, AssignmentKind, DiscussionPhase, ProviderName, ProviderRun
+from .models import (
+    CODE_ASSIGNMENT_KINDS,
+    Assignment,
+    AssignmentKind,
+    DiscussionPhase,
+    ProviderName,
+    ProviderRun,
+)
 from .policy import antigravity_assignment_errors, canonical_repository
 from .process_isolation import ProcessContainmentError, launch_contained_process
 
@@ -262,6 +270,15 @@ class ProviderAdapter:
 class CursorAdapter(ProviderAdapter):
     name = ProviderName.CURSOR
 
+    @staticmethod
+    def _require_code_transport(assignment: Assignment) -> None:
+        """Keep Cursor on its repository-bound Agent transport, including debate."""
+
+        if not assignment.repository:
+            raise ProviderError(
+                "Cursor's code-agent transport requires an explicit repository"
+            )
+
     @property
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.settings.cursor_api_key}", "Content-Type": "application/json"}
@@ -347,6 +364,7 @@ class CursorAdapter(ProviderAdapter):
         return body
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+        self._require_code_transport(assignment)
         body = self._dispatch_body(assignment, context)
         attempts = max(1, self.settings.cursor_dispatch_max_attempts)
         fallback_used = False
@@ -423,6 +441,7 @@ class CursorAdapter(ProviderAdapter):
                     "a fresh dispatch requires the bounded assignment"
                 )
             fallback = self._fallback_starting_ref(assignment.starting_ref)
+            self._require_code_transport(assignment)
             revised = assignment.model_copy(
                 update={
                     "task": (
@@ -860,14 +879,7 @@ class GrokAdapter(ProviderAdapter):
         super().__init__(settings)
         self._catalog_models: frozenset[str] | None = None
 
-    _CODE_KINDS = frozenset(
-        {
-            AssignmentKind.IMPLEMENTATION,
-            AssignmentKind.BOILERPLATE,
-            AssignmentKind.SCAFFOLDING,
-            AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
-        }
-    )
+    _CODE_KINDS = CODE_ASSIGNMENT_KINDS
 
     @property
     def headers(self) -> dict[str, str]:
@@ -1530,3 +1542,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -1200,6 +1201,10 @@ class Settings:
                 "team": "primary",
                 "priority": "primary_workhorse",
                 "account_context": self.claude_account_context,
+                "surfaces": {
+                    "chat": "claude_routine_conversation_and_debate",
+                    "code": "claude_routine_and_claude_code",
+                },
                 "strengths": [
                     "coding implementation",
                     "repository-scale reasoning",
@@ -1211,17 +1216,30 @@ class Settings:
                 "team": "primary",
                 "priority": "director_planning_and_acceptance_review",
                 "account_context": self.openai_account_context,
-                "strengths": ["orchestration", "planning", "structured acceptance review"],
+                "surfaces": {
+                    "chat": "in_process_openai_responses_director",
+                    "code": "owner_authorized_external_codex",
+                },
+                "runtime_assignment_target": False,
+                "strengths": [
+                    "orchestration",
+                    "planning",
+                    "structured acceptance review",
+                    "bounded Codex implementation through the external code surface",
+                ],
             },
             "cursor": {
                 "team": "primary",
                 "priority": "primary_full_spectrum_repository_partner",
                 "account_context": self.other_provider_account_context,
                 "capability_parity_target": 1.0,
+                "surfaces": {"code": "cursor_cloud_agents_api"},
+                "chat_surface": False,
+                "debate_transport": "cursor_cloud_agents_api",
                 "eligible_complexity": ["low", "medium", "high", "critical"],
                 "strengths": [
-                    "research and evidence verification",
-                    "deep technical reasoning and planning support",
+                    "repository-bound technical research and evidence verification",
+                    "repository-bound technical reasoning and implementation planning",
                     "complex implementation, debugging, and refactoring",
                     "architecture, reliability, and security-adjacent analysis",
                     "cross-platform quality assurance",
@@ -1234,6 +1252,10 @@ class Settings:
                 "team": "supplemental",
                 "priority": "subordinate_boilerplate_and_alternate_ideation",
                 "account_context": self.other_provider_account_context,
+                "surfaces": {
+                    "chat": "persisted_antigravity_debate",
+                    "code": "closed_fixture_antigravity_sandbox",
+                },
                 "strengths": [
                     "bounded boilerplate and scaffolding in predefined public fixture lanes",
                     "low-level mechanical implementation in those lanes",
@@ -1259,6 +1281,11 @@ class Settings:
                 "priority": "primary_cursor_family_repository_partner",
                 "account_context": self.other_provider_account_context,
                 "capability_parity_target": 1.0,
+                "surfaces": {
+                    "chat": self.grok_model,
+                    "code": self.grok_code_model,
+                    "repository_code": "grok_build_cli",
+                },
                 "eligible_complexity": ["low", "medium", "high", "critical"],
                 "eligible_responsibilities": [
                     "research",
@@ -1307,3 +1334,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]

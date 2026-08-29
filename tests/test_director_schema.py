@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
@@ -24,6 +25,7 @@ from director_orchestrator.config import Settings
 from director_orchestrator.director import OpenAIDirector, _strict_schema
 from director_orchestrator.models import (
     Assignment,
+    AssignmentKind,
     AssignmentOutcome,
     DebatePlan,
     DirectorPlan,
@@ -111,7 +113,7 @@ class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
                     ),
                     Assignment(
                         sequence=2,
-                        agent=ProviderName.CURSOR,
+                        agent=ProviderName.GROK,
                         task="Assess B",
                         acceptance=["Evidence recorded"],
                         estimated_cost_usd=0.20,
@@ -161,6 +163,7 @@ class DirectorReviewPhaseTests(unittest.IsolatedAsyncioTestCase):
             Assignment(
                 sequence=2,
                 agent=ProviderName.CURSOR,
+                kind=AssignmentKind.INDEPENDENT_REVIEW,
                 task="Review independently",
                 acceptance=["Cursor evidence is complete"],
                 repository="example/demo",
@@ -322,6 +325,22 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grok["capability_parity_target"], 1.0)
         self.assertEqual(grok["eligible_responsibilities"], cursor["eligible_responsibilities"])
         self.assertTrue(any("own work" in rule for rule in grok["non_substitution_rules"]))
+        self.assertEqual(
+            team_charter_manifest()["provider_surfaces"],
+            {
+                "openai": ["chat", "code"],
+                "claude": ["chat", "code"],
+                "cursor": ["code"],
+                "antigravity": ["chat", "code"],
+                "grok": ["chat", "code"],
+                "perplexity": ["research"],
+            },
+        )
+        self.assertEqual(
+            team_charter_manifest()["cursor_debate_transport"],
+            "cursor_cloud_agents_api",
+        )
+        self.assertIn("cursor", charter["committee"]["debate"]["seatable_members"])
         self.assertTrue(
             any(
                 "deterministic policy" in rule.lower()
@@ -688,6 +707,9 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         cursor = team_operating_charter()["role_profiles"]["cursor"]
 
         self.assertEqual(len(cursor["eligible_responsibilities"]), 8)
+        self.assertIn('surfaces: ["code"]', contract)
+        self.assertIn('separate_chat_credential: false', contract)
+        self.assertIn('debate_transport: "cursor_cloud_agents_api"', contract)
         for area in cursor["eligible_responsibilities"]:
             with self.subTest(area=area):
                 self.assertIn(f'      - "{area}"', contract)
@@ -930,3 +952,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]
