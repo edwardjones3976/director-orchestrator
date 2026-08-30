@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | BEGIN]] -->
@@ -129,10 +130,11 @@ Copy only the artifacts the project needs from
 - [`project-state-report.md`](templates/project-bootstrap/project-state-report.md)
   reports bootstrap, milestone, reshaping, pause, or completion state.
 
-The templates are scaffolding, not mandatory ceremony. Start with the intake
-and add the other files only when they improve coordination, evidence, or
-repeatability. Delete irrelevant fields and mark material uncertainty instead
-of filling placeholders with guesses.
+The rollout packet is mandatory for every project presented to the Director.
+Start with the intake and a project-local rollout packet created from the
+template; add the remaining optional files only when they improve coordination,
+evidence, or repeatability. Delete irrelevant fields and mark material
+uncertainty instead of filling placeholders with guesses.
 
 ## Modular work kit
 
@@ -422,3 +424,4 @@ project-specific control.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:20 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->

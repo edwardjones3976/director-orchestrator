@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]] -->
@@ -20,12 +21,14 @@ Configure one provider at a time and leave `ALLOW_PAID_RUNS=false` until every i
 
 Before enabling live execution, configure an exact deployment profile:
 
-- Create the project's `docs/templates/project-bootstrap/rollout-packet.md`.
-  If another Director deployment will remain active, assign a distinct Slack
-  app, project channel, deployment profile, and state namespace. Record app and
-  channel IDs and readiness only; keep token values in the ignored deployment
-  profile. Missing or reused identities block Slack activation while leaving
-  analysis-only shaping available.
+- Create a project-local rollout packet using
+  `docs/templates/project-bootstrap/rollout-packet.md` as the starting
+  template. If another Director deployment will remain active, assign a
+  distinct Slack app, project channel, deployment profile, and state namespace.
+  Record app and channel IDs and readiness only; keep token values and exact
+  owner-user allowlist IDs in the ignored deployment profile. Missing or reused
+  identities block Slack activation while leaving analysis-only shaping
+  available.
 - `PROJECT_ALLOWLIST`: case-insensitive project names accepted by this deployment.
 - `REPOSITORY_ALLOWLIST`: exact GitHub `owner/repository` targets; GitHub HTTPS URLs normalize to this form.
 - `ALLOWED_STARTING_REFS`: case-sensitive starting branches or refs. Cursor auto-generated `cursor/...` working branches are not durable starting points; they are deleted after merge. A pre-creation "GitHub branch not found" response for one of those refs retries once against the first allowlisted ref. A follow-up against a deleted working branch starts a new agent from that same durable ref instead of resuming the dead session. Durable refs such as `main` still fail closed.
@@ -306,3 +309,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->

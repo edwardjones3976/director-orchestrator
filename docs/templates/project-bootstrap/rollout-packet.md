@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 # Project rollout packet
 
@@ -35,7 +36,9 @@ deterministic gates remain authoritative.
 ## Slack isolation
 
 - **Workspace ID:** <exact ID or pending>
-- **Slack owner-user allowlist:** <exact owner user ID(s) or pending>
+- **Slack owner-user allowlist reference:** <ignored-profile or secret-store
+  reference, or a non-reversible verification digest; exact IDs stay in the
+  ignored deployment profile>
 - **Runtime channel allowlist:** <exact project channel ID(s) or pending>
 - **Dedicated Slack app display name:** <project-specific name or pending>
 - **Slack app ID:** <exact ID or pending>
@@ -102,8 +105,9 @@ app, channel, thread, credentials, profile, or state namespace as a fallback.
 
 ## Disposition
 
-- **Current state:** <analysis-only | blocked | ready for dry run | active | paused>
+- **Current state:** <analysis_only | blocked | ready for dry run | active | paused>
 - **Blocking fields:** <pending identities/evidence or none>
 - **Next responsible party:** <Director | provider | owner | deterministic gate>
 - **Next bounded action:** <one action>
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->

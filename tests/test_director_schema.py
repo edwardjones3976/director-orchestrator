@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]]
@@ -973,8 +974,13 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
 
     def test_packet_records_references_not_token_values(self):
         packet = self.read(self.BOOTSTRAP / "rollout-packet.md")
+        normalized = " ".join(packet.split())
         self.assertIn("secret reference", packet)
         self.assertIn("Never copy token values", packet)
+        self.assertIn("Slack owner-user allowlist reference", packet)
+        self.assertIn("non-reversible verification digest", packet)
+        self.assertIn("exact IDs stay in the ignored deployment profile", normalized)
+        self.assertNotIn("exact owner user ID(s)", packet)
         self.assertNotIn("xapp-", packet)
         self.assertNotIn("xoxb-", packet)
 
@@ -1059,3 +1065,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]]
