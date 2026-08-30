@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 from __future__ import annotations
@@ -7,7 +8,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -49,6 +50,22 @@ class SuccessfulCursorProbe:
 
     async def poll(self, run: ProviderRun) -> ProviderRun:
         raise AssertionError("Terminal usage checks must not be polled")
+
+
+class SequentialOpenAIUsageClient:
+    def __init__(self, responses: list[httpx.Response]) -> None:
+        self.responses = iter(responses)
+        self.calls = 0
+
+    async def __aenter__(self) -> "SequentialOpenAIUsageClient":
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def post(self, *args: object, **kwargs: object) -> httpx.Response:
+        self.calls += 1
+        return next(self.responses)
 
 
 class QuotaFailingGeminiProbe:
@@ -139,6 +156,139 @@ class UsageNormalizationTests(unittest.TestCase):
 
 
 class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _openai_response(
+        status_code: int,
+        *,
+        headers: dict[str, str] | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> httpx.Response:
+        return httpx.Response(
+            status_code,
+            headers=headers,
+            json=payload,
+            request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+        )
+
+    async def test_openai_usage_check_recovers_once_from_short_rate_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                openai_api_key="test-openai",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            client = SequentialOpenAIUsageClient(
+                [
+                    self._openai_response(429, headers={"Retry-After": "0"}),
+                    self._openai_response(
+                        200,
+                        payload={
+                            "id": "resp_recovered",
+                            "status": "completed",
+                            "output_text": "STATUS=OK",
+                            "usage": {"input_tokens": 3, "output_tokens": 2},
+                        },
+                    ),
+                ]
+            )
+
+            with (
+                patch("director_orchestrator.usage.httpx.AsyncClient", return_value=client),
+                patch(
+                    "director_orchestrator.usage.asyncio.sleep",
+                    new=AsyncMock(return_value=None),
+                ) as sleep,
+            ):
+                run = await monitor._openai_usage_check()
+
+            self.assertEqual(client.calls, 2)
+            sleep.assert_awaited_once_with(0.0)
+            self.assertEqual(run.attempt_count, 2)
+            self.assertEqual(run.run_id, "resp_recovered")
+
+    async def test_openai_rate_limit_is_recorded_after_one_bounded_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("openai",),
+                openai_api_key="test-openai",
+                slack_bot_token="",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            client = SequentialOpenAIUsageClient(
+                [
+                    self._openai_response(429, headers={"Retry-After": "0"}),
+                    self._openai_response(429, headers={"Retry-After": "0"}),
+                ]
+            )
+
+            with (
+                patch("director_orchestrator.usage.httpx.AsyncClient", return_value=client),
+                patch(
+                    "director_orchestrator.usage.asyncio.sleep",
+                    new=AsyncMock(return_value=None),
+                ),
+            ):
+                records = await monitor.run_once(force=True)
+
+            self.assertEqual(client.calls, 2)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(records[0].attempt_count, 2)
+            self.assertEqual(records[0].provider_error_code, "http_429")
+            self.assertIsNone(records[0].response_text)
+            accounting = monitor.health()["daily_accounting"]["openai"]
+            self.assertEqual(accounting["request_count"], 2)
+            self.assertEqual(accounting["retry_count"], 1)
+            self.assertEqual(accounting["quota_failure_count"], 1)
+
+    async def test_openai_does_not_retry_a_non_rate_limit_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                openai_api_key="test-openai",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            client = SequentialOpenAIUsageClient([self._openai_response(503)])
+
+            with patch("director_orchestrator.usage.httpx.AsyncClient", return_value=client):
+                with self.assertRaises(ProviderError) as raised:
+                    await monitor._openai_usage_check()
+
+            self.assertEqual(client.calls, 1)
+            self.assertEqual(raised.exception.code, "http_503")
+            self.assertEqual(raised.exception.attempt_count, 1)
+
+    async def test_openai_refuses_an_unbounded_rate_limit_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                openai_api_key="test-openai",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            client = SequentialOpenAIUsageClient(
+                [self._openai_response(429, headers={"Retry-After": "61"})]
+            )
+
+            with patch("director_orchestrator.usage.httpx.AsyncClient", return_value=client):
+                with self.assertRaises(ProviderError) as raised:
+                    await monitor._openai_usage_check()
+
+            self.assertEqual(client.calls, 1)
+            self.assertEqual(raised.exception.code, "http_429")
+            self.assertEqual(raised.exception.attempt_count, 1)
+
     async def test_grok_is_a_bounded_supported_usage_provider(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
@@ -824,3 +974,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
