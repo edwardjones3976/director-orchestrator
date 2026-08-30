@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -53,7 +54,7 @@ class SuccessfulCursorProbe:
 
 
 class SequentialOpenAIUsageClient:
-    def __init__(self, responses: list[httpx.Response]) -> None:
+    def __init__(self, responses: list[httpx.Response | Exception]) -> None:
         self.responses = iter(responses)
         self.calls = 0
 
@@ -65,7 +66,10 @@ class SequentialOpenAIUsageClient:
 
     async def post(self, *args: object, **kwargs: object) -> httpx.Response:
         self.calls += 1
-        return next(self.responses)
+        result = next(self.responses)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class QuotaFailingGeminiProbe:
@@ -288,6 +292,72 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.calls, 1)
             self.assertEqual(raised.exception.code, "http_429")
             self.assertEqual(raised.exception.attempt_count, 1)
+
+    async def test_openai_retry_transport_failure_preserves_second_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                openai_api_key="test-openai",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            client = SequentialOpenAIUsageClient(
+                [
+                    self._openai_response(429, headers={"Retry-After": "0"}),
+                    httpx.ConnectTimeout("timed out"),
+                ]
+            )
+
+            with (
+                patch("director_orchestrator.usage.httpx.AsyncClient", return_value=client),
+                patch(
+                    "director_orchestrator.usage.asyncio.sleep",
+                    new=AsyncMock(return_value=None),
+                ),
+            ):
+                with self.assertRaises(ProviderError) as raised:
+                    await monitor._openai_usage_check()
+
+            self.assertEqual(client.calls, 2)
+            self.assertEqual(raised.exception.code, "transport_error")
+            self.assertEqual(raised.exception.attempt_count, 2)
+
+    async def test_openai_retry_invalid_response_preserves_second_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            settings = replace(
+                Settings(),
+                openai_api_key="test-openai",
+                sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+            )
+            monitor = UsageMonitor(settings, store, adapters={})
+            client = SequentialOpenAIUsageClient(
+                [
+                    self._openai_response(429, headers={"Retry-After": "0"}),
+                    httpx.Response(
+                        200,
+                        content=b"not-json",
+                        request=httpx.Request(
+                            "POST", "https://api.openai.com/v1/responses"
+                        ),
+                    ),
+                ]
+            )
+
+            with (
+                patch("director_orchestrator.usage.httpx.AsyncClient", return_value=client),
+                patch(
+                    "director_orchestrator.usage.asyncio.sleep",
+                    new=AsyncMock(return_value=None),
+                ),
+            ):
+                with self.assertRaises(ProviderError) as raised:
+                    await monitor._openai_usage_check()
+
+            self.assertEqual(client.calls, 2)
+            self.assertEqual(raised.exception.code, "invalid_response")
+            self.assertEqual(raised.exception.attempt_count, 2)
 
     async def test_grok_is_a_bounded_supported_usage_provider(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -975,3 +1045,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]

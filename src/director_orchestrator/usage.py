@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -359,11 +360,18 @@ class UsageMonitor:
         }
         async with httpx.AsyncClient(timeout=180) as client:
             for attempt_count in range(1, 3):
-                response = await client.post(
-                    "https://api.openai.com/v1/responses",
-                    headers=headers,
-                    json=body,
-                )
+                try:
+                    response = await client.post(
+                        "https://api.openai.com/v1/responses",
+                        headers=headers,
+                        json=body,
+                    )
+                except httpx.HTTPError as exc:
+                    raise ProviderError(
+                        "OpenAI usage check encountered a transport failure",
+                        code="transport_error",
+                        attempt_count=attempt_count,
+                    ) from exc
                 if response.status_code == 429:
                     retry_delay = self._openai_usage_retry_delay(response)
                     if attempt_count == 2 or retry_delay is None:
@@ -382,7 +390,14 @@ class UsageMonitor:
                         code=f"http_{response.status_code}",
                         attempt_count=attempt_count,
                     ) from exc
-                payload = response.json()
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise ProviderError(
+                        "OpenAI usage check returned an invalid response",
+                        code="invalid_response",
+                        attempt_count=attempt_count,
+                    ) from exc
                 return ProviderRun(
                     provider=ProviderName.OPENAI,
                     run_id=payload["id"],
@@ -674,3 +689,4 @@ class UsageMonitor:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
