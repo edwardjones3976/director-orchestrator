@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]] -->
@@ -178,6 +179,24 @@ project-local fit here and link back for authority boundaries.
 
 Each row summarizes the canonical role definitions in
 [`team-operating-charter.md`](team-operating-charter.md#roles).
+
+### Firecrawl privacy routing
+
+Treat a rejected Zero Data Retention (ZDR) request as a terminal routing result,
+not permission to weaken data handling:
+
+1. Use Firecrawl with `zeroDataRetention: true` only after the authenticated
+   account accepts that option.
+2. For an approved public page, `lockdown: true` is an acceptable cache-only ZDR
+   route. A cache miss is terminal for that route because lockdown never fetches
+   the live page.
+3. On a public lockdown cache miss, use an ordinary first-party public retrieval
+   route outside Firecrawl.
+4. Never send private, repository, account, credential, or project material
+   through that public-only fallback or through non-ZDR Firecrawl.
+5. Do not retry a rejected ZDR request unchanged. Record the rejection and keep
+   Firecrawl unavailable for protected material until authenticated ZDR is
+   proven.
 
 ### Shared provider workflow skills
 
@@ -425,3 +444,4 @@ project-specific control.
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | END]] -->

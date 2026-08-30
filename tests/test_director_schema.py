@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
@@ -1046,6 +1047,21 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
                 self.assertIn("rollout", content.lower())
                 self.assertIn("Slack", content)
 
+    def test_firecrawl_routing_fails_closed_without_authenticated_zdr(self):
+        protocol = self.read(self.ROOT / "docs" / "project-bootstrap-protocol.md")
+        normalized = " ".join(protocol.split())
+        for requirement in (
+            "zeroDataRetention: true",
+            "lockdown: true",
+            "cache-only ZDR route",
+            "first-party public retrieval route outside Firecrawl",
+            "Never send private, repository, account, credential, or project material",
+            "Do not retry a rejected ZDR request unchanged",
+            "authenticated ZDR is proven",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1066,3 +1082,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | END]]
