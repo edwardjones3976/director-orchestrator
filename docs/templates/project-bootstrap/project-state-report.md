@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
@@ -61,6 +62,8 @@ report or submission envelope.
 - **Workload:** <60/28/7/4/1 target, actual provider share, deviation, and rationale>
 - **Avoidable commit trend:** <rolling comparable baseline window/sample and count/rate; current count/rate; absolute and percentage delta toward 33%; exclusions and comparability changes>
 - **Coordination:** <slack channel ID or configured placeholder and thread>
+- **Rollout packet:** <path, status, and exact configuration identity>
+- **Deployment isolation:** <dedicated app/channel/profile/state namespace and collision-check evidence>
 - **Execution surface:** <verified repository/ref/worktree or analysis-only>
 - **Stopping point:** <current stopping condition>
 
@@ -93,6 +96,9 @@ report or submission envelope.
 - **Risks and confidence:** <unresolved risks, limitations, blockers, uncertainty, and calibrated confidence>
 - **Usage:** <cost, input/output/cached/reasoning tokens when available, elapsed time, retries, and explicitly unavailable telemetry>
 - **Recovery and rollback:** <restart/replay state, duplicate-dispatch evidence, rollback instructions, and recovery gaps>
+- **Slack activation evidence:** <owner-user/channel allowlists, app ID, bot user ID, manifest digest, membership, Socket Mode, collision result, or pending; never token values>
+- **Slack negative checks:** <off-channel/non-owner/replay results and proof no other active deployment consumed or persisted the event>
+- **Communication fallback:** <three-attempt result and prior durable project-local transport; never another deployment's Slack surface>
 - **Explicitly not done:** <writes, calls, merges, deployments, or other actions not performed>
 - **Unverified:** <claims, checks, provider states, environments, or outcomes still unverified>
 
@@ -113,3 +119,4 @@ published, enabled, or otherwise changed>.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->

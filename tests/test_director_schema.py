@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | BEGIN]]
@@ -913,6 +917,154 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
                 )
 
 
+class ProjectRolloutPacketContractTests(unittest.TestCase):
+    """Drift tests for project rollout and concurrent Slack isolation."""
+
+    ROOT = Path(__file__).resolve().parents[1]
+    BOOTSTRAP = ROOT / "docs" / "templates" / "project-bootstrap"
+
+    def read(self, path: Path) -> str:
+        return path.read_text(encoding="utf-8")
+
+    def test_every_presented_project_gets_a_rollout_packet(self):
+        packet = self.BOOTSTRAP / "rollout-packet.md"
+        self.assertTrue(packet.is_file())
+        for surface in (
+            self.BOOTSTRAP / "README.md",
+            self.ROOT / "docs" / "project-bootstrap-protocol.md",
+            self.ROOT / "prompts" / "director-system.md",
+        ):
+            with self.subTest(surface=surface):
+                content = self.read(surface)
+                self.assertIn("rollout-packet.md", content)
+                self.assertIn("every project presented", content.lower())
+
+        readme = self.read(self.BOOTSTRAP / "README.md")
+        self.assertIn("rollout packet is mandatory", readme.lower())
+        self.assertNotIn("may need only the intake", readme.lower())
+
+    def test_profile_requires_concurrent_deployment_isolation(self):
+        profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
+        for field in (
+            'rollout_packet: "rollout-packet.md"',
+            "dedicated_app_per_active_deployment: true",
+            "dedicated_channel_per_active_deployment: true",
+            "distinct_profile_and_state_namespace: true",
+            'concurrent_deployment_collision_check: "pending"',
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, profile)
+
+    def test_packet_blocks_slack_activation_without_borrowing(self):
+        packet = self.read(self.BOOTSTRAP / "rollout-packet.md")
+        normalized = " ".join(packet.split()).lower()
+        for requirement in (
+            "distinct slack app",
+            "distinct project channel",
+            "distinct deployment profile/state namespace",
+            "blocks slack gateway activation",
+            "one primary attempt",
+            "second attempt",
+            "third attempt",
+            "never retry an ambiguous slack side effect",
+            "do not borrow another deployment's slack app",
+            "activation evidence",
+            "rollback",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
+    def test_packet_records_references_not_token_values(self):
+        packet = self.read(self.BOOTSTRAP / "rollout-packet.md")
+        normalized = " ".join(packet.split())
+        self.assertIn("secret reference", packet)
+        self.assertIn("Never copy token values", packet)
+        self.assertIn("Slack owner-user allowlist reference", packet)
+        self.assertIn("non-reversible verification digest", packet)
+        self.assertIn("exact IDs stay in the ignored deployment profile", normalized)
+        self.assertNotIn("exact owner user ID(s)", packet)
+        self.assertNotIn("xapp-", packet)
+        self.assertNotIn("xoxb-", packet)
+
+    def test_slack_retry_policy_is_synchronized(self):
+        profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
+        for field in (
+            "primary_attempt_limit: 1",
+            'second_attempt_requires: "plausibly_transient_failure"',
+            'third_attempt_requires: "materially_different_transport_or_new_information"',
+            'ambiguous_slack_side_effect: "do_not_retry_reconcile_first"',
+            'exhausted_route: "same_project_durable_transport_never_borrow_another_deployment_surface"',
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, profile)
+
+        for surface in (
+            self.BOOTSTRAP / "rollout-packet.md",
+            self.ROOT / "docs" / "project-bootstrap-protocol.md",
+            self.ROOT / "prompts" / "director-system.md",
+        ):
+            normalized = " ".join(self.read(surface).split()).lower()
+            for phrase in (
+                "one primary attempt",
+                "second attempt",
+                "plausibly transient",
+                "third attempt",
+                "materially different transport or new information",
+                "never retry an ambiguous slack side effect",
+                "same project's prior durable",
+                "another deployment",
+            ):
+                with self.subTest(surface=surface, phrase=phrase):
+                    self.assertIn(phrase, normalized)
+
+    def test_packet_records_slack_identities_and_negative_activation_checks(self):
+        profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
+        packet = self.read(self.BOOTSTRAP / "rollout-packet.md")
+        for field in (
+            "owner_user_allowlist_reference:",
+            "runtime_channel_allowlist:",
+            "bot_user_id:",
+            "manifest_sha256:",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, profile)
+        self.assertNotIn("<exact Slack owner user ID", profile)
+        for evidence in (
+            "Slack owner-user allowlist",
+            "Runtime channel allowlist",
+            "Slack bot user ID",
+            "Slack app manifest SHA-256",
+            "Off-channel event rejection",
+            "Non-owner event rejection",
+            "Replayed event handling",
+            "proof no other active deployment consumed or persisted the event",
+        ):
+            with self.subTest(evidence=evidence):
+                self.assertIn(evidence, packet)
+
+    def test_rollout_status_is_synchronized_across_bootstrap_surfaces(self):
+        for name in ("intake.md", "workstream-plan.md", "project-state-report.md"):
+            with self.subTest(name=name):
+                content = self.read(self.BOOTSTRAP / name)
+                self.assertIn("rollout", content.lower())
+                self.assertIn("Slack", content)
+
+    def test_firecrawl_routing_fails_closed_without_authenticated_zdr(self):
+        protocol = self.read(self.ROOT / "docs" / "project-bootstrap-protocol.md")
+        normalized = " ".join(protocol.split())
+        for requirement in (
+            "zeroDataRetention: true",
+            "lockdown: true",
+            "cache-only ZDR route",
+            "first-party public retrieval route outside Firecrawl",
+            "Never send private, repository, account, credential, or project material",
+            "Do not retry a rejected ZDR request unchanged",
+            "authenticated ZDR is proven",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, normalized)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -930,3 +1082,7 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:27 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | END]]
