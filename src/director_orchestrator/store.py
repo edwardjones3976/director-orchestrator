@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:56 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
@@ -16,7 +17,7 @@ import json
 import secrets
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -473,6 +474,30 @@ class TaskStore:
             connection.execute(
                 """CREATE INDEX IF NOT EXISTS idx_direct_production_order
                 ON direct_production_credits(credit_id DESC)"""
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS direct_production_no_credit (
+                    disposition_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assignment_id TEXT NOT NULL UNIQUE,
+                    reason TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS direct_production_no_credit_no_update
+                BEFORE UPDATE ON direct_production_no_credit
+                BEGIN SELECT RAISE(ABORT, 'direct-production dispositions are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS direct_production_no_credit_no_delete
+                BEFORE DELETE ON direct_production_no_credit
+                BEGIN SELECT RAISE(ABORT, 'direct-production dispositions are append-only'); END
+                """
             )
             connection.execute(
                 """
@@ -1089,6 +1114,82 @@ class TaskStore:
             return [self._record_from_row(connection, row) for row in rows]
 
     @staticmethod
+    def _workload_unit_exists(
+        connection: sqlite3.Connection, assignment_id: str
+    ) -> bool:
+        """Return whether any reservation was ever taken for this unit identity."""
+
+        return (
+            connection.execute(
+                """SELECT 1 FROM workload_assignment_reservations
+                WHERE assignment_id = ? LIMIT 1""",
+                (assignment_id,),
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _record_no_credit_disposition(
+        connection: sqlite3.Connection,
+        assignment_id: str,
+        *,
+        reason: str,
+        recorded_at: datetime,
+    ) -> bool:
+        """Append one terminal "this unit will never be credited" record.
+
+        An already-credited unit is never retroactively zeroed: the append-only
+        credit ledger stays authoritative and the attempt fails closed.
+        """
+
+        credited = connection.execute(
+            "SELECT 1 FROM direct_production_credits WHERE assignment_id = ?",
+            (assignment_id,),
+        ).fetchone()
+        if credited is not None:
+            raise WorkloadReservationConflict(
+                "a credited direct-production unit cannot be given a no-credit disposition"
+            )
+        existing = connection.execute(
+            "SELECT 1 FROM direct_production_no_credit WHERE assignment_id = ?",
+            (assignment_id,),
+        ).fetchone()
+        if existing is not None:
+            return False
+        connection.execute(
+            """INSERT INTO direct_production_no_credit(
+                assignment_id, reason, recorded_at
+            ) VALUES (?, ?, ?)""",
+            (assignment_id, reason[:255], recorded_at.isoformat()),
+        )
+        return True
+
+    def record_direct_production_no_credit(
+        self, assignment_id: str, *, reason: str
+    ) -> bool:
+        """Close a rejected or terminated implementation's production accounting.
+
+        An invoked implementation that is never accepted would otherwise stay
+        "unresolved" forever: the rollover projection treats every uncredited
+        invoked implementation as a unit that might still be credited, so a
+        single terminally rejected unit can block later production for good.
+        This records the terminal fact that no credit will follow.
+        """
+
+        if not isinstance(assignment_id, str) or not assignment_id.strip():
+            raise ValueError("workload assignment id must not be blank")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("no-credit disposition reason must not be blank")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            return self._record_no_credit_disposition(
+                connection,
+                assignment_id,
+                reason=reason,
+                recorded_at=datetime.now(timezone.utc),
+            )
+
+    @staticmethod
     def _append_direct_production_credits(
         connection: sqlite3.Connection, record: TaskRecord
     ) -> None:
@@ -1103,7 +1204,7 @@ class TaskStore:
         )
         for outcome in record.assignment_outcomes:
             assignment = assignments.get(outcome.assignment_sequence)
-            if assignment is None or assignment.agent != outcome.provider:
+            if assignment is not None and assignment.agent != outcome.provider:
                 raise WorkloadReservationConflict(
                     "accepted direct-production outcome is not bound to its assignment"
                 )
@@ -1118,14 +1219,38 @@ class TaskStore:
                 # Ordinary OpenAI is the control plane. The separately
                 # owner-authorized external OpenAI lane is never inferred here.
                 continue
+            assignment_id = (
+                f"{record.task_id}:{record.plan_generation}:"
+                f"{outcome.assignment_sequence}"
+            )
+            if assignment is None:
+                if TaskStore._workload_unit_exists(connection, assignment_id):
+                    raise WorkloadReservationConflict(
+                        "accepted direct-production outcome is not bound to its assignment"
+                    )
+                # The identity this outcome would claim belongs to no reservation
+                # in the current plan generation: the plan was regenerated (a
+                # dry-run replan, for instance) and the accepted outcome now
+                # names a superseded unit. Raising here wedged every later
+                # `save` for the task forever. Record the terminal no-credit
+                # disposition instead. It grants no authority — the outcome
+                # simply earns nothing — and it keeps the unresolved-rollover
+                # projection from holding the stale identity open.
+                TaskStore._record_no_credit_disposition(
+                    connection,
+                    assignment_id,
+                    reason="stale_assignment_identity",
+                    recorded_at=record.updated_at,
+                )
+                continue
             if not is_direct_production_kind(trusted_work_kind(assignment)):
                 # Accepted research, review, debate, and coordination outcomes
                 # are real provider work, but they are not production credits.
                 continue
-            assignment_id = (
-                f"{record.task_id}:{record.plan_generation}:"
-                f"{assignment.sequence}"
-            )
+            if not TaskStore._workload_unit_exists(connection, assignment_id):
+                raise WorkloadReservationConflict(
+                    "accepted direct-production outcome lacks invoked workload authority"
+                )
             workload_authority = connection.execute(
                 """SELECT reservation.task_id, reservation.provider,
                           reservation.effort_units, reservation.work_kind
@@ -1528,7 +1653,17 @@ class TaskStore:
 
         Reusing the exact reservation key returns its original decision and never
         appends a second workload row. Reusing it with a different assignment
-        identity fails closed.
+        identity fails closed.  The one exception is a reservation already
+        finalized as ``failed_pre_submit``: that attempt reached no provider, so
+        returning its stale decision would hand the caller a live allow whose
+        every outcome collides with append-only terminal evidence.  Such a key
+        advances to the next attempt-scoped key and is evaluated afresh.
+
+        The exponential unresolved-rollover projection runs *outside* the
+        exclusive write transaction, against a fingerprinted ledger snapshot.
+        The commit transaction re-reads that fingerprint and only proceeds when
+        it is unchanged, so the compare-and-set guarantee is preserved without
+        holding the cross-process write lock for the projection.
         """
 
         for value, label in (
@@ -1550,6 +1685,9 @@ class TaskStore:
         ):
             raise ValueError("workload shadow assignment limit must be positive")
         available = frozenset(available_primary_providers)
+        # Built up front so a structurally invalid request is rejected before any
+        # database work, exactly as before. The committed request below carries
+        # the attempt-scoped key this call actually owns.
         request = AssignmentRequest(
             assignment_id=reservation_key,
             provider=provider,
@@ -1563,222 +1701,353 @@ class TaskStore:
             ensure_ascii=True,
             separators=(",", ":"),
         )
+        requested_identity = (
+            task_id,
+            assignment_id,
+            phase,
+            provider.value,
+            effort_units,
+            kind.value,
+            size.value,
+            model_label,
+        )
+        direct_provider = direct_production_provider(provider)
+        direct_relevant = direct_provider is not None and is_direct_production_kind(
+            kind
+        )
 
-        with self._lock, self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            existing = self._workload_row(connection, reservation_key)
-            if existing is not None:
-                identity = (
-                    str(existing["task_id"]),
-                    str(existing["assignment_id"]),
-                    str(existing["phase"]),
-                    str(existing["provider"]),
-                    int(existing["effort_units"]),
-                    str(existing["work_kind"]),
-                    str(existing["work_size"]),
-                    (
-                        str(existing["model_label"])
-                        if existing["model_label"] is not None
-                        else None
-                    ),
-                )
-                requested_identity = (
-                    task_id,
-                    assignment_id,
-                    phase,
-                    provider.value,
-                    effort_units,
-                    kind.value,
-                    size.value,
-                    model_label,
-                )
-                if identity != requested_identity:
-                    raise WorkloadReservationConflict(
-                        "workload reservation key was reused with different assignment identity"
+        with self._lock:
+            for _ in range(self._MAX_ROLLOVER_SNAPSHOT_ATTEMPTS):
+                # Snapshot pass: no write transaction is held, so the exponential
+                # projection below cannot block another process's reservation.
+                with self._connect() as connection:
+                    fingerprint = self._workload_ledger_fingerprint(connection)
+                    effective_key, persisted = self._resolve_workload_reservation_key(
+                        connection,
+                        reservation_key=reservation_key,
+                        requested_identity=requested_identity,
                     )
-                persisted = self._workload_reservation_from_row(
-                    existing, created=False
-                )
-                if persisted.final_outcome is not None:
-                    return persisted
-                if (
-                    persisted.configured_mode is not mode
-                    or persisted.shadow_assignment_limit
-                    != shadow_assignment_limit
-                    or persisted.available_primary_providers != available
-                ):
-                    raise WorkloadReservationConflict(
-                        "pending workload reservation authority changed before dispatch"
-                    )
-                return persisted
-
-            effective_mode = mode
-            unit_authority = connection.execute(
-                """SELECT configured_mode, shadow_assignment_limit, mode
-                FROM workload_assignment_reservations
-                WHERE assignment_id = ?
-                ORDER BY ledger_id ASC
-                LIMIT 1""",
-                (assignment_id,),
-            ).fetchone()
-            if unit_authority is not None:
-                if (
-                    EnforcementMode(str(unit_authority["configured_mode"]))
-                    is not mode
-                    or int(unit_authority["shadow_assignment_limit"])
-                    != shadow_assignment_limit
-                ):
-                    raise WorkloadReservationConflict(
-                        "workload assignment unit authority changed between phases"
-                    )
-                effective_mode = EnforcementMode(str(unit_authority["mode"]))
-            elif mode is EnforcementMode.SHADOW:
-                effective_mode = self._effective_workload_mode(
-                    connection,
-                    configured_mode=mode,
-                    shadow_assignment_limit=shadow_assignment_limit,
-                )
-
-            effective_rows = connection.execute(
-                """SELECT reservation.reservation_key, reservation.provider,
-                          reservation.effort_units
-                FROM workload_assignment_reservations AS reservation
-                LEFT JOIN workload_assignment_events AS event
-                  ON event.reservation_key = reservation.reservation_key
-                WHERE event.outcome = 'invoked'
-                   OR (event.outcome IS NULL AND reservation.provider = ?)
-                ORDER BY reservation.ledger_id DESC
-                LIMIT ?""",
-                (provider.value, DEFAULT_POLICY.rolling_window_size - 1),
-            ).fetchall()
-            history = [
-                WorkloadRecord(
-                    assignment_id=str(row["reservation_key"]),
-                    provider=Provider(str(row["provider"])),
-                    effort_units=int(row["effort_units"]),
-                )
-                for row in reversed(effective_rows)
-            ]
-            direct_history: list[DirectProductionRecord] = []
-            direct_provider = direct_production_provider(provider)
-            if (
-                direct_provider is not None
-                and is_direct_production_kind(kind)
-            ):
-                # Pending and invoked-but-uncredited implementations are handled
-                # symmetrically by _direct_rollover_violations below.  The base
-                # history therefore remains the canonical append-only credit
-                # window instead of mixing unrelated table clocks and ordinals.
-                direct_rows = connection.execute(
-                    """SELECT assignment_id, provider, effort_units
-                    FROM direct_production_credits
-                    ORDER BY credit_id DESC
-                    LIMIT ?""",
-                    (DEFAULT_POLICY.rolling_window_size - 1,),
-                ).fetchall()
-                for row in reversed(direct_rows):
-                    mapped_provider = direct_production_provider(
-                        Provider(str(row["provider"]))
-                    )
-                    if mapped_provider is None:
-                        raise WorkloadReservationConflict(
-                            "ordinary OpenAI cannot enter direct-production history"
+                    if persisted is None:
+                        effective_mode = self._effective_assignment_mode(
+                            connection,
+                            assignment_id=assignment_id,
+                            mode=mode,
+                            shadow_assignment_limit=shadow_assignment_limit,
                         )
-                    direct_history.append(
-                        DirectProductionRecord(
-                            assignment_id=str(row["assignment_id"]),
-                            provider=mapped_provider,
+                        overall_rows = self._overall_rollover_rows(connection)
+                        direct_inputs = (
+                            self._direct_rollover_inputs(connection, assignment_id)
+                            if direct_relevant
+                            else None
+                        )
+
+                if persisted is None:
+                    committed_request = (
+                        request
+                        if effective_key == reservation_key
+                        else replace(request, assignment_id=effective_key)
+                    )
+                    # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
+                    # Unresolved-rollover projection.  Only pending rows that can
+                    # still enter the rolling window are relevant: a pending row
+                    # older than the nineteen most recent invoked rows can never
+                    # displace them, so it must not act as a lifetime global
+                    # block.  Each relevant pending row is projected both ways
+                    # (invoked / not invoked); a sibling is safe only when every
+                    # projection agrees it clears the caps.
+                    extra_violations: list[str] = list(
+                        self._overall_rollover_violations(
+                            overall_rows,
+                            request=committed_request,
+                            available=available,
+                            mode=effective_mode,
+                        )
+                    )
+                    if direct_inputs is not None:
+                        extra_violations.extend(
+                            self._direct_rollover_violations(
+                                direct_inputs,
+                                request=committed_request,
+                                assignment_id=assignment_id,
+                                available=available,
+                                mode=effective_mode,
+                            )
+                        )
+                    # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
+
+                with self._connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    if self._workload_ledger_fingerprint(connection) != fingerprint:
+                        # The ledger moved while the projection ran. Nothing was
+                        # written, so discard the snapshot and take it again.
+                        continue
+                    # The fingerprint is unchanged, so this resolves identically;
+                    # re-running it keeps the committing transaction self-contained.
+                    effective_key, persisted = self._resolve_workload_reservation_key(
+                        connection,
+                        reservation_key=reservation_key,
+                        requested_identity=requested_identity,
+                    )
+                    if persisted is not None:
+                        if persisted.final_outcome is not None:
+                            return persisted
+                        if (
+                            persisted.configured_mode is not mode
+                            or persisted.shadow_assignment_limit
+                            != shadow_assignment_limit
+                            or persisted.available_primary_providers != available
+                        ):
+                            raise WorkloadReservationConflict(
+                                "pending workload reservation authority changed before dispatch"
+                            )
+                        return persisted
+
+                    effective_rows = connection.execute(
+                        """SELECT reservation.reservation_key, reservation.provider,
+                                  reservation.effort_units
+                        FROM workload_assignment_reservations AS reservation
+                        LEFT JOIN workload_assignment_events AS event
+                          ON event.reservation_key = reservation.reservation_key
+                        WHERE event.outcome = 'invoked'
+                           OR (event.outcome IS NULL AND reservation.provider = ?)
+                        ORDER BY reservation.ledger_id DESC
+                        LIMIT ?""",
+                        (provider.value, DEFAULT_POLICY.rolling_window_size - 1),
+                    ).fetchall()
+                    history = [
+                        WorkloadRecord(
+                            assignment_id=str(row["reservation_key"]),
+                            provider=Provider(str(row["provider"])),
                             effort_units=int(row["effort_units"]),
                         )
-                    )
-            decision = evaluate_assignment(
-                request,
-                history=history,
-                direct_production_history=direct_history,
-                direct_production_assignment_id=assignment_id,
-                available_primary_providers=available,
-                policy=DEFAULT_POLICY,
-                mode=effective_mode,
-            )
-            # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
-            # Unresolved-rollover projection.  Only pending rows that can still
-            # enter the rolling window are relevant: a pending row older than the
-            # nineteen most recent invoked rows can never displace them, so it
-            # must not act as a lifetime global block.  Each relevant pending row
-            # is projected both ways (invoked / not invoked); a sibling is safe
-            # only when every projection agrees it clears the caps.
-            extra_violations: list[str] = []
-            extra_violations.extend(
-                self._overall_rollover_violations(
-                    connection,
-                    request=request,
-                    available=available,
-                    mode=effective_mode,
-                )
-            )
-            if direct_provider is not None and is_direct_production_kind(kind):
-                extra_violations.extend(
-                    self._direct_rollover_violations(
-                        connection,
-                        request=request,
-                        assignment_id=assignment_id,
-                        available=available,
+                        for row in reversed(effective_rows)
+                    ]
+                    direct_history: list[DirectProductionRecord] = []
+                    if direct_relevant:
+                        # Pending and invoked-but-uncredited implementations are
+                        # handled symmetrically by _direct_rollover_violations.
+                        # The base history therefore remains the canonical
+                        # append-only credit window instead of mixing unrelated
+                        # table clocks and ordinals.
+                        direct_rows = connection.execute(
+                            """SELECT assignment_id, provider, effort_units
+                            FROM direct_production_credits
+                            ORDER BY credit_id DESC
+                            LIMIT ?""",
+                            (DEFAULT_POLICY.rolling_window_size - 1,),
+                        ).fetchall()
+                        for row in reversed(direct_rows):
+                            mapped_provider = direct_production_provider(
+                                Provider(str(row["provider"]))
+                            )
+                            if mapped_provider is None:
+                                raise WorkloadReservationConflict(
+                                    "ordinary OpenAI cannot enter direct-production history"
+                                )
+                            direct_history.append(
+                                DirectProductionRecord(
+                                    assignment_id=str(row["assignment_id"]),
+                                    provider=mapped_provider,
+                                    effort_units=int(row["effort_units"]),
+                                )
+                            )
+                    decision = evaluate_assignment(
+                        committed_request,
+                        history=history,
+                        direct_production_history=direct_history,
+                        direct_production_assignment_id=assignment_id,
+                        available_primary_providers=available,
+                        policy=DEFAULT_POLICY,
                         mode=effective_mode,
                     )
-                )
-            # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
-            decision = self._decision_with_violations(
-                decision, extra_violations
-            )
-            recorded_at = datetime.now(timezone.utc)
-            connection.execute(
-                """INSERT INTO workload_assignment_reservations(
-                    reservation_key, task_id, assignment_id, phase, provider,
-                    effort_units, work_kind, work_size, model_label,
-                    available_primary_json, configured_mode,
-                    shadow_assignment_limit, mode, decision_outcome, allowed,
-                    violations_json, advisories_json, recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    decision = self._decision_with_violations(
+                        decision, extra_violations
+                    )
+                    recorded_at = datetime.now(timezone.utc)
+                    connection.execute(
+                        """INSERT INTO workload_assignment_reservations(
+                            reservation_key, task_id, assignment_id, phase, provider,
+                            effort_units, work_kind, work_size, model_label,
+                            available_primary_json, configured_mode,
+                            shadow_assignment_limit, mode, decision_outcome, allowed,
+                            violations_json, advisories_json, recorded_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            effective_key,
+                            task_id,
+                            assignment_id,
+                            phase,
+                            provider.value,
+                            effort_units,
+                            kind.value,
+                            size.value,
+                            model_label,
+                            available_json,
+                            mode.value,
+                            shadow_assignment_limit,
+                            effective_mode.value,
+                            decision.outcome.value,
+                            int(decision.allowed),
+                            json.dumps(
+                                list(decision.violations),
+                                ensure_ascii=True,
+                                separators=(",", ":"),
+                            ),
+                            json.dumps(
+                                list(decision.advisories),
+                                ensure_ascii=True,
+                                separators=(",", ":"),
+                            ),
+                            recorded_at.isoformat(),
+                        ),
+                    )
+                    if not decision.allowed:
+                        connection.execute(
+                            """INSERT INTO workload_assignment_events(
+                                reservation_key, outcome, recorded_at
+                            ) VALUES (?, 'blocked', ?)""",
+                            (effective_key, recorded_at.isoformat()),
+                        )
+                    committed = self._workload_row(connection, effective_key)
+                    if committed is None:  # Defensive: insert and read share a transaction.
+                        raise RuntimeError(
+                            "workload reservation disappeared during commit"
+                        )
+                    return self._workload_reservation_from_row(
+                        committed, created=True
+                    )
+
+        raise WorkloadReservationConflict(
+            "the workload ledger changed on every rollover projection attempt; "
+            "no reservation was recorded"
+        )
+
+    # A pre-submit failure reached no provider, so the caller may try again. Each
+    # retry takes its own append-only reservation row rather than reusing the
+    # finalized one. The ladder is bounded so an unbounded key search can never
+    # stand in for a fail-closed stop.
+    _MAX_PRE_SUBMIT_RETRY_RESERVATIONS = 20
+
+    # The snapshot the projection ran against must still be the ledger this
+    # reservation commits into. A few retries absorb ordinary cross-process
+    # interleaving; past that the reservation fails closed.
+    _MAX_ROLLOVER_SNAPSHOT_ATTEMPTS = 5
+
+    @staticmethod
+    def _workload_ledger_fingerprint(
+        connection: sqlite3.Connection,
+    ) -> tuple[int, ...]:
+        """Return a value that changes whenever any rollover input changes.
+
+        Each table below is append-only under database triggers, so a row count
+        paired with the highest identifier ever assigned determines its contents
+        exactly.  Comparing this is what lets the exponential projection run
+        outside the exclusive write transaction without losing compare-and-set
+        correctness: a mismatch means the snapshot is stale and is discarded.
+        """
+
+        row = connection.execute(
+            """SELECT
+                (SELECT COUNT(*) FROM workload_assignment_reservations),
+                (SELECT COALESCE(MAX(ledger_id), 0)
+                   FROM workload_assignment_reservations),
+                (SELECT COUNT(*) FROM workload_assignment_events),
+                (SELECT COALESCE(MAX(event_id), 0)
+                   FROM workload_assignment_events),
+                (SELECT COUNT(*) FROM direct_production_credits),
+                (SELECT COALESCE(MAX(credit_id), 0)
+                   FROM direct_production_credits),
+                (SELECT COUNT(*) FROM direct_production_no_credit),
+                (SELECT COALESCE(MAX(disposition_id), 0)
+                   FROM direct_production_no_credit)"""
+        ).fetchone()
+        return tuple(int(value) for value in row)
+
+    @classmethod
+    def _resolve_workload_reservation_key(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        reservation_key: str,
+        requested_identity: tuple[Any, ...],
+    ) -> tuple[str, WorkloadLedgerReservation | None]:
+        """Return the key this attempt owns and any reservation already at it.
+
+        A reservation finalized as ``failed_pre_submit`` never reached a
+        provider.  Returning it would hand the caller a stale allow decision
+        whose every terminal outcome conflicts with the append-only evidence
+        already recorded, so the search advances to the next attempt-scoped key.
+        Every other terminal outcome, and any pending row, is genuinely this
+        attempt's and is returned unchanged.
+        """
+
+        key = reservation_key
+        for attempt in range(cls._MAX_PRE_SUBMIT_RETRY_RESERVATIONS + 1):
+            existing = cls._workload_row(connection, key)
+            if existing is None:
+                return key, None
+            identity = (
+                str(existing["task_id"]),
+                str(existing["assignment_id"]),
+                str(existing["phase"]),
+                str(existing["provider"]),
+                int(existing["effort_units"]),
+                str(existing["work_kind"]),
+                str(existing["work_size"]),
                 (
-                    reservation_key,
-                    task_id,
-                    assignment_id,
-                    phase,
-                    provider.value,
-                    effort_units,
-                    kind.value,
-                    size.value,
-                    model_label,
-                    available_json,
-                    mode.value,
-                    shadow_assignment_limit,
-                    effective_mode.value,
-                    decision.outcome.value,
-                    int(decision.allowed),
-                    json.dumps(
-                        list(decision.violations),
-                        ensure_ascii=True,
-                        separators=(",", ":"),
-                    ),
-                    json.dumps(
-                        list(decision.advisories),
-                        ensure_ascii=True,
-                        separators=(",", ":"),
-                    ),
-                    recorded_at.isoformat(),
+                    str(existing["model_label"])
+                    if existing["model_label"] is not None
+                    else None
                 ),
             )
-            if not decision.allowed:
-                connection.execute(
-                    """INSERT INTO workload_assignment_events(
-                        reservation_key, outcome, recorded_at
-                    ) VALUES (?, 'blocked', ?)""",
-                    (reservation_key, recorded_at.isoformat()),
+            if identity != requested_identity:
+                raise WorkloadReservationConflict(
+                    "workload reservation key was reused with different assignment identity"
                 )
-            persisted = self._workload_row(connection, reservation_key)
-            if persisted is None:  # Defensive: insertion and read share a transaction.
-                raise RuntimeError("workload reservation disappeared during commit")
-            return self._workload_reservation_from_row(persisted, created=True)
+            persisted = cls._workload_reservation_from_row(existing, created=False)
+            if persisted.final_outcome is not WorkloadAttemptOutcome.FAILED_PRE_SUBMIT:
+                return key, persisted
+            key = f"{reservation_key}#pre-submit-retry-{attempt + 1}"
+        raise WorkloadReservationConflict(
+            "workload reservation exhausted its bounded pre-submit retry ladder"
+        )
+
+    @classmethod
+    def _effective_assignment_mode(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        assignment_id: str,
+        mode: EnforcementMode,
+        shadow_assignment_limit: int,
+    ) -> EnforcementMode:
+        """Return the mode this assignment unit is already bound to, if any."""
+
+        unit_authority = connection.execute(
+            """SELECT configured_mode, shadow_assignment_limit, mode
+            FROM workload_assignment_reservations
+            WHERE assignment_id = ?
+            ORDER BY ledger_id ASC
+            LIMIT 1""",
+            (assignment_id,),
+        ).fetchone()
+        if unit_authority is not None:
+            if (
+                EnforcementMode(str(unit_authority["configured_mode"])) is not mode
+                or int(unit_authority["shadow_assignment_limit"])
+                != shadow_assignment_limit
+            ):
+                raise WorkloadReservationConflict(
+                    "workload assignment unit authority changed between phases"
+                )
+            return EnforcementMode(str(unit_authority["mode"]))
+        if mode is EnforcementMode.SHADOW:
+            return cls._effective_workload_mode(
+                connection,
+                configured_mode=mode,
+                shadow_assignment_limit=shadow_assignment_limit,
+            )
+        return mode
 
     @staticmethod
     def _decision_with_violations(
@@ -1824,16 +2093,11 @@ class TaskStore:
             merged.append(tag)
         return list(dict.fromkeys(merged))
 
-    @classmethod
-    def _overall_rollover_violations(
-        cls,
+    @staticmethod
+    def _overall_rollover_rows(
         connection: sqlite3.Connection,
-        *,
-        request: AssignmentRequest,
-        available: frozenset[Provider],
-        mode: EnforcementMode,
-    ) -> list[str]:
-        """Project every in-window pending row as invoked and as not invoked."""
+    ) -> list[dict[str, Any]]:
+        """Read the in-window invoked and pending rows the projection needs."""
 
         window = DEFAULT_POLICY.rolling_window_size
         boundary = connection.execute(
@@ -1858,6 +2122,24 @@ class TaskStore:
             ORDER BY reservation.ledger_id ASC""",
             (int(boundary["ledger_id"]) if boundary is not None else 0,),
         ).fetchall()
+        return [dict(row) for row in rows]
+
+    @classmethod
+    def _overall_rollover_violations(
+        cls,
+        rows: list[dict[str, Any]],
+        *,
+        request: AssignmentRequest,
+        available: frozenset[Provider],
+        mode: EnforcementMode,
+    ) -> list[str]:
+        """Project every in-window pending row as invoked and as not invoked.
+
+        This is a pure function of the snapshot rows so it can run outside the
+        exclusive write transaction.
+        """
+
+        window = DEFAULT_POLICY.rolling_window_size
         pending = [row for row in rows if row["final_outcome"] is None]
         if not pending:
             return []
@@ -1895,17 +2177,16 @@ class TaskStore:
             decisions, "workload_rollover_pending_unresolved"
         )
 
-    @classmethod
-    def _direct_rollover_violations(
-        cls,
-        connection: sqlite3.Connection,
-        *,
-        request: AssignmentRequest,
-        assignment_id: str,
-        available: frozenset[Provider],
-        mode: EnforcementMode,
-    ) -> list[str]:
-        """Project every uncredited in-flight implementation unit both ways."""
+    @staticmethod
+    def _direct_rollover_inputs(
+        connection: sqlite3.Connection, assignment_id: str
+    ) -> tuple[list[DirectProductionRecord], list[DirectProductionRecord], int]:
+        """Read the uncredited in-flight units, recent credits, and credit total.
+
+        A unit carrying a terminal no-credit disposition is excluded: it was
+        rejected or otherwise terminated and will never be credited, so leaving
+        it "unresolved" would block later production for the ledger's lifetime.
+        """
 
         window = DEFAULT_POLICY.rolling_window_size
         unresolved_rows = connection.execute(
@@ -1920,6 +2201,10 @@ class TaskStore:
               AND NOT EXISTS (
                   SELECT 1 FROM direct_production_credits AS credit
                   WHERE credit.assignment_id = reservation.assignment_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM direct_production_no_credit AS disposition
+                  WHERE disposition.assignment_id = reservation.assignment_id
               )
               AND (
                   event.outcome IS NULL
@@ -1940,16 +2225,6 @@ class TaskStore:
                 provider=mapped,
                 effort_units=int(row["effort_units"]),
             )
-        if not unresolved:
-            return []
-        units = list(unresolved.values())
-        if len(units) > cls._ROLLOVER_PROJECTION_LIMIT:
-            credit_total = connection.execute(
-                "SELECT COUNT(*) AS count FROM direct_production_credits"
-            ).fetchone()
-            if int(credit_total["count"]) + len(units) >= window - 1:
-                return ["direct_production_rollover_pending_unresolved"]
-            return []
         credit_rows = connection.execute(
             """SELECT assignment_id, provider, effort_units
             FROM direct_production_credits
@@ -1971,6 +2246,35 @@ class TaskStore:
                     effort_units=int(row["effort_units"]),
                 )
             )
+        credit_total = connection.execute(
+            "SELECT COUNT(*) AS count FROM direct_production_credits"
+        ).fetchone()
+        return list(unresolved.values()), credits, int(credit_total["count"])
+
+    @classmethod
+    def _direct_rollover_violations(
+        cls,
+        inputs: tuple[list[DirectProductionRecord], list[DirectProductionRecord], int],
+        *,
+        request: AssignmentRequest,
+        assignment_id: str,
+        available: frozenset[Provider],
+        mode: EnforcementMode,
+    ) -> list[str]:
+        """Project every uncredited in-flight implementation unit both ways.
+
+        This is a pure function of the snapshot inputs so it can run outside the
+        exclusive write transaction.
+        """
+
+        window = DEFAULT_POLICY.rolling_window_size
+        units, credits, credit_total = inputs
+        if not units:
+            return []
+        if len(units) > cls._ROLLOVER_PROJECTION_LIMIT:
+            if credit_total + len(units) >= window - 1:
+                return ["direct_production_rollover_pending_unresolved"]
+            return []
         decisions: list[DecisionResult] = []
         for mask in range(1 << len(units)):
             chosen = [
@@ -2489,3 +2793,4 @@ class TaskStore:
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:56 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
@@ -22,6 +23,8 @@ Antigravity, Perplexity, and OpenAI boundaries recorded there.
 - **Total phase budget/time:** <bounded ceiling>
 - **Project channel/thread:** <slack channel ID or configured placeholder and thread>
 - **Repository/ref/worktree:** <exact verified values or analysis-only>
+- **Rollout packet:** <path/status from `rollout-packet.md`>
+- **Deployment isolation:** <dedicated Slack app, channel, profile, and state namespace status>
 
 ## Selected modules
 
@@ -132,6 +135,7 @@ serious-safety signal. Any changed candidate invalidates prior review evidence.
 
 ## Owner and deterministic gates
 
+- <Slack activation blocked until concurrent-deployment isolation is verified>
 - <owner decision required>
 - <security/CI/exact-SHA gate>
 - <merge/deployment/publication/access gate>
@@ -145,3 +149,4 @@ use the commit, pull-request, or `REVIEW_READY` envelope instead.
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->

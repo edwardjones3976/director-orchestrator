@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:06 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
@@ -376,6 +377,30 @@ class OrchestrationEngine:
             and record.plan.workload_policy_version == "v1"
         )
 
+    def _revision_limit(self, record: TaskRecord) -> int:
+        """Return the revisions the declared attempt ceiling actually permits.
+
+        ``max_revisions`` is clamped to the ``MAX_REVISIONS`` setting, which a
+        deployment may raise above the declared route-attempt ceiling. The v1
+        workload contract fixes that ceiling at one primary attempt plus one
+        transient recovery plus one conditional third attempt, so the live
+        revision loop must stop at the smaller of the two rather than trusting
+        the configured maximum. Pre-policy plans keep their original authority.
+        """
+
+        plan = record.plan
+        if plan is None:
+            return 0
+        if not self._workload_policy_applies(record):
+            return plan.max_revisions
+        return max(
+            0,
+            min(
+                plan.max_revisions,
+                plan.execution_limits.total_route_attempt_limit - 1,
+            ),
+        )
+
     @staticmethod
     def _record_workload_pre_submit_stop(
         record: TaskRecord,
@@ -518,11 +543,24 @@ class OrchestrationEngine:
 
     @staticmethod
     def _packet_workload_outcome(
-        status: RuntimeExecutionStatus, reason: str
+        status: RuntimeExecutionStatus,
+        reason: str,
+        reservation: WorkloadLedgerReservation | None = None,
     ) -> WorkloadAttemptOutcome:
         if status == RuntimeExecutionStatus.COMPLETED:
             return WorkloadAttemptOutcome.INVOKED
         if status == RuntimeExecutionStatus.REPLAYED:
+            # `cached_replay` means "this reservation's provider attempt was
+            # already counted". That is only true when the reservation itself
+            # carries an invoked outcome. A reservation still pending its first
+            # terminal evidence has never been counted, so classifying the
+            # durable runtime completion as a cached replay would silently drop
+            # a real attempt out of the rolling window.
+            if (
+                reservation is not None
+                and reservation.final_outcome is not WorkloadAttemptOutcome.INVOKED
+            ):
+                return WorkloadAttemptOutcome.INVOKED
             return WorkloadAttemptOutcome.CACHED_REPLAY
         if status == RuntimeExecutionStatus.REJECTED:
             return WorkloadAttemptOutcome.FAILED_PRE_SUBMIT
@@ -961,7 +999,9 @@ class OrchestrationEngine:
         if workload_reservation is not None and not await self._finalize_workload_dispatch(
             record,
             workload_reservation,
-            self._packet_workload_outcome(outcome.status, outcome.reason),
+            self._packet_workload_outcome(
+                outcome.status, outcome.reason, workload_reservation
+            ),
         ):
             return False
         if outcome.status in {
@@ -1607,7 +1647,9 @@ class OrchestrationEngine:
             workload_outcome = (
                 WorkloadAttemptOutcome.INVOKED
                 if error is not None
-                else self._packet_workload_outcome(outcome.status, outcome.reason)
+                else self._packet_workload_outcome(
+                    outcome.status, outcome.reason, workload_reservation
+                )
             )
             if workload_reservation is not None and not await self._finalize_workload_dispatch(
                 record,
@@ -5831,7 +5873,7 @@ class OrchestrationEngine:
             return await self._finalize_debate(record, assignment)
         while (
             decision.verdict == ReviewVerdict.REVISE
-            and record.revision_count < record.plan.max_revisions
+            and record.revision_count < self._revision_limit(record)
         ):
             if assignment.agent == ProviderName.PERPLEXITY:
                 return await self._stop_for_perplexity_refinement(
@@ -6286,3 +6328,4 @@ class OrchestrationEngine:
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:06 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]

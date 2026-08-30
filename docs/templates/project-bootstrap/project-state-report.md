@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
@@ -70,6 +72,8 @@ report or submission envelope.
 - **Shadow/enforcement mode:** <five-assignment observe-only shadow result or automatic enforcement state; would-route/would-block/would-correct evidence and drift correction>
 - **Avoidable commit trend:** <rolling comparable baseline window/sample and count/rate; current count/rate; absolute and percentage delta toward 33%; exclusions and comparability changes>
 - **Coordination:** <slack channel ID or configured placeholder and thread>
+- **Rollout packet:** <path, status, and exact configuration identity>
+- **Deployment isolation:** <dedicated app/channel/profile/state namespace and collision-check evidence>
 - **Execution surface:** <verified repository/ref/worktree or analysis-only>
 - **Stopping point:** <current stopping condition>
 
@@ -107,6 +111,9 @@ report or submission envelope.
 - **Action accounting:** <major orchestration waves and raw provider/tool calls; percent reduction; five-action closure state or reshaped/owner gate>
 - **Required evidence preservation:** <100% exact-SHA, trusted CI, security, budget, and safety evidence present, not applicable, or blocking>
 - **Recovery and rollback:** <restart/replay state, duplicate-dispatch evidence, rollback instructions, and recovery gaps>
+- **Slack activation evidence:** <owner-user/channel allowlists, app ID, bot user ID, manifest digest, membership, Socket Mode, collision result, or pending; never token values>
+- **Slack negative checks:** <off-channel/non-owner/replay results and proof no other active deployment consumed or persisted the event>
+- **Communication fallback:** <three-attempt result and prior durable project-local transport; never another deployment's Slack surface>
 - **Explicitly not done:** <writes, calls, merges, deployments, or other actions not performed>
 - **Unverified:** <claims, checks, provider states, environments, or outcomes still unverified>
 
@@ -128,3 +135,5 @@ published, enabled, or otherwise changed>.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]] -->

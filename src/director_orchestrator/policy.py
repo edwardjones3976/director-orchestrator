@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
@@ -386,6 +387,81 @@ def _canonical_prestage_record(record: PlanPrestageRecord) -> PlanPrestageRecord
     return PlanPrestageRecord.model_validate(packet.to_dict())
 
 
+def _material_author_agents(
+    by_sequence: dict[int, Assignment], reviewed: Assignment
+) -> set[ProviderName]:
+    """Return every provider whose output is material input to ``reviewed``.
+
+    A dependency that is absent from the plan contributes nothing here; the
+    generic dependency-existence check reports it separately.
+    """
+
+    authors: set[ProviderName] = set()
+    seen: set[int] = set()
+    pending = list(reviewed.depends_on)
+    while pending:
+        sequence = pending.pop()
+        if sequence in seen:
+            continue
+        seen.add(sequence)
+        dependency = by_sequence.get(sequence)
+        if dependency is None:
+            continue
+        authors.add(dependency.agent)
+        pending.extend(dependency.depends_on)
+    return authors
+
+
+def _independent_review_binding_errors(plan: DirectorPlan) -> set[str]:
+    """Bind each independent review to the exact work it is budgeted to examine.
+
+    Without this an independent-review assignment floats free of any artifact:
+    it can declare no dependency at all, depend on unrelated work, or be routed
+    back to the provider that produced — or materially authored — the very thing
+    it is supposed to check independently.
+    """
+
+    errors: set[str] = set()
+    by_sequence = {item.sequence: item for item in plan.assignments}
+    implementation_sequences = {
+        item.sequence
+        for item in plan.assignments
+        if _work_kind(item) is WorkKind.IMPLEMENTATION
+    }
+    for review in plan.assignments:
+        if review.kind != AssignmentKind.INDEPENDENT_REVIEW:
+            continue
+        bound = [
+            sequence for sequence in review.depends_on if sequence in by_sequence
+        ]
+        if len(review.depends_on) != 1 or len(bound) != 1:
+            errors.add(
+                f"assignment {review.sequence}: independent review must depend on "
+                "exactly one existing assignment it reviews"
+            )
+            continue
+        reviewed = by_sequence[bound[0]]
+        if (
+            implementation_sequences
+            and reviewed.sequence not in implementation_sequences
+        ):
+            errors.add(
+                f"assignment {review.sequence}: independent review must bind the "
+                "exact implementation assignment it reviews"
+            )
+        if review.agent == reviewed.agent:
+            errors.add(
+                f"assignment {review.sequence}: the producer of assignment "
+                f"{reviewed.sequence} cannot review its own work"
+            )
+        elif review.agent in _material_author_agents(by_sequence, reviewed):
+            errors.add(
+                f"assignment {review.sequence}: a material author of assignment "
+                f"{reviewed.sequence} cannot review it"
+            )
+    return errors
+
+
 def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
     """Validate v1 routing without manufacturing assignments to hit percentages."""
 
@@ -451,6 +527,8 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
             "v1 provider plans require at least two distinct team providers; "
             "only genuinely simple local work may remain with OpenAI alone"
         )
+
+    errors.update(_independent_review_binding_errors(plan))
 
     if len(set(plan.research_evidence)) != len(plan.research_evidence):
         errors.add("research evidence declarations must be unique")
@@ -1223,7 +1301,13 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             required_security_evidence=(
                 "Paid provider dispatch and external writes remain disabled",
             ),
-            budget_units=sum(item.effort_points for item in assignments),
+            # Budget the effort the *trusted* normalization will assign, not the
+            # points these draft assignments happen to carry. `enforce_plan`
+            # raises every implementation lane to its minimum size below, and the
+            # pre-stage budget gate then compares against those raised points.
+            budget_units=sum(
+                _trusted_v1_assignment(item).effort_points for item in assignments
+            ),
             timeout_seconds=max(1, settings.provider_timeout_seconds),
             retry_limit=3,
             merge_eligibility_conditions=("A fresh exact-SHA plan is required",),
@@ -1246,3 +1330,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]

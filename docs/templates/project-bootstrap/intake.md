@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | BEGIN]] -->
@@ -19,6 +20,10 @@ provider roles and boundaries.
 - **Requested by:** <owner or authorized source>
 - **Initial state:** exploring
 - **Project channel:** <slack channel ID or configured placeholder from project profile; not a hardcoded workspace name>
+- **Deployment intent:** <analysis_only | planned | live>
+- **Concurrent with another active Director deployment:** <true | false | unknown>
+- **Dedicated Slack app:** <project-specific app ID/name or pending>
+- **Deployment profile/state namespace:** <project-specific values or pending>
 
 ## Mold the source into this project
 
@@ -106,10 +111,15 @@ repository target, risk, or project direction.
 
 ## Director response requested
 
-Create a provisional project profile and select the smallest useful module set.
+Create a provisional project profile, a
+[`rollout-packet.md`](rollout-packet.md), and the smallest useful module set.
 Proceed analysis-only where authority or execution surfaces remain unknown.
+If live operation will overlap another deployment, keep Slack activation
+blocked until a distinct app, project channel, and profile/state namespace are
+verified. Never borrow another deployment's Slack surface as a fallback.
 Ask the owner one focused question only when the unresolved choice materially
 changes authority, scope, cost, privacy, repository target, or risk.
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
