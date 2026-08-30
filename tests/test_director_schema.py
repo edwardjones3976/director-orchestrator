@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]]
@@ -1020,13 +1021,14 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
         profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
         packet = self.read(self.BOOTSTRAP / "rollout-packet.md")
         for field in (
-            "owner_user_allowlist:",
+            "owner_user_allowlist_reference:",
             "runtime_channel_allowlist:",
             "bot_user_id:",
             "manifest_sha256:",
         ):
             with self.subTest(field=field):
                 self.assertIn(field, profile)
+        self.assertNotIn("<exact Slack owner user ID", profile)
         for evidence in (
             "Slack owner-user allowlist",
             "Runtime channel allowlist",
@@ -1083,3 +1085,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | END]]
