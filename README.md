@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
@@ -30,6 +32,8 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
 - A local n8n deployment and an importable intake workflow.
 - A reusable Slack app manifest and a Claude routine prompt.
+- A reusable project rollout packet that records isolated deployment, Slack,
+  allowlist, activation-evidence, fallback, and rollback requirements.
 - Dry-run previews for testing without provider spending.
 
 Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`,
@@ -184,7 +188,7 @@ Callers must wait only for the providers listed in `scheduled_providers`, must t
 
 ## Execution profiles and handoffs
 
-Live plans fail closed unless their project is listed in `PROJECT_ALLOWLIST`. Every explicit repository and starting ref must match `REPOSITORY_ALLOWLIST` and `ALLOWED_STARTING_REFS`; Cursor assignments must always name a repository so they cannot fall back to an account-level default. Use separate deployments and databases when projects require different repositories, credentials, budgets, or Slack destinations.
+Live plans fail closed unless their project is listed in `PROJECT_ALLOWLIST`. Every explicit repository and starting ref must match `REPOSITORY_ALLOWLIST` and `ALLOWED_STARTING_REFS`; Cursor assignments must always name a repository so they cannot fall back to an account-level default. Use separate deployments and databases when projects require different repositories, credentials, budgets, or Slack destinations. Every project presented to the Director receives a rollout packet; concurrently active deployments require distinct Slack apps, project channels, deployment profiles, and state namespaces. Pending identities permit analysis-only shaping but block Slack activation.
 
 After OpenAI accepts an assignment, the orchestrator persists a bounded outcome containing its result, review summary, and evidence. Later assignments receive prior accepted outcomes and their declared `depends_on` results inside a marked untrusted-data envelope. Missing, forward, or unknown dependencies block execution rather than being ignored.
 
@@ -253,3 +257,5 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | END]] -->
