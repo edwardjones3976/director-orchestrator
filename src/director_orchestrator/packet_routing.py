@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
@@ -109,6 +110,31 @@ class DirectorPacketTaskRouter:
             canonical_json_bytes(outcome.model_dump(mode="json"))
         ).hexdigest()
 
+    @staticmethod
+    def _path_scope(
+        record: TaskRecord,
+    ) -> tuple[list[str] | None, list[str]]:
+        """Return the immutable pre-stage path scope carried into the packet.
+
+        The pre-stage packet is the only authority for which repository paths an
+        assignment owns and which it may never touch. Dispatching without it
+        would hand a provider write tools with no declared boundary, so a v1
+        plan that lacks the scope fails closed instead of widening silently.
+        Pre-policy plans carry no pre-stage packet and keep their prior shape.
+        """
+
+        plan = record.plan
+        if plan is None:
+            raise PacketRoutingError("task has no Director plan")
+        if plan.workload_policy_version != "v1":
+            return None, []
+        prestage = plan.prestage
+        if prestage is None or not prestage.owned_paths:
+            raise PacketRoutingError(
+                "v1 packet routing requires the pre-stage owned-path scope"
+            )
+        return list(prestage.owned_paths), list(prestage.prohibited_paths)
+
     def _snapshot(
         self, record: TaskRecord, assignment: Assignment
     ) -> list[dict[str, str]]:
@@ -162,12 +188,25 @@ class DirectorPacketTaskRouter:
             if assignment.requires_approval
             else []
         )
+        owned_paths, prohibited_paths = self._path_scope(record)
         allowed_tools = ["READ_REPOSITORY", "RUN_TESTS"]
         allowed_external_effects: list[str] = []
         if assignment.allow_draft_pr:
             allowed_tools.extend(["WRITE_ISOLATED_BRANCH", "OPEN_DRAFT_PULL_REQUEST"])
             allowed_external_effects.extend(
                 ["WRITE_ISOLATED_BRANCH", "OPEN_DRAFT_PULL_REQUEST"]
+            )
+        constraints = list(self._BASE_CONSTRAINTS)
+        if owned_paths is not None:
+            constraints.append(
+                "Confine every repository write to the owned paths in this packet: "
+                + ", ".join(owned_paths)
+                + "."
+            )
+        if prohibited_paths:
+            constraints.append(
+                "Never read, write, or reference the prohibited paths in this "
+                "packet: " + ", ".join(prohibited_paths) + "."
             )
 
         objective = assignment.task
@@ -202,11 +241,22 @@ class DirectorPacketTaskRouter:
             "authority_snapshot": snapshot,
             "authority_snapshot_digest": snapshot_digest,
             "dependencies": dependencies,
-            "constraints": list(self._BASE_CONSTRAINTS),
+            "constraints": constraints,
             "prohibited_actions": list(self._PROHIBITED_ACTIONS),
             "allowed_tools": allowed_tools,
             "allowed_external_effects": allowed_external_effects,
             "acceptance_checks": list(assignment.acceptance),
+            # Optional in the v1 schema so previously recorded v1 documents stay
+            # readable. Every v1 workload plan emits both, and dispatch fails
+            # closed above when the pre-stage scope is missing.
+            **(
+                {
+                    "owned_paths": owned_paths,
+                    "prohibited_paths": prohibited_paths,
+                }
+                if owned_paths is not None
+                else {}
+            ),
             "evidence_requirements": [
                 "Report the exact authority commit and artifact digests used.",
                 "Report each command or provider action and its result.",
@@ -269,6 +319,16 @@ class DirectorPacketTaskRouter:
         for field, value in expected.items():
             if validated.get(field) != value:
                 raise PacketRoutingError(f"bound work packet {field} changed")
+        owned_paths, prohibited_paths = self._path_scope(record)
+        if owned_paths is not None:
+            # A previously bound packet cannot re-enter dispatch carrying a wider
+            # or absent path scope than the current pre-stage authority declares.
+            if validated.get("owned_paths") != owned_paths:
+                raise PacketRoutingError("bound work packet owned_paths changed")
+            if validated.get("prohibited_paths") != prohibited_paths:
+                raise PacketRoutingError(
+                    "bound work packet prohibited_paths changed"
+                )
         expected_dependencies = [
             {
                 "assignment_id": f"{record.task_id}-{sequence}",
@@ -304,3 +364,4 @@ class DirectorPacketTaskRouter:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]

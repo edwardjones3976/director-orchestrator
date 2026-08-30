@@ -1,6 +1,9 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:31 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | BEGIN]] -->
@@ -11,7 +14,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=7a03b09530a21ef7c5b626bf0db18f8f200c08c9c57b3d10e342ce66f001dd99 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=46eec94317569507ce257f6b411903ae6d2dff5b7dd934bce59c0d8846589d76 -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -24,9 +27,9 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - Deterministic approval gates that model output cannot remove.
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
 - An OpenAI Director planner/reviewer using Structured Outputs.
-- A primary OpenAI–Claude–Cursor team, with Claude Pro 20x as the coding/general workhorse and Gemini/Perplexity retained as optional specialists.
-- Standing project roles with flexible capacity targets: OpenAI Director, Claude Chief Programmer, Cursor Project Secretary, Gemini/Antigravity Specialist and Backup Programmer, and Perplexity.ai Research Programmers.
-- A full-time OpenAI Director/control plane, distinct from direct-production workload targets of Claude 60%, Cursor 28%, Gemini/Antigravity 7%, Perplexity 4%, and a 1% separately owner-authorized Codex/OpenAI lane outside this runtime.
+- A primary OpenAI–Claude–Cursor–Grok team, with Claude as the mandatory medium/long-form programming lane and Gemini/Antigravity and Perplexity retained as supplemental specialists.
+- Separate effort ledgers: overall effort targets of Claude 36%, Cursor 20%, Grok 20%, OpenAI 8%, Antigravity 11%, and Perplexity 5%; direct-production targets of Claude 60%, Cursor 14%, Grok 14%, Gemini/Antigravity 7%, Perplexity 4%, and a 1% separately owner-authorized external Codex/OpenAI lane.
+- Default-on deterministic workload enforcement, an immutable pre-stage packet, rolling 20-assignment drift control, and a five-action ordinary review-to-merge ceiling.
 - Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
 - Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
@@ -256,6 +259,9 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 12:37 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:31 UTC | END]] -->

@@ -1,6 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | BEGIN]]
@@ -64,6 +66,10 @@ class ProviderError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.attempt_count = attempt_count
+
+
+class PreSubmitProviderError(ProviderError):
+    """A deterministically known failure before model or process submission."""
 
 
 class PostSubmitAmbiguityError(ProviderError):
@@ -262,7 +268,7 @@ class ProviderAdapter:
         assignment: Assignment | None = None,
         context: str | None = None,
     ) -> ProviderRun:
-        raise ProviderError(f"{self.name} follow-up is not configured")
+        raise PreSubmitProviderError(f"{self.name} follow-up is not configured")
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         raise ProviderError(f"{self.name} usage check is not configured")
@@ -522,7 +528,9 @@ class ClaudeAdapter(ProviderAdapter):
         context: str | None = None,
     ) -> ProviderRun:
         if assignment is None or context is None:
-            raise ProviderError("claude revision requires the bounded assignment and approval context")
+            raise PreSubmitProviderError(
+                "claude revision requires the bounded assignment and approval context"
+            )
         headers = {
             "Authorization": f"Bearer {self.settings.claude_routine_token}",
             "anthropic-beta": self.settings.claude_routine_beta,
@@ -601,7 +609,7 @@ class GeminiAdapter(ProviderAdapter):
             if not ready
         ]
         if failed:
-            raise ProviderError(
+            raise PreSubmitProviderError(
                 "Antigravity subordinate configuration is not ready: " + ", ".join(failed)
             )
 
@@ -634,7 +642,7 @@ class GeminiAdapter(ProviderAdapter):
         if assignment.discussion_phase == DiscussionPhase.WORK:
             errors = antigravity_assignment_errors(assignment)
             if errors:
-                raise ProviderError(
+                raise PreSubmitProviderError(
                     "Antigravity assignment is outside its subordinate lane: "
                     + "; ".join(errors)
                 )
@@ -646,7 +654,7 @@ class GeminiAdapter(ProviderAdapter):
                 revision_prompt=revision_prompt,
             )
         except AntigravityContractError as exc:
-            raise ProviderError(
+            raise PreSubmitProviderError(
                 "Antigravity assignment is outside its phase contract: "
                 + "; ".join(exc.labels)
             ) from None
@@ -773,7 +781,9 @@ class GeminiAdapter(ProviderAdapter):
         context: str | None = None,
     ) -> ProviderRun:
         if assignment is None:
-            raise ProviderError("Antigravity revision requires the bound assignment")
+            raise PreSubmitProviderError(
+                "Antigravity revision requires the bound assignment"
+            )
         # Ordinary work still ignores revision prose and is re-issued its own
         # original bounded request. A debate turn may carry the bounded Director
         # revision request, which the debate contract sanitizes and truncates.
@@ -791,7 +801,7 @@ class GeminiAdapter(ProviderAdapter):
             # Falling back to a fresh "remote" sandbox while still chaining
             # previous_interaction_id would silently drop the prior files and
             # tool state, so the revision fails closed before any paid call.
-            raise ProviderError(
+            raise PreSubmitProviderError(
                 "Antigravity revision requires the prior sandbox environment ID"
             )
         body = {
@@ -896,32 +906,32 @@ class GrokAdapter(ProviderAdapter):
             if not ready
         ]
         if failed:
-            raise ProviderError(
+            raise PreSubmitProviderError(
                 "Grok primary API contact is not ready: "
                 + ", ".join(failed)
             )
         if assignment is None:
             return
         if assignment.public_research_query is not None:
-            raise ProviderError("Grok has no web-grounded research lane")
+            raise PreSubmitProviderError("Grok has no web-grounded research lane")
         trusted_estimate = max(
             assignment.estimated_cost_usd,
             self.settings.grok_request_cost_floor_usd,
         )
         if trusted_estimate > self.settings.grok_daily_budget_usd:
-            raise ProviderError(
+            raise PreSubmitProviderError(
                 "Grok assignment estimate exceeds the configured daily budget ceiling"
             )
         if self._requires_cli(assignment):
             if assignment.allow_draft_pr and not self.settings.grok_allow_repository_write:
-                raise ProviderError(
+                raise PreSubmitProviderError(
                     "Grok draft-PR work requires GROK_ALLOW_REPOSITORY_WRITE=true"
                 )
             if (
                 assignment.kind == AssignmentKind.EXACT_SHA_REVIEW
                 and not self.settings.grok_allow_review_verdict
             ):
-                raise ProviderError(
+                raise PreSubmitProviderError(
                     "Grok exact-SHA review requires GROK_ALLOW_REVIEW_VERDICT=true"
                 )
             repository = canonical_repository(assignment.repository or "")
@@ -929,7 +939,7 @@ class GrokAdapter(ProviderAdapter):
                 not self.settings.grok_cli_enabled
                 or repository not in self.settings.grok_cli_repository_map()
             ):
-                raise ProviderError(
+                raise PreSubmitProviderError(
                     "Grok repository work requires an enabled CLI and an explicit "
                     "repository-to-worktree mapping"
                 )
@@ -988,7 +998,7 @@ class GrokAdapter(ProviderAdapter):
                 if isinstance(item, dict) and isinstance(item.get("id"), str)
             )
         if model not in self._catalog_models:
-            raise ProviderError(
+            raise PreSubmitProviderError(
                 "Configured Grok model is unavailable to the authenticated xAI key"
             )
 
@@ -1000,7 +1010,7 @@ class GrokAdapter(ProviderAdapter):
         revision_prompt: str | None = None,
     ) -> str:
         if len(context) > self.settings.grok_max_context_chars:
-            raise ProviderError(
+            raise PreSubmitProviderError(
                 "Grok context exceeds the configured complete-packet limit; "
                 "partial packet transmission is prohibited"
             )
@@ -1046,7 +1056,9 @@ class GrokAdapter(ProviderAdapter):
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
             detail = stderr.decode("utf-8", errors="replace").strip()[:500]
-            raise ProviderError(f"Grok CLI worktree validation failed: {detail}")
+            raise PreSubmitProviderError(
+                f"Grok CLI worktree validation failed: {detail}"
+            )
         return stdout.decode("utf-8", errors="replace").strip()
 
     async def _validated_cli_worktree(
@@ -1055,15 +1067,19 @@ class GrokAdapter(ProviderAdapter):
         repository = canonical_repository(assignment.repository or "")
         configured = self.settings.grok_cli_repository_map().get(repository)
         if configured is None:
-            raise ProviderError("Grok CLI repository mapping is missing")
+            raise PreSubmitProviderError("Grok CLI repository mapping is missing")
         root = Path(configured).expanduser().resolve()
         if not root.is_dir():
-            raise ProviderError("Grok CLI mapped worktree does not exist")
+            raise PreSubmitProviderError("Grok CLI mapped worktree does not exist")
         actual_root = Path(await self._git(root, "rev-parse", "--show-toplevel")).resolve()
         if actual_root != root:
-            raise ProviderError("Grok CLI mapping must name the exact Git worktree root")
+            raise PreSubmitProviderError(
+                "Grok CLI mapping must name the exact Git worktree root"
+            )
         if await self._git(root, "status", "--porcelain"):
-            raise ProviderError("Grok CLI worktree must be clean before dispatch")
+            raise PreSubmitProviderError(
+                "Grok CLI worktree must be clean before dispatch"
+            )
         branch = await self._git(root, "branch", "--show-current")
         evidence: dict[str, Any] = {
             "repository": repository,
@@ -1074,17 +1090,27 @@ class GrokAdapter(ProviderAdapter):
             try:
                 handoff = json.loads(assignment.task)
             except json.JSONDecodeError as exc:
-                raise ProviderError("Grok exact-SHA review requires a structured handoff") from exc
+                raise PreSubmitProviderError(
+                    "Grok exact-SHA review requires a structured handoff"
+                ) from exc
             if not isinstance(handoff, dict):
-                raise ProviderError("Grok exact-SHA review handoff must be an object")
+                raise PreSubmitProviderError(
+                    "Grok exact-SHA review handoff must be an object"
+                )
             base_sha = handoff.get("base_sha")
             head_sha = handoff.get("head_sha")
             if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", base_sha):
-                raise ProviderError("Grok review handoff has no valid base SHA")
+                raise PreSubmitProviderError(
+                    "Grok review handoff has no valid base SHA"
+                )
             if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", head_sha):
-                raise ProviderError("Grok review handoff has no valid head SHA")
+                raise PreSubmitProviderError(
+                    "Grok review handoff has no valid head SHA"
+                )
             if canonical_repository(str(handoff.get("repository", ""))) != repository:
-                raise ProviderError("Grok review handoff repository does not match the worktree")
+                raise PreSubmitProviderError(
+                    "Grok review handoff repository does not match the worktree"
+                )
             await self._git(root, "cat-file", "-e", f"{base_sha}^{{commit}}")
             await self._git(root, "cat-file", "-e", f"{head_sha}^{{commit}}")
             await self._git(root, "merge-base", "--is-ancestor", base_sha, head_sha)
@@ -1098,12 +1124,14 @@ class GrokAdapter(ProviderAdapter):
             )
         elif assignment.allow_draft_pr:
             if not branch.startswith("grok/"):
-                raise ProviderError(
+                raise PreSubmitProviderError(
                     "Grok draft-PR work requires a clean isolated grok/* worktree"
                 )
             evidence.update({"mode": "draft_pr", "read_only": False})
         else:
-            raise ProviderError("Grok CLI transport was selected for an unsupported assignment")
+            raise PreSubmitProviderError(
+                "Grok CLI transport was selected for an unsupported assignment"
+            )
         return root, evidence
 
     @staticmethod
@@ -1147,16 +1175,24 @@ class GrokAdapter(ProviderAdapter):
         configured = Path(self.settings.grok_cli_executable).expanduser()
         expected = self.settings.grok_cli_executable_sha256.lower()
         if not configured.is_absolute():
-            raise ProviderError("GROK_CLI_EXECUTABLE must be an absolute path")
+            raise PreSubmitProviderError(
+                "GROK_CLI_EXECUTABLE must be an absolute path"
+            )
         if not re.fullmatch(r"[0-9a-f]{64}", expected):
-            raise ProviderError("GROK_CLI_EXECUTABLE_SHA256 must be an exact sha256 digest")
+            raise PreSubmitProviderError(
+                "GROK_CLI_EXECUTABLE_SHA256 must be an exact sha256 digest"
+            )
         try:
             executable = configured.resolve(strict=True)
             before = executable.stat()
         except (OSError, RuntimeError) as exc:
-            raise ProviderError("GROK_CLI_EXECUTABLE could not be verified") from exc
+            raise PreSubmitProviderError(
+                "GROK_CLI_EXECUTABLE could not be verified"
+            ) from exc
         if not executable.is_file():
-            raise ProviderError("GROK_CLI_EXECUTABLE must name a regular file")
+            raise PreSubmitProviderError(
+                "GROK_CLI_EXECUTABLE must name a regular file"
+            )
         try:
             digest = hashlib.sha256()
             with executable.open("rb") as handle:
@@ -1164,7 +1200,9 @@ class GrokAdapter(ProviderAdapter):
                     digest.update(chunk)
             after = executable.stat()
         except OSError as exc:
-            raise ProviderError("GROK_CLI_EXECUTABLE could not be verified") from exc
+            raise PreSubmitProviderError(
+                "GROK_CLI_EXECUTABLE could not be verified"
+            ) from exc
         identity_before = (
             before.st_dev,
             before.st_ino,
@@ -1178,9 +1216,13 @@ class GrokAdapter(ProviderAdapter):
             after.st_mtime_ns,
         )
         if identity_before != identity_after:
-            raise ProviderError("GROK_CLI_EXECUTABLE changed during verification")
+            raise PreSubmitProviderError(
+                "GROK_CLI_EXECUTABLE changed during verification"
+            )
         if not hmac.compare_digest(digest.hexdigest(), expected):
-            raise ProviderError("GROK_CLI_EXECUTABLE digest does not match configuration")
+            raise PreSubmitProviderError(
+                "GROK_CLI_EXECUTABLE digest does not match configuration"
+            )
         return str(executable)
 
     def _run_contained_cli(
@@ -1383,7 +1425,9 @@ class GrokAdapter(ProviderAdapter):
     ) -> ProviderRun:
         del run
         if assignment is None or context is None:
-            raise ProviderError("Grok revision requires the bound assignment and context")
+            raise PreSubmitProviderError(
+                "Grok revision requires the bound assignment and context"
+            )
         self._require_profile(assignment)
         if self._requires_cli(assignment):
             return await self._dispatch_cli(
@@ -1415,14 +1459,16 @@ class PerplexityAdapter(ProviderAdapter):
             if not ready
         ]
         if failed:
-            raise ProviderError(
+            raise PreSubmitProviderError(
                 "Perplexity research-only configuration is not ready: " + ", ".join(failed)
             )
         if assignment is not None:
             if assignment.allow_draft_pr:
-                raise ProviderError("Perplexity research assignments cannot create draft pull requests")
+                raise PreSubmitProviderError(
+                    "Perplexity research assignments cannot create draft pull requests"
+                )
             if assignment.estimated_cost_usd > self.settings.perplexity_daily_budget_usd:
-                raise ProviderError(
+                raise PreSubmitProviderError(
                     "Perplexity assignment estimate exceeds the configured research budget ceiling"
                 )
 
@@ -1477,7 +1523,9 @@ class PerplexityAdapter(ProviderAdapter):
         del context  # Search receives only the bounded query, never repository/task context.
         self._require_research_only(assignment)
         if not assignment.public_research_query:
-            raise ProviderError("Perplexity requires a bounded public research query")
+            raise PreSubmitProviderError(
+                "Perplexity requires a bounded public research query"
+            )
         body = {
             "query": assignment.public_research_query,
             "max_results": self.settings.perplexity_max_results,
@@ -1501,9 +1549,11 @@ class PerplexityAdapter(ProviderAdapter):
     ) -> ProviderRun:
         del run, prompt, context  # Director feedback is private and never becomes a query.
         if assignment is None:
-            raise ProviderError("Perplexity requires a bounded public research query")
+            raise PreSubmitProviderError(
+                "Perplexity requires a bounded public research query"
+            )
         self._require_research_only(assignment)
-        raise ProviderError(
+        raise PreSubmitProviderError(
             "Perplexity revision requires a new owner-approved bounded public research query"
         )
 
@@ -1544,6 +1594,8 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:02 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:31 UTC | END]]

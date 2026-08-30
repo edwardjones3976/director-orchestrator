@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | BEGIN]]
@@ -54,7 +55,7 @@ from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.parallel_dispatch import MemberState
 from director_orchestrator.providers import ProviderDailyLimitExceeded
 from director_orchestrator.runtime_activation import RuntimeActivation
-from director_orchestrator.store import TaskStore
+from director_orchestrator.store import TaskStore, WorkloadAttemptOutcome
 from tests.plan_binding_helpers import seed_production_plan_materialization
 
 
@@ -216,7 +217,10 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         return replace(Settings(), **fields)
 
     def _record(
-        self, *, estimated_cost_usd: float = 0
+        self,
+        *,
+        estimated_cost_usd: float = 0,
+        workload_policy_version: str | None = None,
     ) -> tuple[TaskRecord, Assignment]:
         assignment = Assignment(
             sequence=1,
@@ -245,6 +249,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                 max_revisions=0,
                 assignments=[assignment],
                 final_acceptance=["The coordinator executed the assignment"],
+                workload_policy_version=workload_policy_version,
             ),
         )
         seed_production_plan_materialization(record)
@@ -445,6 +450,251 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         engine._publish_delegation.assert_not_awaited()
         self.assertEqual(0, transport.sends)
+
+    async def test_cached_replay_rejects_contradictory_pre_submit_evidence(self):
+        settings = self._settings()
+        engine, _ = self._engine(settings, None)
+        engine._stop_for_owner = AsyncMock()
+        record, _ = self._record(workload_policy_version="v1")
+        reservation = MagicMock(
+            final_outcome=WorkloadAttemptOutcome.FAILED_PRE_SUBMIT
+        )
+
+        self.assertFalse(
+            await engine._finalize_workload_dispatch(
+                record,
+                reservation,
+                WorkloadAttemptOutcome.CACHED_REPLAY,
+            )
+        )
+        engine._stop_for_owner.assert_awaited_once()
+
+        engine._stop_for_owner.reset_mock()
+        reservation.final_outcome = WorkloadAttemptOutcome.INVOKED
+        self.assertTrue(
+            await engine._finalize_workload_dispatch(
+                record,
+                reservation,
+                WorkloadAttemptOutcome.CACHED_REPLAY,
+            )
+        )
+        engine._stop_for_owner.assert_not_awaited()
+
+    async def test_unclosed_packet_effect_counts_workload_conservatively(self):
+        transport = RecordingTransport(self.result)
+        router = StubPacketTaskRouter(
+            self.work, PacketBoundaryAdapter("claude", transport)
+        )
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record(workload_policy_version="v1")
+        stored, _ = store.create(record)
+        reservation = MagicMock(final_outcome=None)
+        engine._reserve_workload_dispatch = AsyncMock(return_value=reservation)
+        engine._publish_delegation = AsyncMock(return_value=True)
+        engine._revalidated_plan_after_publication = MagicMock(return_value=None)
+        engine._close_failed_pre_submit_after_publication = MagicMock(
+            return_value=False
+        )
+        engine._finalize_workload_dispatch = AsyncMock(return_value=True)
+
+        self.assertFalse(await engine._route_live_dispatch(stored, assignment))
+
+        engine._finalize_workload_dispatch.assert_awaited_once()
+        finalized = engine._finalize_workload_dispatch.await_args.args
+        self.assertIs(finalized[1], reservation)
+        self.assertIs(finalized[2], WorkloadAttemptOutcome.INVOKED)
+        self.assertEqual(0, transport.sends)
+
+    async def test_runtime_exception_counts_unclosed_workload_conservatively(self):
+        transport = RecordingTransport(self.result)
+        router = StubPacketTaskRouter(
+            self.work, PacketBoundaryAdapter("claude", transport)
+        )
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record(workload_policy_version="v1")
+        stored, _ = store.create(record)
+        reservation = MagicMock(final_outcome=None)
+        engine._reserve_workload_dispatch = AsyncMock(return_value=reservation)
+        engine._publish_delegation = AsyncMock(return_value=True)
+        engine._revalidated_plan_after_publication = MagicMock(
+            side_effect=lambda current: current
+        )
+        engine._close_failed_pre_submit_after_publication = MagicMock(
+            return_value=False
+        )
+        engine._finalize_workload_dispatch = AsyncMock(return_value=True)
+
+        with patch(
+            "director_orchestrator.engine.asyncio.to_thread",
+            new=AsyncMock(side_effect=RuntimeError("runtime ledger failure")),
+        ):
+            self.assertFalse(await engine._route_live_dispatch(stored, assignment))
+
+        finalized = engine._finalize_workload_dispatch.await_args.args
+        self.assertIs(finalized[1], reservation)
+        self.assertIs(finalized[2], WorkloadAttemptOutcome.INVOKED)
+        self.assertEqual(0, transport.sends)
+
+    async def test_workload_block_precedes_supplemental_spend_reservation(self):
+        transport = RecordingTransport(self.result)
+        router = StubPacketTaskRouter(
+            self.work, PacketBoundaryAdapter("grok", transport)
+        )
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record(workload_policy_version="v1")
+        assignment.agent = ProviderName.GROK
+        record.task_effect_ledger = []
+        record.provider_interaction_ledger = []
+        record.plan_interaction_id = None
+        seed_production_plan_materialization(record)
+        stored, _ = store.create(record)
+        engine._reserve_workload_dispatch = AsyncMock(return_value=None)
+        engine._reserve_provider_daily_spend = MagicMock()
+        engine._publish_delegation = AsyncMock(return_value=True)
+
+        self.assertFalse(await engine._route_live_dispatch(stored, assignment))
+
+        engine._reserve_workload_dispatch.assert_awaited_once()
+        engine._reserve_provider_daily_spend.assert_not_called()
+        engine._publish_delegation.assert_not_awaited()
+        self.assertEqual(0, transport.sends)
+
+    async def test_parallel_workload_block_cancels_prepared_siblings(self):
+        assignments = [
+            Assignment(
+                sequence=1,
+                agent=ProviderName.CURSOR,
+                task="Inspect fixture A",
+                acceptance=["Fixture A inspected"],
+                repository="example/demo",
+                estimated_cost_usd=0.1,
+            ),
+            Assignment(
+                sequence=2,
+                agent=ProviderName.OPENAI,
+                task="Inspect fixture B",
+                acceptance=["Fixture B inspected"],
+                repository="example/demo",
+                estimated_cost_usd=0.1,
+            ),
+        ]
+        record, _ = self._record(workload_policy_version="v1")
+        record.plan.assignments = assignments
+        record.plan.max_hops = 3
+        record.task_effect_ledger = []
+        record.provider_interaction_ledger = []
+        record.plan_interaction_id = None
+        seed_production_plan_materialization(record)
+        packets = {}
+        adapters = {}
+        transports = {}
+        for assignment in assignments:
+            work = copy.deepcopy(self.work)
+            work["assignment_id"] = f"{record.task_id}-{assignment.sequence}"
+            work["objective"] = assignment.task
+            work["acceptance_checks"] = list(assignment.acceptance)
+            work["idempotency_key"] = (
+                f"{record.task_id}:{record.plan_generation}:{assignment.sequence}:"
+                + (str(assignment.sequence) * 64)
+            )
+            work["correlation"]["correlation_id"] = (
+                f"{record.task_id}:generation-{record.plan_generation}:"
+                f"assignment-{assignment.sequence}"
+            )
+            packets[assignment.sequence] = work
+            result = copy.deepcopy(self.result)
+            for field in (
+                "task_id",
+                "assignment_id",
+                "idempotency_key",
+                "authority_snapshot_digest",
+                "correlation",
+            ):
+                result[field] = copy.deepcopy(work[field])
+            result["provider"] = assignment.agent.value
+            result["run_reference"] = f"run-{assignment.sequence}"
+            result["acceptance"] = [
+                {
+                    "check": assignment.acceptance[0],
+                    "status": "NOT_RUN",
+                    "evidence": "Director review remains required.",
+                }
+            ]
+            transport = RecordingTransport(result)
+            transports[assignment.agent.value] = transport
+            adapters[assignment.agent.value] = PacketBoundaryAdapter(
+                assignment.agent.value, transport
+            )
+        router = MultiPacketTaskRouter(packets, adapters)
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            langgraph_parallel_external_dispatch_enabled=True,
+            langgraph_parallel_kill_switch=False,
+            max_task_budget_usd=1.0,
+            max_daily_provider_budget_usd=5.0,
+        )
+        activation = RuntimeActivation(
+            settings,
+            packet_task_router=router,
+            packet_result_consumer=RecordingResultConsumer(),
+        )
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        allowed_reservation = MagicMock(final_outcome=None)
+        engine._reserve_workload_dispatch = AsyncMock(
+            side_effect=[allowed_reservation, None]
+        )
+        engine._finalize_workload_dispatch = AsyncMock(return_value=True)
+        engine._reserve_provider_daily_spend = MagicMock()
+        engine._publish_delegation = AsyncMock(return_value=True)
+        stored, _ = store.create(record)
+
+        self.assertFalse(await engine._dispatch_parallel_packet_batch(stored))
+
+        effect_keys = tuple(
+            hashlib.sha256(
+                str(packets[item.sequence]["idempotency_key"]).encode("utf-8")
+            ).hexdigest()
+            for item in assignments
+        )
+        aggregate = engine.parallel_dispatch.find_latest_batch(
+            record.task_id, effect_keys
+        )
+        self.assertIsNotNone(aggregate)
+        self.assertEqual(
+            {MemberState.CANCELLED},
+            {member.state for member in aggregate.members},
+        )
+        engine._reserve_provider_daily_spend.assert_not_called()
+        engine._publish_delegation.assert_not_awaited()
+        engine._finalize_workload_dispatch.assert_awaited_once()
+        finalized = engine._finalize_workload_dispatch.await_args.args
+        self.assertIs(finalized[1], allowed_reservation)
+        self.assertIs(finalized[2], WorkloadAttemptOutcome.FAILED_PRE_SUBMIT)
+        self.assertEqual(0, sum(item.sends for item in transports.values()))
 
     async def test_unknown_parallel_provider_cap_stops_before_any_reservation(self):
         transport = RecordingTransport(self.result)
@@ -1005,3 +1255,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
