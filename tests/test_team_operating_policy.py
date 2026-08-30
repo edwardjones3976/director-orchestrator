@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:11 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:36 UTC | BEGIN]]
@@ -48,7 +50,10 @@ from director_orchestrator.interactions import (
     start_interaction,
     transition_interaction,
 )
-from director_orchestrator.providers import PostSubmitAmbiguityError, ProviderError
+from director_orchestrator.providers import (
+    PostSubmitAmbiguityError,
+    PreSubmitProviderError,
+)
 from director_orchestrator.models import (
     Assignment,
     AssignmentKind,
@@ -544,6 +549,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.directive = self.charter["director_operating_directive"]
 
     def test_director_duties_are_separate_from_direct_production_share(self):
+        self.assertEqual(self.directive["workload_policy_version"], "v1")
         self.assertEqual(self.directive["director"], "openai")
         self.assertTrue(
             self.directive["duties_excluded_from_openai_direct_production_share"]
@@ -563,21 +569,35 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             targets,
             {
                 "claude": 60,
-                "cursor": 28,
+                "cursor": 14,
+                "grok": 14,
                 "gemini": 7,
                 "perplexity": 4,
-                "openai": 1,
+                "external_openai": 1,
             },
         )
         self.assertEqual(sum(targets.values()), 100)
-        self.assertEqual(targets["openai"], 1)
+        self.assertEqual(targets["external_openai"], 1)
+        overall = self.directive["overall_effort_percent"]
+        self.assertEqual(
+            overall,
+            {
+                "claude": 36,
+                "cursor": 20,
+                "grok": 20,
+                "openai": 8,
+                "gemini": 11,
+                "perplexity": 5,
+            },
+        )
+        self.assertEqual(sum(overall.values()), 100)
         self.assertEqual(
             self.directive["workload_lanes"]["perplexity"],
             "public_research_evidence_only",
         )
         self.assertEqual(
             self.directive["workload_lanes"]["openai"],
-            "external_owner_authorized_only",
+            "control_plane_and_truly_simple_local_overall_effort_external_owner_authorized_direct_production",
         )
         self.assertEqual(
             self.directive["openai_direct_production_boundary"],
@@ -590,6 +610,155 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 "authority": "owner_scope_and_current_gates",
             },
         )
+
+    def test_dual_ledgers_and_hard_caps_prevent_openai_dominance(self):
+        accounting = self.directive["workload_accounting"]
+        self.assertEqual(accounting["unit_basis"], "immutable_prestaged_effort_points")
+        self.assertEqual(
+            accounting["workload_size_values"],
+            ["simple", "short", "medium", "long"],
+        )
+        self.assertEqual(accounting["effort_points"], {"minimum": 1, "maximum": 100})
+        self.assertEqual(
+            accounting["windows"],
+            ["assignment", "rolling_20_completed_assignments"],
+        )
+        self.assertEqual(
+            accounting["failed_attempt_rule"],
+            "overall_effort_only_not_direct_production_credit",
+        )
+        self.assertIn("accepted", accounting["ledgers"]["direct_production"])
+        self.assertIn("overall_effort_percent", accounting["ledgers"]["overall_effort"])
+        self.assertEqual(
+            accounting["control_plane_rule"],
+            "openai_control_plane_counts_only_in_overall_effort",
+        )
+
+        enforcement = self.directive["workload_enforcement"]
+        self.assertEqual(enforcement["normal_tolerance_percentage_points"], 3)
+        self.assertEqual(enforcement["hard_overage_percentage_points"], 5)
+        self.assertEqual(
+            enforcement["primary_providers"],
+            ["claude", "cursor", "grok", "openai"],
+        )
+        self.assertEqual(
+            enforcement["hard_thresholds_percent"],
+            {
+                "claude": 45,
+                "cursor": 25,
+                "grok": 25,
+                "openai": 13,
+                "gemini": 16,
+                "perplexity": 10,
+            },
+        )
+        self.assertEqual(
+            enforcement["primary_caps_percent"],
+            {"claude": 45, "cursor": 27, "grok": 27, "openai": 27},
+        )
+        self.assertEqual(
+            enforcement["claude_cap_percent_with_two_other_primary_available"],
+            45,
+        )
+        self.assertTrue(
+            all(
+                cap <= enforcement["absolute_non_claude_cap_percent"]
+                for provider, cap in enforcement["primary_caps_percent"].items()
+                if provider != "claude"
+            )
+        )
+        self.assertFalse(enforcement["openai_overage_exception"])
+        self.assertTrue(enforcement["automatic_drift_correction"])
+        self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
+        self.assertEqual(enforcement["hard_action"], "block_dispatch_and_reshape")
+
+    def test_claude_coding_team_first_and_prestaging_are_fail_closed(self):
+        coding = self.directive["coding_routing"]
+        self.assertEqual(coding["medium_or_long_programming_provider"], "claude")
+        self.assertEqual(coding["minimum_model_profile"], "FABLE 5 ULTRA/MAX")
+        self.assertEqual(
+            coding["required_assignment_model_label"],
+            "FABLE 5 ULTRA/MAX",
+        )
+        self.assertFalse(coding["downgrade_allowed"])
+        self.assertTrue(coding["one_writer_lease_per_file_or_error_surface"])
+        self.assertTrue(
+            coding["reviewer_must_differ_from_producer_and_material_authors"]
+        )
+
+        team_first = self.directive["team_first"]
+        self.assertTrue(team_first["default"])
+        self.assertEqual(team_first["minimum_distinct_provider_roles"], 2)
+        self.assertEqual(
+            team_first["simple_local_openai_exception"],
+            {
+                "complexity": "simple",
+                "risk": "low",
+                "external_opinion_required": False,
+                "reviewable_artifact": False,
+                "external_action": False,
+                "material_uncertainty": False,
+            },
+        )
+
+        prestage = self.directive["pre_staging"]
+        self.assertEqual(prestage["priority"], "high_blocking")
+        self.assertTrue(prestage["required_before_provider_dispatch"])
+        self.assertEqual(
+            prestage["revision_mode"],
+            "immutable_canonical_packet_revisions",
+        )
+        self.assertIn(
+            "base_sha",
+            prestage["required_fields"],
+        )
+        self.assertIn(
+            "retry_limit",
+            prestage["required_fields"],
+        )
+        self.assertIn("candidate_sha", prestage["required_fields"])
+        self.assertIn("independent_reviewer", prestage["required_fields"])
+        self.assertEqual(
+            prestage["invalid_or_missing_action"],
+            "PRESTAGE_REQUIRED_no_dispatch",
+        )
+
+    def test_retries_reductions_shadow_mode_and_evidence_are_exact(self):
+        availability = self.directive["availability"]
+        self.assertEqual(availability["primary_attempts"], 1)
+        self.assertEqual(availability["transient_recovery_attempts"], 1)
+        self.assertEqual(
+            availability["third_attempt_requires"],
+            "materially_different_transport_or_new_information",
+        )
+        self.assertEqual(availability["ambiguous"], "no_duplicate_dispatch")
+
+        targets = self.directive["efficiency_targets"]
+        self.assertEqual(targets["unchanged_status_check_reduction_percent"], 80)
+        self.assertEqual(targets["duplicate_validation_reduction_percent"], 70)
+        self.assertEqual(targets["total_task_action_reduction_percent"], 60)
+        self.assertIsNone(targets["browser_handoff_reduction_target"])
+        self.assertEqual(targets["ordinary_review_to_merge_max_major_actions"], 5)
+        self.assertEqual(targets["required_evidence_preservation_percent"], 100)
+
+        status = self.directive["status_and_validation"]
+        self.assertEqual(status["status_mode"], "event_callback_first")
+        self.assertEqual(status["initial_status_read_limit"], 1)
+        self.assertEqual(status["terminal_verification_limit"], 1)
+        self.assertEqual(status["unchanged_status_reads"], "deduplicate")
+        self.assertIn("lower_priority", status["browser"])
+
+        closure = self.directive["closure"]
+        self.assertEqual(closure["ordinary_review_to_merge_major_actions"], 5)
+        self.assertFalse(closure["may_skip_required_gate"])
+        self.assertTrue(closure["raw_provider_and_tool_calls_reported_separately"])
+
+        shadow = self.directive["shadow_mode"]
+        self.assertEqual(shadow["assignment_count"], 5)
+        self.assertFalse(shadow["changes_live_routing"])
+        self.assertFalse(shadow["dispatches_provider"])
+        self.assertFalse(shadow["writes_externally"])
+        self.assertFalse(shadow["counts_as_participation_or_workload"])
 
     def test_coordination_capacity_and_commit_reduction_are_narrowly_bounded(self):
         capacity = self.directive["coordination_percent"]
@@ -675,7 +844,9 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 "objective_bounded_scope_and_categorized_status",
                 "starting_and_current_refs_shas_and_artifact_digests",
                 "authenticated_provider_participation_unavailable_abstaining_and_labels",
-                "target_and_actual_workload_by_provider_deviations_and_rationale",
+                "target_and_actual_direct_production_and_overall_effort_by_provider_deviations_and_rationale",
+                "prestage_packet_digest_workload_size_effort_points_and_deltas",
+                "status_validation_action_counts_reduction_baselines_and_browser_use",
                 "openai_moderator_participant_director_actions_and_vote",
                 "dissent_counter_bias_and_alternative_analysis",
                 "exact_tests_trusted_ci_security_independent_review_and_verdict",
@@ -732,7 +903,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
     def test_explicit_planning_payload_ceiling_remains_bounded(self):
         payload = canonical_team_charter_json().encode("utf-8")
-        self.assertEqual(TEAM_CHARTER_MAX_BYTES, 12_512)
+        self.assertEqual(TEAM_CHARTER_MAX_BYTES, 20_480)
         self.assertLessEqual(len(payload), TEAM_CHARTER_MAX_BYTES)
         self.assertGreater(TEAM_CHARTER_MAX_BYTES - len(payload), 256)
 
@@ -1489,6 +1660,7 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                 allowed_starting_refs=("main",),
                 max_agent_hops=3,
                 provider_poll_seconds=0,
+                workload_policy_enabled=False,
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
             store = TaskStore(settings.sqlite_path)
@@ -1598,6 +1770,7 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                     project_allowlist=("demo",),
                     repository_allowlist=("example/demo",),
                     allowed_starting_refs=("main",),
+                    workload_policy_enabled=False,
                     sqlite_path=str(Path(directory) / "tasks.sqlite3"),
                 )
                 store = TaskStore(settings.sqlite_path)
@@ -1653,12 +1826,14 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                     "remains ambiguous", (store.get(task.task_id).message or "")
                 )
 
-    async def test_plain_provider_error_is_not_misclassified_as_post_submit(self):
+    async def test_known_pre_submit_error_is_not_misclassified_as_post_submit(self):
         class PredispatchAdapter:
             name = ProviderName.CLAUDE
 
             async def dispatch(self, assignment, context):
-                raise ProviderError("bounded public research query is required")
+                raise PreSubmitProviderError(
+                    "bounded public research query is required"
+                )
 
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(
@@ -1670,6 +1845,7 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
                 project_allowlist=("demo",),
                 repository_allowlist=("example/demo",),
                 allowed_starting_refs=("main",),
+                workload_policy_enabled=False,
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
             store = TaskStore(settings.sqlite_path)
@@ -1895,3 +2071,5 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:11 UTC | END]]

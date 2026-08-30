@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -185,6 +188,23 @@ class Settings:
     max_task_budget_usd: float = _float("MAX_TASK_BUDGET_USD", 2.0)
     max_daily_provider_budget_usd: float = _positive_float(
         "MAX_DAILY_PROVIDER_BUDGET_USD", 1_000.0
+    )
+    # The owner-approved workload router is an active deterministic gate. Shadow
+    # mode remains available for observation-only comparison, but new deployments
+    # enforce the policy unless an operator deliberately selects shadow mode.
+    workload_policy_enabled: bool = field(
+        default_factory=lambda: _bool("WORKLOAD_POLICY_ENABLED", True)
+    )
+    workload_policy_mode: str = field(
+        default_factory=lambda: os.getenv(
+            "WORKLOAD_POLICY_MODE", "enforced"
+        ).strip().lower()
+    )
+    workload_policy_window_assignments: int = field(
+        default_factory=lambda: _int("WORKLOAD_POLICY_WINDOW_ASSIGNMENTS", 20)
+    )
+    workload_policy_shadow_assignments: int = field(
+        default_factory=lambda: _int("WORKLOAD_POLICY_SHADOW_ASSIGNMENTS", 5)
     )
     provider_poll_seconds: int = _int("PROVIDER_POLL_SECONDS", 15)
     provider_timeout_seconds: int = _int("PROVIDER_TIMEOUT_SECONDS", 3600)
@@ -656,6 +676,43 @@ class Settings:
             "grok": readiness["grok"],
             "perplexity": readiness["perplexity"],
         }
+
+    def workload_policy_readiness(
+        self, *, effective_mode: str | None = None
+    ) -> dict[str, bool]:
+        """Expose only non-sensitive workload-enforcement readiness booleans."""
+
+        if effective_mode is not None and effective_mode not in {"enforced", "shadow"}:
+            raise ValueError("effective workload mode must be enforced or shadow")
+        active_mode = effective_mode or self.workload_policy_mode
+        return {
+            "enabled": self.workload_policy_enabled,
+            "enforced": (
+                self.workload_policy_enabled
+                and active_mode == "enforced"
+            ),
+            "shadow": (
+                self.workload_policy_enabled and active_mode == "shadow"
+            ),
+            "mode_valid": self.workload_policy_mode in {"enforced", "shadow"},
+            "window_valid": self.workload_policy_window_assignments == 20,
+            "shadow_sample_valid": self.workload_policy_shadow_assignments == 5,
+        }
+
+    def validate_workload_policy_configuration(self) -> None:
+        readiness = self.workload_policy_readiness()
+        if not readiness["mode_valid"]:
+            raise ValueError(
+                "WORKLOAD_POLICY_MODE must be either 'enforced' or 'shadow'"
+            )
+        if not readiness["window_valid"]:
+            raise ValueError(
+                "WORKLOAD_POLICY_WINDOW_ASSIGNMENTS must remain exactly 20"
+            )
+        if not readiness["shadow_sample_valid"]:
+            raise ValueError(
+                "WORKLOAD_POLICY_SHADOW_ASSIGNMENTS must remain exactly 5"
+            )
 
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
     def chatgpt_bridge_readiness(self) -> dict[str, bool]:
@@ -1299,3 +1356,6 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]

@@ -1,3 +1,10 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -26,8 +33,26 @@ from .models import (
     DirectorPlan,
     DiscussionPhase,
     MaterialDecisionDimension,
+    PlanPrestageRecord,
     ProviderName,
     RiskLevel,
+    WorkloadEnforcementRecord,
+)
+from .workload_policy import (
+    AssignmentRequest,
+    DirectProductionRecord,
+    EnforcementMode,
+    FABLE_MODEL_FLOOR,
+    PrestagePacket,
+    Provider,
+    WorkKind,
+    WorkSize,
+    WorkloadPolicy,
+    WorkloadPolicyError,
+    WorkloadRecord,
+    direct_production_provider,
+    evaluate_assignment,
+    is_direct_production_kind,
 )
 
 
@@ -44,6 +69,12 @@ _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
 _ANTIGRAVITY_SCOPE = re.compile(
     r"\b(boilerplate|scaffold(?:ing)?|low[- ]level|mechanical|fixture generation|"
     r"alternate ideas?|alternate ideation|brainstorm(?:ing)?)\b",
+    re.I,
+)
+
+_IMPLEMENTATION_SCOPE = re.compile(
+    r"\b(implement(?:ation|ing)?|cod(?:e|ing)|program(?:ming)?|develop(?:ment|ing)?|"
+    r"refactor(?:ing)?|patch(?:ing)?|fix(?:ing)?|scaffold(?:ing)?|boilerplate)\b",
     re.I,
 )
 
@@ -241,8 +272,427 @@ def _is_antigravity_consumer(assignment: Assignment) -> bool:
     )
 
 
+def _workload_provider(provider: ProviderName) -> Provider:
+    try:
+        return Provider(provider.value)
+    except ValueError as exc:
+        raise WorkloadPolicyError(
+            f"provider is outside the workload ledger: {provider.value}"
+        ) from exc
+
+
+def _work_kind(assignment: Assignment) -> WorkKind:
+    if assignment.kind in {
+        AssignmentKind.IMPLEMENTATION,
+        AssignmentKind.BOILERPLATE,
+        AssignmentKind.SCAFFOLDING,
+        AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+    }:
+        return WorkKind.IMPLEMENTATION
+    if assignment.kind in {
+        AssignmentKind.INDEPENDENT_REVIEW,
+        AssignmentKind.EXACT_SHA_REVIEW,
+    }:
+        return WorkKind.REVIEW
+    if assignment.agent == ProviderName.PERPLEXITY:
+        return WorkKind.RESEARCH
+    if _IMPLEMENTATION_SCOPE.search(assignment.task):
+        return WorkKind.IMPLEMENTATION
+    if assignment.kind == AssignmentKind.RESEARCH:
+        return WorkKind.RESEARCH
+    return WorkKind.COORDINATION
+
+
+def trusted_work_kind(assignment: Assignment) -> WorkKind:
+    """Return the single deterministic workload classification used at every gate."""
+
+    return _work_kind(assignment)
+
+
+_WORK_SIZE_RANK = {
+    WorkSize.SIMPLE: 0,
+    WorkSize.SHORT: 1,
+    WorkSize.MEDIUM: 2,
+    WorkSize.LONG: 3,
+}
+
+_WORK_SIZE_EFFORT_POINTS = {
+    WorkSize.SIMPLE: 1,
+    WorkSize.SHORT: 2,
+    WorkSize.MEDIUM: 5,
+    WorkSize.LONG: 8,
+}
+
+
+def _trusted_v1_assignment(assignment: Assignment) -> Assignment:
+    """Derive trusted workload fields without accepting model under-classification."""
+
+    kind = _work_kind(assignment)
+    if kind == WorkKind.IMPLEMENTATION:
+        # Antigravity is the only short implementation lane because its output is
+        # non-authoritative and must be independently reproduced by a primary-team
+        # consumer. Model-selected subordinate labels cannot downgrade direct work.
+        minimum_size = (
+            WorkSize.SHORT
+            if assignment.agent == ProviderName.GEMINI
+            else WorkSize.MEDIUM
+        )
+    elif assignment.agent == ProviderName.OPENAI and kind == WorkKind.COORDINATION:
+        # Only genuinely simple work kept local by OpenAI may stay in this lane.
+        minimum_size = WorkSize.SIMPLE
+    else:
+        minimum_size = WorkSize.SHORT
+
+    effective_size = assignment.workload_size
+    if _WORK_SIZE_RANK[effective_size] < _WORK_SIZE_RANK[minimum_size]:
+        effective_size = minimum_size
+
+    updates: dict[str, object] = {
+        "workload_size": effective_size,
+        # Effort is a deterministic consequence of trusted size, never model input.
+        "effort_points": _WORK_SIZE_EFFORT_POINTS[effective_size],
+    }
+    if assignment.agent == ProviderName.CLAUDE and effective_size in {
+        WorkSize.MEDIUM,
+        WorkSize.LONG,
+    }:
+        updates["model_label"] = FABLE_MODEL_FLOOR
+    return assignment.model_copy(update=updates)
+
+
+def _canonical_prestage_record(record: PlanPrestageRecord) -> PlanPrestageRecord:
+    """Rebuild a proposed packet through the immutable canonical contract."""
+
+    packet = PrestagePacket(
+        packet_id=record.packet_id,
+        goal=record.goal,
+        terminal_condition=record.terminal_condition,
+        repository=canonical_repository(record.repository),
+        worktree=record.worktree,
+        branch=record.branch,
+        base_sha=record.base_sha,
+        candidate_sha=record.candidate_sha,
+        producer=_workload_provider(record.producer),
+        independent_reviewer=_workload_provider(record.independent_reviewer),
+        owned_paths=record.owned_paths,
+        prohibited_paths=record.prohibited_paths,
+        required_tests=record.required_tests,
+        required_security_evidence=record.required_security_evidence,
+        budget_units=record.budget_units,
+        timeout_seconds=record.timeout_seconds,
+        retry_limit=record.retry_limit,
+        merge_eligibility_conditions=record.merge_eligibility_conditions,
+        stopping_conditions=record.stopping_conditions,
+    )
+    return PlanPrestageRecord.model_validate(packet.to_dict())
+
+
+def _material_author_agents(
+    by_sequence: dict[int, Assignment], reviewed: Assignment
+) -> set[ProviderName]:
+    """Return every provider whose output is material input to ``reviewed``.
+
+    A dependency that is absent from the plan contributes nothing here; the
+    generic dependency-existence check reports it separately.
+    """
+
+    authors: set[ProviderName] = set()
+    seen: set[int] = set()
+    pending = list(reviewed.depends_on)
+    while pending:
+        sequence = pending.pop()
+        if sequence in seen:
+            continue
+        seen.add(sequence)
+        dependency = by_sequence.get(sequence)
+        if dependency is None:
+            continue
+        authors.add(dependency.agent)
+        pending.extend(dependency.depends_on)
+    return authors
+
+
+def _independent_review_binding_errors(plan: DirectorPlan) -> set[str]:
+    """Bind each independent review to the exact work it is budgeted to examine.
+
+    Without this an independent-review assignment floats free of any artifact:
+    it can declare no dependency at all, depend on unrelated work, or be routed
+    back to the provider that produced — or materially authored — the very thing
+    it is supposed to check independently.
+    """
+
+    errors: set[str] = set()
+    by_sequence = {item.sequence: item for item in plan.assignments}
+    implementation_sequences = {
+        item.sequence
+        for item in plan.assignments
+        if _work_kind(item) is WorkKind.IMPLEMENTATION
+    }
+    for review in plan.assignments:
+        if review.kind != AssignmentKind.INDEPENDENT_REVIEW:
+            continue
+        bound = [
+            sequence for sequence in review.depends_on if sequence in by_sequence
+        ]
+        if len(review.depends_on) != 1 or len(bound) != 1:
+            errors.add(
+                f"assignment {review.sequence}: independent review must depend on "
+                "exactly one existing assignment it reviews"
+            )
+            continue
+        reviewed = by_sequence[bound[0]]
+        if (
+            implementation_sequences
+            and reviewed.sequence not in implementation_sequences
+        ):
+            errors.add(
+                f"assignment {review.sequence}: independent review must bind the "
+                "exact implementation assignment it reviews"
+            )
+        if review.agent == reviewed.agent:
+            errors.add(
+                f"assignment {review.sequence}: the producer of assignment "
+                f"{reviewed.sequence} cannot review its own work"
+            )
+        elif review.agent in _material_author_agents(by_sequence, reviewed):
+            errors.add(
+                f"assignment {review.sequence}: a material author of assignment "
+                f"{reviewed.sequence} cannot review it"
+            )
+    return errors
+
+
+def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
+    """Validate v1 routing without manufacturing assignments to hit percentages."""
+
+    if plan.workload_policy_version != "v1":
+        return set()
+
+    errors: set[str] = set()
+    history: list[WorkloadRecord] = []
+    direct_history: list[DirectProductionRecord] = []
+    for assignment in sorted(plan.assignments, key=lambda item: item.sequence):
+        try:
+            provider = _workload_provider(assignment.agent)
+        except WorkloadPolicyError as exc:
+            errors.add(f"assignment {assignment.sequence}: {exc}")
+            continue
+        request = AssignmentRequest(
+            assignment_id=f"{plan.project}:{assignment.sequence}",
+            provider=provider,
+            kind=_work_kind(assignment),
+            size=assignment.workload_size,
+            model_label=assignment.model_label,
+            effort_units=assignment.effort_points,
+        )
+        decision = evaluate_assignment(
+            request,
+            history=history,
+            direct_production_history=direct_history,
+            mode=EnforcementMode.ENFORCED,
+        )
+        errors.update(
+            f"assignment {assignment.sequence}: workload policy {violation}"
+            for violation in decision.violations
+        )
+        history.append(
+            WorkloadRecord(
+                assignment_id=request.assignment_id,
+                provider=provider,
+                effort_units=assignment.effort_points,
+            )
+        )
+        direct_provider = direct_production_provider(provider)
+        if direct_provider is not None and is_direct_production_kind(request.kind):
+            direct_history.append(
+                DirectProductionRecord(
+                    assignment_id=request.assignment_id,
+                    provider=direct_provider,
+                    effort_units=assignment.effort_points,
+                )
+            )
+
+    # A genuinely simple request that needs no external opinion may stay local.
+    # Every short, medium, or long provider plan is team work.
+    team = {
+        item.agent
+        for item in plan.assignments
+        if item.agent not in {ProviderName.OWNER, ProviderName.OPENAI}
+    }
+    nontrivial = any(
+        item.workload_size.value != "simple" for item in plan.assignments
+    )
+    if nontrivial and len(team) < 2:
+        errors.add(
+            "v1 provider plans require at least two distinct team providers; "
+            "only genuinely simple local work may remain with OpenAI alone"
+        )
+
+    errors.update(_independent_review_binding_errors(plan))
+
+    if len(set(plan.research_evidence)) != len(plan.research_evidence):
+        errors.add("research evidence declarations must be unique")
+    if plan.research_evidence:
+        research_assignments = [
+            item
+            for item in plan.assignments
+            if item.agent == ProviderName.PERPLEXITY
+            and item.kind == AssignmentKind.RESEARCH
+            and item.public_research_query
+        ]
+        if not research_assignments:
+            evidence = ", ".join(item.value for item in plan.research_evidence)
+            errors.add(
+                "declared public evidence requires a bounded Perplexity research "
+                f"assignment: {evidence}"
+            )
+
+    prestage = plan.prestage
+    if prestage is None:
+        errors.add("v1 workload plans require an immutable pre-stage packet")
+        return errors
+    try:
+        canonical = _canonical_prestage_record(prestage)
+    except (ValueError, WorkloadPolicyError) as exc:
+        errors.add(f"pre-stage packet is invalid: {exc}")
+        return errors
+    if prestage.digest is None:
+        errors.add("pre-stage packet requires its canonical digest")
+    elif prestage.digest != canonical.digest:
+        errors.add("pre-stage packet digest does not match its canonical contents")
+    if prestage.goal != plan.normalized_outcome:
+        errors.add("pre-stage goal must exactly match the normalized plan outcome")
+    if prestage.terminal_condition != "\n".join(plan.final_acceptance):
+        errors.add("pre-stage terminal condition must exactly bind final acceptance")
+    if prestage.retry_limit != plan.execution_limits.total_route_attempt_limit:
+        errors.add("pre-stage retry limit must match the plan route-attempt limit")
+    if prestage.budget_units < sum(item.effort_points for item in plan.assignments):
+        errors.add("pre-stage budget units do not cover planned assignment effort")
+
+    repository_scope: list[tuple[str, str]] = []
+    repository_scope_unbound = False
+    for assignment in plan.assignments:
+        if assignment.repository is None:
+            continue
+        repository = canonical_repository(assignment.repository)
+        if not repository:
+            repository_scope_unbound = True
+            continue
+        repository_scope.append((repository, assignment.starting_ref.strip()))
+    repository_binding_required = any(
+        assignment.agent
+        in {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK}
+        or assignment.allow_draft_pr
+        for assignment in plan.assignments
+    )
+    if repository_scope_unbound or (repository_binding_required and not repository_scope):
+        errors.add("v1 pre-stage repository scope is unbound")
+    elif repository_scope:
+        repositories = {repository for repository, _ in repository_scope}
+        if len(repositories) > 1:
+            errors.add(
+                "v1 pre-stage repository scope spans multiple canonical assignment repositories"
+            )
+        elif canonical_repository(prestage.repository) != next(iter(repositories)):
+            errors.add(
+                "pre-stage repository must match the single canonical assignment repository"
+            )
+
+        starting_refs = {starting_ref for _, starting_ref in repository_scope}
+        if not starting_refs or "" in starting_refs:
+            errors.add("v1 pre-stage starting-ref scope is unbound")
+        elif len(starting_refs) > 1:
+            errors.add(
+                "v1 pre-stage starting-ref scope spans multiple assignment starting refs"
+            )
+        elif prestage.branch != next(iter(starting_refs)):
+            errors.add(
+                "pre-stage branch must match the single assignment starting ref"
+            )
+    if prestage.candidate_sha is not None:
+        errors.add("initial pre-stage candidate SHA must be absent before production")
+
+    assignment_agents = {item.agent for item in plan.assignments}
+    if prestage.producer not in assignment_agents:
+        errors.add("pre-stage producer is not assigned in the plan")
+    review_agents = {
+        item.agent
+        for item in plan.assignments
+        if item.kind
+        in {AssignmentKind.INDEPENDENT_REVIEW, AssignmentKind.EXACT_SHA_REVIEW}
+    }
+    if prestage.independent_reviewer not in review_agents:
+        errors.add("pre-stage independent reviewer lacks a typed review assignment")
+    return errors
+
+
+def _workload_settings_errors(settings: Settings) -> set[str]:
+    if not settings.workload_policy_enabled:
+        return set()
+    errors: set[str] = set()
+    if settings.workload_policy_mode not in {
+        EnforcementMode.ENFORCED.value,
+        EnforcementMode.SHADOW.value,
+    }:
+        errors.add("workload policy mode must be enforced or shadow")
+    policy = WorkloadPolicy.default()
+    if settings.workload_policy_window_assignments != policy.rolling_window_size:
+        errors.add("workload policy rolling window must be 20 assignments")
+    if settings.workload_policy_shadow_assignments != 5:
+        errors.add("workload policy shadow rehearsal must be five assignments")
+    return errors
+
+
+def _workload_enforcement_record(
+    plan: DirectorPlan, settings: Settings
+) -> WorkloadEnforcementRecord | None:
+    if plan.workload_policy_version != "v1":
+        return None
+    if not settings.workload_policy_enabled:
+        return WorkloadEnforcementRecord(
+            mode="disabled",
+            outcome="disabled",
+            allowed=True,
+            would_block=False,
+        )
+    violations = tuple(
+        sorted(_v1_workload_plan_errors(plan) | _workload_settings_errors(settings))
+    )
+    mode = settings.workload_policy_mode
+    if mode == EnforcementMode.SHADOW.value:
+        return WorkloadEnforcementRecord(
+            mode="shadow",
+            outcome="shadow_would_block" if violations else "allow",
+            allowed=True,
+            would_block=bool(violations),
+            violations=violations,
+        )
+    return WorkloadEnforcementRecord(
+        mode="enforced",
+        outcome="block" if violations else "allow",
+        allowed=not violations,
+        would_block=bool(violations),
+        violations=violations,
+    )
+
+
 def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]:
     errors: set[str] = set()
+    workload_record = _workload_enforcement_record(plan, settings)
+    if workload_record is not None:
+        if (
+            workload_record.mode == "enforced"
+            and plan.workload_enforcement != workload_record
+        ):
+            errors.add("workload enforcement record is absent, stale, or untrusted")
+        if workload_record.mode == "enforced":
+            errors.update(workload_record.violations)
+    if (
+        plan.prestage is not None
+        and plan.prestage.packet_id == "dry-run-preview"
+        and settings.allow_paid_runs
+    ):
+        errors.add("dry-run preview packets cannot authorize paid provider dispatch")
     if tuple(settings.primary_team) != ("openai", "claude", "cursor", "grok"):
         errors.add("primary team must be exactly openai, claude, cursor, grok")
     allowed_projects = {item.strip().lower() for item in settings.project_allowlist}
@@ -460,6 +910,10 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                     f"assignment {assignment.sequence}: Grok has no web-grounded research lane"
                 )
         if assignment.agent == ProviderName.PERPLEXITY:
+            if assignment.kind != AssignmentKind.RESEARCH:
+                errors.add(
+                    f"assignment {assignment.sequence}: Perplexity is research-only and requires research kind"
+                )
             if not assignment.requires_approval:
                 errors.add(
                     f"assignment {assignment.sequence}: Perplexity research requires exact-query owner approval"
@@ -587,8 +1041,23 @@ def trusted_openai_debate_phase_cost_usd(
     return max(model_estimate_usd, settings.openai_debate_turn_estimated_cost_usd)
 
 
-def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> DirectorPlan:
+def enforce_plan(
+    plan: DirectorPlan,
+    source_text: str,
+    settings: Settings,
+    *,
+    activate_workload_policy: bool = False,
+) -> DirectorPlan:
     safe = deepcopy(plan)
+    # The live engine explicitly marks a newly generated plan. Persisted plans and
+    # focused pre-policy unit callers retain the null legacy marker, while omission
+    # at the live generation boundary cannot opt out of default-on enforcement.
+    if activate_workload_policy:
+        safe.workload_policy_version = "v1"
+    workload_v1 = safe.workload_policy_version == "v1"
+    # The enforcement outcome is deterministic trusted metadata, never a value the
+    # planning model may preserve or select.
+    safe.workload_enforcement = None
     safe.max_hops = min(safe.max_hops, settings.max_agent_hops)
     safe.max_revisions = min(safe.max_revisions, settings.max_revisions)
     if safe.debate is not None:
@@ -668,6 +1137,24 @@ def enforce_plan(plan: DirectorPlan, source_text: str, settings: Settings) -> Di
             else item
             for item in safe.assignments
         ]
+    if workload_v1:
+        # Normalize after structural rewrites so a generated implementation lane
+        # cannot retain a pre-rewrite short/simple classification.
+        safe.assignments = [
+            _trusted_v1_assignment(item) for item in safe.assignments
+        ]
+    if (
+        safe.workload_policy_version == "v1"
+        and settings.workload_policy_enabled
+        and safe.prestage is not None
+    ):
+        try:
+            safe.prestage = _canonical_prestage_record(safe.prestage)
+        except (ValueError, WorkloadPolicyError):
+            # Keep the rejected proposal intact so policy reports the precise
+            # structural failure instead of turning it into an internal error.
+            pass
+    safe.workload_enforcement = _workload_enforcement_record(safe, settings)
     return safe
 
 
@@ -688,6 +1175,8 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         project = match.group(1).strip()[:255]
 
     assignment_kind = AssignmentKind.GENERAL
+    public_research_query: str | None = None
+    workload_size = WorkSize.SHORT
     if provider == ProviderName.GEMINI:
         if re.search(r"\bboilerplate\b", text, re.I):
             assignment_kind = AssignmentKind.BOILERPLATE
@@ -697,12 +1186,45 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             assignment_kind = AssignmentKind.LOW_LEVEL_IMPLEMENTATION
         else:
             assignment_kind = AssignmentKind.ABSTRACT_IDEATION
+    elif provider == ProviderName.PERPLEXITY:
+        assignment_kind = AssignmentKind.RESEARCH
+        # This is deliberately generic: dry-run preview must never turn raw intake
+        # into a public query, especially when the intake mentions private context.
+        public_research_query = "public sources for the owner-defined research topic"
+    elif _IMPLEMENTATION_SCOPE.search(text):
+        assignment_kind = AssignmentKind.IMPLEMENTATION
+        workload_size = (
+            WorkSize.MEDIUM
+            if provider == ProviderName.CLAUDE
+            else WorkSize.SHORT
+        )
+    preview_repository = (
+        settings.repository_allowlist[0]
+        if settings.repository_allowlist
+        else "dry-run/preview"
+    )
+    assignment_repository = (
+        None
+        if provider in {ProviderName.GEMINI, ProviderName.PERPLEXITY}
+        or not settings.repository_allowlist
+        else preview_repository
+    )
     assignment = Assignment(
         sequence=1,
         agent=provider,
         kind=assignment_kind,
+        workload_size=workload_size,
+        effort_points=5 if workload_size == WorkSize.MEDIUM else 2,
+        model_label=(
+            FABLE_MODEL_FLOOR
+            if provider == ProviderName.CLAUDE
+            and workload_size == WorkSize.MEDIUM
+            else None
+        ),
         task=text.strip(),
         acceptance=["Owner-defined outcome is demonstrably satisfied", "Evidence and unresolved risks are reported"],
+        public_research_query=public_research_query,
+        repository=assignment_repository,
         requires_approval=False,
         estimated_cost_usd=0,
     )
@@ -713,23 +1235,84 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
                 sequence=2,
                 agent=ProviderName.CLAUDE,
                 kind=AssignmentKind.IMPLEMENTATION,
+                workload_size=WorkSize.SHORT,
+                effort_points=2,
                 task=ANTIGRAVITY_CONSUMER_TASK,
                 acceptance=list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
+                repository=preview_repository,
                 depends_on=[1],
                 estimated_cost_usd=0,
             )
         )
+    producer = ProviderName.CLAUDE if provider == ProviderName.GEMINI else provider
+    reviewer = (
+        ProviderName.CURSOR
+        if producer == ProviderName.CLAUDE
+        else ProviderName.CLAUDE
+    )
+    reviewed_sequence = assignments[-1].sequence
+    assignments.append(
+        Assignment(
+            sequence=reviewed_sequence + 1,
+            agent=reviewer,
+            kind=AssignmentKind.INDEPENDENT_REVIEW,
+            workload_size=WorkSize.SHORT,
+            effort_points=2,
+            task="Independently review the bounded dry-run plan and required evidence",
+            acceptance=["Report contradictions, missing evidence, and unresolved risk"],
+            repository=preview_repository,
+            depends_on=[reviewed_sequence],
+            estimated_cost_usd=0,
+        )
+    )
+    final_acceptance = [
+        "All assignment checks pass",
+        "No approval gate was bypassed",
+    ]
     plan = DirectorPlan(
         project=project,
         normalized_outcome=text.strip(),
         risk_level=RiskLevel.LOW,
         approval_required=False,
         approval_reasons=[],
-        max_hops=min(3, settings.max_agent_hops),
+        max_hops=min(max(3, len(assignments)), settings.max_agent_hops),
         max_revisions=min(1, settings.max_revisions),
         assignments=assignments,
-        final_acceptance=["All assignment checks pass", "No approval gate was bypassed"],
+        final_acceptance=final_acceptance,
         owner_question=None,
+        workload_policy_version="v1",
+        workload_target_variance_reason=(
+            "Dry-run previews do not manufacture assignments to imitate rolling targets"
+        ),
+        prestage=PlanPrestageRecord(
+            packet_id="dry-run-preview",
+            goal=text.strip(),
+            terminal_condition="\n".join(final_acceptance),
+            repository=preview_repository,
+            worktree="DRY-RUN-NO-WORKTREE",
+            branch="main",
+            base_sha="0" * 40,
+            candidate_sha=None,
+            producer=producer,
+            independent_reviewer=reviewer,
+            owned_paths=("dry-run/no-files",),
+            prohibited_paths=("all external writes",),
+            required_tests=("Dry-run preview only; no command executed",),
+            required_security_evidence=(
+                "Paid provider dispatch and external writes remain disabled",
+            ),
+            # Budget the effort the *trusted* normalization will assign, not the
+            # points these draft assignments happen to carry. `enforce_plan`
+            # raises every implementation lane to its minimum size below, and the
+            # pre-stage budget gate then compares against those raised points.
+            budget_units=sum(
+                _trusted_v1_assignment(item).effort_points for item in assignments
+            ),
+            timeout_seconds=max(1, settings.provider_timeout_seconds),
+            retry_limit=3,
+            merge_eligibility_conditions=("A fresh exact-SHA plan is required",),
+            stopping_conditions=("Stop before any provider dispatch",),
+        ),
     )
     return enforce_plan(plan, text, settings)
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | END]]
@@ -741,3 +1324,10 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]

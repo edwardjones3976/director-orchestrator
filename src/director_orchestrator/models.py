@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | BEGIN]]
@@ -26,6 +27,7 @@ from pydantic import (
 )
 
 from .interactions import ProviderInteractionEvent
+from .workload_policy import WorkSize
 
 
 def canonical_opaque_identifier_digest(value: str) -> str:
@@ -128,6 +130,14 @@ class AssignmentKind(StrEnum):
     SCAFFOLDING = "scaffolding"
     LOW_LEVEL_IMPLEMENTATION = "low_level_implementation"
     ABSTRACT_IDEATION = "abstract_ideation"
+
+
+class ResearchEvidenceType(StrEnum):
+    """Public evidence a plan explicitly asks the research lane to collect."""
+
+    EXTERNAL_SOURCES = "external_sources"
+    USER_REVIEWS = "user_reviews"
+    COMPETITOR_SOLUTIONS = "competitor_solutions"
 
 
 class ReviewVerdict(StrEnum):
@@ -239,6 +249,12 @@ class Assignment(BaseModel):
     sequence: int = Field(ge=1, le=20)
     agent: ProviderName
     kind: AssignmentKind = AssignmentKind.GENERAL
+    # Defaults keep pre-policy persisted assignments readable. A v1 workload plan
+    # must declare the intended size and points explicitly in its authoritative
+    # pre-stage packet; deterministic policy validates the resulting route.
+    workload_size: WorkSize = WorkSize.SIMPLE
+    effort_points: int = Field(default=1, ge=1, le=100)
+    model_label: str | None = Field(default=None, min_length=1, max_length=255)
     task: str = Field(min_length=1, max_length=10_000)
     acceptance: list[str] = Field(min_length=1, max_length=20)
     public_research_query: str | None = Field(default=None, min_length=1, max_length=2_000)
@@ -355,6 +371,82 @@ class DebatePlan(BaseModel):
     estimated_tie_judgment_cost_usd: float = Field(default=0, ge=0, le=1_000)
 
 
+class LeanExecutionLimits(BaseModel):
+    """Immutable execution limits attached to every v1 workload plan."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    primary_attempt_limit: Literal[1] = 1
+    transient_recovery_attempt_limit: Literal[1] = 1
+    total_route_attempt_limit: Literal[3] = 3
+    third_attempt_requires_new_information_or_transport: Literal[True] = True
+    ambiguous_paid_dispatch_retry_allowed: Literal[False] = False
+    unchanged_green_validation_rerun_allowed: Literal[False] = False
+    preferred_completion_signal: Literal["callback_or_event"] = "callback_or_event"
+    browser_transport_priority: Literal["lower_priority_fallback"] = (
+        "lower_priority_fallback"
+    )
+    browser_usage_reduction_target_percent: Literal[0] = 0
+    initial_status_read_limit: Literal[1] = 1
+    terminal_status_verification_limit: Literal[1] = 1
+    major_action_limit: Literal[5] = 5
+    status_check_reduction_target_percent: Literal[80] = 80
+    duplicate_validation_reduction_target_percent: Literal[70] = 70
+    total_action_reduction_target_percent: Literal[60] = 60
+
+
+class PlanPrestageRecord(BaseModel):
+    """Immutable, digest-bound handoff packet prepared before provider dispatch.
+
+    ``digest`` is optional only while a Director proposal is being parsed and for
+    old persisted plans. ``enforce_plan`` replaces a proposed record with the
+    canonical record produced by ``workload_policy.PrestagePacket``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["prestage.v1"] = "prestage.v1"
+    packet_id: str = Field(min_length=1, max_length=255)
+    goal: str = Field(min_length=1, max_length=10_000)
+    terminal_condition: str = Field(min_length=1, max_length=10_000)
+    repository: str = Field(min_length=1, max_length=2_000)
+    worktree: str = Field(min_length=1, max_length=2_000)
+    branch: str = Field(min_length=1, max_length=255)
+    base_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    candidate_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    producer: ProviderName
+    independent_reviewer: ProviderName
+    owned_paths: tuple[str, ...] = Field(min_length=1, max_length=100)
+    prohibited_paths: tuple[str, ...] = Field(default_factory=tuple, max_length=100)
+    required_tests: tuple[str, ...] = Field(min_length=1, max_length=100)
+    required_security_evidence: tuple[str, ...] = Field(min_length=1, max_length=100)
+    budget_units: int = Field(ge=1, le=100_000)
+    timeout_seconds: int = Field(ge=1, le=604_800)
+    retry_limit: int = Field(ge=1, le=3)
+    merge_eligibility_conditions: tuple[str, ...] = Field(
+        min_length=1, max_length=50
+    )
+    stopping_conditions: tuple[str, ...] = Field(min_length=1, max_length=50)
+    digest: str | None = Field(
+        default=None,
+        min_length=71,
+        max_length=71,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
+class WorkloadEnforcementRecord(BaseModel):
+    """Trusted deterministic outcome attached by ``enforce_plan``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["disabled", "shadow", "enforced"]
+    outcome: Literal["disabled", "allow", "block", "shadow_would_block"]
+    allowed: bool
+    would_block: bool
+    violations: tuple[str, ...] = Field(default_factory=tuple, max_length=100)
+
+
 class DirectorPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -369,6 +461,21 @@ class DirectorPlan(BaseModel):
     final_acceptance: list[str] = Field(min_length=1, max_length=30)
     owner_question: str | None = Field(default=None, max_length=2_000)
     debate: DebatePlan | None = None
+    # None is the durable legacy marker. It lets pre-policy plans deserialize and
+    # complete under their original authority while newly emitted v1 plans receive
+    # strict deterministic workload, team, research, and pre-stage enforcement.
+    workload_policy_version: Literal["v1"] | None = None
+    workload_target_variance_reason: str | None = Field(
+        default=None, max_length=2_000
+    )
+    research_evidence: tuple[ResearchEvidenceType, ...] = Field(
+        default_factory=tuple, max_length=3
+    )
+    execution_limits: LeanExecutionLimits = Field(
+        default_factory=LeanExecutionLimits
+    )
+    prestage: PlanPrestageRecord | None = None
+    workload_enforcement: WorkloadEnforcementRecord | None = None
 
 
 class DebateContribution(BaseModel):
@@ -1045,3 +1152,4 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]

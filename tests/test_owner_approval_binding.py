@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
@@ -3584,12 +3585,14 @@ class IntakeBudgetAdmissionTests(unittest.TestCase):
 
             paid_settings = replace(
                 dry_settings,
+                workload_policy_enabled=False,
                 allow_paid_runs=True,
                 openai_api_key="test-openai-key",
             )
             fresh_plan = preview.plan.model_copy(
                 update={
                     "project": "demo",
+                    "prestage": None,
                     "approval_required": True,
                     "approval_reasons": ["Focused live-plan acceptance gate"],
                     "assignments": [
@@ -3893,3 +3896,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:41 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
