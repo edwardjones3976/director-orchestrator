@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
@@ -1395,6 +1396,8 @@ class GrokAdapter(ProviderAdapter):
 
     async def usage_check(self, prompt: str) -> ProviderRun:
         self._require_profile()
+        async with httpx.AsyncClient(timeout=self.settings.grok_timeout_seconds) as client:
+            await self._ensure_model_allowed(client, self.settings.grok_code_model)
         return await self._submit(None, prompt)
 
 
@@ -1543,3 +1546,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:49 UTC | END]]

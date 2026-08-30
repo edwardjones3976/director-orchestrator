@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
@@ -886,6 +887,25 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(RecordingAsyncClient.calls), 1)
         self.assertEqual(RecordingAsyncClient.calls[0]["method"], "GET")
 
+    async def test_grok_usage_preflight_requires_code_model_before_paid_request(self):
+        settings = replace(
+            Settings(),
+            grok_enabled=True,
+            grok_api_key="test-xai",
+            grok_model="grok-4.6",
+            grok_code_model="grok-build-0.1",
+        )
+        RecordingAsyncClient.responses = [{"data": [{"id": "grok-4.6"}]}]
+
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaisesRegex(
+                ProviderError, "unavailable to the authenticated xAI key"
+            ):
+                await GrokAdapter(settings).usage_check("bounded usage check")
+
+        self.assertEqual(len(RecordingAsyncClient.calls), 1)
+        self.assertEqual(RecordingAsyncClient.calls[0]["method"], "GET")
+
     async def test_grok_routes_implementation_to_build_model_and_general_to_chat(self):
         settings = replace(
             Settings(),
@@ -1460,3 +1480,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:49 UTC | END]]
