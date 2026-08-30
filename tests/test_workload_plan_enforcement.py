@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
@@ -19,7 +20,7 @@ from director_orchestrator.models import (
 )
 from director_orchestrator.policy import enforce_plan, execution_policy_errors
 from director_orchestrator.policy import preview_plan
-from director_orchestrator.workload_policy import FABLE_MODEL_FLOOR, WorkSize
+from director_orchestrator.workload_policy import FABLE_MODEL_FLOOR, WorkKind, WorkSize
 
 
 class WorkloadPlanEnforcementTests(unittest.TestCase):
@@ -196,6 +197,37 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             "dry-run preview packets cannot authorize paid provider dispatch",
             execution_policy_errors(preview, paid),
         )
+
+    def test_research_label_cannot_hide_implementation_scope(self) -> None:
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CLAUDE,
+            kind=AssignmentKind.RESEARCH,
+            task="Research and implement the bounded adapter fix",
+            acceptance=["The implementation is tested"],
+            repository="example/demo",
+        )
+
+        self.assertEqual(
+            policy_module.trusted_work_kind(assignment),
+            WorkKind.IMPLEMENTATION,
+        )
+
+    def test_dry_run_preview_uses_first_allowlisted_repository(self) -> None:
+        settings = replace(
+            self.settings,
+            repository_allowlist=("example/primary", "example/secondary"),
+        )
+
+        preview = preview_plan(
+            "Project: demo\nImplement and test a bounded API change",
+            settings,
+        )
+
+        self.assertEqual(preview.assignments[0].repository, "example/primary")
+        self.assertEqual(preview.assignments[1].repository, "example/primary")
+        self.assertEqual(preview.prestage.repository, "example/primary")
+        self.assertEqual(execution_policy_errors(preview, settings), [])
 
     def test_enforce_plan_attaches_canonical_immutable_prestage_digest(self) -> None:
         plan = self._valid_plan()
@@ -580,3 +612,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | END]]

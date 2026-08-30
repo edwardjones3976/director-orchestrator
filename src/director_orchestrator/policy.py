@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
@@ -292,13 +293,12 @@ def _work_kind(assignment: Assignment) -> WorkKind:
         AssignmentKind.EXACT_SHA_REVIEW,
     }:
         return WorkKind.REVIEW
-    if (
-        assignment.agent == ProviderName.PERPLEXITY
-        or assignment.kind == AssignmentKind.RESEARCH
-    ):
+    if assignment.agent == ProviderName.PERPLEXITY:
         return WorkKind.RESEARCH
     if _IMPLEMENTATION_SCOPE.search(assignment.task):
         return WorkKind.IMPLEMENTATION
+    if assignment.kind == AssignmentKind.RESEARCH:
+        return WorkKind.RESEARCH
     return WorkKind.COORDINATION
 
 
@@ -1122,7 +1122,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         )
     preview_repository = (
         settings.repository_allowlist[0]
-        if len(settings.repository_allowlist) == 1
+        if settings.repository_allowlist
         else "dry-run/preview"
     )
     assignment_repository = (
@@ -1245,3 +1245,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | END]]
