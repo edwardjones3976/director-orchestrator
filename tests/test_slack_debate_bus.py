@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
@@ -854,6 +855,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(
                 Settings(),
+                workload_policy_enabled=False,
                 allow_paid_runs=True,
                 openai_api_key="test-openai",
                 claude_routine_url="https://claude.invalid/fire",
@@ -925,6 +927,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(
                 Settings(),
+                workload_policy_enabled=False,
                 allow_paid_runs=True,
                 openai_api_key="test-openai",
                 claude_routine_url="https://claude.invalid/fire",
@@ -1333,6 +1336,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             settings = replace(
                 Settings(),
+                workload_policy_enabled=False,
                 allow_paid_runs=True,
                 openai_api_key="test-openai",
                 openai_plan_estimated_cost_usd=0.10,
@@ -1618,6 +1622,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             database = str(Path(directory) / "tasks.sqlite3")
             dry_settings = replace(
                 Settings(),
+                workload_policy_enabled=False,
                 allow_paid_runs=False,
                 project_allowlist=("demo",),
                 repository_allowlist=("example/demo",),
@@ -2788,3 +2793,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:43 UTC | END]]

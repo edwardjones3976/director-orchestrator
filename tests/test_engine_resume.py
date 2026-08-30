@@ -1,3 +1,10 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:08 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
+# [[Cursor Agent | Cursor Agent CLI | 2026-08-29 | 06:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | BEGIN]]
@@ -25,11 +32,13 @@ import httpx
 import director_orchestrator.main as main
 from director_orchestrator.config import Settings
 from director_orchestrator.approvals import (
+    EffectAlreadyClaimed,
     apply_oracle_recovery,
     assignment_approval_digest,
     record_task_effect_observation,
     reset_for_owner_clarification,
     record_provider_effect_observation,
+    reserve_provider_effect,
     reserve_task_effect,
     task_effect_key,
 )
@@ -44,16 +53,19 @@ from director_orchestrator.interactions import (
     append_interaction_event,
     build_transport_evidence,
     canonical_content_digest,
+    project_interaction,
     require_verified_result,
     start_interaction,
     transition_interaction,
 )
 from director_orchestrator.models import (
     Assignment,
+    AssignmentKind,
     AssignmentOutcome,
     DirectorPlan,
     IntakeAuthentication,
     OracleRecoveryApproval,
+    PlanPrestageRecord,
     ProviderName,
     ProviderRun,
     ReviewDecision,
@@ -63,12 +75,14 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
+from director_orchestrator.policy import enforce_plan
+from director_orchestrator.workload_policy import WorkSize
 from director_orchestrator.oracle_merge import (
     OracleMergeInProgress,
     OracleMergeResult,
     OracleMergeStatus,
 )
-from director_orchestrator.providers import ProviderError
+from director_orchestrator.providers import PreSubmitProviderError, ProviderError
 from director_orchestrator.store import TaskStore
 
 
@@ -533,6 +547,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             database = str(Path(directory) / "tasks.sqlite3")
             settings = replace(
                 Settings(),
+                workload_policy_enabled=False,
                 allow_paid_runs=True,
                 openai_api_key="test-openai",
                 openai_plan_estimated_cost_usd=0.1,
@@ -1367,6 +1382,378 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIn("reconciliation is required", stopped.message or "")
 
+    # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
+    # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:15 UTC | BEGIN]]
+    @staticmethod
+    def _workload_ledger_rows(database: str) -> list[tuple[str, str | None]]:
+        import sqlite3
+
+        connection = sqlite3.connect(database)
+        try:
+            return [
+                (str(phase), outcome)
+                for phase, outcome in connection.execute(
+                    """SELECT reservation.phase, event.outcome
+                    FROM workload_assignment_reservations AS reservation
+                    LEFT JOIN workload_assignment_events AS event
+                      ON event.reservation_key = reservation.reservation_key
+                    ORDER BY reservation.ledger_id ASC"""
+                ).fetchall()
+            ]
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _v1_revision_prestage(*, goal: str, terminal_condition: str) -> PlanPrestageRecord:
+        return PlanPrestageRecord(
+            packet_id="demo-v1-revision",
+            goal=goal,
+            terminal_condition=terminal_condition,
+            repository="example/demo",
+            worktree="C:/worktrees/demo-v1-revision",
+            branch="main",
+            base_sha="a" * 40,
+            candidate_sha=None,
+            producer=ProviderName.CLAUDE,
+            independent_reviewer=ProviderName.CURSOR,
+            owned_paths=("src/",),
+            prohibited_paths=("private/",),
+            required_tests=("python -m unittest",),
+            required_security_evidence=("none",),
+            budget_units=10,
+            timeout_seconds=3_600,
+            retry_limit=3,
+            merge_eligibility_conditions=("accepted",),
+            stopping_conditions=("owner decision required",),
+        )
+
+    def _v1_revision_fixture(self, directory: str, adapter, director):
+        from director_orchestrator.workload_policy import PRIMARY_PROVIDERS
+
+        database = str(Path(directory) / "tasks.sqlite3")
+        store = TaskStore(database)
+        intake_text = "DIRECTOR Project: demo Outcome: analyze"
+        settings = replace(
+            Settings(),
+            allow_paid_runs=True,
+            openai_api_key="test-openai",
+            claude_routine_url="https://claude.example/routine",
+            claude_routine_token="test-claude",
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+            sqlite_path=database,
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CLAUDE,
+            kind=AssignmentKind.IMPLEMENTATION,
+            workload_size=WorkSize.SIMPLE,
+            task="Analyze",
+            acceptance=["Exact evidence"],
+            repository="example/demo",
+        )
+        review_assignment = Assignment(
+            sequence=2,
+            agent=ProviderName.CURSOR,
+            kind=AssignmentKind.INDEPENDENT_REVIEW,
+            workload_size=WorkSize.SIMPLE,
+            task="Independently review the bounded change",
+            acceptance=["Review complete"],
+            repository="example/demo",
+            depends_on=[1],
+        )
+        plan = enforce_plan(
+            DirectorPlan(
+                project="demo",
+                normalized_outcome="analyze",
+                risk_level=RiskLevel.LOW,
+                approval_required=False,
+                max_hops=2,
+                max_revisions=1,
+                assignments=[assignment, review_assignment],
+                final_acceptance=["Accepted"],
+                workload_policy_version="v1",
+                prestage=self._v1_revision_prestage(
+                    goal="analyze",
+                    terminal_condition="Accepted",
+                ),
+            ),
+            intake_text,
+            settings,
+            activate_workload_policy=True,
+        )
+        record = TaskRecord(
+            task_id="DIR-V1-REVISION",
+            status=TaskStatus.QUEUED,
+            intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+            intake=SlackIntake(
+                source_event_id="evt-v1-revision",
+                channel_id="C123",
+                thread_ts="123.46",
+                user_id="U123",
+                text=intake_text,
+            ),
+            plan=plan,
+            provider_runs=[
+                ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    assignment_sequence=1,
+                    run_id="claude-original",
+                    status="completed",
+                    result="Incomplete evidence",
+                    evidence_source="provider_authenticated",
+                )
+            ],
+        )
+        _seed_verified_plan(record)
+        _seed_verified_run(record, record.provider_runs[0])
+        store.create(record)
+        engine = OrchestrationEngine(settings, store)
+        engine.providers[ProviderName.CLAUDE] = adapter
+        engine.director = director
+        engine._available_workload_primary_providers = lambda record: PRIMARY_PROVIDERS
+        return database, store, engine, record
+
+    async def test_v1_revision_passes_the_workload_gate_and_is_finalized_invoked(self):
+        class RevisingDirector:
+            def __init__(self):
+                self.reviews = 0
+
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                self.reviews += 1
+                if self.reviews == 1:
+                    return ReviewDecision(
+                        verdict=ReviewVerdict.REVISE,
+                        summary="More evidence required.",
+                        revision_prompt="Add exact evidence.",
+                    )
+                return ReviewDecision(
+                    verdict=ReviewVerdict.ACCEPT,
+                    summary="Revision accepted.",
+                    evidence=[result],
+                )
+
+        class RevisingAdapter:
+            def __init__(self):
+                self.revisions = 0
+
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                raise AssertionError("Recorded original run must not be redispatched")
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal runs must not be polled")
+
+            async def revise(self, run, prompt, *, assignment, context) -> ProviderRun:
+                self.revisions += 1
+                return ProviderRun(
+                    provider=ProviderName.CLAUDE,
+                    run_id="claude-revision",
+                    status="completed",
+                    result="Exact evidence added",
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = RevisingAdapter()
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, adapter, RevisingDirector()
+            )
+            await engine.run(record.task_id)
+
+            completed = store.get(record.task_id)
+            self.assertEqual(adapter.revisions, 1)
+            self.assertEqual(completed.revision_count, 0)
+            self.assertEqual(
+                [run.run_id for run in completed.provider_runs],
+                ["claude-original", "claude-revision"],
+            )
+            self.assertEqual(
+                self._workload_ledger_rows(database), [("revision", "invoked")]
+            )
+
+    async def test_v1_ambiguous_revision_is_counted_invoked_and_never_retried(self):
+        class RevisionDirector:
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                return ReviewDecision(
+                    verdict=ReviewVerdict.REVISE,
+                    summary="Revision needed.",
+                    revision_prompt="Add evidence.",
+                )
+
+        class AmbiguousRevisionAdapter:
+            def __init__(self):
+                self.revisions = 0
+
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                raise AssertionError("Recorded original run must not be redispatched")
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal original run must not be polled")
+
+            async def revise(self, run, prompt, *, assignment, context) -> ProviderRun:
+                self.revisions += 1
+                request = httpx.Request("POST", "https://claude.example/routine")
+                raise httpx.HTTPStatusError(
+                    "provider returned 503 after submission",
+                    request=request,
+                    response=httpx.Response(503, request=request),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = AmbiguousRevisionAdapter()
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, adapter, RevisionDirector()
+            )
+            await engine.run(record.task_id)
+
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.revision_count, 0)
+            self.assertEqual(adapter.revisions, 1)
+            self.assertIn("reconciliation is required", stopped.message or "")
+            # The ambiguous attempt consumed workload capacity and is terminal.
+            self.assertEqual(
+                self._workload_ledger_rows(database), [("revision", "invoked")]
+            )
+
+            await engine.run(record.task_id)
+            self.assertEqual(adapter.revisions, 1)
+            self.assertEqual(
+                self._workload_ledger_rows(database), [("revision", "invoked")]
+            )
+
+    async def test_v1_revision_pre_submit_provider_error_finalizes_failed_pre_submit(
+        self,
+    ):
+        class RevisionDirector:
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                return ReviewDecision(
+                    verdict=ReviewVerdict.REVISE,
+                    summary="Revision needed.",
+                    revision_prompt="Add evidence.",
+                )
+
+        class PreSubmitRevisionAdapter:
+            def __init__(self):
+                self.revisions = 0
+
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                raise AssertionError("Recorded original run must not be redispatched")
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal original run must not be polled")
+
+            async def revise(self, run, prompt, *, assignment, context) -> ProviderRun:
+                self.revisions += 1
+                raise PreSubmitProviderError(
+                    "revision rejected before provider I/O"
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = PreSubmitRevisionAdapter()
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, adapter, RevisionDirector()
+            )
+            await engine.run(record.task_id)
+
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.FAILED)
+            self.assertIn("ProviderError", stopped.error or "")
+            self.assertIn(
+                "revision rejected before provider I/O", stopped.error or ""
+            )
+            self.assertEqual(stopped.revision_count, 0)
+            self.assertEqual(adapter.revisions, 1)
+            self.assertEqual(
+                self._workload_ledger_rows(database),
+                [("revision", "failed_pre_submit")],
+            )
+            revision_effects = [
+                item.outcome
+                for item in stopped.task_effect_ledger
+                if item.kind == "provider_observation" and item.phase == "revision"
+            ]
+            self.assertEqual(revision_effects, ["failed_pre_submit"])
+            revision_interaction_id = next(
+                event.interaction_id
+                for event in reversed(stopped.provider_interaction_ledger)
+                if event.phase == ProviderInteractionPhase.REVISION
+            )
+            revision_projection = project_interaction(
+                stopped.provider_interaction_ledger, revision_interaction_id
+            )
+            self.assertEqual(
+                revision_projection.state, ProviderInteractionState.FAILED
+            )
+            self.assertEqual(store.list_recent_direct_production(), [])
+            self.assertEqual(
+                [
+                    run.run_id
+                    for run in stopped.provider_runs
+                    if run.run_id != "claude-original"
+                ],
+                [],
+            )
+
+    async def test_v1_plain_revision_error_is_ambiguous_and_not_retried(self):
+        class RevisionDirector:
+            async def review(self, record: TaskRecord, result: str) -> ReviewDecision:
+                return ReviewDecision(
+                    verdict=ReviewVerdict.REVISE,
+                    summary="Revision needed.",
+                    revision_prompt="Add evidence.",
+                )
+
+        class UnknownRevisionAdapter:
+            def __init__(self):
+                self.revisions = 0
+
+            async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
+                raise AssertionError("Recorded original run must not be redispatched")
+
+            async def poll(self, run: ProviderRun) -> ProviderRun:
+                raise AssertionError("Terminal original run must not be polled")
+
+            async def revise(self, run, prompt, *, assignment, context) -> ProviderRun:
+                self.revisions += 1
+                raise ProviderError("submission outcome cannot be established")
+
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = UnknownRevisionAdapter()
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, adapter, RevisionDirector()
+            )
+            await engine.run(record.task_id)
+
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(stopped.revision_count, 0)
+            self.assertEqual(adapter.revisions, 1)
+            self.assertEqual(
+                self._workload_ledger_rows(database), [("revision", "invoked")]
+            )
+            revision_effects = [
+                item.outcome
+                for item in stopped.task_effect_ledger
+                if item.kind == "provider_observation" and item.phase == "revision"
+            ]
+            self.assertEqual(revision_effects, ["ambiguous"])
+            self.assertEqual(
+                [item.outcome for item in stopped.provider_contact_attempts],
+                ["ambiguous_dispatch"],
+            )
+
+            with self.assertRaises(EffectAlreadyClaimed):
+                reserve_provider_effect(
+                    stopped,
+                    stopped.plan.assignments[0],
+                    phase="revision",
+                    max_task_budget_usd=engine.settings.max_task_budget_usd,
+                )
+            self.assertEqual(adapter.revisions, 1)
+    # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:15 UTC | END]]
+    # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
+
     async def test_each_assignment_gets_its_declared_revision_headroom(self):
         class RevisingEveryAssignmentDirector:
             def __init__(self):
@@ -2066,6 +2453,7 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             assignment = Assignment(
                 sequence=1,
                 agent=ProviderName.PERPLEXITY,
+                kind=AssignmentKind.RESEARCH,
                 task="Find public methodology sources",
                 acceptance=["Return source URLs"],
                 requires_approval=True,
@@ -2133,4 +2521,11 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-24 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:54 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]
+# [[Cursor Agent | Cursor Agent CLI | 2026-08-29 | 06:14 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:08 UTC | END]]
 
