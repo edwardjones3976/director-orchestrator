@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
@@ -135,6 +137,29 @@ function Set-DotEnvValue {
         return [Regex]::Replace($Text, $pattern, "${Name}=${escapedValue}")
     }
     return $Text.TrimEnd() + [Environment]::NewLine + "${Name}=${Value}" + [Environment]::NewLine
+}
+
+function Copy-ProviderCredentialValues {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$SourceValues,
+        [Parameter(Mandatory = $true)][string]$ProfileText
+    )
+
+    # Only these named credential values are ever copied. Enable flags such as
+    # GROK_ENABLED and PERPLEXITY_ENABLED are neither copied from the source
+    # nor synthesized because a key exists: a seeded key stays inert until the
+    # target profile explicitly opts in and lists the provider in
+    # USAGE_CHECK_PROVIDERS.
+    $text = $ProfileText
+    foreach ($name in @(
+        "OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN",
+        "GEMINI_API_KEY", "PERPLEXITY_API_KEY", "XAI_API_KEY"
+    )) {
+        if ($SourceValues.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$SourceValues[$name])) {
+            $text = Set-DotEnvValue -Text $text -Name $name -Value ([string]$SourceValues[$name])
+        }
+    }
+    return $text
 }
 
 function Write-Utf8NoBom {
@@ -312,11 +337,75 @@ function Get-UsageProviderNames {
     return @($Values | ForEach-Object { [string]$_ })
 }
 
+function Get-ValidatedUsageCheckProviders {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Values,
+        [Parameter(Mandatory = $true)][string]$ProfileLabel
+    )
+
+    # Mirrors SUPPORTED_PROVIDERS in src/director_orchestrator/usage.py. OpenAI,
+    # Claude, and Cursor are mandatory check providers. An optional provider is
+    # scheduled only when it is listed here, explicitly enabled, and carries a
+    # configured credential; anything not listed is never dispatched. The
+    # returned set is the exact partition the usage-check endpoint must report.
+    $mandatory = @("openai", "claude", "cursor")
+    $known = @("openai", "claude", "cursor", "grok", "perplexity", "gemini")
+    if (-not $Values.ContainsKey("USAGE_CHECK_PROVIDERS") -or
+        [string]::IsNullOrWhiteSpace([string]$Values["USAGE_CHECK_PROVIDERS"])) {
+        throw "$ProfileLabel must declare USAGE_CHECK_PROVIDERS explicitly before paid provider checks."
+    }
+    $configured = @(([string]$Values["USAGE_CHECK_PROVIDERS"]).Split(",") | ForEach-Object { $_.Trim() })
+    if (@($configured | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS contains an empty provider entry."
+    }
+    $unknown = @($configured | Where-Object { $_ -cnotin $known })
+    if ($unknown.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS names unknown providers: $($unknown -join ', ')."
+    }
+    $duplicates = @($configured | Group-Object -CaseSensitive | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
+    if ($duplicates.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS contains duplicate providers: $($duplicates -join ', ')."
+    }
+    $missing = @($mandatory | Where-Object { $_ -cnotin $configured })
+    if ($missing.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS omits mandatory primary providers: $($missing -join ', ')."
+    }
+    foreach ($provider in $configured) {
+        $enabledName = $null
+        $credentialNames = @()
+        if ($provider -ceq "grok") {
+            $enabledName = "GROK_ENABLED"
+            $credentialNames = @("XAI_API_KEY")
+        }
+        elseif ($provider -ceq "perplexity") {
+            $enabledName = "PERPLEXITY_ENABLED"
+            $credentialNames = @("PERPLEXITY_API_KEY")
+        }
+        elseif ($provider -ceq "gemini") {
+            $credentialNames = @("GEMINI_API_KEY")
+        }
+        else {
+            continue
+        }
+        if ($null -ne $enabledName -and [string]$Values[$enabledName] -cne "true") {
+            throw "$ProfileLabel lists $provider in USAGE_CHECK_PROVIDERS but $enabledName is not exactly true."
+        }
+        foreach ($name in $credentialNames) {
+            if (-not $Values.ContainsKey($name) -or
+                [string]::IsNullOrWhiteSpace([string]$Values[$name]) -or
+                ([string]$Values[$name]).StartsWith("REPLACE_WITH_")) {
+                throw "$ProfileLabel lists $provider in USAGE_CHECK_PROVIDERS but $name is not configured. No values were printed."
+            }
+        }
+    }
+    return @($configured | Sort-Object)
+}
+
 function Assert-UsageProviderPartition {
     param(
         [Parameter(Mandatory = $true)]$ScheduledProviders,
         [Parameter(Mandatory = $true)]$CoolingDownProviders,
-        [string[]]$ExpectedPrimary = @("claude", "cursor", "openai")
+        [Parameter(Mandatory = $true)][string[]]$ExpectedPrimary
     )
 
     $scheduled = @(Get-UsageProviderNames -Values $ScheduledProviders)
@@ -501,6 +590,29 @@ function Assert-LongTableSnapshot {
     }
 }
 
+function Assert-N8nWorkflowPublishCapability {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$HelpOutput)
+
+    # The selected n8n image must expose both exact command names before any
+    # workflow mutation. The pinned CLI renders command headings with a trailing
+    # separator (for example, "publish:workflow:"). Anchor each name at the
+    # beginning of its own help line so unpublish cannot satisfy publish and a
+    # deprecation note cannot stand in for a missing command.
+    $ansi = "{0}\[[0-9;?]*[ -/]*[@-~]" -f [char]27
+    $lines = @(
+        $HelpOutput |
+            ForEach-Object { ([string]$_) -replace $ansi, "" } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    $missing = @(@("publish:workflow", "unpublish:workflow") | Where-Object {
+        $heading = "^\s*$([Regex]::Escape($_)):\s*(?:$|\S.*$)"
+        @($lines | Where-Object { [string]$_ -cmatch $heading }).Count -eq 0
+    })
+    if ($missing.Count -gt 0) {
+        throw "The selected n8n image does not expose the required workflow commands: $($missing -join ', '). No workflow was modified."
+    }
+}
+
 function Initialize-N8nIntakeWorkflow {
     param(
         [Parameter(Mandatory = $true)][string]$ComposeProject,
@@ -523,6 +635,16 @@ function Initialize-N8nIntakeWorkflow {
         throw "The committed n8n intake workflow does not carry the required directorIntake identity."
     }
     $workflowMount = "${workflowPath}:/workflows/director-intake.json:ro"
+
+    # Capability preflight: prove the selected n8n image's CLI exposes the exact
+    # publish/unpublish commands in an ephemeral container before n8n is stopped,
+    # n8n-db is started, or any workflow is unpublished, imported, or published.
+    $helpOutput = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n --help |
+            ForEach-Object { [string]$_ }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to read the selected n8n image's command list. No workflow was modified." }
+    Assert-N8nWorkflowPublishCapability -HelpOutput $helpOutput
 
     docker compose --project-name $ComposeProject --env-file $ProfilePath stop n8n
     if ($LASTEXITCODE -ne 0) { throw "Unable to stop n8n before deterministic workflow import." }
@@ -599,22 +721,8 @@ if (-not [string]::IsNullOrWhiteSpace($providerCredentialSource)) {
         throw "The provider credential source must be different from the target profile."
     }
     $primaryValues = Read-DotEnv -Path $resolvedCredentialSource
-    foreach ($name in @(
-        "OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN",
-        "GEMINI_API_KEY", "PERPLEXITY_API_KEY", "XAI_API_KEY"
-    )) {
-        if ($primaryValues.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$primaryValues[$name])) {
-            $profileText = Set-DotEnvValue -Text $profileText -Name $name -Value ([string]$primaryValues[$name])
-        }
-    }
-    if ($primaryValues.ContainsKey("PERPLEXITY_API_KEY") -and
-        -not [string]::IsNullOrWhiteSpace([string]$primaryValues["PERPLEXITY_API_KEY"])) {
-        $profileText = Set-DotEnvValue -Text $profileText -Name "PERPLEXITY_ENABLED" -Value "true"
-    }
-    if ($primaryValues.ContainsKey("XAI_API_KEY") -and
-        -not [string]::IsNullOrWhiteSpace([string]$primaryValues["XAI_API_KEY"])) {
-        $profileText = Set-DotEnvValue -Text $profileText -Name "GROK_ENABLED" -Value "true"
-    }
+    # Credential values only; enable flags are never copied or synthesized here.
+    $profileText = Copy-ProviderCredentialValues -SourceValues $primaryValues -ProfileText $profileText
     Write-Host "Provider credentials were copied locally from the configured source to $profilePath; values were not displayed."
 }
 
@@ -631,7 +739,9 @@ $identity = [ordered]@{
     MAX_TASK_BUDGET_USD = [string]$selected.MAX_TASK_BUDGET_USD
     PRIMARY_TEAM = "openai,claude,cursor,grok"
     PRIMARY_WORKHORSE = "claude"
-    USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"
+    # USAGE_CHECK_PROVIDERS is deliberately not forced here. The profile's
+    # explicit periodic-check membership is preserved and validated by
+    # Get-ValidatedUsageCheckProviders before any paid dispatch.
     USAGE_CHECK_INTERVAL_MINUTES = "360"
     ALLOW_PAID_RUNS = "false"
     USAGE_CHECK_ENABLED = "false"
@@ -746,6 +856,15 @@ if (-not $EnablePaidRuns) {
     return
 }
 
+# Provider partition preflight. The paid gate, usage checks, and the manual
+# usage-check endpoint stay closed until the profile's explicit
+# USAGE_CHECK_PROVIDERS is valid: no duplicates or unknown names, every
+# mandatory primary provider present, and every listed optional provider
+# explicitly enabled with a configured credential. The endpoint response must
+# later partition exactly this validated set.
+$expectedUsageProviders = @(Get-ValidatedUsageCheckProviders -Values $values -ProfileLabel $profilePath)
+Write-Host "Validated usage-check providers before paid dispatch: $($expectedUsageProviders -join ', ')."
+
 # Provider probes require the paid gate, but the live writer and parallel gate
 # remain closed until that evidence succeeds.
 Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $false
@@ -767,7 +886,8 @@ try {
     $runStatus = [string]$accepted.status
     $partition = Assert-UsageProviderPartition `
         -ScheduledProviders $accepted.scheduled_providers `
-        -CoolingDownProviders $accepted.cooling_down_providers
+        -CoolingDownProviders $accepted.cooling_down_providers `
+        -ExpectedPrimary $expectedUsageProviders
     $scheduledProviders = @($partition.ScheduledProviders)
     $coolingProviders = @($partition.CoolingDownProviders)
     $completionVerifiedProviders = @(
@@ -954,3 +1074,5 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | END]]

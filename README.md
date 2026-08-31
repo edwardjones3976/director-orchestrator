@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:31 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
@@ -228,11 +229,22 @@ project ID `long-table-bid-whist`, repository
 project Slack channel. Run `scripts/windows-long-table-live-validation.ps1`
 for the complete isolated stack; add `-ApiOnly` only for an intentional
 orchestrator-only canary. Use `-ProviderCredentialSourceEnvPath` to seed only
-named provider credentials from another ignored local profile without printing
-their values. Full-stack startup replaces the project-namespaced n8n intake
-workflow from the committed JSON, publishes it, and verifies that exact workflow
-ID is active before reporting readiness. Paid execution remains fail-closed
-until the script's fresh provider checks succeed.
+the named credential values `OPENAI_API_KEY`, `CURSOR_API_KEY`,
+`CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN`, `GEMINI_API_KEY`,
+`PERPLEXITY_API_KEY`, and `XAI_API_KEY` from another ignored local profile
+without printing their values. Enable flags are never copied or synthesized:
+Grok and Perplexity stay disabled unless the target profile explicitly sets
+`GROK_ENABLED=true` or `PERPLEXITY_ENABLED=true` and adds `grok` or
+`perplexity` to `USAGE_CHECK_PROVIDERS`. The template schedules exactly
+`openai,claude,cursor`; before the paid gate opens, the script validates the
+profile's explicit `USAGE_CHECK_PROVIDERS` (no duplicates or unknown names,
+OpenAI/Claude/Cursor mandatory, and any listed optional provider enabled with a
+configured credential) and requires the usage-check response to partition
+exactly that set. Full-stack startup first proves the pinned n8n image's CLI
+exposes `publish:workflow` and `unpublish:workflow`, then replaces the
+project-namespaced n8n intake workflow from the committed JSON, publishes it,
+and verifies that exact workflow ID is active before reporting readiness. Paid
+execution remains fail-closed until the script's fresh provider checks succeed.
 
 ## Local validation
 
@@ -265,3 +277,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]] -->
