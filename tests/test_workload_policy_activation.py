@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
@@ -20,14 +23,18 @@ from director_orchestrator.models import (
     Assignment,
     AssignmentKind,
     DirectorPlan,
+    PlanPrestageRecord,
     ProviderName,
     RiskLevel,
     SlackIntake,
     TaskRecord,
     TaskStatus,
 )
+from director_orchestrator.policy import enforce_plan, execution_policy_errors, preview_plan
 from director_orchestrator.store import TaskStore, WorkloadAttemptOutcome
 from director_orchestrator.workload_policy import (
+    DirectProductionProvider,
+    DirectProductionRecord,
     EnforcementMode,
     PRIMARY_PROVIDERS,
     Provider,
@@ -87,7 +94,90 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                 "mode_valid": True,
                 "window_valid": True,
                 "shadow_sample_valid": True,
+                "selector_mode_valid": True,
+                "cost_ranks_valid": False,
+                "ready_provider_ranks_complete": False,
             },
+        )
+
+    def test_paid_routing_requires_explicit_comparable_cost_ranks(self) -> None:
+        missing = replace(
+            Settings(),
+            allow_paid_runs=True,
+            workload_policy_enabled=True,
+            primary_workhorse="cheapest_capable",
+            trusted_provider_cost_ranks_json="",
+            claude_routine_url="https://example.invalid/claude",
+            claude_routine_token="token",
+        )
+        with self.assertRaisesRegex(ValueError, "TRUSTED_PROVIDER_COST_RANKS"):
+            missing.validate_workload_policy_configuration()
+
+        malformed = replace(
+            missing,
+            trusted_provider_cost_ranks_json='{"claude": true}',
+        )
+        with self.assertRaisesRegex(ValueError, "positive integers"):
+            malformed.validate_workload_policy_configuration()
+
+        ambiguous = replace(
+            missing,
+            trusted_provider_cost_ranks_json='{"claude": 1, "cursor": 1}',
+        )
+        with self.assertRaisesRegex(ValueError, "unique total order"):
+            ambiguous.validate_workload_policy_configuration()
+
+        external_openai = replace(
+            missing,
+            trusted_provider_cost_ranks_json='{"external_openai": 1}',
+        )
+        with self.assertRaisesRegex(ValueError, "unsupported provider"):
+            external_openai.validate_workload_policy_configuration()
+
+        invalid_payloads = (
+            ("not-json", "JSON object"),
+            ("[]", "non-empty JSON object"),
+            ("{}", "non-empty JSON object"),
+            ('{"Claude": 1, " claude ": 2}', "provider names must be unique"),
+            ('{"claude": 0}', "positive integers"),
+            ('{"claude": -1}', "positive integers"),
+            ('{"claude": 1.5}', "positive integers"),
+            ('{"claude": "1"}', "positive integers"),
+        )
+        for payload, reason in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ValueError, reason):
+                    replace(
+                        missing,
+                        trusted_provider_cost_ranks_json=payload,
+                    ).validate_workload_policy_configuration()
+
+        incomplete = replace(
+            missing,
+            trusted_provider_cost_ranks_json='{"claude": 1}',
+            cursor_api_key="cursor-secret",
+        )
+        with self.assertRaisesRegex(ValueError, "every configured ready specialist"):
+            incomplete.validate_workload_policy_configuration()
+
+    def test_paid_routing_accepts_only_explicit_ready_provider_ranks(self) -> None:
+        settings = replace(
+            Settings(),
+            allow_paid_runs=True,
+            workload_policy_enabled=True,
+            primary_workhorse="cheapest_capable",
+            trusted_provider_cost_ranks_json='{"claude": 2, "cursor": 1}',
+            claude_routine_url="https://example.invalid/claude",
+            claude_routine_token="token",
+            cursor_api_key="cursor-secret",
+            gemini_api_key="",
+            grok_api_key="",
+            perplexity_api_key="",
+        )
+
+        settings.validate_workload_policy_configuration()
+        self.assertEqual(
+            settings.trusted_provider_cost_ranks(), {"claude": 2, "cursor": 1}
         )
 
     def test_shadow_mode_is_observe_only_but_remains_valid(self) -> None:
@@ -230,6 +320,309 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             record.plan = plan.model_copy(update={"workload_policy_version": "v1"})
             self.assertTrue(engine._workload_policy_applies(record))
 
+    @staticmethod
+    def _selection_plan() -> DirectorPlan:
+        plan = DirectorPlan(
+            project="demo",
+            normalized_outcome="Implement and independently review the bounded change",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=2,
+            max_revisions=1,
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.CLAUDE,
+                    kind=AssignmentKind.IMPLEMENTATION,
+                    workload_size=WorkSize.MEDIUM,
+                    effort_points=5,
+                    model_label="FABLE 5 ULTRA/MAX",
+                    task="Implement the bounded change",
+                    acceptance=["Focused tests pass"],
+                    repository="example/demo",
+                ),
+                Assignment(
+                    sequence=2,
+                    agent=ProviderName.CURSOR,
+                    kind=AssignmentKind.INDEPENDENT_REVIEW,
+                    workload_size=WorkSize.SHORT,
+                    effort_points=2,
+                    task="Independently review the exact candidate",
+                    acceptance=["Return findings tied to the candidate"],
+                    repository="example/demo",
+                    depends_on=[1],
+                ),
+            ],
+            final_acceptance=["Exact candidate accepted"],
+            workload_policy_version="v1",
+            prestage=PlanPrestageRecord(
+                packet_id="trusted-selection-1",
+                goal="Implement and independently review the bounded change",
+                terminal_condition="Exact candidate accepted",
+                repository="example/demo",
+                worktree="C:/worktrees/trusted-selection-1",
+                branch="main",
+                base_sha="a" * 40,
+                producer=ProviderName.CLAUDE,
+                independent_reviewer=ProviderName.CURSOR,
+                owned_paths=("src/demo.py",),
+                prohibited_paths=("private/",),
+                required_tests=("python -m unittest tests.test_demo",),
+                required_security_evidence=("No credential diff",),
+                budget_units=7,
+                timeout_seconds=3600,
+                retry_limit=3,
+                merge_eligibility_conditions=("Exact-SHA review accepts",),
+                stopping_conditions=("Budget is exhausted",),
+            ),
+        )
+        return plan
+
+    def test_runtime_selector_uses_explicit_cost_readiness_and_independence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "director.sqlite3"
+            settings = replace(
+                Settings(),
+                sqlite_path=str(path),
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                trusted_provider_cost_ranks_json=(
+                    '{"cursor": 1, "claude": 2, "grok": 3}'
+                ),
+                claude_routine_url="https://example.invalid/claude",
+                claude_routine_token="token",
+                cursor_api_key="cursor-secret",
+                grok_enabled=True,
+                grok_api_key="grok-secret",
+            )
+            store = TaskStore(path)
+            engine = OrchestrationEngine(
+                settings,
+                store,
+                providers={
+                    ProviderName.CLAUDE: object(),
+                    ProviderName.CURSOR: object(),
+                    ProviderName.GROK: object(),
+                },
+            )
+            plan = enforce_plan(
+                self._selection_plan(),
+                "Implement and independently review the bounded change",
+                settings,
+                activate_workload_policy=True,
+            )
+            original_digest = plan.prestage.digest
+            record = TaskRecord(
+                task_id="DIR-TRUSTED-SELECTION",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-trusted-selection",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Implement and independently review the bounded change",
+                ),
+            )
+
+            with patch.object(
+                store,
+                "list_recent_direct_production",
+                wraps=store.list_recent_direct_production,
+            ) as direct_history:
+                selected = engine._apply_trusted_provider_selection(record, plan)
+
+            self.assertEqual(
+                [item.agent for item in selected.assignments],
+                [ProviderName.CURSOR, ProviderName.CLAUDE],
+            )
+            self.assertEqual(selected.prestage.producer, ProviderName.CURSOR)
+            self.assertEqual(
+                selected.prestage.independent_reviewer, ProviderName.CLAUDE
+            )
+            self.assertNotEqual(selected.prestage.digest, original_digest)
+            self.assertIsNone(selected.assignments[0].model_label)
+            self.assertEqual(execution_policy_errors(selected, settings), [])
+            direct_history.assert_called_once_with(limit=19)
+
+    def test_runtime_selector_preserves_source_free_antigravity_integration_and_review(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "director.sqlite3"
+            settings = replace(
+                Settings(),
+                sqlite_path=str(path),
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                trusted_provider_cost_ranks_json=(
+                    '{"gemini": 1, "claude": 2, "cursor": 3}'
+                ),
+                gemini_api_key="gemini-secret",
+                claude_routine_url="https://example.invalid/claude",
+                claude_routine_token="token",
+                cursor_api_key="cursor-secret",
+            )
+            store = TaskStore(path)
+            engine = OrchestrationEngine(
+                settings,
+                store,
+                providers={
+                    ProviderName.GEMINI: object(),
+                    ProviderName.CLAUDE: object(),
+                    ProviderName.CURSOR: object(),
+                },
+            )
+            source = "Project: demo\nScaffolding for a new bounded package"
+            plan = preview_plan(source, settings)
+            record = TaskRecord(
+                task_id="DIR-TRUSTED-ANTIGRAVITY",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-trusted-antigravity",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text=source,
+                ),
+            )
+
+            selected = engine._apply_trusted_provider_selection(record, plan)
+
+            self.assertEqual(
+                [item.agent for item in selected.assignments],
+                [ProviderName.GEMINI, ProviderName.CLAUDE, ProviderName.CURSOR],
+            )
+            self.assertIsNone(selected.assignments[0].repository)
+            self.assertIsNotNone(selected.assignments[0].antigravity_directive)
+            self.assertEqual(selected.assignments[1].kind, AssignmentKind.IMPLEMENTATION)
+            self.assertEqual(selected.assignments[1].depends_on, [1])
+            self.assertEqual(
+                selected.assignments[2].kind, AssignmentKind.INDEPENDENT_REVIEW
+            )
+            self.assertEqual(selected.assignments[2].depends_on, [2])
+            self.assertEqual(selected.prestage.producer, ProviderName.CLAUDE)
+            self.assertEqual(
+                selected.prestage.independent_reviewer, ProviderName.CURSOR
+            )
+            self.assertEqual(execution_policy_errors(selected, settings), [])
+
+    def test_runtime_selector_uses_accepted_direct_production_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "director.sqlite3"
+            settings = replace(
+                Settings(),
+                sqlite_path=str(path),
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                trusted_provider_cost_ranks_json=(
+                    '{"cursor": 1, "claude": 2, "grok": 3}'
+                ),
+                claude_routine_url="https://example.invalid/claude",
+                claude_routine_token="token",
+                cursor_api_key="cursor-secret",
+                grok_enabled=True,
+                grok_api_key="grok-secret",
+            )
+            store = TaskStore(path)
+            engine = OrchestrationEngine(
+                settings,
+                store,
+                providers={
+                    ProviderName.CLAUDE: object(),
+                    ProviderName.CURSOR: object(),
+                    ProviderName.GROK: object(),
+                },
+            )
+            plan = enforce_plan(
+                self._selection_plan(),
+                "Implement and independently review the bounded change",
+                settings,
+                activate_workload_policy=True,
+            )
+            record = TaskRecord(
+                task_id="DIR-TRUSTED-HISTORY",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-trusted-history",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Implement and independently review the bounded change",
+                ),
+            )
+            cursor_history = [
+                DirectProductionRecord(
+                    assignment_id=f"accepted-cursor-{index}",
+                    provider=DirectProductionProvider.CURSOR,
+                    effort_units=5,
+                )
+                for index in range(19)
+            ]
+
+            with patch.object(
+                store,
+                "list_recent_direct_production",
+                return_value=cursor_history,
+            ):
+                selected = engine._apply_trusted_provider_selection(record, plan)
+
+            self.assertEqual(selected.assignments[0].agent, ProviderName.CLAUDE)
+            self.assertEqual(selected.assignments[1].agent, ProviderName.CURSOR)
+
+    def test_runtime_selector_excludes_task_unavailable_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "director.sqlite3"
+            settings = replace(
+                Settings(),
+                sqlite_path=str(path),
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                trusted_provider_cost_ranks_json=(
+                    '{"cursor": 1, "claude": 2, "grok": 3}'
+                ),
+                claude_routine_url="https://example.invalid/claude",
+                claude_routine_token="token",
+                cursor_api_key="cursor-secret",
+                grok_enabled=True,
+                grok_api_key="grok-secret",
+            )
+            store = TaskStore(path)
+            engine = OrchestrationEngine(
+                settings,
+                store,
+                providers={
+                    ProviderName.CLAUDE: object(),
+                    ProviderName.CURSOR: object(),
+                    ProviderName.GROK: object(),
+                },
+            )
+            plan = enforce_plan(
+                self._selection_plan(),
+                "Implement and independently review the bounded change",
+                settings,
+                activate_workload_policy=True,
+            )
+            record = TaskRecord(
+                task_id="DIR-TRUSTED-UNAVAILABLE",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-trusted-unavailable",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Implement and independently review the bounded change",
+                ),
+                unavailable_providers=[ProviderName.CURSOR],
+            )
+
+            selected = engine._apply_trusted_provider_selection(record, plan)
+
+            self.assertEqual(
+                [item.agent for item in selected.assignments],
+                [ProviderName.CLAUDE, ProviderName.GROK],
+            )
+            self.assertNotIn(
+                ProviderName.CURSOR, [item.agent for item in selected.assignments]
+            )
+
     def test_packet_workload_stop_uses_canonical_task_effect_phase(self) -> None:
         assignment = Assignment(
             sequence=1,
@@ -302,3 +695,6 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:59 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | END]]

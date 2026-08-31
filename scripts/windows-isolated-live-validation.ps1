@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
@@ -547,7 +548,7 @@ $identity = [ordered]@{
     MAX_AGENT_HOPS = [string]$selected.MAX_AGENT_HOPS
     MAX_TASK_BUDGET_USD = [string]$selected.MAX_TASK_BUDGET_USD
     PRIMARY_TEAM = "openai,claude,cursor,grok"
-    PRIMARY_WORKHORSE = "claude"
+    PRIMARY_WORKHORSE = "cheapest_capable"
     USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"
     USAGE_CHECK_INTERVAL_MINUTES = "360"
     ALLOW_PAID_RUNS = "false"
@@ -587,6 +588,11 @@ if (-not $ApiOnly) {
     )
 }
 Assert-Configured -Values $values -Names $requiredConfiguration
+if ($EnablePaidRuns) {
+    # The operator owns the comparable-cost order. Preserve the ignored
+    # profile value and fail closed instead of inventing or printing ranks.
+    Assert-Configured -Values $values -Names @("TRUSTED_PROVIDER_COST_RANKS")
+}
 if ($ProfileName -eq "edge-oracle") {
     Assert-Configured -Values $values -Names @("ORACLE_AUTOMERGE_REVIEW_SECRET")
 }
@@ -863,3 +869,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]

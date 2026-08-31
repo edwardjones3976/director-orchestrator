@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:06 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
@@ -88,6 +90,7 @@ from .models import (
     CollaborationTurn,
     DebateActorRole,
     DiscussionPhase,
+    DirectorPlan,
     IntakeAuthentication,
     ProviderName,
     ProviderContactAttempt,
@@ -103,6 +106,7 @@ from .interactions import (
     ProviderTransport,
     TransportEvidenceSource,
     append_interaction_event,
+    acceptance_review_candidate_digest,
     build_transport_evidence,
     canonical_content_digest,
     canonical_identifier_digest,
@@ -124,6 +128,7 @@ from .policy import (
     estimated_plan_cost_usd,
     execution_policy_errors,
     preview_plan,
+    synchronize_trusted_provider_selection,
     trusted_work_kind,
     trusted_openai_debate_phase_cost_usd,
 )
@@ -156,9 +161,13 @@ from .store import (
 )
 from .team_charter import AdvisoryVote, tally_advisory_votes
 from .workload_policy import (
+    DirectProductionRecord,
     EnforcementMode as WorkloadEnforcementMode,
     Provider as WorkloadProvider,
+    TrustedProviderProfile,
     WorkKind as WorkloadKind,
+    WorkloadPolicyError,
+    select_cheapest_capable_provider,
 )
 from .parallel_dispatch import (
     DailyTaskBudgetExceeded,
@@ -190,6 +199,57 @@ _STANDING_PROVIDER_ROLES = {
     ProviderName.PERPLEXITY: "Research Programmers",
     ProviderName.OWNER: "Owner",
 }
+
+_TRUSTED_ROUTING_CAPABILITIES: dict[
+    WorkloadProvider, frozenset[WorkloadKind]
+] = {
+    WorkloadProvider.CLAUDE: frozenset(
+        {
+            WorkloadKind.IMPLEMENTATION,
+            WorkloadKind.REVIEW,
+            WorkloadKind.RESEARCH,
+            WorkloadKind.VALIDATION,
+            WorkloadKind.COORDINATION,
+        }
+    ),
+    WorkloadProvider.CURSOR: frozenset(
+        {
+            WorkloadKind.IMPLEMENTATION,
+            WorkloadKind.REVIEW,
+            WorkloadKind.RESEARCH,
+            WorkloadKind.VALIDATION,
+            WorkloadKind.COORDINATION,
+        }
+    ),
+    WorkloadProvider.GROK: frozenset(
+        {
+            WorkloadKind.IMPLEMENTATION,
+            WorkloadKind.REVIEW,
+            WorkloadKind.RESEARCH,
+            WorkloadKind.VALIDATION,
+            WorkloadKind.COORDINATION,
+        }
+    ),
+    WorkloadProvider.GEMINI: frozenset(
+        {
+            WorkloadKind.IMPLEMENTATION,
+            WorkloadKind.VALIDATION,
+            WorkloadKind.COORDINATION,
+        }
+    ),
+    WorkloadProvider.PERPLEXITY: frozenset({WorkloadKind.RESEARCH}),
+}
+_TRUSTED_PRIMARY_REVIEWERS = frozenset(
+    {WorkloadProvider.CLAUDE, WorkloadProvider.CURSOR, WorkloadProvider.GROK}
+)
+_ANTIGRAVITY_TYPED_KINDS = frozenset(
+    {
+        AssignmentKind.BOILERPLATE,
+        AssignmentKind.SCAFFOLDING,
+        AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+        AssignmentKind.ABSTRACT_IDEATION,
+    }
+)
 
 
 class ProviderUnavailableError(ProviderError):
@@ -361,6 +421,160 @@ class OrchestrationEngine:
             if readiness.get(readiness_key, False) and provider.value not in unavailable:
                 available.add(provider)
         return frozenset(available)
+
+    def _trusted_selection_profiles(self) -> tuple[TrustedProviderProfile, ...]:
+        ranks = self.settings.trusted_provider_cost_ranks()
+        return tuple(
+            TrustedProviderProfile(
+                provider=WorkloadProvider(provider),
+                supported_work_kinds=_TRUSTED_ROUTING_CAPABILITIES[
+                    WorkloadProvider(provider)
+                ],
+                trusted_cost_rank=rank,
+            )
+            for provider, rank in sorted(ranks.items())
+        )
+
+    def _trusted_ready_specialists(
+        self, record: TaskRecord
+    ) -> frozenset[WorkloadProvider]:
+        readiness = self.settings.readiness()
+        unavailable = {item.value for item in record.unavailable_providers}
+        return frozenset(
+            provider
+            for provider in _TRUSTED_ROUTING_CAPABILITIES
+            if readiness.get(provider.value, False)
+            and provider.value not in unavailable
+            and ProviderName(provider.value) in self.providers
+        )
+
+    @staticmethod
+    def _trusted_assignment_scope(
+        assignment: Assignment, kind: WorkloadKind
+    ) -> frozenset[WorkloadProvider]:
+        if assignment.discussion_phase != DiscussionPhase.WORK:
+            # Debate identities are part of the independently validated committee
+            # contract, not production routes selected from cost ranks.
+            return frozenset({WorkloadProvider(assignment.agent.value)})
+        if kind is WorkloadKind.REVIEW:
+            return _TRUSTED_PRIMARY_REVIEWERS
+        if assignment.kind in _ANTIGRAVITY_TYPED_KINDS:
+            # Antigravity's source-free packet is a distinct preplanned lane, not
+            # a generic implementation target. Never transform a repository-
+            # capable primary assignment into that privacy boundary after planning.
+            return (
+                frozenset({WorkloadProvider.GEMINI})
+                if assignment.agent == ProviderName.GEMINI
+                else _TRUSTED_PRIMARY_REVIEWERS
+            )
+        if kind is WorkloadKind.RESEARCH:
+            # Perplexity receives only an explicitly planned public-query packet.
+            # A private/general primary research assignment cannot be re-routed
+            # into the supplemental public research transport by cost selection.
+            return (
+                frozenset({WorkloadProvider.PERPLEXITY})
+                if assignment.agent == ProviderName.PERPLEXITY
+                else _TRUSTED_PRIMARY_REVIEWERS
+            )
+        if kind is WorkloadKind.IMPLEMENTATION:
+            return _TRUSTED_PRIMARY_REVIEWERS
+        return _TRUSTED_PRIMARY_REVIEWERS
+
+    @staticmethod
+    def _trusted_material_authors(
+        assignment: Assignment,
+        assignments_by_sequence: dict[int, Assignment],
+    ) -> frozenset[WorkloadProvider]:
+        authors: set[WorkloadProvider] = set()
+        pending = list(assignment.depends_on)
+        visited: set[int] = set()
+        while pending:
+            sequence = pending.pop()
+            if sequence in visited:
+                continue
+            visited.add(sequence)
+            dependency = assignments_by_sequence.get(sequence)
+            if dependency is None:
+                continue
+            if dependency.agent not in {ProviderName.OWNER, ProviderName.OPENAI}:
+                authors.add(WorkloadProvider(dependency.agent.value))
+            pending.extend(dependency.depends_on)
+        return frozenset(authors)
+
+    def _apply_trusted_provider_selection(
+        self, record: TaskRecord, plan: DirectorPlan
+    ) -> DirectorPlan:
+        """Route work from trusted evidence before plan persistence or dispatch."""
+
+        if (
+            not self.settings.workload_policy_enabled
+            or plan.workload_policy_version != "v1"
+        ):
+            return plan
+        if any(
+            assignment.agent == ProviderName.OPENAI
+            for assignment in plan.assignments
+        ):
+            raise WorkloadPolicyError(
+                "trusted specialist routing excludes OpenAI Director assignments"
+            )
+        if not any(
+            assignment.agent != ProviderName.OWNER
+            and assignment.discussion_phase == DiscussionPhase.WORK
+            for assignment in plan.assignments
+        ):
+            return plan
+        profiles = self._trusted_selection_profiles()
+        ready = self._trusted_ready_specialists(record)
+        history: tuple[DirectProductionRecord, ...] = tuple(
+            self.store.list_recent_direct_production(limit=19)
+        )
+        selected: dict[int, ProviderName] = {}
+        rewritten: dict[int, Assignment] = {}
+        for assignment in sorted(plan.assignments, key=lambda item: item.sequence):
+            if assignment.agent == ProviderName.OWNER:
+                selected[assignment.sequence] = assignment.agent
+                rewritten[assignment.sequence] = assignment
+                continue
+            if assignment.discussion_phase != DiscussionPhase.WORK:
+                selected[assignment.sequence] = assignment.agent
+                rewritten[assignment.sequence] = assignment
+                continue
+            kind = self._workload_kind(assignment)
+            scope = self._trusted_assignment_scope(assignment, kind)
+            reviewer_independent = _TRUSTED_PRIMARY_REVIEWERS
+            if kind is WorkloadKind.REVIEW:
+                reviewer_independent = reviewer_independent.difference(
+                    self._trusted_material_authors(assignment, rewritten)
+                )
+            provider = select_cheapest_capable_provider(
+                assignment_id=f"{record.task_id}:{assignment.sequence}",
+                kind=kind,
+                effort_units=assignment.effort_points,
+                trusted_profiles=profiles,
+                ready_providers=ready,
+                in_scope_providers=scope,
+                reviewer_independent_providers=frozenset(reviewer_independent),
+                direct_production_history=history,
+            )
+            provider_name = ProviderName(provider.value)
+            selected[assignment.sequence] = provider_name
+            rewritten[assignment.sequence] = assignment.model_copy(
+                update={"agent": provider_name}
+            )
+        selected_plan = synchronize_trusted_provider_selection(
+            plan, selected, self.settings
+        )
+        # Provider selection can move a typed subordinate assignment onto Gemini.
+        # Re-run only deterministic normalization so the Antigravity directive,
+        # downstream consumer contract, trusted sizes, and pre-stage digest match
+        # the selected providers before the plan is persisted or dispatched.
+        return enforce_plan(
+            selected_plan,
+            record.intake.text,
+            self.settings,
+            activate_workload_policy=True,
+        )
 
     def _workload_policy_applies(self, record: TaskRecord) -> bool:
         """Return whether this task carries the active v1 workload contract.
@@ -1876,6 +2090,7 @@ class OrchestrationEngine:
         phase: str,
         effect_key: str,
         plan_generation: int | None = None,
+        candidate_binding_digest: str | None = None,
     ) -> str:
         interaction_generation = (
             record.plan_generation
@@ -1908,6 +2123,7 @@ class OrchestrationEngine:
             attempt=1,
             transport_evidence=evidence,
             effect_key=effect_key,
+            candidate_binding_digest=candidate_binding_digest,
         )
         attempted = transition_interaction(
             [drafted],
@@ -2003,6 +2219,8 @@ class OrchestrationEngine:
         phase: str,
         attempt: int,
         effect_key: str,
+        request_payload: str | bytes | None = None,
+        consumed_artifact_digests: tuple[str, ...] = (),
     ) -> str:
         interaction_id = self._interaction_id(
             record,
@@ -2031,6 +2249,8 @@ class OrchestrationEngine:
             attempt=attempt,
             transport_evidence=evidence,
             effect_key=effect_key,
+            request_payload=request_payload,
+            consumed_artifact_digests=consumed_artifact_digests,
         )
         attempted = transition_interaction(
             [drafted],
@@ -2337,11 +2557,14 @@ class OrchestrationEngine:
                 verified_plan_event = self._complete_director_interaction(
                     record, interaction_id=plan_interaction_id, result=plan
                 )
-                record.plan = enforce_plan(
-                    plan,
-                    record.intake.text,
-                    self.settings,
-                    activate_workload_policy=True,
+                record.plan = self._apply_trusted_provider_selection(
+                    record,
+                    enforce_plan(
+                        plan,
+                        record.intake.text,
+                        self.settings,
+                        activate_workload_policy=True,
+                    ),
                 )
                 record.plan_generation = target_plan_generation
                 record.plan_interaction_id = plan_interaction_id
@@ -2614,15 +2837,43 @@ class OrchestrationEngine:
             self.store.save(failed)
             await self._status_post(failed, f"*{task_id} — FAILED*\n{failed.error}")
 
-    def _handoff_context(self, record: TaskRecord, assignment: Assignment) -> str:
-        prior_outcomes = sorted(
+    @staticmethod
+    def _handoff_dependency_outcomes(
+        record: TaskRecord, assignment: Assignment
+    ) -> tuple[AssignmentOutcome, ...]:
+        """Retain bounded dependencies plus every directly consumed Gemini artifact."""
+
+        dependency_set = (
+            transitive_dependency_sequences(record.plan.assignments, assignment)
+            if record.plan
+            else set()
+        )
+        dependencies = sorted(
             (
                 outcome
                 for outcome in record.assignment_outcomes
                 if outcome.assignment_sequence < assignment.sequence
+                and outcome.assignment_sequence in dependency_set
             ),
             key=lambda outcome: outcome.assignment_sequence,
-        )[-10:]
+        )
+        retained = {
+            outcome.assignment_sequence: outcome for outcome in dependencies[-10:]
+        }
+        direct_dependencies = set(assignment.depends_on)
+        retained.update(
+            {
+                outcome.assignment_sequence: outcome
+                for outcome in dependencies
+                if outcome.assignment_sequence in direct_dependencies
+                and outcome.provider == ProviderName.GEMINI
+                and outcome.provider_result_digest is not None
+            }
+        )
+        return tuple(retained[sequence] for sequence in sorted(retained))
+
+    def _handoff_context(self, record: TaskRecord, assignment: Assignment) -> str:
+        prior_outcomes = self._handoff_dependency_outcomes(record, assignment)
         dependency_set = (
             transitive_dependency_sequences(record.plan.assignments, assignment)
             if record.plan
@@ -2635,6 +2886,7 @@ class OrchestrationEngine:
                 "provider": outcome.provider.value,
                 "run_id": outcome.run_id,
                 "result": outcome.result[:6_000],
+                "provider_result_digest": outcome.provider_result_digest,
                 "review_summary": outcome.review_summary[:2_000],
                 "evidence": [item[:1_000] for item in outcome.evidence[:10]],
                 "unresolved_question": outcome.unresolved_question,
@@ -2740,6 +2992,27 @@ class OrchestrationEngine:
                 and turn.provider_result_digest is not None
             ][-12:]
         return json.dumps(payload, ensure_ascii=False)
+
+    @staticmethod
+    def _consumed_dependency_artifact_digests(
+        record: TaskRecord, assignment: Assignment
+    ) -> tuple[str, ...]:
+        """Return exact accepted Antigravity artifacts consumed by this request."""
+
+        direct_dependencies = set(assignment.depends_on)
+        return tuple(
+            sorted(
+                {
+                    outcome.provider_result_digest
+                    for outcome in OrchestrationEngine._handoff_dependency_outcomes(
+                        record, assignment
+                    )
+                    if outcome.assignment_sequence in direct_dependencies
+                    and outcome.provider == ProviderName.GEMINI
+                    and outcome.provider_result_digest is not None
+                }
+            )
+        )
 
     def _record_outcome(
         self,
@@ -5623,18 +5896,24 @@ class OrchestrationEngine:
                         effect_key=effect_key,
                     )
                 return False
+            handoff_context = self._handoff_context(record, assignment)
+            consumed_artifact_digests = (
+                self._consumed_dependency_artifact_digests(record, assignment)
+            )
             interaction_id = self._begin_provider_interaction(
                 record,
                 assignment,
                 phase="dispatch",
                 attempt=1,
                 effect_key=effect_key,
+                request_payload=handoff_context,
+                consumed_artifact_digests=consumed_artifact_digests,
             )
             self.store.save(record)
             try:
                 run = await adapter.dispatch(
                     assignment,
-                    context=self._handoff_context(record, assignment),
+                    context=handoff_context,
                 )
             except PreSubmitProviderError as exc:
                 if workload_reservation is not None:
@@ -5763,7 +6042,7 @@ class OrchestrationEngine:
             return False
 
         try:
-            self._verify_provider_result(record, run)
+            verified_provider_event = self._verify_provider_result(record, run)
         except CommunicationEvidenceFailure as exc:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.error = str(exc)[:2_000]
@@ -5820,7 +6099,18 @@ class OrchestrationEngine:
             return False
         record, review_effect_key = reservation
         review_interaction_id = self._begin_director_interaction(
-            record, phase="acceptance_review", effect_key=review_effect_key
+            record,
+            phase="acceptance_review",
+            effect_key=review_effect_key,
+            candidate_binding_digest=acceptance_review_candidate_digest(
+                task_id=record.task_id,
+                plan_generation=record.plan_generation,
+                assignment_sequence=assignment.sequence,
+                provider=assignment.agent.value,
+                provider_run_id=run.run_id,
+                provider_event_digest=verified_provider_event.event_digest,
+                provider_result_digest=canonical_content_digest(run.result or ""),
+            ),
         )
         self.store.save(record)
         try:
@@ -5955,12 +6245,18 @@ class OrchestrationEngine:
                     record, f"*{record.task_id} — BLOCKED*\n{record.message}"
                 )
                 return False
+            revision_handoff_context = self._handoff_context(record, assignment)
+            revision_consumed_artifact_digests = (
+                self._consumed_dependency_artifact_digests(record, assignment)
+            )
             revision_interaction_id = self._begin_provider_interaction(
                 record,
                 assignment,
                 phase="revision",
                 attempt=min(10, record.revision_count + 2),
                 effect_key=revision_effect_key,
+                request_payload=revision_handoff_context,
+                consumed_artifact_digests=revision_consumed_artifact_digests,
             )
             self.store.save(record)
             try:
@@ -5968,7 +6264,7 @@ class OrchestrationEngine:
                     run,
                     decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
                     assignment=assignment,
-                    context=self._handoff_context(record, assignment),
+                    context=revision_handoff_context,
                 )
             except PreSubmitProviderError as exc:
                 if revision_workload_reservation is not None:
@@ -6095,7 +6391,9 @@ class OrchestrationEngine:
                 )
                 return False
             try:
-                self._verify_provider_result(record, revised)
+                verified_revised_provider_event = self._verify_provider_result(
+                    record, revised
+                )
             except CommunicationEvidenceFailure as exc:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.error = str(exc)[:2_000]
@@ -6121,6 +6419,17 @@ class OrchestrationEngine:
                 record,
                 phase="acceptance_review",
                 effect_key=final_review_effect_key,
+                candidate_binding_digest=acceptance_review_candidate_digest(
+                    task_id=record.task_id,
+                    plan_generation=record.plan_generation,
+                    assignment_sequence=assignment.sequence,
+                    provider=assignment.agent.value,
+                    provider_run_id=revised.run_id,
+                    provider_event_digest=verified_revised_provider_event.event_digest,
+                    provider_result_digest=canonical_content_digest(
+                        revised.result or ""
+                    ),
+                ),
             )
             self.store.save(record)
             try:
@@ -6329,3 +6638,5 @@ class OrchestrationEngine:
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:06 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:26 UTC | END]]

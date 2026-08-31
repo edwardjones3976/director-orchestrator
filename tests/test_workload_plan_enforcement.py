@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
@@ -172,11 +173,8 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         self.assertIn(
             "v1 workload plans require an immutable pre-stage packet", errors
         )
-        self.assertTrue(
-            any(
-                "medium_long_implementation_requires_claude" in error
-                for error in errors
-            )
+        self.assertFalse(
+            any("medium_long_implementation_requires_claude" in error for error in errors)
         )
 
     def test_dry_run_preview_has_team_and_digest_but_no_dispatch_authority(self) -> None:
@@ -290,22 +288,25 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         self.assertEqual(guarded.assignments[0].model_label, FABLE_MODEL_FLOOR)
         self.assertEqual(execution_policy_errors(guarded, self.settings), [])
 
-    def test_underclassified_implementation_cannot_bypass_claude_route(self) -> None:
-        wrong_provider = self._valid_plan()
-        wrong_provider.assignments[0] = wrong_provider.assignments[0].model_copy(
+    def test_underclassified_nonclaude_implementation_keeps_provider(self) -> None:
+        plan = self._valid_plan()
+        plan.assignments[0] = plan.assignments[0].model_copy(
             update={
                 "agent": ProviderName.GROK,
                 "workload_size": WorkSize.SHORT,
                 "effort_points": 1,
             }
         )
-        wrong_provider.prestage = self._prestage(producer=ProviderName.GROK)
-        guarded = enforce_plan(wrong_provider, "bounded implementation", self.settings)
+        plan.prestage = self._prestage(producer=ProviderName.GROK)
+        guarded = enforce_plan(plan, "bounded implementation", self.settings)
         self.assertEqual(guarded.assignments[0].workload_size, WorkSize.MEDIUM)
         self.assertEqual(guarded.assignments[0].effort_points, 5)
-        self.assertIn(
-            "assignment 1: workload policy medium_long_implementation_requires_claude",
-            execution_policy_errors(guarded, self.settings),
+        self.assertEqual(guarded.assignments[0].agent, ProviderName.GROK)
+        self.assertFalse(
+            any(
+                "medium_long_implementation_requires_claude" in error
+                for error in execution_policy_errors(guarded, self.settings)
+            )
         )
 
     def test_only_antigravity_implementation_may_remain_short(self) -> None:
@@ -515,10 +516,24 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
     def test_shadow_mode_records_would_block_without_blocking(self) -> None:
         shadow_settings = replace(self.settings, workload_policy_mode="shadow")
         plan = self._valid_plan()
-        plan.assignments[0] = plan.assignments[0].model_copy(
-            update={"agent": ProviderName.GROK}
+        plan.assignments = [
+            Assignment(
+                sequence=sequence,
+                agent=ProviderName.GROK,
+                kind=AssignmentKind.IMPLEMENTATION,
+                workload_size=WorkSize.MEDIUM,
+                effort_points=5,
+                task=f"Implement bounded productive unit {sequence}",
+                acceptance=["Evidence recorded"],
+                repository="example/demo",
+            )
+            for sequence in range(1, 21)
+        ]
+        plan.max_hops = 20
+        plan.prestage = self._prestage(
+            producer=ProviderName.GROK,
+            budget_units=100,
         )
-        plan.prestage = self._prestage(producer=ProviderName.GROK)
 
         guarded = enforce_plan(plan, "bounded implementation", shadow_settings)
 
@@ -528,6 +543,12 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         )
         self.assertTrue(guarded.workload_enforcement.allowed)
         self.assertTrue(guarded.workload_enforcement.would_block)
+        self.assertTrue(
+            any(
+                "direct_production_hard_threshold_exceeded:grok:16" in violation
+                for violation in guarded.workload_enforcement.violations
+            )
+        )
         self.assertEqual(execution_policy_errors(guarded, shadow_settings), [])
 
     def test_disabled_policy_preserves_legacy_execution_behavior(self) -> None:
@@ -543,7 +564,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         self.assertEqual(guarded.workload_enforcement.outcome, "disabled")
         self.assertEqual(execution_policy_errors(guarded, disabled), [])
 
-    def test_complete_plan_window_enforces_effort_weighted_cap(self) -> None:
+    def test_complete_plan_overall_window_is_report_only(self) -> None:
         assignments: list[Assignment] = []
         for sequence in range(1, 21):
             provider = (
@@ -585,9 +606,10 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         )
 
         guarded = enforce_plan(plan, "bounded coordinated work", self.settings)
-        self.assertTrue(
+        self.assertFalse(
             any(
-                "overall_hard_threshold_exceeded:claude:45" in error
+                "overall_hard_threshold_exceeded" in error
+                or "absolute_primary_ceiling_exceeded" in error
                 for error in execution_policy_errors(guarded, self.settings)
             )
         )
@@ -613,3 +635,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]

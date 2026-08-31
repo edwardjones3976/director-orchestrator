@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
@@ -176,9 +178,31 @@ project-local fit here and link back for authority boundaries.
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
 | Codex Security | independent security evidence for eligible repository changes | product direction, acceptance, merge, or deployment authority |
+| GitHub Copilot Lite | one requested post-green, exact-candidate-frozen hygiene observation | a provider role, workload share, gate, every-push trigger, independent acceptance, or merge authority |
 
 Each row summarizes the canonical role definitions in
 [`team-operating-charter.md`](team-operating-charter.md#roles).
+
+The sole enforced allocation is accepted productive work: external OpenAI/Codex
+25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%.
+The earlier Claude/Cursor/Grok/OpenAI/Antigravity/Perplexity overall-effort split
+of 36/20/20/8/11/5 is historical non-enforced reporting only.
+
+Choose the cheapest capable trusted model, never simply the cheapest contact.
+First establish exact scope and allowlists, usable transport, readiness,
+capability, tools/context, risk, and independence; then apply the direct
+allocation, prefer an under-target eligible provider, compare trusted cost
+evidence, and use a deterministic tie-breaker. Unknown cost is not zero. An
+exact trusted requirement may select Claude or a named model profile; workload
+length alone does not. Record eligible candidates, exclusions, comparable costs,
+the selected provider/model, and the tie-break reason.
+
+For paid routing, only the operator-authored `TRUSTED_PROVIDER_COST_RANKS`
+setting supplies the comparable total order. It must cover every configured
+ready specialist with unique positive ranks and is never inferred, generated,
+or rewritten by a provider. A candidate provider at its hard threshold is
+blocked; another provider's inherited overage remains advisory so corrective
+under-target routing can proceed.
 
 ### Firecrawl privacy routing
 
@@ -348,6 +372,22 @@ The reviewer returns `ACCEPT`, `CHANGES_REQUIRED`, or
 through the project's configured independent security, CI, and deterministic
 merge gates. A changed candidate restarts this evidence chain.
 
+After required checks are green and the exact candidate is frozen, the Director
+may request one GitHub Copilot Lite hygiene observation. It is non-gating and has
+no percentage or action authority; do not automate it on every push. A quota or
+availability failure and every rejected finding count as waste. Validate each
+finding independently and block only for a confirmed underlying defect. A new
+commit invalidates the observation without an automatic rerun. If Copilot
+substantively authors a fix, list it as a material author and exclude it from
+independent review or acceptance of that candidate.
+
+For ROI reporting, count only authenticated accepted direct-production effort as
+productive units. Keep all attempts, failures, control-plane work, and recovery
+in historical effort; categorize invoked effort without productive credit as
+waste. Report estimated ROI, provider-reported cost ROI only when correlated
+cost exists, first-pass yield, correction rate, duplicate validation, and quota
+failures. Never invent or blend missing cost telemetry.
+
 ## Minimal integration fix lane
 
 Before opening a new correction assignment, check whether the defect qualifies
@@ -445,3 +485,5 @@ project-specific control.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:40 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:08 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | BEGIN]]
@@ -2319,6 +2320,123 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "accepted result 1",
             )
 
+    def test_early_direct_gemini_dependency_remains_in_exact_handoff_evidence(self):
+        assignments = [
+            Assignment(
+                sequence=1,
+                agent=ProviderName.GEMINI,
+                kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+                task="Produce one bounded source-free artifact",
+                acceptance=["Artifact digest is recorded"],
+            )
+        ]
+        assignments.extend(
+            Assignment(
+                sequence=sequence,
+                agent=ProviderName.CURSOR,
+                task=f"Unrelated accepted outcome {sequence}",
+                acceptance=["Outcome is recorded"],
+            )
+            for sequence in range(2, 12)
+        )
+        consumer = Assignment(
+            sequence=12,
+            agent=ProviderName.CLAUDE,
+            kind=AssignmentKind.IMPLEMENTATION,
+            task="Independently reproduce and integrate the Gemini artifact",
+            acceptance=["Exact consumed artifact is reported"],
+            depends_on=[1],
+        )
+        assignments.append(consumer)
+        gemini_result = "bounded Antigravity artifact"
+        gemini_digest = canonical_content_digest(gemini_result)
+        outcomes = [
+            AssignmentOutcome(
+                assignment_sequence=1,
+                provider=ProviderName.GEMINI,
+                run_id="gemini-artifact-run",
+                result=gemini_result,
+                review_summary="Accepted for independent integration",
+                provider_result_digest=gemini_digest,
+            )
+        ]
+        outcomes.extend(
+            AssignmentOutcome(
+                assignment_sequence=sequence,
+                provider=ProviderName.CURSOR,
+                run_id=f"intervening-run-{sequence}",
+                result=f"intervening accepted result {sequence}",
+                review_summary="Accepted unrelated outcome",
+                provider_result_digest=canonical_content_digest(
+                    f"intervening accepted result {sequence}"
+                ),
+            )
+            for sequence in range(2, 12)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            record = TaskRecord(
+                task_id="DIR-OLD-GEMINI-HANDOFF",
+                status=TaskStatus.RUNNING,
+                intake=SlackIntake(
+                    source_event_id="evt-old-gemini-handoff",
+                    channel_id="C123",
+                    thread_ts="123.99",
+                    user_id="U123",
+                    text="Integrate one bounded dependency",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Integrate one bounded dependency",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=12,
+                    max_revisions=0,
+                    assignments=assignments,
+                    final_acceptance=["Integration accepted"],
+                ),
+                assignment_outcomes=outcomes,
+            )
+            engine = OrchestrationEngine(
+                replace(Settings(), sqlite_path=store.path), store
+            )
+
+            context = engine._handoff_context(record, consumer)
+            payload = json.loads(context)
+            consumed = engine._consumed_dependency_artifact_digests(
+                record, consumer
+            )
+
+            self.assertEqual(consumed, (gemini_digest,))
+            self.assertEqual(
+                [item["assignment_sequence"] for item in payload["dependency_outcomes"]],
+                [1],
+            )
+            self.assertEqual(
+                payload["dependency_outcomes"][0]["provider_result_digest"],
+                gemini_digest,
+            )
+            interaction_id = engine._begin_provider_interaction(
+                record,
+                consumer,
+                phase="dispatch",
+                attempt=1,
+                effect_key="e" * 64,
+                request_payload=context,
+                consumed_artifact_digests=consumed,
+            )
+            drafted = next(
+                event
+                for event in record.provider_interaction_ledger
+                if event.interaction_id == interaction_id
+                and event.transition_ordinal == 1
+            )
+            self.assertEqual(drafted.consumed_artifact_digests, (gemini_digest,))
+            self.assertEqual(
+                drafted.request_payload_digest,
+                canonical_content_digest(context),
+            )
+
     async def test_max_revisions_runs_every_bounded_revision_before_acceptance(self):
         class Director:
             def __init__(self):
@@ -2528,4 +2646,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:08 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:52 UTC | END]]
 

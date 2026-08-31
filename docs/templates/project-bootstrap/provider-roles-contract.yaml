@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]]
@@ -42,6 +43,63 @@ responsibility_areas:
     expectation: "Reproduce defects, test by risk, and never treat partial evidence as readiness."
   - name: "leadership"
     expectation: "Coordinate dependencies and dissent under owner intent and deterministic policy."
+
+allocation_and_selection:
+  enforced_ledger: "accepted_productive_work"
+  accepted_productive_work_percent:
+    external_openai_codex: 25
+    claude: 25
+    cursor: 20
+    gemini_antigravity: 15
+    grok: 11
+    perplexity: 4
+  historical_overall_effort_percent:
+    claude: 36
+    cursor: 20
+    grok: 20
+    openai: 8
+    gemini_antigravity: 11
+    perplexity: 5
+  historical_overall_effort_status: "non_enforced_reporting_only"
+  normal_tolerance_percentage_points: 3
+  hard_thresholds_percent:
+    external_openai_codex: 30
+    claude: 30
+    cursor: 25
+    gemini_antigravity: 20
+    grok: 16
+    perplexity: 9
+  selection_policy: "cheap_capable_model_first"
+  selection_order:
+    - "exact scope, allowlists, transport, and readiness"
+    - "task capability, tools, context, risk, and reviewer independence"
+    - "accepted-productive-work allocation compliance and under-target preference"
+    - "lowest trusted comparable estimated cost"
+    - "deterministic tie-breaker"
+  missing_cost_rule: "Unknown cost is never treated as zero or automatically cheapest."
+  claude_requirement_rule: "An exact trusted assignment requirement may select Claude or a named model profile; workload length alone does not."
+  provider_output_may_expand_eligibility: false
+  selection_record_requires:
+    - "eligible candidate set"
+    - "exclusion reasons"
+    - "trusted comparable costs"
+    - "selected provider and model"
+    - "deterministic tie-break reason"
+  value_and_waste:
+    accepted_productive_unit: "authenticated accepted direct-production effort point"
+    estimated_roi: "accepted productive units divided by recorded estimated cost"
+    provider_reported_cost_roi: "only when correlated provider-reported cost exists; never invent or blend missing telemetry"
+    first_pass_yield: "accepted primary-attempt results divided by primary attempts"
+    correction_rate: "reviewable candidates requiring correction divided by reviewable candidates"
+    waste_unit: "invoked effort without accepted productive credit"
+    waste_categories:
+      - "rejected or unusable output"
+      - "quota or unavailable invocation"
+      - "duplicate dispatch"
+      - "duplicate validation"
+      - "recovery attempt"
+      - "ambiguous dispatch"
+      - "rejected supplemental-review finding"
 
 providers:
 
@@ -246,6 +304,19 @@ providers:
       deterministic_gates: "Exact-SHA review, trusted checks, budgets, allowlists, and approval gates remain mandatory where configured."
       assignment_target: "OpenAI is never emitted as a specialist assignment target; its external production share is separately owner-authorized."
 
+supplemental_reviewers:
+  github_copilot_lite:
+    provider_or_committee_member: false
+    workload_percentage: null
+    trigger: "one requested run after required checks are green and the exact candidate is frozen"
+    automatic_every_push: false
+    gating: false
+    authority_granted: []
+    unavailable_or_quota_failure: "record as waste and continue without an inferred verdict"
+    finding_rule: "independently validate; a confirmed underlying defect follows normal gates, while a rejected finding is waste"
+    candidate_change_rule: "invalidate the observation without an automatic rerun"
+    material_authorship_rule: "A substantive Copilot-authored fix makes Copilot a material author ineligible for independent review or acceptance of that candidate."
+
 # Requirement of this template, restated so a reader cannot infer more from it.
 this_template_does_not_change:
   - "committee voting weights or the immutable denominator"
@@ -269,3 +340,4 @@ project_local_bindings:
 # [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]]

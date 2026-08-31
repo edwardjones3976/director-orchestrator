@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:23 UTC | BEGIN]]
@@ -435,7 +436,10 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             "Director and separately authorized production lane | OpenAI/Codex | 25% | 8%",
         ):
             self.assertIn(expected, charter)
-        self.assertIn("Maintain two distinct ledgers", prompt)
+        self.assertIn("Enforce one accepted-productive-work allocation", prompt)
+        self.assertIn("historical non-enforced reporting only", prompt)
+        self.assertIn("cheapest capable trusted model first", prompt)
+        self.assertIn("GitHub Copilot Lite", prompt)
         self.assertIn("canonical matching UTC contribution", prompt)
         self.assertIn("never authenticate provider", charter.lower())
 
@@ -1196,3 +1200,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]

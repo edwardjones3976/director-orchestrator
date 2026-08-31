@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
@@ -10,7 +11,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=71af6d650239331d78c55368c3fc8f0eb5cca9a3470b629d0d8f8f9516dea5e3 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=a942e1da0850ce265b71301a3a065ae2e7a5fcb72215dd3807cc9a3da748d996 -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -55,21 +56,23 @@ report or submission envelope.
 - **Selected modules:** <active modules>
 - **Team routing:** <providers, roles, and discovered workflow skills>
 - **Provider roles contract:** <path to the project's `provider-roles-contract.yaml`, or none; it records the eight responsibility areas and the Cursor, Antigravity, Perplexity, and OpenAI boundaries>
-- **Director/control plane:** <OpenAI Director duties; never a specialist assignment target; counted in overall effort but separate from its external 25% direct-production share>
-- **Direct-production routing:** <Claude 25%, Cursor 20%, Grok 11%, Gemini/Antigravity 15%, Perplexity 4%, separately owner-authorized external Codex/OpenAI 25%; target, accepted actual, deviation, and rationale>
-- **Overall-effort routing:** <Claude 36%, Cursor 20%, Grok 20%, OpenAI 8%, Antigravity 11%, Perplexity 5%; assignment and rolling-20 target, actual immutable effort points, deviation, and rationale>
-- **Workload enforcement:** <±3-point normal tolerance; Claude/Cursor/Grok/OpenAI/Gemini/Perplexity hard thresholds 45/25/25/13/16/10; separate primary caps Claude 45 and Cursor/Grok/OpenAI 27; automatic correction or exact blocked/reshaped state; no OpenAI exception>
+- **Director/control plane:** <OpenAI Director duties; never a specialist assignment target; recorded in historical overall effort but separate from its external 25% accepted-productive-work share>
+- **Enforced accepted-productive-work routing:** <external OpenAI/Codex 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, Perplexity 4%; assignment and rolling-20 target, accepted actual, deviation, rationale, and automatic correction>
+- **Historical overall effort:** <Claude 36%, Cursor 20%, Grok 20%, OpenAI 8%, Antigravity 11%, Perplexity 5%; non-enforced assignment and rolling-20 actual immutable effort points and context only>
+- **Workload enforcement:** <±3-point normal tolerance; external OpenAI/Claude/Cursor/Gemini/Grok/Perplexity direct hard thresholds 30/30/25/20/16/9; automatic correction or exact blocked/reshaped state; confirmation that historical overall effort did not route or block>
 - **External OpenAI production:** <none, or exact owner authorization, authenticated candidate identity, different-provider exact-candidate review, and current security/CI/merge evidence>
 - **Team-first routing:** <distinct provider roles, one writer lease per file/error surface, rotating different non-author reviewer, or exact truly-simple local OpenAI exception>
-- **Claude coding lane:** <all medium/long programming assigned to Claude with exact `model_label: FABLE 5 ULTRA/MAX`, or exact blocked/reshaped state>
+- **Cheap-capable selection:** <eligible candidates and exclusions; exact scope/allowlists, transport/readiness, capability/tools/context/risk/independence; under-target preference; trusted comparable costs; selected provider/model; deterministic tie-break reason; exact trusted Claude/model requirement or none>
 - **Pre-stage packet:** <workload_policy_version, packet ID, canonical digest, immutable revision/delta, exact repo/worktree/branch/base/candidate identity, producer/reviewer, owned/prohibited paths, evidence, limits, merge/stopping conditions>
 - **Research evidence:** <external_sources / user_reviews / competitor_solutions selected and why public research is or is not material>
 - **Repository oversight:** <read-only paths, refs, diffs, artifacts, checks, and state inspected; separate write assignment or none>
 - **Starting identity:** <starting ref and SHA; starting artifact/config digests>
 - **Current identity:** <current ref and SHA; current artifact/config digests>
 - **Coordination capacity:** <95% productive / 5% reserve used for checks, drift, evidence, recovery, process, or infrastructure; reserve is not planned idle>
-- **Workload:** <both ledgers, immutable effort-point basis, assignment and rolling-20 windows, failed-attempt treatment, actual versus target deviation, and rationale>
+- **Workload:** <sole enforced accepted-productive-work ledger, historical non-enforced overall-effort ledger, immutable effort-point basis, assignment and rolling-20 windows, failed-attempt treatment, actual versus target deviation, and rationale>
 - **Efficiency targets:** <80% fewer unchanged status checks, 70% less duplicate validation, 60% fewer total task actions, browser use reported with no reduction target, ordinary review-to-merge at most five major actions>
+- **ROI and waste:** <accepted productive units; historical effort; estimated ROI; correlated provider-reported-cost ROI or unavailable; first-pass yield; correction rate; duplicate validation; rejected/unusable, quota/unavailable, duplicate, recovery, ambiguous, and rejected-hygiene-finding waste>
+- **Copilot Lite hygiene:** <not requested, one post-green/post-freeze observation with exact candidate, unavailable/quota waste, validated/rejected findings, invalidated by change, or substantive material authorship; never a percentage, gate, authority, or independent acceptance>
 - **Shadow/enforcement mode:** <five-assignment observe-only shadow result or automatic enforcement state; would-route/would-block/would-correct evidence and drift correction>
 - **Avoidable commit trend:** <rolling comparable baseline window/sample and count/rate; current count/rate; absolute and percentage delta toward 33%; exclusions and comparability changes>
 - **Coordination:** <slack channel ID or configured placeholder and thread>
@@ -106,6 +109,8 @@ report or submission envelope.
 - **Debate integrity:** <neutral framing, independent positions, appropriate alternative or none, counter-bias check, actual participants/abstentions/unavailable members, and retained dissent, or not applicable>
 - **Risks and confidence:** <unresolved risks, limitations, blockers, uncertainty, and calibrated confidence>
 - **Usage:** <cost, input/output/cached/reasoning tokens when available, elapsed time, retries, and explicitly unavailable telemetry>
+- **Selection evidence:** <eligible candidate set, exclusions, trusted comparable cost evidence, selected provider/model, tie-break reason, and confirmation missing cost was not treated as zero>
+- **Value evidence:** <accepted productive units, estimated ROI, correlated reported-cost ROI or unavailable, first-pass yield, correction rate, and categorized waste>
 - **Retry discipline:** <one primary attempt; one transient recovery attempt if eligible; third attempt's different transport/new information; unavailable/fallback state; ambiguous paid dispatch not repeated>
 - **Status checks:** <event/callback sources, initial read, terminal verification, deduplicated unchanged reads, and reduction from comparable baseline>
 - **Validation reuse:** <candidate/check/environment/command digest, reused evidence, reruns and exact state change/ambiguity/named gap, reduction from baseline>
@@ -139,3 +144,4 @@ published, enabled, or otherwise changed>.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->

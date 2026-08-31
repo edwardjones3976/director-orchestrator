@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
@@ -7,16 +9,19 @@
 
 This module is deliberately self-contained and side-effect free.  It records the
 owner-approved workload percentages, validates prospective routing against a
-rolling assignment window, and returns explicit shadow or enforced decisions.
+rolling accepted-production window, and returns explicit shadow or enforced
+decisions.
 It never dispatches a provider, spends budget, changes a repository, or treats a
 model-generated suggestion as policy authority.
 
 Two percentage ledgers are intentionally separate:
 
 * ``overall_targets`` covers all provider effort, including direction, review,
-  research, validation, and implementation.
-* ``direct_production_targets`` covers accepted production output only.  The
-  external OpenAI lane is distinct from OpenAI's overall control-plane work.
+  research, validation, and implementation. It is retained for historical
+  reporting only and never authorizes or blocks dispatch.
+* ``direct_production_targets`` is the sole workload-allocation blocker and
+  covers authenticated, Director-accepted production output only. The external
+  OpenAI lane is distinct from OpenAI's overall control-plane work.
 
 Keeping the ledgers typed separately prevents the 36 percent overall Claude
 target from being confused with the 25 percent direct-production target.
@@ -126,26 +131,6 @@ class DirectProductionTarget:
         _validate_percent(self.percent, "direct-production target")
 
 
-@dataclass(frozen=True)
-class PrimaryCap:
-    provider: Provider
-    percent: int
-
-    def __post_init__(self) -> None:
-        _validate_percent(self.percent, "primary cap")
-
-
-@dataclass(frozen=True)
-class HardThreshold:
-    """Provider-wide target overage threshold for a rolling window."""
-
-    provider: Provider
-    percent: int
-
-    def __post_init__(self) -> None:
-        _validate_percent(self.percent, "hard threshold")
-
-
 def _validate_percent(value: int, label: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise WorkloadPolicyError(f"{label} must be an integer percentage")
@@ -171,23 +156,6 @@ DIRECT_PRODUCTION_TARGETS: tuple[DirectProductionTarget, ...] = (
     DirectProductionTarget(DirectProductionProvider.EXTERNAL_OPENAI, 25),
 )
 
-PRIMARY_CAPS: tuple[PrimaryCap, ...] = (
-    PrimaryCap(Provider.CLAUDE, 45),
-    PrimaryCap(Provider.CURSOR, 27),
-    PrimaryCap(Provider.GROK, 27),
-    PrimaryCap(Provider.OPENAI, 27),
-)
-
-HARD_THRESHOLDS: tuple[HardThreshold, ...] = (
-    # Claude's owner-approved special threshold replaces the ordinary 36 + 5.
-    HardThreshold(Provider.CLAUDE, 45),
-    HardThreshold(Provider.CURSOR, 25),
-    HardThreshold(Provider.GROK, 25),
-    HardThreshold(Provider.OPENAI, 13),
-    HardThreshold(Provider.GEMINI, 16),
-    HardThreshold(Provider.PERPLEXITY, 10),
-)
-
 PRIMARY_PROVIDERS: frozenset[Provider] = frozenset(
     {Provider.CLAUDE, Provider.CURSOR, Provider.GROK, Provider.OPENAI}
 )
@@ -209,9 +177,8 @@ class WorkloadPolicy:
     direct_production_targets: tuple[DirectProductionTarget, ...] = (
         DIRECT_PRODUCTION_TARGETS
     )
-    hard_thresholds: tuple[HardThreshold, ...] = HARD_THRESHOLDS
-    primary_caps: tuple[PrimaryCap, ...] = PRIMARY_CAPS
     rolling_window_size: int = 20
+    direct_production_soft_tolerance_points: int = 3
     direct_production_hard_overage_points: int = 5
     claude_model_floor: str = FABLE_MODEL_FLOOR
     approved_claude_model_labels: tuple[str, ...] = (FABLE_MODEL_FLOOR,)
@@ -231,8 +198,6 @@ class WorkloadPolicy:
         for name in (
             "overall_targets",
             "direct_production_targets",
-            "hard_thresholds",
-            "primary_caps",
             "approved_claude_model_labels",
             "enabled_transports",
             "transport_priority",
@@ -280,41 +245,13 @@ class WorkloadPolicy:
                 "direct-production targets do not match owner policy"
             )
 
-        _validate_complete_targets(
-            self.hard_thresholds,
-            expected=frozenset(Provider),
-            label="hard thresholds",
-        )
-        if {
-            threshold.provider: threshold.percent
-            for threshold in self.hard_thresholds
-        } != {
-            Provider.CLAUDE: 45,
-            Provider.CURSOR: 25,
-            Provider.GROK: 25,
-            Provider.OPENAI: 13,
-            Provider.GEMINI: 16,
-            Provider.PERPLEXITY: 10,
-        }:
-            raise WorkloadPolicyError("hard thresholds do not match owner policy")
-
-        _validate_complete_targets(
-            self.primary_caps,
-            expected=PRIMARY_PROVIDERS,
-            label="primary caps",
-        )
-        cap_map = {cap.provider: cap.percent for cap in self.primary_caps}
-        if cap_map[Provider.CLAUDE] != 45:
-            raise WorkloadPolicyError("Claude's rolling primary cap must be 45 percent")
-        for provider in (Provider.CURSOR, Provider.GROK, Provider.OPENAI):
-            if cap_map[provider] != 27:
-                raise WorkloadPolicyError(
-                    f"{provider.value} rolling primary cap must be 27 percent; only Claude may exceed it"
-                )
-
         _positive_int(self.rolling_window_size, "rolling window size")
         if self.rolling_window_size != 20:
             raise WorkloadPolicyError("rolling window size must be 20 assignments")
+        if self.direct_production_soft_tolerance_points != 3:
+            raise WorkloadPolicyError(
+                "direct-production soft tolerance must remain plus or minus 3 points"
+            )
         if self.direct_production_hard_overage_points != 5:
             raise WorkloadPolicyError(
                 "direct-production hard overage must remain target plus 5 points"
@@ -393,14 +330,16 @@ class WorkloadPolicy:
             + self.direct_production_hard_overage_points,
         )
 
-    def primary_cap(self, provider: Provider) -> int | None:
-        for cap in self.primary_caps:
-            if cap.provider is provider:
-                return cap.percent
-        return None
+    def direct_production_soft_band(
+        self, provider: DirectProductionProvider
+    ) -> tuple[int, int]:
+        """Return the report/routing band around a direct-production target."""
 
-    def hard_threshold(self, provider: Provider) -> int:
-        return _lookup_percent(self.hard_thresholds, provider)
+        target = self.direct_production_target(provider)
+        return (
+            max(0, target - self.direct_production_soft_tolerance_points),
+            min(100, target + self.direct_production_soft_tolerance_points),
+        )
 
     def transport_rank(self, transport: Transport) -> int:
         """Return a zero-based priority rank; browser is enabled but last."""
@@ -552,6 +491,24 @@ def is_direct_production_kind(kind: WorkKind) -> bool:
     return kind is WorkKind.IMPLEMENTATION
 
 
+def is_accepted_productive_kind(provider: Provider, kind: WorkKind) -> bool:
+    """Return whether accepted work may enter the productive-work ledger.
+
+    Implementation remains productive work for repository-capable providers.
+    Perplexity's narrow, authenticated public-research product is the sole
+    non-code exception; this does not grant Perplexity programming, review,
+    voting, merge, Slack, or operational authority.
+    """
+
+    if not isinstance(provider, Provider) or not isinstance(kind, WorkKind):
+        raise WorkloadPolicyError(
+            "accepted productive-work classification requires typed provider and kind"
+        )
+    return is_direct_production_kind(kind) or (
+        provider is Provider.PERPLEXITY and kind is WorkKind.RESEARCH
+    )
+
+
 @dataclass(frozen=True)
 class AssignmentRequest:
     assignment_id: str
@@ -575,6 +532,227 @@ class AssignmentRequest:
         _positive_int(self.effort_units, "assignment effort units")
 
 
+@dataclass(frozen=True)
+class TrustedProviderProfile:
+    """Owner/system-authored routing facts; never populate this from model output.
+
+    ``trusted_cost_rank`` is an ordinal supplied by authenticated configuration;
+    lower values are cheaper. It is deliberately not a model-proposed dollar
+    estimate, and equal ranks are resolved by the stable provider identifier.
+    """
+
+    provider: Provider
+    supported_work_kinds: frozenset[WorkKind]
+    trusted_cost_rank: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.provider, Provider):
+            raise WorkloadPolicyError(
+                "trusted provider profile provider must be a Provider"
+            )
+        try:
+            supported = frozenset(self.supported_work_kinds)
+        except TypeError as exc:
+            raise WorkloadPolicyError(
+                "trusted provider capabilities must be an iterable of WorkKind values"
+            ) from exc
+        if not supported or any(
+            not isinstance(kind, WorkKind) for kind in supported
+        ):
+            raise WorkloadPolicyError(
+                "trusted provider capabilities must be a non-empty set of WorkKind values"
+            )
+        if (
+            isinstance(self.trusted_cost_rank, bool)
+            or not isinstance(self.trusted_cost_rank, int)
+            or self.trusted_cost_rank < 0
+        ):
+            raise WorkloadPolicyError(
+                "trusted provider cost rank must be a non-negative integer"
+            )
+        object.__setattr__(self, "supported_work_kinds", supported)
+
+
+def _validated_provider_set(
+    values: frozenset[Provider], *, label: str
+) -> frozenset[Provider]:
+    providers = frozenset(values)
+    if any(not isinstance(provider, Provider) for provider in providers):
+        raise WorkloadPolicyError(f"{label} must contain only Provider values")
+    return providers
+
+
+def _direct_candidate_routing_rank(
+    *,
+    assignment_id: str,
+    provider: Provider,
+    kind: WorkKind,
+    effort_units: int,
+    history: tuple[DirectProductionRecord, ...],
+    policy: WorkloadPolicy,
+) -> int | None:
+    """Return the soft-allocation tier, or ``None`` when the hard cap blocks."""
+
+    if not is_accepted_productive_kind(provider, kind):
+        return 1
+    direct_provider = direct_production_provider(provider)
+    if direct_provider is None:
+        return None
+    prior = history[-(policy.rolling_window_size - 1) :]
+    if any(record.assignment_id == assignment_id for record in prior):
+        raise WorkloadPolicyError(
+            "trusted provider selection assignment id collides with direct history"
+        )
+    window = prior + (
+        DirectProductionRecord(
+            assignment_id=assignment_id,
+            provider=direct_provider,
+            effort_units=effort_units,
+        ),
+    )
+    total_units = sum(record.effort_units for record in window)
+    provider_units = sum(
+        record.effort_units
+        for record in window
+        if record.provider is direct_provider
+    )
+    if (
+        len(window) == policy.rolling_window_size
+        and provider_units * 100
+        > policy.direct_production_hard_threshold(direct_provider) * total_units
+    ):
+        return None
+
+    soft_floor, soft_ceiling = policy.direct_production_soft_band(direct_provider)
+    if provider_units * 100 < soft_floor * total_units:
+        return 0
+    if provider_units * 100 > soft_ceiling * total_units:
+        return 2
+    return 1
+
+
+def select_cheapest_capable_provider(
+    *,
+    assignment_id: str,
+    kind: WorkKind,
+    effort_units: int,
+    trusted_profiles: Sequence[TrustedProviderProfile],
+    ready_providers: frozenset[Provider],
+    in_scope_providers: frozenset[Provider],
+    reviewer_independent_providers: frozenset[Provider],
+    direct_production_history: Sequence[DirectProductionRecord] = (),
+    explicit_required_provider: Provider | None = None,
+    policy: WorkloadPolicy = DEFAULT_POLICY,
+) -> Provider:
+    """Select deterministically from trusted facts without rewriting an assignment.
+
+    A trusted explicit provider requirement wins only after capability, readiness,
+    scope, reviewer-independence, and direct hard-limit checks. Otherwise direct
+    providers below the target-minus-three soft band are preferred, followed by
+    providers inside the band, then providers above target-plus-three; trusted
+    cost rank and provider id break ties. Missing trusted facts fail closed.
+
+    Callers must construct every profile and provider set from authenticated
+    configuration/runtime evidence. Model-authored capability, cost, availability,
+    scope, reviewer-binding, or explicit-provider claims are not valid inputs.
+    """
+
+    if not isinstance(assignment_id, str) or not assignment_id.strip():
+        raise WorkloadPolicyError(
+            "trusted provider selection assignment id must be a non-empty string"
+        )
+    if not isinstance(kind, WorkKind):
+        raise WorkloadPolicyError(
+            "trusted provider selection kind must be a WorkKind"
+        )
+    _positive_int(effort_units, "trusted provider selection effort units")
+    profiles = tuple(trusted_profiles)
+    if not profiles or any(
+        not isinstance(profile, TrustedProviderProfile) for profile in profiles
+    ):
+        raise WorkloadPolicyError(
+            "trusted provider profiles are required for provider selection"
+        )
+    profile_providers = [profile.provider for profile in profiles]
+    if len(profile_providers) != len(set(profile_providers)):
+        raise WorkloadPolicyError("trusted provider profiles must be unique")
+    ready = _validated_provider_set(ready_providers, label="ready providers")
+    in_scope = _validated_provider_set(
+        in_scope_providers, label="in-scope providers"
+    )
+    reviewer_independent = _validated_provider_set(
+        reviewer_independent_providers,
+        label="reviewer-independent providers",
+    )
+    direct_history = tuple(direct_production_history)
+    if any(
+        not isinstance(record, DirectProductionRecord) for record in direct_history
+    ):
+        raise WorkloadPolicyError(
+            "direct-production history must contain only DirectProductionRecord values"
+        )
+    direct_assignment_ids = [record.assignment_id for record in direct_history]
+    if len(direct_assignment_ids) != len(set(direct_assignment_ids)):
+        raise WorkloadPolicyError(
+            "trusted provider selection requires unique direct-production credit ids"
+        )
+    if explicit_required_provider is not None and not isinstance(
+        explicit_required_provider, Provider
+    ):
+        raise WorkloadPolicyError(
+            "trusted explicit provider requirement must be absent or a Provider"
+        )
+
+    ranked: list[tuple[int, int, str, Provider]] = []
+    for profile in profiles:
+        provider = profile.provider
+        if kind not in profile.supported_work_kinds:
+            continue
+        if provider not in ready or provider not in in_scope:
+            continue
+        if kind is WorkKind.REVIEW and provider not in reviewer_independent:
+            continue
+        if kind is WorkKind.IMPLEMENTATION and not any(
+            candidate.provider is not provider
+            and WorkKind.REVIEW in candidate.supported_work_kinds
+            and candidate.provider in ready
+            and candidate.provider in reviewer_independent
+            for candidate in profiles
+        ):
+            continue
+        direct_rank = _direct_candidate_routing_rank(
+            assignment_id=assignment_id,
+            provider=provider,
+            kind=kind,
+            effort_units=effort_units,
+            history=direct_history,
+            policy=policy,
+        )
+        if direct_rank is None:
+            continue
+        ranked.append(
+            (
+                direct_rank,
+                profile.trusted_cost_rank,
+                provider.value,
+                provider,
+            )
+        )
+
+    if explicit_required_provider is not None:
+        for _direct_rank, _cost_rank, _provider_id, provider in ranked:
+            if provider is explicit_required_provider:
+                return provider
+        raise WorkloadPolicyError(
+            "trusted explicit provider requirement is not eligible for this assignment"
+        )
+    if not ranked:
+        raise WorkloadPolicyError(
+            "no trusted capable, ready, in-scope, independent, allocation-eligible provider"
+        )
+    return min(ranked)[-1]
+
+
 def evaluate_assignment(
     request: AssignmentRequest,
     *,
@@ -587,16 +765,23 @@ def evaluate_assignment(
 ) -> DecisionResult:
     """Evaluate a prospective assignment without dispatching it.
 
-    The rolling cap uses effort-weighted shares across the candidate plus the
-    previous 19 assignments.  It activates only when a complete 20-assignment
-    window exists, avoiding mathematically meaningless first-assignment caps.
+    Overall-effort history remains visible as advisory reporting only. The sole
+    workload-allocation blocker uses effort-weighted authenticated accepted
+    production across the candidate plus the previous 19 accepted credits. Its
+    hard cap activates only when a complete 20-credit window exists.
     """
 
     if not isinstance(mode, EnforcementMode):
         raise WorkloadPolicyError("mode must be an EnforcementMode")
-    records = tuple(history)
-    if any(not isinstance(record, WorkloadRecord) for record in records):
-        raise WorkloadPolicyError("history must contain only WorkloadRecord values")
+    reported_records = tuple(history)
+    overall_history_invalid = any(
+        not isinstance(record, WorkloadRecord) for record in reported_records
+    )
+    records = tuple(
+        record
+        for record in reported_records
+        if isinstance(record, WorkloadRecord)
+    )
     direct_records = tuple(direct_production_history)
     if any(
         not isinstance(record, DirectProductionRecord)
@@ -636,19 +821,27 @@ def evaluate_assignment(
             violations.append("degraded_primary_availability_requires_owner_decision")
         else:
             advisories.append(
-                f"primary_ceiling_active_with_other_providers:{len(other_available)}"
+                f"primary_team_alternatives_available:{len(other_available)}"
             )
-    if request.kind is WorkKind.IMPLEMENTATION and request.size in {
-        WorkSize.MEDIUM,
-        WorkSize.LONG,
-    }:
-        if request.provider is not Provider.CLAUDE:
-            violations.append("medium_long_implementation_requires_claude")
+    if (
+        request.provider is Provider.CLAUDE
+        and request.kind is WorkKind.IMPLEMENTATION
+        and request.size in {
+            WorkSize.MEDIUM,
+            WorkSize.LONG,
+        }
+    ):
         if request.model_label not in policy.approved_claude_model_labels:
             violations.append(
-                f"medium_long_implementation_requires_model_floor:{policy.claude_model_floor}"
+                "claude_medium_long_implementation_requires_model_floor:"
+                f"{policy.claude_model_floor}"
             )
 
+    # Overall effort is historical reporting only. Invalid reporting identity is
+    # surfaced as an advisory; it cannot create or remove dispatch authority.
+    advisories.append("overall_effort_history_report_only")
+    if overall_history_invalid:
+        advisories.append("overall_effort_history_invalid_records_ignored")
     prior = records[-(policy.rolling_window_size - 1) :]
     candidate = WorkloadRecord(
         assignment_id=request.assignment_id,
@@ -658,7 +851,7 @@ def evaluate_assignment(
     window = prior + (candidate,)
     ids = [record.assignment_id for record in window]
     if len(ids) != len(set(ids)):
-        violations.append("rolling_window_assignment_ids_not_unique")
+        advisories.append("overall_effort_assignment_ids_not_unique")
 
     if len(window) < policy.rolling_window_size:
         advisories.append(
@@ -675,37 +868,10 @@ def evaluate_assignment(
             "prospective_rolling_share:"
             f"{request.provider.value}:{requested_provider_units}/{total_units}"
         )
-        # Check the complete window, not only the final provider. During warm-up
-        # no provider has yet been measured against a complete window, and the
-        # model controls which provider appears in the twentieth position.
-        for provider in Provider:
-            provider_units = sum(
-                record.effort_units
-                for record in window
-                if record.provider is provider
-            )
-            if provider_units == 0:
-                continue
-            hard_threshold = policy.hard_threshold(provider)
-            if provider_units * 100 > hard_threshold * total_units:
-                violations.append(
-                    "overall_hard_threshold_exceeded:"
-                    f"{provider.value}:{hard_threshold}"
-                )
-            # The absolute primary ceiling remains active even in degraded mode;
-            # the availability violation above prevents fallback from bypassing it.
-            absolute_cap = policy.primary_cap(provider)
-            if (
-                absolute_cap is not None
-                and provider_units * 100 > absolute_cap * total_units
-            ):
-                violations.append(
-                    "absolute_primary_ceiling_exceeded:"
-                    f"{provider.value}:{absolute_cap}"
-                )
-
     direct_provider = direct_production_provider(request.provider)
-    if direct_provider is not None and is_direct_production_kind(request.kind):
+    if direct_provider is not None and is_accepted_productive_kind(
+        request.provider, request.kind
+    ):
         direct_prior = direct_records[-(policy.rolling_window_size - 1) :]
         direct_candidate = DirectProductionRecord(
             assignment_id=(
@@ -735,6 +901,22 @@ def evaluate_assignment(
                 f"{direct_provider.value}:"
                 f"{requested_direct_provider_units}/{direct_total}"
             )
+            soft_floor, soft_ceiling = policy.direct_production_soft_band(
+                direct_provider
+            )
+            if requested_direct_provider_units * 100 < soft_floor * direct_total:
+                advisories.append(
+                    "direct_production_below_soft_band:"
+                    f"{direct_provider.value}:{soft_floor}"
+                )
+            elif (
+                requested_direct_provider_units * 100
+                > soft_ceiling * direct_total
+            ):
+                advisories.append(
+                    "direct_production_above_soft_band:"
+                    f"{direct_provider.value}:{soft_ceiling}"
+                )
             for provider in DirectProductionProvider:
                 provider_units = sum(
                     record.effort_units
@@ -746,9 +928,16 @@ def evaluate_assignment(
                 direct_threshold = policy.direct_production_hard_threshold(
                     provider
                 )
-                if provider_units * 100 > direct_threshold * direct_total:
+                if provider_units * 100 <= direct_threshold * direct_total:
+                    continue
+                if provider is direct_provider:
                     violations.append(
                         "direct_production_hard_threshold_exceeded:"
+                        f"{provider.value}:{direct_threshold}"
+                    )
+                else:
+                    advisories.append(
+                        "direct_production_other_provider_over_hard_threshold:"
                         f"{provider.value}:{direct_threshold}"
                     )
 
@@ -1090,3 +1279,5 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | END]]

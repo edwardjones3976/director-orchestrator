@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | BEGIN]]
@@ -129,9 +130,10 @@ class OpenAIDirector:
             "routing_rules": [
                 "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases.",
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
-                "Use estimated_cost_usd and max_task_budget_usd for the deterministic budget gate. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
+                "Use estimated_cost_usd and max_task_budget_usd for the deterministic task-budget gate only. estimated_cost_usd is model-authored and is never trusted relative-cost evidence for provider selection. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
                 "Treat OpenAI, Claude, Cursor, and Grok as the primary team. Grok is the Cursor-family peer and shares Cursor's full task-eligibility profile.",
-                "Use Claude as the primary coding and general workhorse when configured.",
+                "Never default medium or long work to Claude. For an unbound assignment, accept only the deterministic trusted selector result: an authenticated exact provider requirement has priority, then capability, configured readiness, allowlisted scope, exact-candidate reviewer independence, accepted direct-production allocation at 25/25/20/15/11/4 with a plus-or-minus 3 point soft band and target-plus-5 hard cap, and finally trusted cheapest cost rank. Model-authored cost, capability, readiness, scope, provider requirements, or allocation claims are not routing authority.",
+                "Never silently rewrite a bound provider assignment. If neither an authenticated exact provider requirement nor a trusted deterministic selection is supplied, assign the owner and ask one narrow routing question instead of guessing a cost order or defaulting to Claude.",
                 "Treat Cursor as a full-spectrum primary repository partner with 100 percent task-capability parity relative to Claude and OpenAI Codex. Route low through critical work to Cursor by fit, independence, capacity, and evidence needs; do not reserve it only for overflow or second passes.",
                 "Cursor may handle research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership. It still cannot replace OpenAI acceptance, mandatory Codex Security, or an independent reviewer for its own work.",
                 "Use Gemini Antigravity only as a subordinate supplemental specialist for explicit boilerplate, scaffolding, low-level mechanical implementation, or alternate ideation. Its output is non-authoritative evidence: it cannot create a draft pull request, perform exact-SHA review, final acceptance, or deterministic merge, or define contract or methodology truth. Never route generic prototype, browser, visual, core methodology, temporal eligibility, evaluation, provenance, or acceptance work to it by keyword alone.",
@@ -349,3 +351,4 @@ class OpenAIDirector:
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | END]]

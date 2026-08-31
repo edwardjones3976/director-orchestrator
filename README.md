@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
@@ -12,7 +14,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=71af6d650239331d78c55368c3fc8f0eb5cca9a3470b629d0d8f8f9516dea5e3 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=a942e1da0850ce265b71301a3a065ae2e7a5fcb72215dd3807cc9a3da748d996 -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -25,9 +27,10 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - Deterministic approval gates that model output cannot remove.
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
 - An OpenAI Director planner/reviewer using Structured Outputs.
-- A primary OpenAI–Claude–Cursor–Grok team, with Claude as the mandatory medium/long-form programming lane and Gemini/Antigravity and Perplexity retained as supplemental specialists.
-- Separate effort ledgers: overall effort targets of Claude 36%, Cursor 20%, Grok 20%, OpenAI 8%, Antigravity 11%, and Perplexity 5%; direct-production targets of Claude 25%, Cursor 20%, Grok 11%, Gemini/Antigravity 15%, Perplexity 4%, and a 25% separately owner-authorized external Codex/OpenAI lane.
-- Default-on deterministic workload enforcement, an immutable pre-stage packet, rolling 20-assignment drift control, and a five-action ordinary review-to-merge ceiling.
+- A primary OpenAI–Claude–Cursor–Grok team selected through a cheap-capable-model-first policy, with Gemini/Antigravity and Perplexity retained as bounded supplemental specialists.
+- One enforced accepted-productive-work allocation: external OpenAI/Codex 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%. The earlier overall-effort split of Claude 36%, Cursor 20%, Grok 20%, OpenAI 8%, Antigravity 11%, and Perplexity 5% remains historical, non-enforced reporting only.
+- Default-on deterministic accepted-productive-work enforcement, an immutable pre-stage packet, rolling 20-assignment drift control, cheap-capable-model selection, and a five-action ordinary review-to-merge ceiling.
+- An optional one-time GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It carries no workload percentage, gate, authority, or every-push trigger.
 - Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
 - Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
@@ -84,6 +87,18 @@ The 5% coordination reserve covers checks, drift, evidence gaps, recovery,
 process failures, and infrastructure variance; it is not planned idle time. The
 33% avoidable micro/fixup reduction is measured against a rolling comparable
 baseline with the baseline, current result, delta, exclusions, and window recorded.
+Provider selection records the eligible candidate set, exclusions, trusted comparable
+costs, selected provider/model, and deterministic tie-break reason. Routing first
+requires scope, capability, readiness, risk, and reviewer independence, then prefers
+an under-target eligible option and the lowest trusted estimated cost. Missing cost
+telemetry is unknown, never zero. Paid routing therefore requires an operator-supplied
+`TRUSTED_PROVIDER_COST_RANKS` JSON object with one unique positive rank for every
+configured ready specialist; lower ranks are cheaper, and there is no default order.
+Reports distinguish accepted productive units from
+historical effort and categorize rejected, unusable, quota-blocked, duplicate,
+recovery, and ambiguous work as waste. They report estimated ROI, provider-reported
+cost ROI only when correlated cost exists, first-pass yield, correction rate, and
+duplicate-validation waste without inventing telemetry.
 Milestone records include project/assignment IDs; starting/current SHA or digest;
 categorized status; authenticated participation; workload deviation; OpenAI
 functions and dissent; tests, CI, security, and review; risks; cost/tokens/time;
@@ -248,3 +263,5 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->

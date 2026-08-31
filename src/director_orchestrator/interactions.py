@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | BEGIN]]
@@ -180,6 +181,32 @@ def _canonical_digest(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def acceptance_review_candidate_digest(
+    *,
+    task_id: str,
+    plan_generation: int,
+    assignment_sequence: int,
+    provider: InteractionProvider | str,
+    provider_run_id: str,
+    provider_event_digest: str,
+    provider_result_digest: str,
+) -> str:
+    """Bind one acceptance review to the exact provider candidate it reviewed."""
+
+    return _canonical_digest(
+        {
+            "binding_version": "v1",
+            "task_id": task_id,
+            "plan_generation": plan_generation,
+            "assignment_sequence": assignment_sequence,
+            "provider": InteractionProvider(provider).value,
+            "provider_run_id_digest": canonical_identifier_digest(provider_run_id),
+            "provider_event_digest": provider_event_digest,
+            "provider_result_digest": provider_result_digest,
+        }
+    )
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("interaction evidence timestamps must be timezone-aware")
@@ -299,7 +326,7 @@ class ProviderInteractionEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    event_version: str = Field(default="v1", pattern=r"^v1$")
+    event_version: Literal["v1", "v2"] = "v2"
     task_id: str = Field(min_length=1, max_length=255)
     interaction_id: str = Field(min_length=1, max_length=255)
     plan_generation: int = Field(ge=0)
@@ -311,6 +338,13 @@ class ProviderInteractionEvent(BaseModel):
     transition_ordinal: int = Field(ge=1)
     effect_key: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     previous_event_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    candidate_binding_digest: str | None = Field(
+        default=None, pattern=_DIGEST_PATTERN
+    )
+    request_payload_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    consumed_artifact_digests: tuple[str, ...] = Field(
+        default_factory=tuple, max_length=20
+    )
     transport_evidence: ProviderTransportEvidence
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_digest: str = Field(pattern=_DIGEST_PATTERN)
@@ -320,8 +354,55 @@ class ProviderInteractionEvent(BaseModel):
     def normalize_recorded_at(cls, value: datetime) -> datetime:
         return _utc(value)
 
+    @field_validator("consumed_artifact_digests", mode="before")
+    @classmethod
+    def normalize_consumed_artifact_digests(cls, value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        normalized = tuple(sorted(set(str(item) for item in value)))
+        if any(
+            len(item) != 64
+            or item.lower() != item
+            or any(character not in "0123456789abcdef" for character in item)
+            for item in normalized
+        ):
+            raise ValueError("consumed artifact digests must be canonical SHA-256 values")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_candidate_and_request_bindings(self) -> ProviderInteractionEvent:
+        if self.event_version == "v1" and (
+            self.candidate_binding_digest is not None
+            or self.request_payload_digest is not None
+            or self.consumed_artifact_digests
+        ):
+            raise ValueError("v1 interaction events cannot carry v2 request bindings")
+        if (
+            self.candidate_binding_digest is not None
+            and self.phase is not ProviderInteractionPhase.ACCEPTANCE_REVIEW
+        ):
+            raise ValueError("candidate binding is limited to acceptance-review interactions")
+        if self.consumed_artifact_digests:
+            if self.phase not in {
+                ProviderInteractionPhase.DISPATCH,
+                ProviderInteractionPhase.REVISION,
+            }:
+                raise ValueError("artifact consumption is limited to work requests")
+            if self.request_payload_digest is None:
+                raise ValueError("artifact consumption requires an exact request payload digest")
+        return self
+
     def canonical_payload(self) -> dict[str, Any]:
-        return self.model_dump(mode="json", exclude={"event_digest"})
+        excluded = {"event_digest"}
+        if self.event_version == "v1":
+            excluded.update(
+                {
+                    "candidate_binding_digest",
+                    "request_payload_digest",
+                    "consumed_artifact_digests",
+                }
+            )
+        return self.model_dump(mode="json", exclude=excluded)
 
     @model_validator(mode="after")
     def validate_event_digest(self) -> ProviderInteractionEvent:
@@ -358,11 +439,14 @@ def _event_payload(
     transition_ordinal: int,
     effect_key: str | None,
     previous_event_digest: str | None,
+    candidate_binding_digest: str | None,
+    request_payload_digest: str | None,
+    consumed_artifact_digests: tuple[str, ...],
     transport_evidence: ProviderTransportEvidence,
     recorded_at: datetime,
 ) -> dict[str, Any]:
     return {
-        "event_version": "v1",
+        "event_version": "v2",
         "task_id": task_id,
         "interaction_id": interaction_id,
         "plan_generation": plan_generation,
@@ -374,6 +458,9 @@ def _event_payload(
         "transition_ordinal": transition_ordinal,
         "effect_key": effect_key,
         "previous_event_digest": previous_event_digest,
+        "candidate_binding_digest": candidate_binding_digest,
+        "request_payload_digest": request_payload_digest,
+        "consumed_artifact_digests": consumed_artifact_digests,
         "transport_evidence": transport_evidence,
         "recorded_at": _utc(recorded_at),
     }
@@ -399,11 +486,30 @@ def start_interaction(
     attempt: int,
     transport_evidence: ProviderTransportEvidence,
     effect_key: str | None = None,
+    candidate_binding_digest: str | None = None,
+    request_payload: str | bytes | None = None,
+    consumed_artifact_digests: Iterable[str] = (),
     recorded_at: datetime | None = None,
 ) -> ProviderInteractionEvent:
     if transport_evidence.source != TransportEvidenceSource.BACKEND_OBSERVATION:
         raise CommunicationEvidenceFailure(
             "DRAFTED requires backend-observed evidence"
+        )
+    consumed = tuple(sorted(set(consumed_artifact_digests)))
+    encoded_request = (
+        request_payload.encode("utf-8")
+        if isinstance(request_payload, str)
+        else request_payload
+    )
+    if consumed and encoded_request is None:
+        raise CommunicationEvidenceFailure(
+            "artifact consumption requires the exact outbound request payload"
+        )
+    if encoded_request is not None and any(
+        digest.encode("ascii") not in encoded_request for digest in consumed
+    ):
+        raise CommunicationEvidenceFailure(
+            "outbound request does not contain every consumed artifact digest"
         )
     return _build_event(
         **_event_payload(
@@ -418,6 +524,13 @@ def start_interaction(
             transition_ordinal=1,
             effect_key=effect_key,
             previous_event_digest=None,
+            candidate_binding_digest=candidate_binding_digest,
+            request_payload_digest=(
+                canonical_content_digest(encoded_request)
+                if encoded_request is not None
+                else None
+            ),
+            consumed_artifact_digests=consumed,
             transport_evidence=transport_evidence,
             recorded_at=recorded_at or datetime.now(timezone.utc),
         )
@@ -459,6 +572,9 @@ def _validated_events(
             "phase",
             "attempt",
             "effect_key",
+            "candidate_binding_digest",
+            "request_payload_digest",
+            "consumed_artifact_digests",
         ):
             if getattr(event, field) != getattr(previous, field):
                 raise CommunicationEvidenceFailure(
@@ -541,6 +657,9 @@ def transition_interaction(
             transition_ordinal=previous.transition_ordinal + 1,
             effect_key=previous.effect_key,
             previous_event_digest=previous.event_digest,
+            candidate_binding_digest=previous.candidate_binding_digest,
+            request_payload_digest=previous.request_payload_digest,
+            consumed_artifact_digests=previous.consumed_artifact_digests,
             transport_evidence=transport_evidence,
             recorded_at=recorded_at or datetime.now(timezone.utc),
         )
@@ -640,3 +759,4 @@ def require_verified_result(
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:12 UTC | END]]

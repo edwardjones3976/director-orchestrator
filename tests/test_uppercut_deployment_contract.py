@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | BEGIN]]
@@ -37,6 +38,36 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertNotIn('Set-Content ".env"', self.script)
         self.assertNotIn('WriteAllText((Join-Path (Get-Location) ".env")', self.script)
         self.assertIn("SeedProviderCredentialsFromPrimaryEnv", self.script)
+
+    def test_paid_activation_preserves_operator_cost_ranks_and_fails_closed_if_blank(self):
+        self.assertIn('PRIMARY_WORKHORSE = "cheapest_capable"', self.script)
+        self.assertNotIn('PRIMARY_WORKHORSE = "claude"', self.script)
+        self.assertNotRegex(
+            self.script,
+            r'TRUSTED_PROVIDER_COST_RANKS\s*=\s*["\']\{',
+        )
+        paid_guard = self.script.index("if ($EnablePaidRuns) {")
+        required_rank = self.script.index(
+            'Assert-Configured -Values $values -Names @("TRUSTED_PROVIDER_COST_RANKS")',
+            paid_guard,
+        )
+        paid_switch = self.script.index(
+            "Write-ProfileSwitches -PaidRuns $true",
+            required_rank,
+        )
+        self.assertLess(required_rank, paid_switch)
+        for profile_name in (
+            ".env.example",
+            ".env.uppercut.example",
+            ".env.edge-oracle.example",
+            ".env.long-table.example",
+        ):
+            profile = (ROOT / profile_name).read_text(encoding="utf-8")
+            self.assertIn("TRUSTED_PROVIDER_COST_RANKS=", profile)
+            self.assertNotRegex(
+                profile,
+                r"(?m)^TRUSTED_PROVIDER_COST_RANKS=\s*\{",
+            )
 
     def test_legacy_profiles_gain_a_fresh_gateway_secret_without_printing_it(self):
         self.assertIn(
@@ -482,3 +513,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]

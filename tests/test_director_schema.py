@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | BEGIN]]
@@ -322,12 +323,36 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(
-            directive["coding_routing"]["minimum_model_profile"],
-            "FABLE 5 ULTRA/MAX",
+            directive["overall_effort_percent_status"],
+            "historical_non_enforced_reporting_only",
         )
         self.assertEqual(
-            directive["coding_routing"]["required_assignment_model_label"],
-            "FABLE 5 ULTRA/MAX",
+            directive["coding_routing"]["selection_policy"],
+            "cheap_capable_model_first",
+        )
+        self.assertFalse(
+            directive["coding_routing"][
+                "unconditional_claude_medium_or_long_requirement"
+            ]
+        )
+        self.assertEqual(
+            directive["workload_enforcement"]["hard_thresholds_percent"],
+            {
+                "claude": 30,
+                "cursor": 25,
+                "grok": 16,
+                "gemini": 20,
+                "perplexity": 9,
+                "external_openai": 30,
+            },
+        )
+        self.assertFalse(
+            directive["workload_enforcement"]["overall_effort_can_block_or_route"]
+        )
+        self.assertIn("estimated_roi", directive["roi_and_waste"])
+        self.assertFalse(directive["copilot_lite_hygiene_review"]["gating"])
+        self.assertIsNone(
+            directive["copilot_lite_hygiene_review"]["workload_percentage"]
         )
         self.assertTrue(
             directive["pre_staging"]["required_before_provider_dispatch"]
@@ -527,6 +552,65 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("different-provider exact-candidate review", prompt)
         self.assertIn("different-provider exact-candidate review", readme)
         self.assertIn("different-provider exact-candidate review", report)
+
+    def test_balanced_allocation_selection_and_copilot_are_synchronized(self):
+        root = Path(__file__).resolve().parents[1]
+        surfaces = {
+            "charter": root / "docs" / "team-operating-charter.md",
+            "prompt": root / "prompts" / "director-system.md",
+            "readme": root / "README.md",
+            "setup": root / "docs" / "provider-setup.md",
+            "protocol": root / "docs" / "project-bootstrap-protocol.md",
+            "report": root
+            / "docs"
+            / "templates"
+            / "project-bootstrap"
+            / "project-state-report.md",
+            "roles": root
+            / "docs"
+            / "templates"
+            / "project-bootstrap"
+            / "provider-roles-contract.yaml",
+        }
+        content = {
+            name: path.read_text(encoding="utf-8") for name, path in surfaces.items()
+        }
+
+        for name, text in content.items():
+            with self.subTest(surface=name):
+                normalized = " ".join(text.split()).lower()
+                self.assertIn("25", normalized)
+                self.assertIn("20", normalized)
+                self.assertIn("15", normalized)
+                self.assertIn("11", normalized)
+                self.assertIn("4", normalized)
+                self.assertIn("historical", normalized)
+                self.assertIn("non-enforced", normalized.replace("_", "-"))
+                self.assertIn("copilot", normalized)
+                self.assertIn("waste", normalized)
+
+        for name in ("charter", "prompt", "readme", "setup", "protocol", "roles"):
+            with self.subTest(cheap_capable_surface=name):
+                normalized_policy = (
+                    content[name].lower().replace("_", " ").replace("-", " ")
+                )
+                self.assertTrue(
+                    "cheap capable" in normalized_policy
+                    or "cheapest capable" in normalized_policy,
+                    name,
+                )
+
+        directive = team_operating_charter()["director_operating_directive"]
+        self.assertEqual(sum(directive["direct_workload_percent"].values()), 100)
+        self.assertEqual(sum(directive["overall_effort_percent"].values()), 100)
+        self.assertEqual(
+            directive["workload_accounting"]["enforced_ledger"],
+            "direct_production",
+        )
+        self.assertEqual(
+            directive["workload_accounting"]["reported_only_ledger"],
+            "overall_effort",
+        )
 
     def test_antigravity_work_and_debate_boundaries_are_synchronized(self):
         root = Path(__file__).resolve().parents[1]
@@ -1146,3 +1230,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
