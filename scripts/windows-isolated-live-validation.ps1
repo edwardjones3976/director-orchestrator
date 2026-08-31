@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]]
@@ -101,6 +102,15 @@ $selected = $profiles[$ProfileName]
 $displayName = [string]$selected.DisplayName
 $profilePath = [string]$selected.ProfilePath
 $profileTemplate = [string]$selected.ProfileTemplate
+# The Compose project is a fixed identity of the selected profile, never a
+# value read back from the profile file. Deriving it here, before any fallible
+# profile staging or validation, lets the early stop below and every rollback
+# path address the correct stack. Compose resolves the orchestrator env_file
+# from DIRECTOR_ENV_FILE, so bind it to the isolated profile at the same point:
+# without it Compose falls back to the primary .env and cannot load the model
+# to stop anything. The finally block restores the original process value.
+$composeProject = [string]$selected.DIRECTOR_COMPOSE_PROJECT_NAME
+[Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")
 
 function New-RandomSecret {
     $bytes = New-Object byte[] 48
@@ -613,6 +623,36 @@ function Assert-N8nWorkflowPublishCapability {
     }
 }
 
+function Stop-PreviouslyRunningServices {
+    param(
+        [Parameter(Mandatory = $true)][string]$ComposeProject,
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
+        [Parameter(Mandatory = $true)][string[]]$Services
+    )
+
+    # Containers keep the environment they were created with, so closing the
+    # profile switches cannot reach a paid orchestrator or Slack intake that an
+    # earlier activation left running. Stop the named services, then prove that
+    # none of them is still live. A failed stop is never masked by the check and
+    # a live container fails closed before any preflight step can run.
+    $label = $Services -join " and "
+    docker compose --project-name $ComposeProject --env-file $ProfilePath stop $Services
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to stop the previously running $label services of Compose project $ComposeProject before preflight."
+    }
+    $live = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath ps --quiet --status running --status paused --status restarting $Services |
+            ForEach-Object { [string]$_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to verify that the $label services of Compose project $ComposeProject are stopped before preflight."
+    }
+    if ($live.Count -gt 0) {
+        throw "Compose project $ComposeProject still has $($live.Count) live $label container(s) after the stop. No preflight step was started."
+    }
+}
+
 function Initialize-N8nIntakeWorkflow {
     param(
         [Parameter(Mandatory = $true)][string]$ComposeProject,
@@ -686,6 +726,16 @@ if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
     }
     Copy-Item -LiteralPath $profileTemplate -Destination $profilePath
 }
+
+# Every invocation stages the paid gate closed in the profile, but containers
+# started by an earlier activation keep their launch-time environment. Stop the
+# previously running orchestrator and Slack intake, and prove they are stopped,
+# before any profile validation, snapshot check, n8n mutation, image build,
+# store inspection, or provider prevalidation can fail and leave a paid service
+# live. They stay stopped until this script intentionally recreates the
+# validated service further down.
+Stop-PreviouslyRunningServices -ComposeProject $composeProject -ProfilePath $profilePath -Services @("orchestrator", "slackbot")
+Write-Host "Previously running $displayName orchestrator and Slack intake are stopped; they stay stopped until the validated service is recreated."
 
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 & icacls.exe $profilePath "/inheritance:r" "/grant:r" "${currentIdentity}:(F)" "*S-1-5-18:(F)" "*S-1-5-32-544:(F)" | Out-Null
@@ -796,7 +846,8 @@ if ($ProfileName -eq "long-table") {
     }
 }
 
-$composeProject = [string]$values["DIRECTOR_COMPOSE_PROJECT_NAME"]
+# Assert-ProfileIdentity already proved the profile names the selected Compose
+# project, so $composeProject keeps the value derived before validation.
 $hostPort = [int]$values["DIRECTOR_HOST_PORT"]
 [Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")
 foreach ($name in @($composeEnvironmentNames | Where-Object { $_ -ne "DIRECTOR_ENV_FILE" })) {
@@ -1076,3 +1127,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | BEGIN]]
@@ -897,6 +898,174 @@ foreach ($entry in $scenarios.GetEnumerator()) {
             self.assertIn(fragment, detail, name)
             self.assertIn("No workflow was modified", detail, name)
 
+    def test_compose_project_is_known_before_any_fallible_profile_validation(self):
+        derivation = self.script.index(
+            "$composeProject = [string]$selected.DIRECTOR_COMPOSE_PROJECT_NAME"
+        )
+        env_binding = self.script.index(
+            '[Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")'
+        )
+        self.assertIn("$composeProject = $null", self.script)
+        self.assertLess(self.script.index("$selected = $profiles[$ProfileName]"), derivation)
+        self.assertLess(derivation, env_binding)
+        for fallible in (
+            "-SkipProviderChecks cannot be combined with -EnablePaidRuns",
+            "Missing $profileTemplate",
+            "& icacls.exe",
+            "$profileText = Get-Content",
+            "Assert-ProfileIdentity -Values $values",
+            "Assert-LongTableSnapshot -Values $values",
+            "Assert-NoProfileCollisions -TargetValues $values",
+            "Assert-Configured -Values $values -Names $requiredConfiguration",
+        ):
+            self.assertLess(env_binding, self.script.index(fallible), fallible)
+        # Inverse: the project is never re-derived from the profile after
+        # validation, so rollback can never observe a null project name.
+        self.assertNotIn('$composeProject = [string]$values[', self.script)
+        self.assertEqual(1, self.script.count("$composeProject = [string]"))
+        outer_catch = self.script[
+            self.script.index("catch {\n    $outerFailure = $_") :
+            self.script.rindex("finally {")
+        ]
+        self.assertIn(
+            "docker compose --project-name $composeProject --env-file $profilePath "
+            "stop orchestrator slackbot n8n n8n-db | Out-Null",
+            outer_catch,
+        )
+
+    def test_previous_activation_is_stopped_and_verified_before_every_preflight_step(self):
+        call = (
+            "Stop-PreviouslyRunningServices -ComposeProject $composeProject "
+            '-ProfilePath $profilePath -Services @("orchestrator", "slackbot")'
+        )
+        self.assertEqual(1, self.script.count(call))
+        stop = self.script.index(call)
+        self.assertLess(self.script.index("function Stop-PreviouslyRunningServices"), stop)
+        # The profile exists before Compose is asked to load it, and nothing
+        # fallible about the profile itself runs before the stop.
+        self.assertLess(
+            self.script.index("Copy-Item -LiteralPath $profileTemplate -Destination $profilePath"),
+            stop,
+        )
+        preflight = {
+            "acl": "& icacls.exe",
+            "profile read": "$profileText = Get-Content",
+            "identity": "Assert-ProfileIdentity -Values $values",
+            "snapshot validation": "Assert-LongTableSnapshot -Values $values",
+            "collisions": "Assert-NoProfileCollisions -TargetValues $values",
+            "configuration": "Assert-Configured -Values $values -Names $requiredConfiguration",
+            "compose config": "config --quiet",
+            "n8n mutation": "Initialize-N8nIntakeWorkflow `",
+            "image build": "$profilePath build orchestrator",
+            "store inspection": "list_recoverable()",
+            "provider prevalidation": "$expectedUsageProviders = @(Get-ValidatedUsageCheckProviders",
+            "paid switches": (
+                "Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $false"
+            ),
+        }
+        for name, marker in preflight.items():
+            self.assertLess(stop, self.script.index(marker), name)
+        # Inverse: nothing between the stop and the intentional paid-closed
+        # start brings the orchestrator or Slack intake back.
+        closed_start = self.script.index("if (-not $EnablePaidRuns) {", stop)
+        held = self.script[stop + len(call) : closed_start]
+        for line in held.splitlines():
+            if "docker compose" in line:
+                self.assertIsNone(re.search(r"\b(up|start|restart|unpause)\b", line), line)
+        # The only container start inside the n8n initializer is its database.
+        # The initializer is the script's last function, so bound it by the
+        # statement that follows it rather than by the next definition.
+        initializer = self.script[
+            self.script.index("function Initialize-N8nIntakeWorkflow") :
+            self.script.index('if ($ApiOnly -and $ProfileName -notin @("edge-oracle", "long-table"))')
+        ]
+        self.assertEqual(
+            ["up -d --wait --wait-timeout 120 n8n-db"],
+            re.findall(r"up -d[^\n]*", initializer),
+        )
+        # Inverse: the paid path recreates the validated service only after
+        # provider prevalidation and the paid-check switches, with no other
+        # start in between.
+        prevalidation = self.script.index(preflight["provider prevalidation"])
+        paid_switches = self.script.index(preflight["paid switches"])
+        paid_start = self.script.index("up -d --build --force-recreate orchestrator")
+        self.assertLess(prevalidation, paid_switches)
+        self.assertLess(paid_switches, paid_start)
+        self.assertEqual(0, self.script.count(" up -d", prevalidation, paid_start))
+        self.assertIn("stop slackbot", self.script[paid_switches:paid_start])
+
+    def test_previous_activation_stop_fails_closed_and_verifies_after_stopping(self):
+        probe = (
+            POWERSHELL_PRELUDE
+            + _function_source(self.script, "Stop-PreviouslyRunningServices")
+            + r"""
+$global:mode = ""
+$global:calls = New-Object System.Collections.Generic.List[string]
+function docker {
+    $call = @($args | ForEach-Object { [string]$_ }) -join " "
+    $global:calls.Add($call)
+    if ($call -match " stop ") {
+        $global:LASTEXITCODE = $(if ($global:mode -eq "stop-fails") { 1 } else { 0 })
+        return
+    }
+    if ($call -match " ps ") {
+        if ($global:mode -eq "verify-fails") { $global:LASTEXITCODE = 1; return }
+        $global:LASTEXITCODE = 0
+        if ($global:mode -eq "still-live") { Write-Output "0123456789ab"; Write-Output "" }
+        if ($global:mode -eq "blank-lines") { Write-Output ""; Write-Output "   " }
+        return
+    }
+    throw "unexpected docker call: $call"
+}
+foreach ($scenario in @("clean", "blank-lines", "stop-fails", "still-live", "verify-fails")) {
+    $global:mode = $scenario
+    $global:calls.Clear()
+    try {
+        Stop-PreviouslyRunningServices -ComposeProject "probe-project" -ProfilePath "probe.env" -Services @("orchestrator", "slackbot")
+        Write-Output ($scenario + "|ok|")
+    }
+    catch {
+        Write-Output ($scenario + "|error|" + $_.Exception.Message)
+    }
+    Write-Output ($scenario + "-calls|" + $global:calls.Count + "|" + ($global:calls -join ";"))
+}
+"""
+        )
+        results = _scenario_results(_run_powershell(probe))
+        stop_call = (
+            "compose --project-name probe-project --env-file probe.env stop orchestrator slackbot"
+        )
+        verify_call = (
+            "compose --project-name probe-project --env-file probe.env ps --quiet "
+            "--status running --status paused --status restarting orchestrator slackbot"
+        )
+        self.assertEqual(("ok", ""), results["clean"])
+        self.assertEqual(("2", f"{stop_call};{verify_call}"), results["clean-calls"])
+        self.assertEqual(("ok", ""), results["blank-lines"])
+        outcome, detail = results["stop-fails"]
+        self.assertEqual("error", outcome)
+        self.assertIn(
+            "Unable to stop the previously running orchestrator and slackbot services "
+            "of Compose project probe-project",
+            detail,
+        )
+        # Inverse: a failed stop is reported as such; verification never runs
+        # afterwards to mask it.
+        self.assertEqual(("1", stop_call), results["stop-fails-calls"])
+        outcome, detail = results["still-live"]
+        self.assertEqual("error", outcome)
+        self.assertIn("still has 1 live orchestrator and slackbot container(s)", detail)
+        self.assertIn("No preflight step was started", detail)
+        self.assertEqual(("2", f"{stop_call};{verify_call}"), results["still-live-calls"])
+        outcome, detail = results["verify-fails"]
+        self.assertEqual("error", outcome)
+        self.assertIn(
+            "Unable to verify that the orchestrator and slackbot services of Compose "
+            "project probe-project are stopped",
+            detail,
+        )
+        self.assertEqual(("2", f"{stop_call};{verify_call}"), results["verify-fails-calls"])
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -910,3 +1079,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:15 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | END]]
