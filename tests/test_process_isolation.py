@@ -1,4 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -70,10 +72,20 @@ class ProcessIsolationTests(unittest.TestCase):
         process.wait.assert_called_once_with(timeout=5)
         resume.assert_not_called()
 
-    def test_windows_child_cannot_escape_before_job_assignment(self):
+    def test_platform_process_containment_contract(self):
         if os.name != "nt":
-            self.assertFalse(hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"))
+            process = Mock()
+            with patch.object(
+                process_isolation.subprocess, "Popen", return_value=process
+            ) as popen:
+                returned, guard = process_isolation.launch_contained_process(
+                    ("trusted",), shell=False
+                )
+            self.assertIs(process, returned)
+            self.assertFalse(guard.active)
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
             return
+
         with tempfile.TemporaryDirectory() as temporary:
             marker = Path(temporary, "escaped.txt")
             child = (
@@ -103,3 +115,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]

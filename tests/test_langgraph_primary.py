@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:17 UTC | BEGIN]]
@@ -39,6 +42,7 @@ from director_orchestrator.langgraph_primary import (
     ExactShaReviewResult,
     InProcessConditionalClaimStore,
     PhaseResult,
+    PlanResult,
     PrimaryHandlers,
     PrimaryPhase,
     PrimaryRequest,
@@ -79,12 +83,14 @@ CHECKPOINT_KEY_ALLOWLIST = frozenset(
         "correlation_id",
         "current_phase",
         "debate_digest",
+        "dedup_payload_digest",
         "effect_approval_receipt_digest",
         "effect_attempt_digest",
         "effect_cost_units",
         "effect_key_digest",
         "effect_readback_digest",
         "effect_result_digest",
+        "effect_result_receipt_digest",
         "effect_status",
         "evidence_digest",
         "execution_approval_receipt_digest",
@@ -100,6 +106,7 @@ CHECKPOINT_KEY_ALLOWLIST = frozenset(
         "pending_approval_kind",
         "pending_approval_request_digest",
         "plan_digest",
+        "plan_work_packet_binding_digest",
         "policy_digest",
         "previous_phase",
         "producer_id",
@@ -107,6 +114,7 @@ CHECKPOINT_KEY_ALLOWLIST = frozenset(
         "provider_cost_units",
         "provider_dispatch_status",
         "provider_result_digest",
+        "provider_result_receipt_digest",
         "review_binding_digest",
         "review_digest",
         "review_producer_id",
@@ -180,7 +188,10 @@ def _handlers(
         ),
         "plan": counted(
             "plan",
-            lambda context: PhaseResult(_digest(f"plan:{context.work_packet_digest}")),
+            lambda context: PlanResult(
+                _digest(f"plan:{context.task_id}"),
+                _digest(f"validated-work-packet:{context.task_id}"),
+            ),
         ),
         "policy_budget": counted(
             "policy_budget",
@@ -692,6 +703,100 @@ class PrimaryWorkflowTests(unittest.TestCase):
             f"director-primary-v1:{request.task_id}",
         )
 
+    def test_plan_result_replaces_pre_plan_digest_before_downstream_work(self):
+        observed: list[str | None] = []
+        actual = _digest("actual-validated-work-packet")
+
+        def plan(context):
+            self.assertIsNone(context.work_packet_digest)
+            return PlanResult(_digest("actual-plan"), actual)
+
+        def policy(context):
+            observed.append(context.work_packet_digest)
+            return PhaseResult(_digest("policy"))
+
+        runtime = _runtime(_handlers(plan=plan, policy_budget=policy))
+        request = _request(
+            "DIR-PRIMARY-POST-PLAN-AUTHORITY",
+            work_packet_digest=_digest("untrusted-preview"),
+        )
+
+        outcome = runtime.start(request)
+
+        self.assertEqual(TerminalClassification.SUCCEEDED, outcome.terminal_classification)
+        self.assertEqual([actual], observed)
+        state = runtime.compact_state(request.task_id)
+        self.assertEqual(actual, state["work_packet_digest"])
+        self.assertIsNotNone(state["plan_work_packet_binding_digest"])
+
+    def test_non_plan_result_never_becomes_work_packet_authority(self):
+        counters: dict[str, int] = {}
+        handlers = _handlers(
+            counters,
+            plan=lambda _: PhaseResult(_digest("legacy-plan-result")),
+        )
+        outcome = _runtime(handlers).start(
+            _request("DIR-PRIMARY-LEGACY-PLAN-RESULT")
+        )
+
+        self.assertEqual(TerminalClassification.FAILED, outcome.terminal_classification)
+        self.assertEqual("plan_handler_error", outcome.reason_code)
+        self.assertEqual(0, counters.get("policy_budget", 0))
+        self.assertEqual(0, counters.get("provider_subgraph", 0))
+
+    def test_restart_with_missing_post_plan_binding_fails_before_resume(self):
+        counters: dict[str, int] = {}
+        runtime = _runtime(_handlers(counters))
+        request = _request(
+            "DIR-PRIMARY-MISSING-POST-PLAN-BINDING",
+            execution_approval_required=True,
+        )
+        paused = runtime.start(request)
+        self.assertEqual(WorkflowRunStatus.PAUSED, paused.run_status)
+        runtime._graph.update_state(  # deliberate checkpoint-corruption test
+            runtime._config(request.task_id),
+            {"plan_work_packet_binding_digest": None},
+        )
+
+        outcome = runtime.resume(_approval(paused, "approval-missing-packet-binding"))
+
+        self.assertEqual(TerminalClassification.POLICY_BLOCKED, outcome.terminal_classification)
+        self.assertEqual("work_packet_authority_invalid", outcome.reason_code)
+        self.assertEqual(0, counters.get("provider_subgraph", 0))
+
+    def test_restart_reclassifies_terminal_checkpoint_with_lost_packet_binding(self):
+        runtime = _runtime()
+        request = _request("DIR-PRIMARY-TERMINAL-PACKET-BINDING-LOST")
+        completed = runtime.start(request)
+        self.assertEqual(TerminalClassification.SUCCEEDED, completed.terminal_classification)
+        runtime._graph.update_state(  # deliberate checkpoint-corruption test
+            runtime._config(request.task_id),
+            {"plan_work_packet_binding_digest": None},
+        )
+
+        recovered = runtime.recover(request.task_id)
+
+        self.assertEqual(TerminalClassification.POLICY_BLOCKED, recovered.terminal_classification)
+        self.assertEqual("work_packet_authority_invalid", recovered.reason_code)
+
+    def test_malformed_post_plan_digest_cannot_be_claimed_for_dispatch(self):
+        counters: dict[str, int] = {}
+        runtime = _runtime(
+            _handlers(counters),
+            auto_execute_provider=False,
+        )
+        request = _request("DIR-PRIMARY-MALFORMED-POST-PLAN-DIGEST")
+        pending = runtime.start(request)
+        self.assertEqual(PrimaryPhase.PROVIDER_SUBGRAPH.value, pending.phase)
+        runtime._graph.update_state(  # deliberate checkpoint-corruption test
+            runtime._config(request.task_id),
+            {"work_packet_digest": "sha256:not-valid"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "not claimable"):
+            runtime.prepare_provider_dispatch(request.task_id)
+        self.assertEqual(0, counters.get("provider_subgraph", 0))
+
     def test_exact_approval_resume_is_idempotent(self):
         runtime = _runtime()
         request = _request(
@@ -791,6 +896,96 @@ class PrimaryWorkflowTests(unittest.TestCase):
         self.assertEqual(counters.get("provider_subgraph", 0), 0)
         # The fence is never released, so the attempt can only be reconciled.
         self.assertEqual(len(store.held_keys()), 1)
+
+    def test_exact_provider_result_redelivery_is_already_applied(self):
+        counters: dict[str, int] = {}
+        runtime = _runtime(
+            _handlers(counters),
+            auto_execute_provider=False,
+        )
+        request = _request("DIR-PRIMARY-PROVIDER-RESULT-REDELIVERY")
+        runtime.start(request)
+        intent = runtime.prepare_provider_dispatch(request.task_id)
+        result = ProviderSubgraphResult(
+            provider_attempt_digest=intent.provider_attempt_digest,
+            idempotency_key_digest=intent.idempotency_key_digest,
+            authority_snapshot_digest=intent.authority_snapshot_digest,
+            producer_id=intent.producer_id,
+            disposition=ProviderDisposition.COMPLETED,
+            result_digest=_digest("provider-result-redelivery"),
+            candidate_sha=SHA_A,
+        )
+
+        applied = runtime.record_provider_result(request.task_id, result)
+        replay = runtime.record_provider_result(request.task_id, result)
+
+        self.assertEqual(applied.run_status, WorkflowRunStatus.TERMINAL)
+        self.assertEqual(replay.run_status, WorkflowRunStatus.ALREADY_APPLIED)
+        self.assertEqual(replay.reason_code, "provider_result_already_applied")
+        self.assertEqual(replay.state_digest, applied.state_digest)
+        self.assertEqual(counters.get("provider_subgraph", 0), 0)
+        with self.assertRaisesRegex(ValueError, "conflicts with the already applied"):
+            runtime.record_provider_result(
+                request.task_id,
+                ProviderSubgraphResult(
+                    provider_attempt_digest=intent.provider_attempt_digest,
+                    idempotency_key_digest=intent.idempotency_key_digest,
+                    authority_snapshot_digest=intent.authority_snapshot_digest,
+                    producer_id=intent.producer_id,
+                    disposition=ProviderDisposition.COMPLETED,
+                    result_digest=_digest("conflicting-provider-result"),
+                    candidate_sha=SHA_B,
+                ),
+            )
+        self.assertEqual(runtime.start(request).state_digest, applied.state_digest)
+
+    def test_exact_effect_result_redelivery_is_already_applied(self):
+        counters: dict[str, int] = {}
+        runtime = _runtime(
+            _handlers(counters),
+            auto_execute_effect=False,
+        )
+        request = _request(
+            "DIR-PRIMARY-EFFECT-RESULT-REDELIVERY",
+            external_effect_required=True,
+            effect_key_digest=_digest("effect-result-redelivery-key"),
+            graph_writer_active=True,
+            legacy_writer_active=False,
+        )
+        paused = runtime.start(request)
+        claimed = runtime.resume(_approval(paused, "approval-effect-redelivery"))
+        self.assertEqual(claimed.effect_status, EffectStatus.CLAIMED)
+        attempt_digest = runtime.prepare_effect_execution(request.task_id)
+        result = EffectExecutionResult(
+            effect_key_digest=request.effect_key_digest,
+            effect_attempt_digest=attempt_digest,
+            writer_owner_id=request.writer_owner_id,
+            disposition=EffectDisposition.COMPLETED,
+            result_digest=_digest("effect-result-redelivery"),
+            readback_digest=_digest("effect-readback-redelivery"),
+        )
+
+        applied = runtime.record_effect_result(request.task_id, result)
+        replay = runtime.record_effect_result(request.task_id, result)
+
+        self.assertEqual(applied.run_status, WorkflowRunStatus.TERMINAL)
+        self.assertEqual(replay.run_status, WorkflowRunStatus.ALREADY_APPLIED)
+        self.assertEqual(replay.reason_code, "effect_result_already_applied")
+        self.assertEqual(replay.state_digest, applied.state_digest)
+        self.assertEqual(counters.get("effect_execution_readback", 0), 0)
+        with self.assertRaisesRegex(ValueError, "conflicts with the already applied"):
+            runtime.record_effect_result(
+                request.task_id,
+                EffectExecutionResult(
+                    effect_key_digest=request.effect_key_digest,
+                    effect_attempt_digest=attempt_digest,
+                    writer_owner_id=request.writer_owner_id,
+                    disposition=EffectDisposition.COMPLETED,
+                    result_digest=_digest("conflicting-effect-result"),
+                    readback_digest=_digest("conflicting-effect-readback"),
+                ),
+            )
+        self.assertEqual(runtime.start(request).state_digest, applied.state_digest)
 
     def test_mismatched_provider_result_binding_fails_to_reconciliation(self):
         counters: dict[str, int] = {}
@@ -1980,3 +2175,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]

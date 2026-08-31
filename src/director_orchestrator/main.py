@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
@@ -97,6 +99,17 @@ from .providers import provider_registry
 from .parallel_dispatch import (
     DailyTaskBudgetLedger,
 )
+from .primary_commands import (
+    ApprovalResumeRequest,
+    CancellationRequest,
+    EffectReconciliationRequest,
+    PrimaryCommandBindingError,
+    PrimaryCommandOperation,
+    PrimaryCommandResponse,
+    ProviderResultRequest,
+    RecoveryRequest,
+)
+from .primary_activation_commands import ProviderActivationAdvanceRequest
 from .workload_policy import EnforcementMode
 
 
@@ -118,9 +131,17 @@ settings = Settings()
 settings.validate_workload_policy_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 settings.validate_langgraph_configuration()
+settings.validate_langgraph_primary_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 store = TaskStore(settings.sqlite_path)
+primary_default_activation = None
+if settings.langgraph_primary_enabled:
+    # Lazy import preserves the default-off startup boundary. Enabling primary
+    # mode must construct its real Postgres application router or fail startup.
+    from .primary_default import DefaultPrimaryActivation
+
+    primary_default_activation = DefaultPrimaryActivation(settings)
 settings.validate_parallel_dispatch_configuration()
 providers = provider_registry(settings)
 packet_task_router = None
@@ -315,8 +336,35 @@ async def _chatgpt_bridge_expiry_loop() -> None:
             continue
 
 
+async def _primary_intake_lease_loop() -> None:
+    while True:
+        await asyncio.sleep(10.0)
+        if primary_default_activation is None:
+            continue
+        try:
+            primary_default_activation.renew()
+        except Exception:
+            # Intake re-checks observed Postgres authority and fails closed. The
+            # public health surface exposes the lost writer lease.
+            continue
+
+
+async def _primary_reconciliation_loop() -> None:
+    while True:
+        await asyncio.sleep(30.0)
+        if primary_default_activation is None:
+            continue
+        try:
+            primary_default_activation.reconcile_once()
+        except Exception:
+            continue
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if primary_default_activation is not None:
+        primary_default_activation.start()
+        primary_default_activation.reconcile_once()
     # Startup fails closed if stale encrypted recovery material cannot be swept.
     chatgpt_bridge.store.sweep_expired_answers()
     initial_resumes = store.claim_privacy_cleanup_resumes()
@@ -338,12 +386,20 @@ async def lifespan(_: FastAPI):
     chatgpt_bridge_expiry_task = asyncio.create_task(
         _chatgpt_bridge_expiry_loop()
     )
+    primary_intake_lease_task = asyncio.create_task(
+        _primary_intake_lease_loop()
+    )
+    primary_reconciliation_task = asyncio.create_task(
+        _primary_reconciliation_loop()
+    )
     tasks = [
         *recovery_tasks,
         monitor_task,
         privacy_recovery_task,
         recoverable_task,
         chatgpt_bridge_expiry_task,
+        primary_intake_lease_task,
+        primary_reconciliation_task,
     ]
     try:
         yield
@@ -354,6 +410,8 @@ async def lifespan(_: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
         runtime_activation.close()
+        if primary_default_activation is not None:
+            primary_default_activation.close()
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
 
@@ -394,6 +452,39 @@ def health() -> dict:
         ),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
         "langgraph": settings.langgraph_shadow_readiness(),
+        # Configuration is deliberately separate from observed authority. Until
+        # the production coordinator is attached to these command routes, every
+        # operational primary claim remains false even if an operator supplies
+        # otherwise valid PostgreSQL settings.
+        "langgraph_primary": (
+            primary_default_activation.health()
+            if primary_default_activation is not None
+            else {
+                **settings.langgraph_primary_configuration_readiness(),
+                "primary_graph_constructed": False,
+                "primary_router_wired": False,
+                "checkpoint_backend_postgres": False,
+                "checkpoint_schema_current": False,
+                "claim_store_ready": False,
+                "effect_ledger_ready": False,
+                "writer_lease_ready": False,
+                "reconciliation_worker_ready": False,
+                "primary_runtime_active": False,
+                "new_intake_owner": "legacy",
+                "legacy_new_intake_disabled": False,
+                "intake_fencing_generation": 0,
+                "graph_task_count": 0,
+                "ambiguous_effect_count": 0,
+                "provider_activation": {
+                    "app_dry_run_ready": False,
+                    "app_live_ready": False,
+                    "runtime_adapter_dry_run_ready": False,
+                    "runtime_adapter_live_ready": False,
+                    "combined_dry_run_ready": False,
+                    "combined_live_ready": False,
+                },
+            }
+        ),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
         # Booleans and one transport identifier only: no path, namespace value,
@@ -502,6 +593,23 @@ def intake(
         default=None, alias=SLACK_INTAKE_SIGNATURE_HEADER
     ),
 ) -> TaskRecord:
+    if primary_default_activation is not None:
+        if not settings.langgraph_primary_new_intake_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="LangGraph primary intake is not activated",
+            )
+        assert primary_default_activation.application is not None
+        try:
+            return primary_default_activation.application.create_intake(
+                payload,
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="LangGraph primary intake is unavailable",
+            ) from exc
     intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
     replay_identity: tuple[str, str] | None = None
     if settings.allow_paid_runs:
@@ -545,12 +653,282 @@ def intake(
 
 @app.get("/v1/tasks/{task_id}", response_model=TaskRecord, dependencies=[Depends(require_auth)])
 def get_task(task_id: str, response: Response) -> TaskRecord:
+    if primary_default_activation is not None:
+        assert primary_default_activation.application is not None
+        primary_record = primary_default_activation.application.get_task(task_id)
+        if primary_record is not None:
+            assert primary_default_activation.coordinator is not None
+            projection = primary_default_activation.coordinator.get_projection(task_id)
+            writer = primary_default_activation.coordinator.get_task_writer(task_id)
+            if projection is None or writer is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="LangGraph primary projection is unavailable",
+                )
+            response.headers["X-Task-Engine-Owner"] = "langgraph"
+            response.headers["X-Primary-Projection-Digest"] = (
+                projection.projection_digest
+            )
+            response.headers["X-Primary-Projection-Version"] = str(
+                projection.projection_version
+            )
+            response.headers["X-Primary-Writer-Generation"] = str(
+                writer.fencing_generation
+            )
+            return primary_record
     versioned = store.get_versioned(task_id)
     if versioned is None:
         raise HTTPException(status_code=404, detail="Task not found")
     record, version = versioned
     response.headers["X-Task-Record-Version"] = str(version)
     return record
+
+
+def _primary_command_projection(
+    task_id: str,
+    request: object,
+    operation: PrimaryCommandOperation,
+):
+    if primary_default_activation is None:
+        raise HTTPException(status_code=404, detail="LangGraph primary task not found")
+    coordinator = primary_default_activation.coordinator
+    if coordinator is None:
+        raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
+    try:
+        request.validate_path(task_id)
+        receipt = coordinator.read_command_receipt(
+            task_id=task_id,
+            operation=operation.value,
+            command_id=request.command_id,
+        )
+        if receipt is not None:
+            return coordinator, None, None, PrimaryCommandResponse.from_receipt(
+                request=request,
+                operation=operation,
+                receipt=receipt,
+            )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    projection = coordinator.get_projection(task_id)
+    if projection is None:
+        raise HTTPException(status_code=404, detail="LangGraph primary task not found")
+    writer = coordinator.get_task_writer(task_id)
+    if writer is None:
+        raise HTTPException(status_code=409, detail="LangGraph task writer lease is unavailable")
+    try:
+        request.validate_path_and_fence(
+            path_task_id=task_id,
+            current_fencing_generation=writer.fencing_generation,
+        )
+        try:
+            request.validate_projection(projection.projection_digest)
+        except PrimaryCommandBindingError:
+            if not request.runtime_replay_is_evidenced(projection.projection):
+                raise
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return coordinator, projection, writer, None
+
+
+def _require_primary_owner_actor(actor_id: str) -> None:
+    if not owner_identity_matches(actor_id, settings.slack_owner_user_id):
+        raise HTTPException(status_code=403, detail="Owner identity mismatch")
+
+
+@app.post(
+    "/v1/primary/provider-activations/{provider_id}/advance",
+    response_model=dict[str, bool],
+    dependencies=[Depends(require_auth)],
+)
+def primary_advance_provider_activation(
+    provider_id: str, request: ProviderActivationAdvanceRequest
+) -> dict[str, bool]:
+    _require_primary_owner_actor(request.actor_id)
+    if primary_default_activation is None:
+        raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
+    activation = primary_default_activation.provider_activation
+    if activation is None:
+        raise HTTPException(
+            status_code=409, detail="Provider activation bindings are unavailable"
+        )
+    try:
+        activation.record(
+            provider_id=provider_id,
+            surface=request.surface,
+            stage=request.stage,
+            evidence_id=request.evidence_id,
+            evidence_digest=request.evidence_digest,
+            observed_at=request.observed_at,
+            expires_at=request.expires_at,
+        )
+        return activation.health()
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _primary_command_response(
+    request: object,
+    operation: PrimaryCommandOperation,
+) -> PrimaryCommandResponse:
+    assert primary_default_activation is not None
+    assert primary_default_activation.coordinator is not None
+    projection = primary_default_activation.coordinator.get_projection(request.task_id)
+    writer = primary_default_activation.coordinator.get_task_writer(request.task_id)
+    if projection is None or writer is None:
+        raise HTTPException(status_code=409, detail="LangGraph command result is unavailable")
+    return PrimaryCommandResponse.from_projection(
+        request=request,
+        operation=operation,
+        projection=projection,
+        fencing_generation=writer.fencing_generation,
+    )
+
+
+def _record_primary_command(
+    request: object,
+    operation: PrimaryCommandOperation,
+) -> PrimaryCommandResponse:
+    assert primary_default_activation is not None
+    coordinator = primary_default_activation.coordinator
+    assert coordinator is not None
+    projection = coordinator.get_projection(request.task_id)
+    if projection is None:
+        raise HTTPException(status_code=409, detail="LangGraph command result is unavailable")
+    coordinator.record_command_receipt(
+        task_id=request.task_id,
+        operation=operation.value,
+        command_id=request.command_id,
+        command_digest=request.command_digest,
+        projection=projection,
+    )
+    return _primary_command_response(request, operation)
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/approvals/resume",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_resume_approval(
+    task_id: str, request: ApprovalResumeRequest
+) -> PrimaryCommandResponse:
+    _require_primary_owner_actor(request.actor_id)
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.APPROVAL_RESUME
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        primary_default_activation.application.resume_approval(request.to_command())
+        return _record_primary_command(
+            request, PrimaryCommandOperation.APPROVAL_RESUME
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/provider-results",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_provider_result(
+    task_id: str, request: ProviderResultRequest
+) -> PrimaryCommandResponse:
+    if request.actor_id != request.producer_id:
+        raise HTTPException(status_code=403, detail="Provider actor binding mismatch")
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.PROVIDER_RESULT
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        primary_default_activation.application.record_provider_result(
+            task_id, request.to_command()
+        )
+        return _record_primary_command(
+            request, PrimaryCommandOperation.PROVIDER_RESULT
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/effects/reconcile",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_reconcile_effect(
+    task_id: str, request: EffectReconciliationRequest
+) -> PrimaryCommandResponse:
+    if request.actor_id != request.writer_owner_id:
+        raise HTTPException(status_code=403, detail="Effect actor binding mismatch")
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.EFFECT_RECONCILIATION
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        primary_default_activation.application.reconcile_effect(
+            task_id, request.to_command()
+        )
+        return _record_primary_command(
+            request, PrimaryCommandOperation.EFFECT_RECONCILIATION
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/cancel",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_cancel(
+    task_id: str, request: CancellationRequest
+) -> PrimaryCommandResponse:
+    _require_primary_owner_actor(request.actor_id)
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.CANCELLATION
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        primary_default_activation.application.cancel(task_id)
+        return _record_primary_command(request, PrimaryCommandOperation.CANCELLATION)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/recover",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_recover(
+    task_id: str, request: RecoveryRequest
+) -> PrimaryCommandResponse:
+    _require_primary_owner_actor(request.actor_id)
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.RECOVERY
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        primary_default_activation.application.recover(task_id)
+        return _record_primary_command(request, PrimaryCommandOperation.RECOVERY)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _apply_owner_decision(record: TaskRecord, approval: OwnerApproval) -> None:
@@ -641,6 +1019,15 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
 
 @app.post("/v1/tasks/{task_id}/approve", response_model=TaskRecord, dependencies=[Depends(require_auth)])
 def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Paid-off LangGraph task cannot cross its execution approval interrupt",
+        )
     if not owner_identity_matches(approval.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     try:
@@ -663,6 +1050,12 @@ def recover_oracle_stop(
     approval: OracleRecoveryApproval,
     background: BackgroundTasks,
 ) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(status_code=409, detail="Command is not valid for this LangGraph task")
     if not owner_identity_matches(approval.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     versioned = store.get_versioned(task_id)
@@ -715,6 +1108,12 @@ def reconcile_dispatch(
     resolution: AmbiguousDispatchResolution,
     background: BackgroundTasks,
 ) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(status_code=409, detail="Use LangGraph effect reconciliation")
     if not owner_identity_matches(resolution.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     versioned = store.get_versioned(task_id)
@@ -741,6 +1140,12 @@ def reconcile_dispatch(
     dependencies=[Depends(require_claude_callback_auth)],
 )
 def claude_callback(task_id: str, callback: ClaudeCallback, background: BackgroundTasks) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(status_code=409, detail="LangGraph task has no pending Claude callback")
     versioned = store.get_versioned(task_id)
     if versioned is None:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -802,6 +1207,12 @@ def complete_run(
     completion: ManualRunCompletion,
     background: BackgroundTasks,
 ) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(status_code=409, detail="Use the LangGraph provider-result command")
     if not owner_identity_matches(completion.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     versioned = store.get_versioned(task_id)
@@ -821,6 +1232,7 @@ def complete_run(
     background.add_task(engine.run, task_id)
     return stored
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
@@ -832,3 +1244,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]

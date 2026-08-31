@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:08 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-31 | 15:05 UTC | BEGIN]]
@@ -11,8 +15,8 @@
 
 Everything in the unit suites runs against fakes and never opens a socket.
 :class:`PostgresControlPlaneIntegrationTests` is the only suite that talks to a
-database, and it is skipped unless ``LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN`` is
-explicitly configured.
+database. Its explicit ``LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN`` is mandatory;
+missing infrastructure is a failure, never silently omitted coverage.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ import threading
 import unittest
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,12 +46,15 @@ from director_orchestrator.langgraph_postgres import (
     MIN_LEASE_SECONDS,
     RECONCILIATION_STATES,
     EffectReservation,
+    IntakeAuthorityLease,
     PostgresCheckpointBinding,
     PostgresCheckpointConfigurationError,
     PostgresCheckpointHandle,
     PostgresConditionalClaimStore,
     PostgresControlPlaneError,
     PostgresPoolBounds,
+    PrimaryCommandReceipt,
+    PrimaryWorkPacketArtifact,
     TaskWriterLease,
     _build_strict_serializer,
     _configure_connection,
@@ -58,6 +66,18 @@ from director_orchestrator.langgraph_postgres import (
 )
 from director_orchestrator.langgraph_primary import ClaimOutcome, ClaimRequest
 from director_orchestrator.langgraph_runtime import LangGraphPacketRuntime
+from director_orchestrator.packet_contracts import (
+    canonical_json_bytes,
+    document_digest,
+    load_json_document,
+)
+from director_orchestrator.provider_activation import (
+    ACTIVATION_EVIDENCE_VERSION,
+    ProviderActivationBinding,
+    ProviderActivationEvidence,
+    ProviderActivationStage,
+    ProviderActivationSurface,
+)
 
 TEST_DSN_VARIABLE = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 
@@ -74,6 +94,33 @@ DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
 DIGEST_C = "sha256:" + "c" * 64
 DIGEST_D = "sha256:" + "d" * 64
+
+
+def _work_packet(
+    *, task_id: str = "task-1", assignment_id: str = "assignment-1"
+) -> dict[str, object]:
+    packet = load_json_document(
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "schemas"
+        / "model-work-packet-v1.example.json"
+    )
+    packet["task_id"] = task_id
+    packet["assignment_id"] = assignment_id
+    packet["idempotency_key"] = f"{task_id}:{assignment_id}:review"
+    packet["correlation"]["correlation_id"] = f"corr-{assignment_id}"
+    return packet
+
+
+def _work_packet_row(packet: dict[str, object], generation: int = 3) -> dict[str, object]:
+    return {
+        "task_id": packet["task_id"],
+        "assignment_id": packet["assignment_id"],
+        "authority_snapshot_digest": packet["authority_snapshot_digest"],
+        "document_digest": document_digest(packet),
+        "canonical_document": canonical_json_bytes(packet).decode("utf-8"),
+        "writer_fencing_generation": generation,
+    }
 
 
 def _claim_request(**overrides: object) -> ClaimRequest:
@@ -128,6 +175,13 @@ class _Cursor:
 
     def fetchone(self) -> object:
         return self._row
+
+    def fetchall(self) -> list[object]:
+        if self._row is None:
+            return []
+        if isinstance(self._row, list):
+            return self._row
+        return [self._row]
 
     def __enter__(self) -> "_Cursor":
         return self
@@ -235,6 +289,19 @@ def _writer_row(**overrides: object) -> dict[str, object]:
     return row
 
 
+def _intake_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "intake_owner": "legacy",
+        "owner_token": "bootstrap-legacy",
+        "fencing_generation": 0,
+        "lease_expires_at": "-infinity",
+        "lease_live": False,
+        "legacy_new_intake_disabled": False,
+    }
+    row.update(overrides)
+    return row
+
+
 def _reservation_row(**overrides: object) -> dict[str, object]:
     row: dict[str, object] = {
         "reservation_key": DIGEST_A,
@@ -246,6 +313,62 @@ def _reservation_row(**overrides: object) -> dict[str, object]:
         "effect_attempt_digest": DIGEST_D,
         "writer_owner_id": "langgraph-primary",
         "reserved_units": 1,
+    }
+    row.update(overrides)
+    return row
+
+
+def _activation_binding(**overrides: str) -> ProviderActivationBinding:
+    fields = {
+        "provider_id": "claude",
+        "workspace_id": "director-default",
+        "provider_version": "provider-v1",
+        "app_version": "app-v1",
+        "runtime_adapter_version": "adapter-v1",
+        "workspace_version": "workspace-v1",
+        "binding_version": "binding-v1",
+    }
+    fields.update(overrides)
+    return ProviderActivationBinding(**fields)
+
+
+def _activation_evidence(
+    *,
+    revision: int = 1,
+    stage: ProviderActivationStage = ProviderActivationStage.INSTALLED,
+    evidence_id: str = "observed-install-1",
+    evidence_digest: str = "a" * 64,
+    binding: ProviderActivationBinding | None = None,
+    surface: ProviderActivationSurface = ProviderActivationSurface.APP,
+) -> ProviderActivationEvidence:
+    observed = datetime(2026, 8, 31, 22, 0, tzinfo=timezone.utc)
+    return ProviderActivationEvidence(
+        schema_version=ACTIVATION_EVIDENCE_VERSION,
+        binding=binding or _activation_binding(),
+        surface=surface,
+        stage=stage,
+        revision=revision,
+        evidence_id=evidence_id,
+        evidence_digest=evidence_digest,
+        observed_at=observed + timedelta(minutes=revision),
+        expires_at=observed + timedelta(days=1),
+    )
+
+
+def _activation_row(
+    evidence: ProviderActivationEvidence,
+    **overrides: object,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        **dataclasses.asdict(evidence.binding),
+        "surface": evidence.surface.value,
+        "revision": evidence.revision,
+        "schema_version": evidence.schema_version,
+        "stage": evidence.stage.value,
+        "evidence_id": evidence.evidence_id,
+        "evidence_digest": evidence.evidence_digest,
+        "observed_at": evidence.observed_at,
+        "expires_at": evidence.expires_at,
     }
     row.update(overrides)
     return row
@@ -269,6 +392,87 @@ def _reservation_arguments(**overrides: object) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Task ownership: acquire / renew
 # ---------------------------------------------------------------------------
+
+
+class IntakeAuthorityLeaseTests(unittest.TestCase):
+    def test_observed_authority_is_not_inferred_from_configuration(self):
+        store, connection = _store([_intake_row()])
+        observed = store.current_intake_authority()
+        self.assertIsInstance(observed, IntakeAuthorityLease)
+        self.assertEqual("legacy", observed.intake_owner)
+        self.assertFalse(observed.legacy_new_intake_disabled)
+        self.assertFalse(observed.lease_live)
+        self.assertIn("lease_expires_at > now()", connection.sql())
+
+    def test_langgraph_acquisition_atomically_disables_legacy_intake(self):
+        store, connection = _store(
+            [
+                _intake_row(),
+                _intake_row(
+                    intake_owner="langgraph",
+                    owner_token="graph-owner",
+                    fencing_generation=1,
+                    lease_expires_at="2026-08-31T23:00:00Z",
+                    lease_live=True,
+                    legacy_new_intake_disabled=True,
+                ),
+            ]
+        )
+        lease = store.acquire_intake_authority(
+            intake_owner="langgraph",
+            owner_token="graph-owner",
+            expected_generation=0,
+        )
+        self.assertEqual(1, lease.fencing_generation)
+        self.assertTrue(lease.legacy_new_intake_disabled)
+        update = connection.statements()[1]
+        self.assertIn("fencing_generation = fencing_generation + 1", update)
+        self.assertIn("legacy_new_intake_disabled = %(legacy_disabled)s", update)
+
+    def test_stale_or_live_competing_intake_owner_fails_closed(self):
+        with self.subTest(refused="stale generation"):
+            store, _ = _store([_intake_row(fencing_generation=3)])
+            with self.assertRaisesRegex(
+                PostgresControlPlaneError, "stale fencing generation"
+            ):
+                store.acquire_intake_authority(
+                    intake_owner="langgraph",
+                    owner_token="graph-owner",
+                    expected_generation=2,
+                )
+        with self.subTest(refused="live competing owner"):
+            store, _ = _store(
+                [
+                    _intake_row(
+                        owner_token="legacy-owner",
+                        fencing_generation=3,
+                        lease_live=True,
+                    )
+                ]
+            )
+            with self.assertRaisesRegex(PostgresControlPlaneError, "unexpired"):
+                store.acquire_intake_authority(
+                    intake_owner="langgraph",
+                    owner_token="graph-owner",
+                    expected_generation=3,
+                )
+
+    def test_renewal_preserves_the_fencing_generation(self):
+        row = _intake_row(
+            intake_owner="langgraph",
+            owner_token="graph-owner",
+            fencing_generation=4,
+            lease_live=True,
+            legacy_new_intake_disabled=True,
+        )
+        store, connection = _store([row])
+        renewed = store.renew_intake_authority(
+            intake_owner="langgraph",
+            owner_token="graph-owner",
+            fencing_generation=4,
+        )
+        self.assertEqual(4, renewed.fencing_generation)
+        self.assertNotIn("fencing_generation = fencing_generation + 1", connection.sql())
 
 
 class TaskWriterLeaseTests(unittest.TestCase):
@@ -401,6 +605,279 @@ class TaskWriterLeaseTests(unittest.TestCase):
             store.renew_task_writer(
                 "task-1", owner_token="owner-1", fencing_generation=0
             )
+
+
+class PrimaryCommandReceiptTests(unittest.TestCase):
+    @staticmethod
+    def receipt_row(**overrides: object) -> dict[str, object]:
+        row: dict[str, object] = {
+            "task_id": "task-1",
+            "operation": "provider_result",
+            "command_id": "command-1",
+            "command_digest": DIGEST_A,
+            "resulting_projection_digest": DIGEST_B,
+            "resulting_projection_version": 4,
+            "writer_fencing_generation": 3,
+        }
+        row.update(overrides)
+        return row
+
+    @staticmethod
+    def arguments(**overrides: object) -> dict[str, object]:
+        arguments: dict[str, object] = {
+            "task_id": "task-1",
+            "operation": "provider_result",
+            "command_id": "command-1",
+            "command_digest": DIGEST_A,
+            "resulting_projection_digest": DIGEST_B,
+            "resulting_projection_version": 4,
+            "owner_token": "owner-1",
+            "fencing_generation": 3,
+        }
+        arguments.update(overrides)
+        return arguments
+
+    def test_records_under_exact_projection_and_live_writer(self):
+        store, connection = _store([_lock_row(), None, self.receipt_row()])
+        receipt = store.record_primary_command_receipt(**self.arguments())
+        self.assertIsInstance(receipt, PrimaryCommandReceipt)
+        self.assertEqual(4, receipt.resulting_projection_version)
+        statements = connection.statements()
+        self.assertIn("pg_advisory_xact_lock", statements[0])
+        self.assertIn("director_primary_task_projection projected", statements[2])
+        self.assertIn("director_primary_task_writer writer", statements[2])
+        self.assertIn("writer.lease_expires_at > now()", statements[2])
+        self.assertIn("projected.projection_digest", statements[2])
+
+    def test_exact_replay_returns_original_after_projection_advances(self):
+        original = self.receipt_row()
+        store, connection = _store([_lock_row(), original])
+        receipt = store.record_primary_command_receipt(
+            **self.arguments(
+                resulting_projection_digest=DIGEST_D,
+                resulting_projection_version=9,
+                fencing_generation=8,
+            )
+        )
+        self.assertEqual(DIGEST_B, receipt.resulting_projection_digest)
+        self.assertEqual(4, receipt.resulting_projection_version)
+        self.assertEqual(2, len(connection.statements()))
+        self.assertNotIn("INSERT INTO", connection.sql())
+
+    def test_command_id_reuse_with_changed_content_fails_closed(self):
+        store, connection = _store([_lock_row(), self.receipt_row()])
+        with self.assertRaisesRegex(PostgresControlPlaneError, "different content"):
+            store.record_primary_command_receipt(
+                **self.arguments(command_digest=DIGEST_C)
+            )
+        self.assertEqual(1, connection.rollbacks)
+        self.assertNotIn("INSERT INTO", connection.sql())
+
+    def test_concurrent_identity_is_serialized_before_read_and_insert(self):
+        store, connection = _store([_lock_row(), None, None])
+        with self.assertRaisesRegex(PostgresControlPlaneError, "projection or writer"):
+            store.record_primary_command_receipt(**self.arguments())
+        statements = connection.statements()
+        self.assertIn("pg_advisory_xact_lock", statements[0])
+        self.assertIn("ON CONFLICT (task_id, operation, command_id) DO NOTHING", statements[2])
+
+    def test_stale_writer_or_projection_cannot_record(self):
+        for label in ("stale writer", "stale projection"):
+            with self.subTest(refused=label):
+                store, connection = _store([_lock_row(), None, None])
+                with self.assertRaisesRegex(
+                    PostgresControlPlaneError, "projection or writer authority is stale"
+                ):
+                    store.record_primary_command_receipt(**self.arguments())
+                self.assertEqual(1, connection.rollbacks)
+
+    def test_read_is_independent_of_current_projection(self):
+        store, connection = _store([self.receipt_row()])
+        receipt = store.read_primary_command_receipt(
+            task_id="task-1", operation="provider_result", command_id="command-1"
+        )
+        self.assertEqual(DIGEST_A, receipt.command_digest)  # type: ignore[union-attr]
+        self.assertNotIn("director_primary_task_projection", connection.sql())
+
+
+class PrimaryWorkPacketArtifactTests(unittest.TestCase):
+    def test_validated_packet_is_inserted_under_the_live_writer_fence(self):
+        packet = _work_packet()
+        row = _work_packet_row(packet)
+        store, connection = _store([_lock_row(), {"task_id": "task-1"}, None, row])
+        artifact = store.record_work_packet_artifact(
+            task_id="task-1",
+            assignment_id="assignment-1",
+            packet=packet,
+            owner_token="owner-1",
+            fencing_generation=3,
+        )
+        self.assertIsInstance(artifact, PrimaryWorkPacketArtifact)
+        self.assertEqual(document_digest(packet), artifact.document_digest)
+        self.assertEqual(packet, artifact.packet)
+        statements = connection.statements()
+        self.assertIn("pg_advisory_xact_lock", statements[0])
+        self.assertIn("FOR UPDATE", statements[1])
+        self.assertIn("writer.lease_expires_at > now()", statements[3])
+
+    def test_exact_replay_is_idempotent_but_changed_content_conflicts(self):
+        packet = _work_packet()
+        row = _work_packet_row(packet)
+        store, connection = _store([_lock_row(), {"task_id": "task-1"}, row])
+        replay = store.record_work_packet_artifact(
+            task_id="task-1",
+            assignment_id="assignment-1",
+            packet=packet,
+            owner_token="owner-1",
+            fencing_generation=3,
+        )
+        self.assertEqual(document_digest(packet), replay.document_digest)
+        self.assertNotIn("INSERT INTO", connection.sql())
+
+        changed = _work_packet()
+        changed["objective"] = "Different authorized work must not replace the artifact."
+        store, connection = _store(
+            [_lock_row(), {"task_id": "task-1"}, _work_packet_row(packet)]
+        )
+        with self.assertRaisesRegex(PostgresControlPlaneError, "different content"):
+            store.record_work_packet_artifact(
+                task_id="task-1",
+                assignment_id="assignment-1",
+                packet=changed,
+                owner_token="owner-1",
+                fencing_generation=3,
+            )
+        self.assertEqual(1, connection.rollbacks)
+
+    def test_stale_writer_and_invalid_or_misbound_packets_fail_closed(self):
+        packet = _work_packet()
+        store, connection = _store([_lock_row(), None])
+        with self.assertRaisesRegex(PostgresControlPlaneError, "writer authority"):
+            store.record_work_packet_artifact(
+                task_id="task-1",
+                assignment_id="assignment-1",
+                packet=packet,
+                owner_token="owner-1",
+                fencing_generation=3,
+            )
+        self.assertNotIn("INSERT INTO", connection.sql())
+
+        for label, mutated in {
+            "task": {**packet, "task_id": "other-task"},
+            "assignment": {**packet, "assignment_id": "other-assignment"},
+            "schema": {**packet, "schema_version": "2.0"},
+        }.items():
+            with self.subTest(refused=label):
+                store, connection = _store([])
+                with self.assertRaises(PostgresControlPlaneError):
+                    store.record_work_packet_artifact(
+                        task_id="task-1",
+                        assignment_id="assignment-1",
+                        packet=mutated,
+                        owner_token="owner-1",
+                        fencing_generation=3,
+                    )
+                self.assertEqual([], connection.statements())
+
+    def test_load_revalidates_canonical_content_digest_and_bindings(self):
+        packet = _work_packet()
+        store, _ = _store([_work_packet_row(packet)])
+        artifact = store.read_work_packet_artifact(
+            task_id="task-1", assignment_id="assignment-1"
+        )
+        self.assertEqual(packet, artifact.packet)  # type: ignore[union-attr]
+
+        corrupt = _work_packet_row(packet)
+        corrupt["document_digest"] = DIGEST_B
+        store, _ = _store([corrupt])
+        with self.assertRaisesRegex(PostgresControlPlaneError, "digest"):
+            store.read_work_packet_artifact(
+                task_id="task-1", assignment_id="assignment-1"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Provider activation evidence
+# ---------------------------------------------------------------------------
+
+
+class ProviderActivationPostgresStoreTests(unittest.TestCase):
+    def test_compare_and_append_then_loads_the_typed_chain(self):
+        evidence = _activation_evidence()
+        store, connection = _store(
+            [
+                _lock_row(),
+                {"revision_count": 0, "latest_revision": 0},
+                {"revision": 1},
+            ]
+        )
+        self.assertTrue(store.append(evidence, expected_revision=0))
+        self.assertIn("pg_advisory_xact_lock", connection.statements()[0])
+        self.assertIn("ON CONFLICT DO NOTHING", connection.statements()[2])
+
+        store, _ = _store([[_activation_row(evidence)]])
+        self.assertEqual(
+            (evidence,), store.load(evidence.binding, evidence.surface)
+        )
+
+    def test_exact_replay_succeeds_without_an_insert(self):
+        evidence = _activation_evidence()
+        store, connection = _store(
+            [
+                _lock_row(),
+                {"revision_count": 1, "latest_revision": 1},
+                _activation_row(evidence),
+            ]
+        )
+        self.assertTrue(store.append(evidence, expected_revision=0))
+        self.assertNotIn("INSERT INTO", connection.sql())
+
+    def test_changed_replay_and_stale_expectation_are_conflicts(self):
+        evidence = _activation_evidence()
+        changed = _activation_evidence(evidence_id="different-observation")
+        store, _ = _store(
+            [
+                _lock_row(),
+                {"revision_count": 1, "latest_revision": 1},
+                _activation_row(evidence),
+            ]
+        )
+        self.assertFalse(store.append(changed, expected_revision=0))
+
+        second = _activation_evidence(
+            revision=2,
+            stage=ProviderActivationStage.AUTHENTICATED,
+            evidence_id="observed-auth-2",
+            evidence_digest="b" * 64,
+        )
+        store, connection = _store(
+            [_lock_row(), {"revision_count": 0, "latest_revision": 0}]
+        )
+        self.assertFalse(store.append(second, expected_revision=1))
+        self.assertNotIn("INSERT INTO", connection.sql())
+
+    def test_revision_gap_fails_closed_on_read_and_append(self):
+        second = _activation_evidence(
+            revision=2,
+            stage=ProviderActivationStage.AUTHENTICATED,
+            evidence_id="observed-auth-2",
+            evidence_digest="b" * 64,
+        )
+        store, _ = _store([[_activation_row(second)]])
+        with self.assertRaisesRegex(PostgresControlPlaneError, "revision gap"):
+            store.load(second.binding, second.surface)
+
+        store, connection = _store(
+            [_lock_row(), {"revision_count": 1, "latest_revision": 2}]
+        )
+        with self.assertRaisesRegex(PostgresControlPlaneError, "revision gap"):
+            store.append(second, expected_revision=1)
+        self.assertEqual(1, connection.rollbacks)
+
+    def test_candidate_revision_must_follow_expected_revision(self):
+        store, _ = _store([])
+        with self.assertRaisesRegex(PostgresControlPlaneError, "must follow"):
+            store.append(_activation_evidence(revision=1), expected_revision=1)
 
 
 # ---------------------------------------------------------------------------
@@ -1389,7 +1866,13 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
         joined = " ".join(" ".join(_control_plane_ddl(schema)).split())
         self.assertIn(f"CREATE SCHEMA IF NOT EXISTS {schema}", joined)
         for table in (
+            "director_primary_intake_authority",
+            "director_primary_intake_dedup",
+            "director_primary_command_receipt",
+            "director_provider_activation_evidence",
+            "director_primary_task_projection",
             "director_primary_task_writer",
+            "director_primary_work_packet_artifact",
             "director_primary_claim",
             "director_primary_budget",
             "director_primary_effect_reservation",
@@ -1521,19 +2004,17 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
 _TEST_DSN = os.environ.get(TEST_DSN_VARIABLE, "").strip()
 
 
-@unittest.skipUnless(
-    _TEST_DSN,
-    f"set {TEST_DSN_VARIABLE} to a disposable Postgres database to run the "
-    "real-Postgres control-plane suite; it must be a complete DSN "
-    "(host/port/dbname/user/sslmode, plus sslrootcert unless it is loopback)",
-)
 class PostgresControlPlaneIntegrationTests(unittest.TestCase):
-    """Real-Postgres races.  Nothing here runs without an explicit test DSN."""
+    """Mandatory real-Postgres races using an explicitly configured test DSN."""
 
     handle = None
 
     @classmethod
     def setUpClass(cls) -> None:
+        if not _TEST_DSN:
+            raise RuntimeError(
+                f"{TEST_DSN_VARIABLE} is required for the real-Postgres suite"
+            )
         cls.schema = f"director_primary_it_{uuid.uuid4().hex[:8]}_v2"
         cls.handle = open_postgres_control_plane(
             _TEST_DSN,
@@ -1585,6 +2066,175 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         self.assertEqual(self.schema, str(row["search_path"]).strip('"'))
         self.assertEqual(self.handle.storage_identity, self.second_store().storage_identity)
 
+    def test_work_packet_artifact_survives_restart_and_rejects_mutation(self):
+        import psycopg
+
+        lease = self.store.acquire_task_writer(
+            self.task_id,
+            engine_owner="langgraph",
+            owner_token="packet-writer",
+            expected_generation=INITIAL_FENCING_GENERATION,
+        )
+        assignment_id = f"assignment-{uuid.uuid4().hex[:8]}"
+        packet = _work_packet(task_id=self.task_id, assignment_id=assignment_id)
+        recorded = self.store.record_work_packet_artifact(
+            task_id=self.task_id,
+            assignment_id=assignment_id,
+            packet=packet,
+            owner_token="packet-writer",
+            fencing_generation=lease.fencing_generation,
+        )
+        restarted = self.second_store()
+        loaded = restarted.read_work_packet_artifact(
+            task_id=self.task_id, assignment_id=assignment_id
+        )
+        self.assertEqual(recorded, loaded)
+        self.assertEqual(
+            recorded,
+            restarted.record_work_packet_artifact(
+                task_id=self.task_id,
+                assignment_id=assignment_id,
+                packet=packet,
+                owner_token="packet-writer",
+                fencing_generation=lease.fencing_generation,
+            ),
+        )
+
+        for operation in ("UPDATE", "DELETE"):
+            statement = (
+                f"{operation} {self.schema}.director_primary_work_packet_artifact "
+                + (
+                    "SET canonical_document = canonical_document "
+                    if operation == "UPDATE"
+                    else ""
+                )
+                + "WHERE task_id = %s AND assignment_id = %s"
+            )
+            with self.subTest(operation=operation):
+                with self.handle.pool.connection() as connection:
+                    with self.assertRaises(psycopg.Error):
+                        connection.execute(statement, (self.task_id, assignment_id))
+
+    def test_concurrent_work_packet_identity_allows_one_content_only(self):
+        lease = self.store.acquire_task_writer(
+            self.task_id,
+            engine_owner="langgraph",
+            owner_token="packet-writer",
+            expected_generation=INITIAL_FENCING_GENERATION,
+        )
+        assignment_id = f"assignment-{uuid.uuid4().hex[:8]}"
+        first = _work_packet(task_id=self.task_id, assignment_id=assignment_id)
+        second = _work_packet(task_id=self.task_id, assignment_id=assignment_id)
+        second["objective"] = "A conflicting packet for the same immutable assignment."
+        other = self.second_store()
+        barrier = threading.Barrier(2)
+        results: list[object] = []
+
+        def attempt(store, packet: dict[str, object]) -> None:
+            barrier.wait()
+            try:
+                results.append(
+                    store.record_work_packet_artifact(
+                        task_id=self.task_id,
+                        assignment_id=assignment_id,
+                        packet=packet,
+                        owner_token="packet-writer",
+                        fencing_generation=lease.fencing_generation,
+                    )
+                )
+            except BaseException as error:  # pragma: no cover - asserted below
+                results.append(error)
+
+        threads = [
+            threading.Thread(target=attempt, args=(self.store, first)),
+            threading.Thread(target=attempt, args=(other, second)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        artifacts = [item for item in results if isinstance(item, PrimaryWorkPacketArtifact)]
+        failures = [item for item in results if isinstance(item, PostgresControlPlaneError)]
+        self.assertEqual(1, len(artifacts), results)
+        self.assertEqual(1, len(failures), results)
+        persisted = self.store.read_work_packet_artifact(
+            task_id=self.task_id, assignment_id=assignment_id
+        )
+        self.assertEqual(artifacts[0], persisted)
+
+    def test_provider_activation_chain_is_durable_atomic_and_append_only(self):
+        import psycopg
+
+        binding = _activation_binding(
+            workspace_id=f"workspace-{uuid.uuid4().hex[:8]}"
+        )
+        first = _activation_evidence(binding=binding)
+        self.assertTrue(self.store.append(first, expected_revision=0))
+        self.assertTrue(self.second_store().append(first, expected_revision=0))
+
+        candidates = (
+            _activation_evidence(
+                binding=binding,
+                revision=2,
+                stage=ProviderActivationStage.AUTHENTICATED,
+                evidence_id="auth-observation-a",
+                evidence_digest="b" * 64,
+            ),
+            _activation_evidence(
+                binding=binding,
+                revision=2,
+                stage=ProviderActivationStage.AUTHENTICATED,
+                evidence_id="auth-observation-b",
+                evidence_digest="c" * 64,
+            ),
+        )
+        other = self.second_store()
+        results: list[object] = []
+        barrier = threading.Barrier(2)
+
+        def attempt(store, evidence: ProviderActivationEvidence) -> None:
+            barrier.wait()
+            try:
+                results.append(store.append(evidence, expected_revision=1))
+            except BaseException as error:  # pragma: no cover - asserted below
+                results.append(error)
+
+        threads = [
+            threading.Thread(target=attempt, args=(self.store, candidates[0])),
+            threading.Thread(target=attempt, args=(other, candidates[1])),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertCountEqual([True, False], results)
+
+        persisted = self.store.load(binding, ProviderActivationSurface.APP)
+        self.assertEqual((1, 2), tuple(item.revision for item in persisted))
+        self.assertEqual(1, sum(item in candidates for item in persisted[1:]))
+        with self.assertRaises(PostgresControlPlaneError):
+            self.store.append(
+                _activation_evidence(
+                    binding=binding,
+                    revision=3,
+                    stage=ProviderActivationStage.WORKSPACE_BOUND,
+                    evidence_id="workspace-bound",
+                    evidence_digest="d" * 64,
+                ),
+                expected_revision=1,
+            )
+
+        with self.handle.pool.connection() as connection:
+            with self.assertRaises(psycopg.Error):
+                connection.execute(
+                    f"DELETE FROM {self.schema}."
+                    "director_provider_activation_evidence "
+                    "WHERE workspace_id = %s",
+                    (binding.workspace_id,),
+                )
+
     def test_two_writers_racing_a_first_acquisition_produce_one_winner(self):
         other = self.second_store()
         results: list[object] = []
@@ -1617,6 +2267,42 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         self.assertEqual(1, leases[0].fencing_generation)
         recorded = self.store.current_task_writer(self.task_id)
         self.assertEqual(leases[0].owner_token, recorded.owner_token)
+
+    def test_two_engines_racing_for_new_intake_produce_one_winner(self):
+        other = self.second_store()
+        results: list[object] = []
+        barrier = threading.Barrier(2)
+
+        def attempt(store, token: str) -> None:
+            barrier.wait()
+            try:
+                results.append(
+                    store.acquire_intake_authority(
+                        intake_owner="langgraph",
+                        owner_token=token,
+                        expected_generation=0,
+                    )
+                )
+            except PostgresControlPlaneError as error:
+                results.append(error)
+
+        threads = [
+            threading.Thread(target=attempt, args=(self.store, "graph-owner-a")),
+            threading.Thread(target=attempt, args=(other, "graph-owner-b")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        leases = [item for item in results if isinstance(item, IntakeAuthorityLease)]
+        failures = [item for item in results if isinstance(item, Exception)]
+        self.assertEqual(1, len(leases), results)
+        self.assertEqual(1, len(failures), results)
+        self.assertEqual(1, leases[0].fencing_generation)
+        observed = self.store.current_intake_authority()
+        self.assertEqual("langgraph", observed.intake_owner)
+        self.assertTrue(observed.legacy_new_intake_disabled)
+        self.assertEqual(leases[0].owner_token, observed.owner_token)
 
     def test_stale_generation_and_live_lease_both_refuse_takeover(self):
         lease = self.own()
@@ -2187,3 +2873,7 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-31 | 15:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | END]]

@@ -1,4 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | BEGIN]]
@@ -1044,8 +1046,8 @@ class CompletionGateContractTests(unittest.TestCase):
                 self.assertNotIn("[[", path.read_text(encoding="utf-8"))
 
     def test_packet_contract_fingerprints_are_explicitly_bound(self):
-        # Pin the exact work-packet authority and assignment-specific retry
-        # budget contract so later drift cannot pass silently.
+        # Pin the current exact packet authority, including assignment-specific
+        # retry and owned/prohibited-path contracts, so drift cannot pass silently.
         expected = {
             "model-work-packet-v1.schema.json": "sha256:8eaa923240bf2b2b57e2ad7081045c50d6abc5a334680e2b250b3b4add0f998d",
             "model-work-packet-v1.example.json": "sha256:de50d90969eda8eae71807479f1fa3cac80254dfdf2656c79474206aea0f663e",
@@ -1071,3 +1073,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]

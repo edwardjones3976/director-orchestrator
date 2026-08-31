@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -8,6 +9,10 @@ services:
     build: .
     restart: unless-stopped
     env_file: ${DIRECTOR_ENV_FILE:-.env}
+    environment:
+      # Compose derives the container-only DSN from one secret-store value. The
+      # primary runtime and new-intake gates remain independently default-off.
+      LANGGRAPH_PRIMARY_POSTGRES_DSN: postgresql://director_primary:${LANGGRAPH_PRIMARY_POSTGRES_PASSWORD}@langgraph-primary-db:5432/director_primary?sslmode=disable
     ports:
       - "127.0.0.1:${DIRECTOR_HOST_PORT:-8080}:8080"
     volumes:
@@ -16,12 +21,31 @@ services:
         source: ${REPOSITORY_SNAPSHOT_HOST_PATH:-./.repository-snapshot-disabled}
         target: /repository
         read_only: true
+    depends_on:
+      langgraph-primary-db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  langgraph-primary-db:
+    image: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: director_primary
+      POSTGRES_DB: director_primary
+      POSTGRES_PASSWORD: ${LANGGRAPH_PRIMARY_POSTGRES_PASSWORD}
+    volumes:
+      - langgraph-primary-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U director_primary -d director_primary"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   slackbot:
     build: .
@@ -94,8 +118,10 @@ services:
 
 volumes:
   director-data:
+  langgraph-primary-db-data:
   n8n-data:
   n8n-db-data:
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]]

@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:17 UTC | BEGIN]]
@@ -457,6 +460,23 @@ class PhaseResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanResult:
+    """The validated plan and the exact work packet derived from that plan."""
+
+    plan_digest: str
+    work_packet_digest: str
+    passed: bool = True
+    reason_code: str = "ok"
+
+    def __post_init__(self) -> None:
+        _require_digest(self.plan_digest, "plan_digest")
+        _require_digest(self.work_packet_digest, "work_packet_digest")
+        if type(self.passed) is not bool:
+            raise ValueError("passed must be a boolean")
+        _require_code(self.reason_code)
+
+
+@dataclass(frozen=True, slots=True)
 class ScheduleResult:
     schedule_digest: str
     producer_id: str
@@ -633,7 +653,7 @@ class HandlerContext:
     intake_digest: str
     scope_digest: str
     authority_snapshot_digest: str
-    work_packet_digest: str
+    work_packet_digest: str | None
     idempotency_key_digest: str
     starting_sha: str
     candidate_sha: str
@@ -653,6 +673,7 @@ class HandlerContext:
 
 
 DigestHandler = Callable[[HandlerContext], PhaseResult]
+PlanHandler = Callable[[HandlerContext], PlanResult]
 ScheduleHandler = Callable[[HandlerContext], ScheduleResult]
 ProviderHandler = Callable[[HandlerContext], ProviderSubgraphResult]
 EvidenceHandler = Callable[[HandlerContext], EvidenceDebateResult]
@@ -668,7 +689,7 @@ class PrimaryHandlers:
 
     authenticate_scope: DigestHandler
     canonicalize: DigestHandler
-    plan: DigestHandler
+    plan: PlanHandler
     policy_budget: DigestHandler
     schedule: ScheduleHandler
     provider_subgraph: ProviderHandler
@@ -689,9 +710,12 @@ class PrimaryRequest:
     intake_digest: str
     scope_digest: str
     authority_snapshot_digest: str
+    # Compatibility-only pre-plan input. It is replaced by PlanResult before
+    # any downstream phase is allowed to run.
     work_packet_digest: str
     idempotency_key_digest: str
     starting_sha: str
+    dedup_payload_digest: str | None = None
     writer_owner_id: str = "langgraph-primary"
     budget_limit_units: int = 1
     provider_cost_units: int = 1
@@ -716,6 +740,8 @@ class PrimaryRequest:
         _require_digest(self.work_packet_digest, "work_packet_digest")
         _require_digest(self.idempotency_key_digest, "idempotency_key_digest")
         _require_sha(self.starting_sha, "starting_sha")
+        if self.dedup_payload_digest is not None:
+            _require_digest(self.dedup_payload_digest, "dedup_payload_digest")
         _require_id(self.writer_owner_id, "writer_owner_id")
         for field in (
             "budget_limit_units",
@@ -760,6 +786,7 @@ class PrimaryRequest:
             "work_packet_digest": self.work_packet_digest,
             "idempotency_key_digest": self.idempotency_key_digest,
             "starting_sha": self.starting_sha,
+            "dedup_payload_digest": self.dedup_payload_digest,
             "writer_owner_id": self.writer_owner_id,
             "budget_limit_units": self.budget_limit_units,
             "provider_cost_units": self.provider_cost_units,
@@ -785,10 +812,12 @@ class PrimaryRequest:
             {
                 "input_digest": self.input_digest,
                 "candidate_sha": self.starting_sha,
+                "plan_work_packet_binding_digest": None,
                 "scheduled_producer_id": None,
                 "provider_dispatch_status": ProviderDispatchStatus.NOT_STARTED.value,
                 "provider_attempt_digest": None,
                 "provider_result_digest": None,
+                "provider_result_receipt_digest": None,
                 "producer_id": None,
                 "review_producer_id": None,
                 "reviewer_id": None,
@@ -810,6 +839,7 @@ class PrimaryRequest:
                     else EffectStatus.NOT_REQUIRED.value
                 ),
                 "effect_result_digest": None,
+                "effect_result_receipt_digest": None,
                 "effect_readback_digest": None,
                 "terminal_classification": None,
             }
@@ -905,6 +935,7 @@ class PrimaryGraphState(TypedDict, total=False):
     idempotency_key_digest: str
     input_digest: str
     starting_sha: str
+    dedup_payload_digest: str | None
     candidate_sha: str
     writer_owner_id: str
     budget_limit_units: int
@@ -924,12 +955,14 @@ class PrimaryGraphState(TypedDict, total=False):
     authenticate_scope_digest: str | None
     canonical_digest: str | None
     plan_digest: str | None
+    plan_work_packet_binding_digest: str | None
     policy_digest: str | None
     schedule_digest: str | None
     scheduled_producer_id: str | None
     provider_dispatch_status: str
     provider_attempt_digest: str | None
     provider_result_digest: str | None
+    provider_result_receipt_digest: str | None
     producer_id: str | None
     evidence_digest: str | None
     debate_digest: str | None
@@ -950,6 +983,7 @@ class PrimaryGraphState(TypedDict, total=False):
     effect_status: str
     effect_attempt_digest: str | None
     effect_result_digest: str | None
+    effect_result_receipt_digest: str | None
     effect_readback_digest: str | None
     current_phase: str
     previous_phase: str | None
@@ -962,6 +996,36 @@ class PrimaryGraphState(TypedDict, total=False):
 _REQUEST_FIELDS = tuple(PrimaryRequest.__dataclass_fields__)
 
 
+def _plan_work_packet_binding(plan_digest: str, work_packet_digest: str) -> str:
+    return _canonical_digest(
+        {
+            "schema_version": PRIMARY_SCHEMA_VERSION,
+            "plan_digest": plan_digest,
+            "work_packet_digest": work_packet_digest,
+        }
+    )
+
+
+def _post_plan_work_packet_digest(state: Mapping[str, Any]) -> str | None:
+    """Return packet authority only when its post-plan binding is intact."""
+
+    try:
+        plan_digest = _require_digest(
+            str(state.get("plan_digest") or ""), "plan_digest"
+        )
+        work_packet_digest = _require_digest(
+            str(state.get("work_packet_digest") or ""), "work_packet_digest"
+        )
+        binding_digest = _require_digest(
+            str(state.get("plan_work_packet_binding_digest") or ""),
+            "plan_work_packet_binding_digest",
+        )
+    except ValueError:
+        return None
+    expected = _plan_work_packet_binding(plan_digest, work_packet_digest)
+    return work_packet_digest if _secure_equal(binding_digest, expected) else None
+
+
 def _context(state: Mapping[str, Any]) -> HandlerContext:
     return HandlerContext(
         task_id=state["task_id"],
@@ -970,7 +1034,7 @@ def _context(state: Mapping[str, Any]) -> HandlerContext:
         intake_digest=state["intake_digest"],
         scope_digest=state["scope_digest"],
         authority_snapshot_digest=state["authority_snapshot_digest"],
-        work_packet_digest=state["work_packet_digest"],
+        work_packet_digest=_post_plan_work_packet_digest(state),
         idempotency_key_digest=state["idempotency_key_digest"],
         starting_sha=state["starting_sha"],
         candidate_sha=state["candidate_sha"],
@@ -988,6 +1052,19 @@ def _context(state: Mapping[str, Any]) -> HandlerContext:
         effect_attempt_digest=state.get("effect_attempt_digest"),
         writer_owner_id=state["writer_owner_id"],
     )
+
+
+_POST_PLAN_PHASES = frozenset(
+    phase
+    for phase in PrimaryPhase
+    if phase
+    not in {
+        PrimaryPhase.AUTHENTICATE_SCOPE,
+        PrimaryPhase.CANONICALIZE,
+        PrimaryPhase.PLAN,
+        PrimaryPhase.TERMINAL_CLASSIFICATION,
+    }
+)
 
 
 def _validate_initial_state(state: PrimaryGraphState) -> PrimaryGraphState:
@@ -1028,6 +1105,12 @@ def _entered_update(
         "visit_count": visit_count,
         "visited_nodes": [*prior, phase.value][-MAX_RETAINED_VISITS:],
     }
+    if phase in _POST_PLAN_PHASES and _post_plan_work_packet_digest(state) is None:
+        update.update(
+            terminal_classification=TerminalClassification.POLICY_BLOCKED.value,
+            transition_reason_code="work_packet_authority_invalid",
+        )
+        return update, False
     if bool(state.get("cancel_requested")):
         update.update(
             terminal_classification=TerminalClassification.CANCELLED.value,
@@ -1090,6 +1173,7 @@ def _approval_request_digest(state: Mapping[str, Any], kind: ApprovalKind) -> st
         "authority_snapshot_digest": state["authority_snapshot_digest"],
         "candidate_sha": state["candidate_sha"],
         "plan_digest": state.get("plan_digest"),
+        "work_packet_digest": _post_plan_work_packet_digest(state),
         "policy_digest": state.get("policy_digest"),
         "budget_limit_units": state["budget_limit_units"],
         "max_revisions": state["max_revisions"],
@@ -1177,13 +1261,23 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
         update, proceed = _entered_update(state, PrimaryPhase.PLAN)
         if not proceed:
             return update
-        return _call_phase_handler(
-            state,
-            update,
-            handlers.plan,
-            digest_field="plan_digest",
-            error_code="plan_handler_error",
+        try:
+            result = handlers.plan(_context(state))
+            if not isinstance(result, PlanResult):
+                raise TypeError("plan handler returned the wrong result type")
+        except Exception:
+            return _handler_failure(update, reason_code="plan_handler_error")
+        update.update(
+            plan_digest=result.plan_digest,
+            work_packet_digest=result.work_packet_digest,
+            plan_work_packet_binding_digest=_plan_work_packet_binding(
+                result.plan_digest, result.work_packet_digest
+            ),
+            transition_reason_code=result.reason_code,
         )
+        if not result.passed:
+            return _handler_failure(update, reason_code=result.reason_code)
+        return update
 
     def policy_budget(state: PrimaryGraphState) -> PrimaryGraphState:
         update, proceed = _entered_update(state, PrimaryPhase.POLICY_BUDGET)
@@ -1322,6 +1416,7 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             provider_attempt_digest=attempt_digest,
             budget_used_units=state["budget_used_units"] + state["provider_cost_units"],
             provider_result_digest=None,
+            provider_result_receipt_digest=None,
             producer_id=None,
             evidence_digest=None,
             debate_digest=None,
@@ -1336,6 +1431,7 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             security_digest=None,
             completion_digest=None,
             effect_result_digest=None,
+            effect_result_receipt_digest=None,
             effect_readback_digest=None,
             transition_reason_code="provider_dispatch_claimed",
         )
@@ -1446,9 +1542,11 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
                 classification=TerminalClassification.RECONCILIATION_REQUIRED,
                 reason_code="provider_binding_mismatch",
             )
+        result_receipt_digest = _canonical_digest(result.as_resume_payload())
         if result.disposition == ProviderDisposition.AMBIGUOUS:
             update.update(
-                provider_dispatch_status=ProviderDispatchStatus.RECONCILIATION_REQUIRED.value
+                provider_dispatch_status=ProviderDispatchStatus.RECONCILIATION_REQUIRED.value,
+                provider_result_receipt_digest=result_receipt_digest,
             )
             return _handler_failure(
                 update,
@@ -1459,11 +1557,13 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             update.update(
                 provider_dispatch_status=ProviderDispatchStatus.FAILED.value,
                 provider_result_digest=result.result_digest,
+                provider_result_receipt_digest=result_receipt_digest,
                 producer_id=result.producer_id,
             )
             return _handler_failure(update, reason_code=result.reason_code)
         update.update(
             provider_result_digest=result.result_digest,
+            provider_result_receipt_digest=result_receipt_digest,
             candidate_sha=result.candidate_sha,
             producer_id=result.producer_id,
             provider_dispatch_status=ProviderDispatchStatus.COMPLETED.value,
@@ -1731,6 +1831,8 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
         attempt_digest = _canonical_digest(
             {
                 "task_id": state["task_id"],
+                "plan_digest": state["plan_digest"],
+                "work_packet_digest": _post_plan_work_packet_digest(state),
                 "candidate_sha": state["candidate_sha"],
                 "completion_digest": state["completion_digest"],
                 "effect_key_digest": state["effect_key_digest"],
@@ -1824,8 +1926,12 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
                 classification=TerminalClassification.RECONCILIATION_REQUIRED,
                 reason_code="effect_binding_mismatch",
             )
+        result_receipt_digest = _canonical_digest(result.as_resume_payload())
         if result.disposition == EffectDisposition.AMBIGUOUS:
-            update.update(effect_status=EffectStatus.RECONCILIATION_REQUIRED.value)
+            update.update(
+                effect_status=EffectStatus.RECONCILIATION_REQUIRED.value,
+                effect_result_receipt_digest=result_receipt_digest,
+            )
             return _handler_failure(
                 update,
                 classification=TerminalClassification.RECONCILIATION_REQUIRED,
@@ -1835,11 +1941,13 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             update.update(
                 effect_status=EffectStatus.FAILED.value,
                 effect_result_digest=result.result_digest,
+                effect_result_receipt_digest=result_receipt_digest,
             )
             return _handler_failure(update, reason_code=result.reason_code)
         update.update(
             effect_status=EffectStatus.COMPLETED.value,
             effect_result_digest=result.result_digest,
+            effect_result_receipt_digest=result_receipt_digest,
             effect_readback_digest=result.readback_digest,
         )
         return _handler_failure(
@@ -2102,6 +2210,32 @@ class PrimaryWorkflowRuntime:
     def _snapshot(self, task_id: str):
         return self._graph.get_state(self._config(task_id))
 
+    def _fail_closed_invalid_post_plan_checkpoint(self, task_id: str) -> bool:
+        """Quarantine a resumed checkpoint whose plan/packet binding drifted."""
+
+        snapshot = self._snapshot(task_id)
+        state = snapshot.values
+        if not state or state.get("plan_digest") is None:
+            return False
+        if _post_plan_work_packet_digest(state) is not None:
+            return False
+        if (
+            state.get("terminal_classification")
+            != TerminalClassification.POLICY_BLOCKED.value
+            or state.get("transition_reason_code")
+            != "work_packet_authority_invalid"
+        ):
+            self._graph.update_state(
+                self._config(task_id),
+                {
+                    "terminal_classification": (
+                        TerminalClassification.POLICY_BLOCKED.value
+                    ),
+                    "transition_reason_code": "work_packet_authority_invalid",
+                },
+            )
+        return True
+
     @staticmethod
     def _state_digest(state: Mapping[str, Any]) -> str:
         compact = {key: value for key, value in state.items() if key != "__interrupt__"}
@@ -2245,6 +2379,8 @@ class PrimaryWorkflowRuntime:
         config = self._config(task_id)
         observed = self._graph.get_state(config)
         if not observed.values or str(observed.values.get(field)) != expected:
+            return False
+        if _post_plan_work_packet_digest(observed.values) is None:
             return False
         observed_id = _checkpoint_id(observed.config)
         if observed_id is None:
@@ -2594,6 +2730,8 @@ class PrimaryWorkflowRuntime:
                     override=WorkflowRunStatus.REJECTED,
                     reason_override="stale_workflow_input",
                 )
+            if self._fail_closed_invalid_post_plan_checkpoint(request.task_id):
+                return self._outcome(request.task_id)
             if (
                 snapshot.values.get("terminal_classification") is None
                 and snapshot.values.get("pending_approval_kind") is None
@@ -2666,12 +2804,124 @@ class PrimaryWorkflowRuntime:
         self._drive_pending_boundaries(task_id)
         return self._outcome(task_id)
 
+    def record_provider_result(
+        self, task_id: str, result: ProviderSubgraphResult
+    ) -> PrimaryOutcome:
+        """Resume one already-dispatched provider boundary from authenticated input."""
+
+        snapshot = self._snapshot(task_id)
+        state = snapshot.values
+        delivered_receipt = _canonical_digest(result.as_resume_payload())
+        applied_receipt = state.get("provider_result_receipt_digest")
+        if applied_receipt is not None:
+            if _secure_equal(str(applied_receipt), delivered_receipt):
+                return self._outcome(
+                    task_id,
+                    override=WorkflowRunStatus.ALREADY_APPLIED,
+                    reason_override="provider_result_already_applied",
+                )
+            raise ValueError("provider result conflicts with the already applied result")
+        if PrimaryPhase.PROVIDER_SUBGRAPH.value not in snapshot.next:
+            raise ValueError("primary graph has no pending provider result")
+        if ProviderDispatchStatus(str(state["provider_dispatch_status"])) != (
+            ProviderDispatchStatus.DISPATCHING
+        ):
+            raise ValueError("provider result requires a durably dispatched intent")
+        expected = self._provider_intent(state)
+        if (
+            not _secure_equal(
+                result.provider_attempt_digest, expected.provider_attempt_digest
+            )
+            or not _secure_equal(
+                result.idempotency_key_digest, expected.idempotency_key_digest
+            )
+            or not _secure_equal(
+                result.authority_snapshot_digest,
+                expected.authority_snapshot_digest,
+            )
+            or result.producer_id != expected.producer_id
+        ):
+            raise ValueError("provider result does not match the dispatched intent")
+        self._graph.invoke(
+            Command(resume=result.as_resume_payload()), self._config(task_id)
+        )
+        self._drive_pending_boundaries(task_id)
+        return self._outcome(task_id)
+
+    def record_effect_result(
+        self, task_id: str, result: EffectExecutionResult
+    ) -> PrimaryOutcome:
+        """Resume one already-executing external effect from authenticated readback."""
+
+        snapshot = self._snapshot(task_id)
+        state = snapshot.values
+        delivered_receipt = _canonical_digest(result.as_resume_payload())
+        applied_receipt = state.get("effect_result_receipt_digest")
+        if applied_receipt is not None:
+            if _secure_equal(str(applied_receipt), delivered_receipt):
+                return self._outcome(
+                    task_id,
+                    override=WorkflowRunStatus.ALREADY_APPLIED,
+                    reason_override="effect_result_already_applied",
+                )
+            raise ValueError("effect result conflicts with the already applied result")
+        if PrimaryPhase.EFFECT_EXECUTION_READBACK.value not in snapshot.next:
+            raise ValueError("primary graph has no pending effect result")
+        if EffectStatus(str(state["effect_status"])) != EffectStatus.EXECUTING:
+            raise ValueError("effect result requires a durably executing intent")
+        if (
+            not _secure_equal(
+                result.effect_key_digest, str(state["effect_key_digest"])
+            )
+            or not _secure_equal(
+                result.effect_attempt_digest,
+                str(state["effect_attempt_digest"]),
+            )
+            or result.writer_owner_id != state["writer_owner_id"]
+        ):
+            raise ValueError("effect result does not match the executing intent")
+        self._graph.invoke(
+            Command(resume=result.as_resume_payload()), self._config(task_id)
+        )
+        self._drive_pending_boundaries(task_id)
+        return self._outcome(task_id)
+
+    def cancel(self, task_id: str) -> PrimaryOutcome:
+        """Persist cancellation without reviving or redispatching pending work."""
+
+        snapshot = self._snapshot(task_id)
+        if not snapshot.values:
+            raise ValueError("primary graph checkpoint does not exist")
+        if snapshot.values.get("terminal_classification") is not None:
+            return self._outcome(task_id)
+        provider_status = ProviderDispatchStatus(
+            str(snapshot.values["provider_dispatch_status"])
+        )
+        effect_status = EffectStatus(str(snapshot.values["effect_status"]))
+        if provider_status == ProviderDispatchStatus.DISPATCHING:
+            self._resume_ambiguous_provider(task_id, "cancelled_after_dispatch")
+            return self._outcome(task_id)
+        if effect_status == EffectStatus.EXECUTING:
+            self._resume_ambiguous_effect(task_id, "cancelled_after_effect_start")
+            return self._outcome(task_id)
+        self._graph.update_state(
+            self._config(task_id),
+            {
+                "cancel_requested": True,
+                "transition_reason_code": "cancel_requested",
+            },
+        )
+        self._graph.invoke(None, self._config(task_id))
+        return self._outcome(task_id)
+
     def recover(self, task_id: str) -> PrimaryOutcome:
         """Inspect a persisted thread; ambiguous executing effects never repeat."""
 
         snapshot = self._snapshot(task_id)
         if not snapshot.values:
             raise ValueError("primary graph checkpoint does not exist")
+        if self._fail_closed_invalid_post_plan_checkpoint(task_id):
+            return self._outcome(task_id)
         self._drive_pending_boundaries(task_id)
         return self._outcome(task_id)
 
@@ -2698,3 +2948,6 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]

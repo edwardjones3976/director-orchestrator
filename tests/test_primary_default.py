@@ -1,0 +1,556 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+import uuid
+from dataclasses import replace
+from pathlib import Path
+
+from director_orchestrator.config import Settings
+from director_orchestrator.langgraph_postgres import open_postgres_control_plane
+from director_orchestrator.langgraph_primary import (
+    ApprovalDecision,
+    ApprovalKind,
+    ApprovalResume,
+)
+from director_orchestrator.models import IntakeAuthentication, SlackIntake, TaskStatus
+from director_orchestrator.packet_contracts import document_digest
+from director_orchestrator.packet_routing import DirectorPacketTaskRouter
+from director_orchestrator.primary_coordinator import PrimaryTaskCoordinator
+from director_orchestrator.primary_default import (
+    DefaultDryRunServices,
+    DefaultOfflineSimulationServices,
+    DefaultPrimaryActivation,
+    DefaultPrimaryApplication,
+    DefaultPrimaryAuthority,
+)
+
+
+TEST_DSN = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+SHA = "b" * 40
+
+
+def digest(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+class _FixedAuthorityResolver:
+    def resolve(self, record, assignment):
+        return [{"path": "README.md", "commit_sha": SHA, "blob_sha": "c" * 40}]
+
+
+def packet_router(settings: Settings) -> DirectorPacketTaskRouter:
+    return DirectorPacketTaskRouter(
+        authority_snapshots=_FixedAuthorityResolver(),
+        boundary_adapters={},
+        writer_owner_id="langgraph-primary-default",
+        writer_secret="default-primary-test-writer-secret",
+        timeout_seconds=settings.provider_timeout_seconds,
+    )
+
+
+class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
+    def test_paid_execution_requires_the_explicit_live_switch(self):
+        settings = replace(
+            Settings(),
+            langgraph_primary_enabled=True,
+            allow_paid_runs=True,
+            langgraph_primary_live_provider_dispatch_enabled=False,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "ALLOW_PAID_RUNS is enabled.*LIVE_PROVIDER_DISPATCH_ENABLED is disabled",
+        ):
+            DefaultPrimaryActivation(settings)
+
+    def test_live_switch_names_every_missing_production_boundary(self):
+        settings = replace(
+            Settings(),
+            langgraph_primary_enabled=True,
+            allow_paid_runs=True,
+            langgraph_primary_live_provider_dispatch_enabled=True,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "explicit provider adapters, durable result/completion/effect resolvers",
+        ):
+            DefaultPrimaryActivation(settings)
+
+
+class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not TEST_DSN:
+            raise RuntimeError(
+                "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN is required for integration tests"
+            )
+
+    def setUp(self) -> None:
+        self.schema = f"director_default_it_{uuid.uuid4().hex[:8]}_v1"
+        self.handle = open_postgres_control_plane(
+            TEST_DSN,
+            schema=self.schema,
+            allow_insecure_local_transport=True,
+        )
+        self.settings = replace(
+            Settings(),
+            app_env="default-test",
+            allow_paid_runs=False,
+            project_allowlist=("default",),
+            repository_allowlist=("owner/director-orchestrator",),
+            allowed_starting_refs=("main",),
+        )
+        self.services = DefaultDryRunServices(
+            self.settings, packet_router=packet_router(self.settings)
+        )
+        self.coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            self.services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-test-v1",
+            application_projection_provider=(
+                self.services.application_projection
+            ),
+        )
+        self.coordinator.activate_new_intake(expected_generation=0)
+        self.application = DefaultPrimaryApplication(
+            self.settings,
+            self.coordinator,
+            self.services,
+            DefaultPrimaryAuthority(
+                starting_sha=SHA,
+                authority_snapshot_digest=digest("authority"),
+            ),
+        )
+
+    def tearDown(self) -> None:
+        try:
+            with self.handle.pool.connection() as connection:
+                connection.execute(f"DROP SCHEMA IF EXISTS {self.schema} CASCADE")
+        finally:
+            self.handle.close()
+
+    @staticmethod
+    def intake() -> SlackIntake:
+        return SlackIntake(
+            source_event_id="event-default-1",
+            channel_id="CDEFAULT",
+            thread_ts="1720000000.000001",
+            user_id="UOWNER",
+            text="Project: default\nCreate a bounded implementation plan.",
+        )
+
+    def test_paid_off_intake_and_read_are_graph_owned(self):
+        record = self.application.create_intake(
+            self.intake(),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+
+        self.assertTrue(record.task_id.startswith("DIR-LG-"))
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, record.status)
+        self.assertIsNotNone(record.plan)
+        self.assertIn("no provider", record.message or "")
+        assert record.plan is not None
+        assignment = min(record.plan.assignments, key=lambda item: item.sequence)
+        expected_packet = self.services._packet_router.work_packet(record, assignment)
+        graph_state = self.coordinator._runtime.compact_state(record.task_id)
+        self.assertEqual(
+            document_digest(expected_packet), graph_state["work_packet_digest"]
+        )
+        self.assertNotEqual(
+            self.application._request(record.task_id, record.intake).work_packet_digest,
+            graph_state["work_packet_digest"],
+        )
+        restored = self.application.get_task(record.task_id)
+        self.assertEqual(record.model_dump(mode="json"), restored.model_dump(mode="json"))
+        readiness = self.coordinator.readiness()
+        self.assertEqual(1, readiness.graph_task_count)
+        self.assertTrue(readiness.writer_lease_ready)
+        self.assertTrue(readiness.legacy_new_intake_disabled)
+
+    def test_duplicate_event_returns_original_graph_task(self):
+        first = self.application.create_intake(
+            self.intake(),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        replay = self.application.create_intake(
+            self.intake(),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+
+        self.assertEqual(first.task_id, replay.task_id)
+        self.assertEqual(1, self.coordinator.readiness().graph_task_count)
+
+    def test_denial_and_cancellation_are_graph_owned_and_recoverable(self):
+        denied = self.application.create_intake(
+            self.intake(),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        denied_projection = self.coordinator.get_projection(denied.task_id)
+        assert denied_projection is not None
+        pending = denied_projection.projection["pending_approval"]
+        denied = self.application.resume_approval(
+            ApprovalResume(
+                task_id=denied.task_id,
+                kind=ApprovalKind(pending["kind"]),
+                request_digest=pending["request_digest"],
+                approval_event_id="deny-default-1",
+                decision=ApprovalDecision.DENY,
+            )
+        )
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, denied.status)
+        self.assertEqual(
+            "execution_approval_denied",
+            self.coordinator.get_projection(denied.task_id).projection["reason_code"],
+        )
+        recovered = self.application.recover(denied.task_id)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, recovered.status)
+
+        second = self.intake().model_copy(
+            update={"source_event_id": "event-default-cancel"}
+        )
+        cancelled = self.application.create_intake(
+            second,
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        cancelled = self.application.cancel(cancelled.task_id)
+        self.assertEqual(TaskStatus.FAILED, cancelled.status)
+        cancelled_projection = self.coordinator.get_projection(cancelled.task_id)
+        assert cancelled_projection is not None
+        self.assertEqual(
+            "CANCELLED", cancelled_projection.projection["terminal_classification"]
+        )
+
+    def test_restart_read_does_not_need_in_memory_application_state(self):
+        first = self.application.create_intake(
+            self.intake(),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        restarted_services = DefaultDryRunServices(
+            self.settings, packet_router=packet_router(self.settings)
+        )
+        restarted = DefaultPrimaryApplication(
+            self.settings,
+            PrimaryTaskCoordinator(
+                self.handle,
+                restarted_services.handlers(),
+                owner_token="default-primary-test-owner",
+                checkpoint_namespace="default-primary-test-v1",
+                application_projection_provider=(
+                    restarted_services.application_projection
+                ),
+            ),
+            restarted_services,
+            DefaultPrimaryAuthority(
+                starting_sha=SHA,
+                authority_snapshot_digest=digest("authority"),
+            ),
+        )
+
+        restored = restarted.get_task(first.task_id)
+        self.assertIsNotNone(restored)
+        self.assertEqual(first.task_id, restored.task_id)
+
+    def test_same_owner_restart_adopts_intake_and_reconciles_from_projection(self):
+        first = self.application.create_intake(
+            self.intake(),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        before = self.coordinator.get_projection(first.task_id)
+        self.assertIsNotNone(before)
+
+        restarted_services = DefaultDryRunServices(
+            self.settings, packet_router=packet_router(self.settings)
+        )
+        restarted_coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            restarted_services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-test-v1",
+            application_projection_provider=(
+                restarted_services.application_projection
+            ),
+        )
+        adopted = restarted_coordinator.adopt_or_activate_new_intake()
+        self.assertEqual(1, adopted.fencing_generation)
+
+        assert before is not None
+        restarted_services.hydrate(before)
+        try:
+            recovered = restarted_coordinator.recover(first.task_id)
+        finally:
+            restarted_services.discard(first.task_id)
+
+        self.assertEqual(first.task_id, recovered.task_id)
+        self.assertEqual(before.projection_digest, recovered.projection_digest)
+        self.assertEqual(1, restarted_coordinator.readiness().graph_task_count)
+
+    def test_offline_simulation_traverses_full_graph_once(self):
+        settings = replace(
+            self.settings,
+            langgraph_primary_offline_simulation_enabled=True,
+        )
+        barrier = threading.Barrier(len(settings.langgraph_primary_required_providers))
+        worker_threads: set[int] = set()
+        worker_lock = threading.Lock()
+
+        def provider_double(provider: str):
+            def run(context):
+                with worker_lock:
+                    worker_threads.add(threading.get_ident())
+                barrier.wait(timeout=5)
+                return digest(f"offline:{provider}:{context.task_id}")
+
+            return run
+
+        services = DefaultOfflineSimulationServices(
+            settings,
+            packet_router=packet_router(settings),
+            provider_doubles={
+                provider: provider_double(provider)
+                for provider in settings.langgraph_primary_required_providers
+            },
+        )
+        coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-offline-test-v1",
+            auto_execute_provider=True,
+            application_projection_provider=services.application_projection,
+        )
+        coordinator.adopt_or_activate_new_intake()
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator,
+            services,
+            DefaultPrimaryAuthority(
+                starting_sha=SHA,
+                authority_snapshot_digest=digest("authority"),
+            ),
+        )
+        intake = self.intake().model_copy(
+            update={"source_event_id": "event-default-offline-full"}
+        )
+        pending = application.create_intake(
+            intake,
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        projection = coordinator.get_projection(pending.task_id)
+        assert projection is not None
+        approval = projection.projection["pending_approval"]
+
+        completed = application.resume_approval(
+            ApprovalResume(
+                task_id=pending.task_id,
+                kind=ApprovalKind(approval["kind"]),
+                request_digest=approval["request_digest"],
+                approval_event_id="approve-default-offline-full",
+                decision=ApprovalDecision.APPROVE,
+            )
+        )
+
+        self.assertEqual(
+            TaskStatus.DONE,
+            completed.status,
+            coordinator.get_projection(pending.task_id).projection,
+        )
+        self.assertEqual(
+            set(settings.langgraph_primary_required_providers),
+            set(services.provider_call_counts),
+        )
+        self.assertTrue(
+            all(value == 1 for value in services.provider_call_counts.values())
+        )
+        self.assertEqual(
+            len(settings.langgraph_primary_required_providers), len(worker_threads)
+        )
+        compact = coordinator._runtime.compact_state(pending.task_id)
+        self.assertEqual("SUCCEEDED", compact["terminal_classification"])
+        self.assertIsNotNone(compact["evidence_digest"])
+        self.assertIsNotNone(compact["acceptance_digest"])
+        self.assertNotEqual(compact["producer_id"], compact["reviewer_id"])
+        self.assertIsNotNone(compact["ci_digest"])
+        self.assertIsNotNone(compact["security_digest"])
+
+        replay = application.recover(pending.task_id)
+        self.assertEqual(TaskStatus.DONE, replay.status)
+        self.assertTrue(
+            all(value == 1 for value in services.provider_call_counts.values())
+        )
+
+
+class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not TEST_DSN:
+            raise RuntimeError(
+                "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN is required for integration tests"
+            )
+
+    def test_real_startup_routes_intake_and_reads_through_langgraph(self):
+        schema = f"director_default_api_{uuid.uuid4().hex[:8]}_v1"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "authority"
+            root.mkdir()
+
+            def git(*arguments: str) -> None:
+                completed = subprocess.run(
+                    ("git", *arguments),
+                    cwd=root,
+                    shell=False,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if completed.returncode != 0:
+                    self.fail(completed.stderr)
+
+            git("init", "-b", "main")
+            git("config", "user.email", "default-primary@example.test")
+            git("config", "user.name", "Default Primary Test")
+            (root / "README.md").write_text("default primary\n", encoding="utf-8")
+            git("add", "README.md")
+            git("commit", "-m", "authority")
+            git("remote", "add", "origin", "https://github.com/owner/director.git")
+            git("update-ref", "refs/remotes/origin/main", "HEAD")
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PYTHONPATH": "src",
+                    "APP_ENV": "default-primary-api-test",
+                    "SQLITE_PATH": str(Path(directory) / "legacy.sqlite3"),
+                    "ORCHESTRATOR_SHARED_SECRET": "test-shared-secret",
+                    "SLACK_OWNER_USER_ID": "UOWNER",
+                    "ALLOW_PAID_RUNS": "false",
+                    "LANGGRAPH_SHADOW_ENABLED": "false",
+                    "LANGGRAPH_APPROVAL_RESUME_ENABLED": "false",
+                    "LANGGRAPH_PRIMARY_ENABLED": "true",
+                    "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "true",
+                    "LANGGRAPH_PRIMARY_POSTGRES_DSN": TEST_DSN,
+                    "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": schema,
+                    "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE": (
+                        "default-primary-api-test-v1"
+                    ),
+                    "LANGGRAPH_PRIMARY_OWNER_TOKEN": "p" * 40,
+                    "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES": "true",
+                    "REPOSITORY_SNAPSHOT_ROOT": str(root),
+                    "REPOSITORY_ALLOWLIST": "owner/director",
+                    "ALLOWED_STARTING_REFS": "main",
+                    "PROJECT_ALLOWLIST": "default",
+                }
+            )
+            program = r'''
+import json
+from fastapi.testclient import TestClient
+from director_orchestrator.main import app
+
+payload = {
+    "source_event_id": "default-api-event-1",
+    "channel_id": "CDEFAULT",
+    "thread_ts": "1720000000.000001",
+    "user_id": "UOWNER",
+    "text": "Project: default\nCreate a bounded implementation plan.",
+    "received_at": "2026-08-31T23:30:00Z"
+}
+headers = {"Authorization": "Bearer test-shared-secret"}
+with TestClient(app) as client:
+    health = client.get("/health").json()["langgraph_primary"]
+    first = client.post("/v1/intake", headers=headers, json=payload)
+    replay = client.post("/v1/intake", headers=headers, json=payload)
+    task_id = first.json()["task_id"]
+    restored = client.get(f"/v1/tasks/{task_id}", headers=headers)
+    command_binding = {
+        "task_id": task_id,
+        "actor_id": "UOWNER",
+        "expected_projection_digest": restored.headers["X-Primary-Projection-Digest"],
+        "expected_fencing_generation": int(
+            restored.headers["X-Primary-Writer-Generation"]
+        )
+    }
+    cancelled = client.post(
+        f"/v1/primary/tasks/{task_id}/cancel",
+        headers=headers,
+        json={**command_binding, "command_id": "cancel-default-api-1"}
+    )
+    recovered = client.post(
+        f"/v1/primary/tasks/{task_id}/recover",
+        headers=headers,
+        json={
+            **command_binding,
+            "command_id": "recover-default-api-1",
+            "expected_projection_digest": cancelled.json()["projection_digest"]
+        }
+    )
+    print(json.dumps({
+        "health": health,
+        "first_status": first.status_code,
+        "replay_status": replay.status_code,
+        "same_task": task_id == replay.json()["task_id"],
+        "read_status": restored.status_code,
+        "read_owner": restored.headers.get("X-Task-Engine-Owner"),
+        "task_status": restored.json()["status"],
+        "cancel_status": cancelled.status_code,
+        "cancel_classification": cancelled.json()["terminal_classification"],
+        "recover_status": recovered.status_code,
+        "recover_classification": recovered.json()["terminal_classification"]
+    }, sort_keys=True))
+'''
+            completed = subprocess.run(
+                (sys.executable, "-c", program),
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                shell=False,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+            try:
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                result = json.loads(completed.stdout.strip().splitlines()[-1])
+                self.assertEqual(202, result["first_status"])
+                self.assertEqual(202, result["replay_status"])
+                self.assertTrue(result["same_task"])
+                self.assertEqual(200, result["read_status"])
+                self.assertEqual("langgraph", result["read_owner"])
+                self.assertEqual("OWNER_DECISION_REQUIRED", result["task_status"])
+                self.assertEqual(200, result["cancel_status"])
+                self.assertEqual("CANCELLED", result["cancel_classification"])
+                self.assertEqual(200, result["recover_status"])
+                self.assertEqual("CANCELLED", result["recover_classification"])
+                self.assertTrue(result["health"]["primary_router_wired"])
+                self.assertTrue(result["health"]["writer_lease_ready"])
+                self.assertEqual("langgraph", result["health"]["new_intake_owner"])
+                self.assertTrue(
+                    result["health"]["legacy_new_intake_disabled"]
+                )
+            finally:
+                cleanup = open_postgres_control_plane(
+                    TEST_DSN,
+                    schema=schema,
+                    allow_insecure_local_transport=True,
+                )
+                try:
+                    with cleanup.pool.connection() as connection:
+                        connection.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+                finally:
+                    cleanup.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]

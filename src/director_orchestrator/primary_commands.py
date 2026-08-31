@@ -1,0 +1,394 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | BEGIN]]
+"""Closed API command envelopes for the LangGraph-primary coordinator.
+
+The FastAPI layer authenticates callers and loads the current durable projection.
+These models then bind the request to the URL task and that exact projection before
+constructing the smaller immutable commands consumed by ``PrimaryTaskCoordinator``.
+No model in this module performs provider dispatch or an external effect.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import re
+from enum import StrEnum
+from typing import Any, Literal, Mapping
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from .langgraph_primary import (
+    ApprovalDecision,
+    ApprovalKind,
+    ApprovalResume,
+    EffectDisposition,
+    EffectExecutionResult,
+    PrimaryOutcome,
+    ProviderDisposition,
+    ProviderSubgraphResult,
+    WorkflowRunStatus,
+)
+
+
+_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+_SHA_PATTERN = r"^[0-9a-f]{40}$"
+_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}$")
+_ACTOR_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+
+
+class PrimaryCommandBindingError(ValueError):
+    """A command is not bound to the current path or durable projection."""
+
+
+class PrimaryCommandOperation(StrEnum):
+    APPROVAL_RESUME = "approval_resume"
+    PROVIDER_RESULT = "provider_result"
+    EFFECT_RECONCILIATION = "effect_reconciliation"
+    CANCELLATION = "cancellation"
+    RECOVERY = "recovery"
+
+
+class _BoundCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    task_id: str = Field(min_length=1, max_length=255)
+    command_id: str = Field(min_length=1, max_length=255)
+    actor_id: str = Field(pattern=_ACTOR_ID_PATTERN)
+    expected_projection_digest: str = Field(pattern=_DIGEST_PATTERN)
+    expected_fencing_generation: int = Field(ge=1)
+
+    def model_post_init(self, __context: Any) -> None:
+        for field_name in ("task_id", "command_id"):
+            if _ID_PATTERN.fullmatch(getattr(self, field_name)) is None:
+                raise ValueError(
+                    f"{field_name} must start with an alphanumeric character and "
+                    "contain only alphanumerics, underscore, period, colon, or hyphen"
+                )
+
+    @property
+    def command_digest(self) -> str:
+        encoded = json.dumps(
+            self.model_dump(mode="json"),
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+    def validate_binding(
+        self,
+        *,
+        path_task_id: str,
+        current_projection_digest: str,
+        current_fencing_generation: int,
+    ) -> None:
+        """Fail closed on cross-task, stale-projection, or stale-writer input."""
+
+        self.validate_path_and_fence(
+            path_task_id=path_task_id,
+            current_fencing_generation=current_fencing_generation,
+        )
+        self.validate_projection(current_projection_digest)
+
+    def validate_path_and_fence(
+        self, *, path_task_id: str, current_fencing_generation: int
+    ) -> None:
+        """Bind a new command to its URL and the current writer authority."""
+
+        self.validate_path(path_task_id)
+        if self.expected_fencing_generation != current_fencing_generation:
+            raise PrimaryCommandBindingError("command targets a stale writer generation")
+
+    def validate_path(self, path_task_id: str) -> None:
+        """Reject cross-task command and receipt lookup before any state access."""
+
+        if not hmac.compare_digest(self.task_id, path_task_id):
+            raise PrimaryCommandBindingError("command task does not match the request path")
+
+    def validate_projection(self, current_projection_digest: str) -> None:
+        if not hmac.compare_digest(
+            self.expected_projection_digest, current_projection_digest
+        ):
+            raise PrimaryCommandBindingError("command targets a stale task projection")
+
+    def validate_replay(self, previous_command_digest: str) -> None:
+        """Accept exact redelivery and reject reuse with changed command content."""
+
+        if re.fullmatch(_DIGEST_PATTERN, previous_command_digest) is None:
+            raise PrimaryCommandBindingError("stored command digest is malformed")
+        if not hmac.compare_digest(self.command_digest, previous_command_digest):
+            raise PrimaryCommandBindingError(
+                "command identity was replayed with different content"
+            )
+
+    def runtime_replay_is_evidenced(self, projection: Mapping[str, Any]) -> bool:
+        """Whether durable graph state proves the command crossed the crash gap."""
+
+        return False
+
+
+class ApprovalResumeRequest(_BoundCommandRequest):
+    schema_version: Literal["langgraph-primary-approval-resume/v1"] = (
+        "langgraph-primary-approval-resume/v1"
+    )
+    kind: ApprovalKind
+    request_digest: str = Field(pattern=_DIGEST_PATTERN)
+    approval_event_id: str = Field(min_length=1, max_length=255)
+    decision: ApprovalDecision = ApprovalDecision.APPROVE
+
+    def to_command(self) -> ApprovalResume:
+        return ApprovalResume(
+            task_id=self.task_id,
+            kind=self.kind,
+            request_digest=self.request_digest,
+            approval_event_id=self.approval_event_id,
+            decision=self.decision,
+        )
+
+    def runtime_replay_is_evidenced(self, projection: Mapping[str, Any]) -> bool:
+        field = (
+            "execution_approval_receipt_digest"
+            if self.kind == ApprovalKind.EXECUTION
+            else "effect_approval_receipt_digest"
+        )
+        stored = projection.get(field)
+        return stored is not None and hmac.compare_digest(
+            str(stored), self.to_command().receipt_digest
+        )
+
+
+class ProviderResultRequest(_BoundCommandRequest):
+    schema_version: Literal["langgraph-primary-provider-result/v1"] = (
+        "langgraph-primary-provider-result/v1"
+    )
+    provider_attempt_digest: str = Field(pattern=_DIGEST_PATTERN)
+    idempotency_key_digest: str = Field(pattern=_DIGEST_PATTERN)
+    authority_snapshot_digest: str = Field(pattern=_DIGEST_PATTERN)
+    producer_id: str = Field(pattern=_ACTOR_ID_PATTERN)
+    disposition: ProviderDisposition
+    result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    candidate_sha: str | None = Field(default=None, pattern=_SHA_PATTERN)
+    reason_code: str = Field(default="ok", pattern=r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
+
+    def to_command(self) -> ProviderSubgraphResult:
+        return ProviderSubgraphResult(
+            provider_attempt_digest=self.provider_attempt_digest,
+            idempotency_key_digest=self.idempotency_key_digest,
+            authority_snapshot_digest=self.authority_snapshot_digest,
+            producer_id=self.producer_id,
+            disposition=self.disposition,
+            result_digest=self.result_digest,
+            candidate_sha=self.candidate_sha,
+            reason_code=self.reason_code,
+        )
+
+    def runtime_replay_is_evidenced(self, projection: Mapping[str, Any]) -> bool:
+        stored = projection.get("provider_result_receipt_digest")
+        return stored is not None and hmac.compare_digest(
+            str(stored), _canonical_payload_digest(self.to_command().as_resume_payload())
+        )
+
+
+class EffectReconciliationRequest(_BoundCommandRequest):
+    schema_version: Literal["langgraph-primary-effect-reconciliation/v1"] = (
+        "langgraph-primary-effect-reconciliation/v1"
+    )
+    effect_key_digest: str = Field(pattern=_DIGEST_PATTERN)
+    effect_attempt_digest: str = Field(pattern=_DIGEST_PATTERN)
+    writer_owner_id: str = Field(min_length=1, max_length=255)
+    disposition: EffectDisposition
+    result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    readback_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    reason_code: str = Field(default="ok", pattern=r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
+
+    def to_command(self) -> EffectExecutionResult:
+        return EffectExecutionResult(
+            effect_key_digest=self.effect_key_digest,
+            effect_attempt_digest=self.effect_attempt_digest,
+            writer_owner_id=self.writer_owner_id,
+            disposition=self.disposition,
+            result_digest=self.result_digest,
+            readback_digest=self.readback_digest,
+            reason_code=self.reason_code,
+        )
+
+    def runtime_replay_is_evidenced(self, projection: Mapping[str, Any]) -> bool:
+        stored = projection.get("effect_result_receipt_digest")
+        return stored is not None and hmac.compare_digest(
+            str(stored), _canonical_payload_digest(self.to_command().as_resume_payload())
+        )
+
+
+class CancellationRequest(_BoundCommandRequest):
+    schema_version: Literal["langgraph-primary-cancellation/v1"] = (
+        "langgraph-primary-cancellation/v1"
+    )
+    reason_code: str = Field(
+        default="owner_cancelled", pattern=r"^[a-z0-9][a-z0-9_.:-]{0,127}$"
+    )
+
+    def to_task_id(self) -> str:
+        return self.task_id
+
+    def runtime_replay_is_evidenced(self, projection: Mapping[str, Any]) -> bool:
+        classification = projection.get("terminal_classification")
+        reason = projection.get("transition_reason_code") or projection.get("reason_code")
+        return classification == "CANCELLED" or reason in {
+            "cancelled_after_dispatch",
+            "cancelled_after_effect_start",
+            "cancel_requested",
+        }
+
+
+class RecoveryRequest(_BoundCommandRequest):
+    schema_version: Literal["langgraph-primary-recovery/v1"] = (
+        "langgraph-primary-recovery/v1"
+    )
+    reason_code: str = Field(
+        default="operator_recovery", pattern=r"^[a-z0-9][a-z0-9_.:-]{0,127}$"
+    )
+
+    def to_task_id(self) -> str:
+        return self.task_id
+
+    def runtime_replay_is_evidenced(self, projection: Mapping[str, Any]) -> bool:
+        # Recovery is itself the bounded, replay-safe graph reconciliation operation.
+        return True
+
+
+class PrimaryCommandResponse(BaseModel):
+    """Sanitized command result suitable for a FastAPI response model."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["langgraph-primary-command-response/v1"] = (
+        "langgraph-primary-command-response/v1"
+    )
+    task_id: str = Field(min_length=1, max_length=255)
+    command_id: str = Field(min_length=1, max_length=255)
+    command_digest: str = Field(pattern=_DIGEST_PATTERN)
+    operation: PrimaryCommandOperation
+    run_status: str
+    phase: str
+    reason_code: str
+    terminal_classification: str | None = None
+    state_digest: str = Field(pattern=_DIGEST_PATTERN)
+    projection_version: int | None = Field(default=None, ge=1)
+    projection_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    fencing_generation: int | None = Field(default=None, ge=1)
+
+    @classmethod
+    def from_outcome(
+        cls,
+        *,
+        request: _BoundCommandRequest,
+        operation: PrimaryCommandOperation,
+        outcome: PrimaryOutcome,
+    ) -> "PrimaryCommandResponse":
+        if not hmac.compare_digest(request.task_id, outcome.task_id):
+            raise PrimaryCommandBindingError("runtime outcome belongs to another task")
+        return cls(
+            task_id=outcome.task_id,
+            command_id=request.command_id,
+            command_digest=request.command_digest,
+            operation=operation,
+            run_status=outcome.run_status.value,
+            phase=outcome.phase,
+            reason_code=outcome.reason_code,
+            terminal_classification=(
+                outcome.terminal_classification.value
+                if outcome.terminal_classification is not None
+                else None
+            ),
+            state_digest=outcome.state_digest,
+        )
+
+    @classmethod
+    def from_projection(
+        cls,
+        *,
+        request: _BoundCommandRequest,
+        operation: PrimaryCommandOperation,
+        projection: Any,
+        fencing_generation: int,
+    ) -> "PrimaryCommandResponse":
+        """Adapt a ``PrimaryTaskProjection`` without importing its Postgres backend."""
+
+        task_id = str(projection.task_id)
+        if not hmac.compare_digest(request.task_id, task_id):
+            raise PrimaryCommandBindingError("durable projection belongs to another task")
+        payload: Mapping[str, Any] = projection.projection
+        state_digest = str(payload.get("state_digest") or projection.projection_digest)
+        return cls(
+            task_id=task_id,
+            command_id=request.command_id,
+            command_digest=request.command_digest,
+            operation=operation,
+            run_status=str(payload.get("run_status") or "UNKNOWN"),
+            phase=str(payload.get("phase") or payload.get("current_phase") or "unknown"),
+            reason_code=str(
+                payload.get("reason_code")
+                or payload.get("transition_reason_code")
+                or "unknown"
+            ),
+            terminal_classification=(
+                str(payload["terminal_classification"])
+                if payload.get("terminal_classification") is not None
+                else None
+            ),
+            state_digest=state_digest,
+            projection_version=int(projection.projection_version),
+            projection_digest=str(projection.projection_digest),
+            fencing_generation=fencing_generation,
+        )
+
+    @classmethod
+    def from_receipt(
+        cls,
+        *,
+        request: _BoundCommandRequest,
+        operation: PrimaryCommandOperation,
+        receipt: Any,
+    ) -> "PrimaryCommandResponse":
+        """Return a durable acknowledgement without consulting advanced state."""
+
+        task_id = str(receipt.task_id)
+        if not hmac.compare_digest(request.task_id, task_id):
+            raise PrimaryCommandBindingError("durable receipt belongs to another task")
+        request.validate_replay(str(receipt.command_digest))
+        if request.expected_fencing_generation != int(
+            receipt.writer_fencing_generation
+        ):
+            raise PrimaryCommandBindingError(
+                "command receipt belongs to another writer generation"
+            )
+        return cls(
+            task_id=task_id,
+            command_id=request.command_id,
+            command_digest=request.command_digest,
+            operation=operation,
+            run_status=WorkflowRunStatus.ALREADY_APPLIED.value,
+            phase=operation.value,
+            reason_code="command_receipt_replay",
+            state_digest=str(receipt.resulting_projection_digest),
+            projection_version=int(receipt.resulting_projection_version),
+            projection_digest=str(receipt.resulting_projection_digest),
+            fencing_generation=int(receipt.writer_fencing_generation),
+        )
+
+
+def _canonical_payload_digest(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]

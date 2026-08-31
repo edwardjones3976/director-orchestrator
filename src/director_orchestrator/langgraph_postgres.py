@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:08 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-31 | 15:05 UTC | BEGIN]]
@@ -50,6 +54,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from .langgraph_primary import (
@@ -61,6 +66,19 @@ from .langgraph_primary import (
     _require_code,
     _require_digest,
     _require_id,
+)
+from .packet_contracts import (
+    PacketContractError,
+    canonical_json_bytes,
+    document_digest,
+    validate_packet,
+)
+from .provider_activation import (
+    ACTIVATION_EVIDENCE_VERSION,
+    ProviderActivationBinding,
+    ProviderActivationEvidence,
+    ProviderActivationStage,
+    ProviderActivationSurface,
 )
 
 
@@ -399,6 +417,10 @@ def _search_path_option(schema: str) -> str:
 
 
 _APPEND_ONLY_TABLES = (
+    "director_primary_intake_dedup",
+    "director_primary_command_receipt",
+    "director_provider_activation_evidence",
+    "director_primary_work_packet_artifact",
     "director_primary_claim",
     "director_primary_effect_reservation",
     "director_primary_remote_binding",
@@ -409,6 +431,8 @@ _APPEND_ONLY_TABLES = (
 
 _RATCHET_TABLES = (
     ("director_primary_task_writer", "director_primary_writer_guard_fn"),
+    ("director_primary_intake_authority", "director_primary_intake_guard_fn"),
+    ("director_primary_task_projection", "director_primary_projection_guard_fn"),
     ("director_primary_budget", "director_primary_budget_ratchet"),
 )
 
@@ -456,6 +480,107 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_intake_authority (
+            singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+            intake_owner text NOT NULL CHECK (intake_owner IN ('legacy', 'langgraph')),
+            owner_token text NOT NULL,
+            fencing_generation bigint NOT NULL CHECK (fencing_generation >= 0),
+            lease_expires_at timestamptz NOT NULL,
+            legacy_new_intake_disabled boolean NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            CHECK (
+                legacy_new_intake_disabled = (intake_owner = 'langgraph')
+            )
+        )
+        """,
+        f"""
+        INSERT INTO {schema}.director_primary_intake_authority (
+            singleton, intake_owner, owner_token, fencing_generation,
+            lease_expires_at, legacy_new_intake_disabled
+        )
+        VALUES (
+            true, 'legacy', 'bootstrap-legacy', 0,
+            TIMESTAMPTZ '1970-01-01 00:00:00+00', false
+        )
+        ON CONFLICT (singleton) DO NOTHING
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_task_projection (
+            task_id text PRIMARY KEY,
+            engine_owner text NOT NULL CHECK (engine_owner IN ('langgraph')),
+            input_digest text NOT NULL,
+            intake_fencing_generation bigint NOT NULL CHECK (
+                intake_fencing_generation >= 1
+            ),
+            projection_version bigint NOT NULL DEFAULT 1 CHECK (
+                projection_version >= 1
+            ),
+            projection_digest text NOT NULL,
+            projection jsonb NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_intake_dedup (
+            idempotency_key_digest text PRIMARY KEY,
+            task_id text NOT NULL UNIQUE
+                REFERENCES {schema}.director_primary_task_projection (task_id),
+            dedup_payload_digest text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_command_receipt (
+            task_id text NOT NULL
+                REFERENCES {schema}.director_primary_task_projection (task_id),
+            operation text NOT NULL,
+            command_id text NOT NULL,
+            command_digest text NOT NULL,
+            resulting_projection_digest text NOT NULL,
+            resulting_projection_version bigint NOT NULL CHECK (
+                resulting_projection_version >= 1
+            ),
+            writer_fencing_generation bigint NOT NULL CHECK (
+                writer_fencing_generation >= 1
+            ),
+            recorded_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (task_id, operation, command_id)
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_provider_activation_evidence (
+            provider_id text NOT NULL,
+            workspace_id text NOT NULL,
+            provider_version text NOT NULL,
+            app_version text NOT NULL,
+            runtime_adapter_version text NOT NULL,
+            workspace_version text NOT NULL,
+            binding_version text NOT NULL,
+            surface text NOT NULL CHECK (surface IN ('app', 'runtime_adapter')),
+            revision bigint NOT NULL CHECK (revision >= 1),
+            schema_version text NOT NULL CHECK (
+                schema_version = '{ACTIVATION_EVIDENCE_VERSION}'
+            ),
+            stage text NOT NULL CHECK (stage IN (
+                'INSTALLED', 'AUTHENTICATED', 'WORKSPACE_BOUND',
+                'DRY_RUN_OK', 'LIVE_OK'
+            )),
+            evidence_id text NOT NULL,
+            evidence_digest text NOT NULL CHECK (
+                evidence_digest ~ '^[0-9a-f]{{64}}$'
+            ),
+            observed_at timestamptz NOT NULL,
+            expires_at timestamptz NOT NULL CHECK (expires_at > observed_at),
+            recorded_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (
+                provider_id, workspace_id, provider_version, app_version,
+                runtime_adapter_version, workspace_version, binding_version,
+                surface, revision
+            )
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_task_writer (
             task_id text PRIMARY KEY,
             engine_owner text NOT NULL,
@@ -464,6 +589,25 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             lease_expires_at timestamptz NOT NULL,
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_work_packet_artifact (
+            task_id text NOT NULL
+                REFERENCES {schema}.director_primary_task_writer (task_id),
+            assignment_id text NOT NULL,
+            authority_snapshot_digest text NOT NULL CHECK (
+                authority_snapshot_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            document_digest text NOT NULL CHECK (
+                document_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            canonical_document text NOT NULL,
+            writer_fencing_generation bigint NOT NULL CHECK (
+                writer_fencing_generation >= 1
+            ),
+            recorded_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (task_id, assignment_id)
         )
         """,
         f"""
@@ -606,6 +750,72 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         $fn$
         """,
         f"""
+        CREATE OR REPLACE FUNCTION {schema}.director_primary_intake_guard_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                RAISE EXCEPTION 'director primary intake authority is never deleted'
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            IF NEW.singleton <> OLD.singleton THEN
+                RAISE EXCEPTION 'director primary intake identity is immutable'
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            IF NEW.fencing_generation < OLD.fencing_generation THEN
+                RAISE EXCEPTION
+                    'director primary intake fencing generation never decreases'
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            IF NEW.fencing_generation = OLD.fencing_generation
+                AND (
+                    NEW.intake_owner <> OLD.intake_owner
+                    OR NEW.owner_token <> OLD.owner_token
+                    OR NEW.legacy_new_intake_disabled <>
+                        OLD.legacy_new_intake_disabled
+                )
+            THEN
+                RAISE EXCEPTION
+                    'director primary intake owner change requires a new generation'
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            IF NEW.legacy_new_intake_disabled <> (NEW.intake_owner = 'langgraph') THEN
+                RAISE EXCEPTION
+                    'legacy intake state must match the fenced intake owner'
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $fn$
+        """,
+        f"""
+        CREATE OR REPLACE FUNCTION {schema}.director_primary_projection_guard_fn()
+        RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                RAISE EXCEPTION 'director primary task projections are never deleted'
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            IF NEW.task_id <> OLD.task_id
+                OR NEW.engine_owner <> OLD.engine_owner
+                OR NEW.input_digest <> OLD.input_digest
+                OR NEW.intake_fencing_generation <>
+                    OLD.intake_fencing_generation
+                OR NEW.created_at <> OLD.created_at
+            THEN
+                RAISE EXCEPTION
+                    'director primary task projection identity is immutable'
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            IF NEW.projection_version <> OLD.projection_version + 1 THEN
+                RAISE EXCEPTION
+                    'director primary task projection version must increment once'
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $fn$
+        """,
+        f"""
         CREATE OR REPLACE FUNCTION {schema}.director_primary_budget_ratchet()
         RETURNS trigger LANGUAGE plpgsql AS $fn$
         BEGIN
@@ -649,6 +859,64 @@ class TaskWriterLease:
 
 
 @dataclass(frozen=True, slots=True)
+class IntakeAuthorityLease:
+    """Deployment-wide authority for creating new Director tasks."""
+
+    intake_owner: str
+    owner_token: str
+    fencing_generation: int
+    lease_expires_at: Any
+    lease_live: bool
+    legacy_new_intake_disabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PrimaryTaskProjection:
+    """Durable owner-facing projection derived from one graph checkpoint."""
+
+    task_id: str
+    engine_owner: str
+    input_digest: str
+    intake_fencing_generation: int
+    projection_version: int
+    projection_digest: str
+    projection: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class PrimaryCommandReceipt:
+    """Append-only identity for one acknowledged primary API command."""
+
+    task_id: str
+    operation: str
+    command_id: str
+    command_digest: str
+    resulting_projection_digest: str
+    resulting_projection_version: int
+    writer_fencing_generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class PrimaryWorkPacketArtifact:
+    """One validated immutable model-work-packet-v1 authority artifact."""
+
+    task_id: str
+    assignment_id: str
+    authority_snapshot_digest: str
+    document_digest: str
+    packet: Mapping[str, Any]
+    writer_fencing_generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class PrimaryControlPlaneMetrics:
+    """Non-sensitive observed counts for operator health and cutover evidence."""
+
+    graph_task_count: int
+    ambiguous_effect_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class EffectReservation:
     """One durable, budget-backed intent recorded strictly before any I/O."""
 
@@ -670,6 +938,144 @@ def _lease_from_row(row: Mapping[str, Any]) -> TaskWriterLease:
         owner_token=str(row["owner_token"]),
         fencing_generation=int(row["fencing_generation"]),
         lease_expires_at=row["lease_expires_at"],
+    )
+
+
+def _intake_lease_from_row(row: Mapping[str, Any]) -> IntakeAuthorityLease:
+    return IntakeAuthorityLease(
+        intake_owner=str(row["intake_owner"]),
+        owner_token=str(row["owner_token"]),
+        fencing_generation=int(row["fencing_generation"]),
+        lease_expires_at=row["lease_expires_at"],
+        lease_live=bool(row["lease_live"]),
+        legacy_new_intake_disabled=bool(row["legacy_new_intake_disabled"]),
+    )
+
+
+def _projection_payload(value: Mapping[str, Any]) -> tuple[str, str]:
+    if not isinstance(value, Mapping):
+        raise PostgresControlPlaneError("projection must be a mapping")
+    try:
+        encoded = json.dumps(
+            dict(value), ensure_ascii=True, separators=(",", ":"), sort_keys=True
+        )
+    except (TypeError, ValueError) as exc:
+        raise PostgresControlPlaneError("projection must be canonical JSON") from exc
+    if len(encoded.encode("utf-8")) > 262_144:
+        raise PostgresControlPlaneError("projection exceeds 256 KiB")
+    return encoded, "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _projection_from_row(row: Mapping[str, Any]) -> PrimaryTaskProjection:
+    raw = row["projection"]
+    projection = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    return PrimaryTaskProjection(
+        task_id=str(row["task_id"]),
+        engine_owner=str(row["engine_owner"]),
+        input_digest=str(row["input_digest"]),
+        intake_fencing_generation=int(row["intake_fencing_generation"]),
+        projection_version=int(row["projection_version"]),
+        projection_digest=str(row["projection_digest"]),
+        projection=projection,
+    )
+
+
+def _command_receipt_from_row(row: Mapping[str, Any]) -> PrimaryCommandReceipt:
+    return PrimaryCommandReceipt(
+        task_id=str(row["task_id"]),
+        operation=str(row["operation"]),
+        command_id=str(row["command_id"]),
+        command_digest=str(row["command_digest"]),
+        resulting_projection_digest=str(row["resulting_projection_digest"]),
+        resulting_projection_version=int(row["resulting_projection_version"]),
+        writer_fencing_generation=int(row["writer_fencing_generation"]),
+    )
+
+
+def _validated_work_packet(
+    packet: Mapping[str, Any],
+    *,
+    task_id: str,
+    assignment_id: str,
+) -> tuple[dict[str, Any], str, str]:
+    """Validate and canonically bind a work packet to its durable identity."""
+
+    try:
+        validated = validate_packet("work", packet)
+    except PacketContractError as exc:
+        raise PostgresControlPlaneError("work packet failed contract validation") from exc
+    if validated["task_id"] != task_id:
+        raise PostgresControlPlaneError("work packet task binding does not match task_id")
+    if validated["assignment_id"] != assignment_id:
+        raise PostgresControlPlaneError(
+            "work packet assignment binding does not match assignment_id"
+        )
+    authority_digest = str(validated["authority_snapshot_digest"])
+    return validated, document_digest(validated), authority_digest
+
+
+def _work_packet_artifact_from_row(
+    row: Mapping[str, Any],
+) -> PrimaryWorkPacketArtifact:
+    task_id = str(row["task_id"])
+    assignment_id = str(row["assignment_id"])
+    raw = row["canonical_document"]
+    if not isinstance(raw, str):
+        raise PostgresControlPlaneError("stored work packet is not canonical JSON text")
+    try:
+        decoded = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise PostgresControlPlaneError("stored work packet is not valid JSON") from exc
+    validated, digest, authority_digest = _validated_work_packet(
+        decoded, task_id=task_id, assignment_id=assignment_id
+    )
+    canonical = canonical_json_bytes(validated).decode("utf-8")
+    if canonical != raw:
+        raise PostgresControlPlaneError("stored work packet is not canonical JSON")
+    if digest != str(row["document_digest"]):
+        raise PostgresControlPlaneError("stored work packet digest does not match content")
+    if authority_digest != str(row["authority_snapshot_digest"]):
+        raise PostgresControlPlaneError(
+            "stored work packet authority binding does not match content"
+        )
+    return PrimaryWorkPacketArtifact(
+        task_id=task_id,
+        assignment_id=assignment_id,
+        authority_snapshot_digest=authority_digest,
+        document_digest=digest,
+        packet=validated,
+        writer_fencing_generation=int(row["writer_fencing_generation"]),
+    )
+
+
+def _activation_evidence_from_row(
+    row: Mapping[str, Any],
+) -> ProviderActivationEvidence:
+    observed_at = row["observed_at"]
+    expires_at = row["expires_at"]
+    if not isinstance(observed_at, datetime) or not isinstance(expires_at, datetime):
+        raise PostgresControlPlaneError(
+            "provider activation timestamps are not typed database instants"
+        )
+    binding = ProviderActivationBinding(
+        provider_id=str(row["provider_id"]),
+        workspace_id=str(row["workspace_id"]),
+        provider_version=str(row["provider_version"]),
+        app_version=str(row["app_version"]),
+        runtime_adapter_version=str(row["runtime_adapter_version"]),
+        workspace_version=str(row["workspace_version"]),
+        binding_version=str(row["binding_version"]),
+    )
+    return ProviderActivationEvidence(
+        schema_version=str(row["schema_version"]),
+        binding=binding,
+        surface=ProviderActivationSurface(str(row["surface"])),
+        stage=ProviderActivationStage(str(row["stage"])),
+        revision=int(row["revision"]),
+        evidence_id=str(row["evidence_id"]),
+        evidence_digest=str(row["evidence_digest"]),
+        observed_at=observed_at.astimezone(timezone.utc),
+        expires_at=expires_at.astimezone(timezone.utc),
     )
 
 
@@ -726,6 +1132,772 @@ class PostgresConditionalClaimStore:
         return self._store_provenance is _FACTORY_PROVENANCE
 
     # -- task ownership ---------------------------------------------------
+
+    def current_intake_authority(self) -> IntakeAuthorityLease:
+        """Return the one observed deployment-wide new-intake authority."""
+
+        with self._pool.connection() as connection:
+            row = self._one_row(
+                connection,
+                f"""
+                SELECT intake_owner, owner_token, fencing_generation,
+                       lease_expires_at, lease_expires_at > now() AS lease_live,
+                       legacy_new_intake_disabled
+                FROM {self._schema}.director_primary_intake_authority
+                WHERE singleton
+                """,
+                {},
+                missing="intake authority metadata is missing",
+            )
+        return _intake_lease_from_row(row)
+
+    def acquire_intake_authority(
+        self,
+        *,
+        intake_owner: str,
+        owner_token: str,
+        expected_generation: int,
+        lease_seconds: float = DEFAULT_LEASE_SECONDS,
+    ) -> IntakeAuthorityLease:
+        """Atomically fence new intake to exactly one engine generation.
+
+        Switching to LangGraph and disabling legacy new intake are one database
+        update.  Rollback is the inverse fenced generation change; it never
+        transfers ownership of tasks that already exist.
+        """
+
+        if intake_owner not in {"legacy", "langgraph"}:
+            raise PostgresControlPlaneError(
+                "intake_owner must be either 'legacy' or 'langgraph'"
+            )
+        _require_id(owner_token, "owner_token")
+        expected = _require_generation(
+            expected_generation, "expected_generation", minimum=0
+        )
+        lease = _require_lease_seconds(lease_seconds)
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                current = self._one_row(
+                    connection,
+                    f"""
+                    SELECT intake_owner, owner_token, fencing_generation,
+                           lease_expires_at,
+                           lease_expires_at > now() AS lease_live,
+                           legacy_new_intake_disabled
+                    FROM {schema}.director_primary_intake_authority
+                    WHERE singleton
+                    FOR UPDATE
+                    """,
+                    {},
+                    missing="intake authority metadata is missing",
+                )
+                recorded = int(current["fencing_generation"])
+                if recorded != expected:
+                    raise PostgresControlPlaneError(
+                        "stale fencing generation; intake authority has moved on"
+                    )
+                if bool(current["lease_live"]) and (
+                    str(current["owner_token"]) != owner_token
+                    or str(current["intake_owner"]) != intake_owner
+                ):
+                    raise PostgresControlPlaneError(
+                        "another engine holds the unexpired intake authority"
+                    )
+                row = self._one_row(
+                    connection,
+                    f"""
+                    UPDATE {schema}.director_primary_intake_authority
+                    SET intake_owner = %(intake_owner)s,
+                        owner_token = %(owner_token)s,
+                        fencing_generation = fencing_generation + 1,
+                        lease_expires_at =
+                            now() + make_interval(secs => %(lease)s),
+                        legacy_new_intake_disabled = %(legacy_disabled)s,
+                        updated_at = now()
+                    WHERE singleton
+                      AND fencing_generation = %(expected)s
+                    RETURNING intake_owner, owner_token, fencing_generation,
+                              lease_expires_at,
+                              lease_expires_at > now() AS lease_live,
+                              legacy_new_intake_disabled
+                    """,
+                    {
+                        "intake_owner": intake_owner,
+                        "owner_token": owner_token,
+                        "expected": expected,
+                        "lease": lease,
+                        "legacy_disabled": intake_owner == "langgraph",
+                    },
+                    missing="intake authority compare-and-swap lost a concurrent race",
+                )
+        return _intake_lease_from_row(row)
+
+    def renew_intake_authority(
+        self,
+        *,
+        intake_owner: str,
+        owner_token: str,
+        fencing_generation: int,
+        lease_seconds: float = DEFAULT_LEASE_SECONDS,
+    ) -> IntakeAuthorityLease:
+        """Renew the live intake lease without changing its generation."""
+
+        if intake_owner not in {"legacy", "langgraph"}:
+            raise PostgresControlPlaneError(
+                "intake_owner must be either 'legacy' or 'langgraph'"
+            )
+        _require_id(owner_token, "owner_token")
+        generation = _require_generation(
+            fencing_generation, "fencing_generation", minimum=1
+        )
+        lease = _require_lease_seconds(lease_seconds)
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    UPDATE {self._schema}.director_primary_intake_authority
+                    SET lease_expires_at =
+                            now() + make_interval(secs => %(lease)s),
+                        updated_at = now()
+                    WHERE singleton
+                      AND intake_owner = %(intake_owner)s
+                      AND owner_token = %(owner_token)s
+                      AND fencing_generation = %(generation)s
+                      AND lease_expires_at > now()
+                    RETURNING intake_owner, owner_token, fencing_generation,
+                              lease_expires_at,
+                              lease_expires_at > now() AS lease_live,
+                              legacy_new_intake_disabled
+                    """,
+                    {
+                        "intake_owner": intake_owner,
+                        "owner_token": owner_token,
+                        "generation": generation,
+                        "lease": lease,
+                    },
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "intake authority renewal refused; authority is stale or expired"
+                    )
+        return _intake_lease_from_row(row)
+
+    def create_primary_task_projection(
+        self,
+        *,
+        task_id: str,
+        input_digest: str,
+        idempotency_key_digest: str,
+        dedup_payload_digest: str,
+        owner_token: str,
+        intake_fencing_generation: int,
+        projection: Mapping[str, Any],
+    ) -> tuple[PrimaryTaskProjection, bool]:
+        """Insert one task only under the current live LangGraph intake fence."""
+
+        _require_id(task_id, "task_id")
+        _require_digest(input_digest, "input_digest")
+        _require_digest(idempotency_key_digest, "idempotency_key_digest")
+        _require_digest(dedup_payload_digest, "dedup_payload_digest")
+        _require_id(owner_token, "owner_token")
+        generation = _require_generation(
+            intake_fencing_generation, "intake_fencing_generation", minimum=1
+        )
+        encoded, digest = _projection_payload(projection)
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {
+                        "key": _advisory_key(
+                            "intake", schema, idempotency_key_digest
+                        )
+                    },
+                )
+                duplicate = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT dedup.task_id, projected.input_digest,
+                           dedup.dedup_payload_digest,
+                           projected.engine_owner,
+                           projected.intake_fencing_generation,
+                           projected.projection_version,
+                           projected.projection_digest,
+                           projected.projection
+                    FROM {schema}.director_primary_intake_dedup dedup
+                    JOIN {schema}.director_primary_task_projection projected
+                      ON projected.task_id = dedup.task_id
+                    WHERE dedup.idempotency_key_digest = %(idempotency_key_digest)s
+                    """,
+                    {"idempotency_key_digest": idempotency_key_digest},
+                )
+                if duplicate is not None:
+                    current = _projection_from_row(duplicate)
+                    if str(duplicate["dedup_payload_digest"]) != dedup_payload_digest:
+                        raise PostgresControlPlaneError(
+                            "intake idempotency key was replayed with different input"
+                        )
+                    return current, False
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_task_projection (
+                        task_id, engine_owner, input_digest,
+                        intake_fencing_generation, projection_digest, projection
+                    )
+                    SELECT %(task_id)s, 'langgraph', %(input_digest)s,
+                           authority.fencing_generation, %(projection_digest)s,
+                           %(projection)s::jsonb
+                    FROM {schema}.director_primary_intake_authority authority
+                    WHERE authority.singleton
+                      AND authority.intake_owner = 'langgraph'
+                      AND authority.legacy_new_intake_disabled
+                      AND authority.owner_token = %(owner_token)s
+                      AND authority.fencing_generation = %(generation)s
+                      AND authority.lease_expires_at > now()
+                    ON CONFLICT (task_id) DO NOTHING
+                    RETURNING task_id, engine_owner, input_digest,
+                              intake_fencing_generation, projection_version,
+                              projection_digest, projection
+                    """,
+                    {
+                        "task_id": task_id,
+                        "input_digest": input_digest,
+                        "projection_digest": digest,
+                        "projection": encoded,
+                        "owner_token": owner_token,
+                        "generation": generation,
+                    },
+                )
+                if row is not None:
+                    created = _projection_from_row(row)
+                    self._one_row(
+                        connection,
+                        f"""
+                        INSERT INTO {schema}.director_primary_intake_dedup (
+                            idempotency_key_digest, task_id, dedup_payload_digest
+                        )
+                        VALUES (%(idempotency_key_digest)s, %(task_id)s,
+                                %(dedup_payload_digest)s)
+                        RETURNING task_id
+                        """,
+                        {
+                            "idempotency_key_digest": idempotency_key_digest,
+                            "task_id": task_id,
+                            "dedup_payload_digest": dedup_payload_digest,
+                        },
+                        missing="intake idempotency identity was not recorded",
+                    )
+                    return created, True
+                existing = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT task_id, engine_owner, input_digest,
+                           intake_fencing_generation, projection_version,
+                           projection_digest, projection
+                    FROM {schema}.director_primary_task_projection
+                    WHERE task_id = %(task_id)s
+                    """,
+                    {"task_id": task_id},
+                )
+                if existing is None:
+                    raise PostgresControlPlaneError(
+                        "new task refused; LangGraph does not hold live intake authority"
+                    )
+                current = _projection_from_row(existing)
+                if current.input_digest != input_digest:
+                    raise PostgresControlPlaneError(
+                        "task identity was replayed with a different input digest"
+                    )
+                self._one_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_intake_dedup (
+                        idempotency_key_digest, task_id, dedup_payload_digest
+                    )
+                    VALUES (%(idempotency_key_digest)s, %(task_id)s,
+                            %(dedup_payload_digest)s)
+                    RETURNING task_id
+                    """,
+                    {
+                        "idempotency_key_digest": idempotency_key_digest,
+                        "task_id": task_id,
+                        "dedup_payload_digest": dedup_payload_digest,
+                    },
+                    missing="intake idempotency identity was not recorded",
+                )
+                return current, False
+
+    def update_primary_task_projection(
+        self,
+        *,
+        task_id: str,
+        owner_token: str,
+        fencing_generation: int,
+        projection: Mapping[str, Any],
+    ) -> PrimaryTaskProjection:
+        """Advance the projection once under the task's current writer fence."""
+
+        _require_id(task_id, "task_id")
+        _require_id(owner_token, "owner_token")
+        generation = _require_generation(
+            fencing_generation, "fencing_generation", minimum=1
+        )
+        encoded, digest = _projection_payload(projection)
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    UPDATE {schema}.director_primary_task_projection projected
+                    SET projection_version = projection_version + 1,
+                        projection_digest = %(projection_digest)s,
+                        projection = %(projection)s::jsonb,
+                        updated_at = now()
+                    FROM {schema}.director_primary_task_writer writer
+                    WHERE projected.task_id = %(task_id)s
+                      AND writer.task_id = projected.task_id
+                      AND writer.engine_owner = 'langgraph'
+                      AND writer.owner_token = %(owner_token)s
+                      AND writer.fencing_generation = %(generation)s
+                      AND writer.lease_expires_at > now()
+                    RETURNING projected.task_id, projected.engine_owner,
+                              projected.input_digest,
+                              projected.intake_fencing_generation,
+                              projected.projection_version,
+                              projected.projection_digest,
+                              projected.projection
+                    """,
+                    {
+                        "task_id": task_id,
+                        "owner_token": owner_token,
+                        "generation": generation,
+                        "projection_digest": digest,
+                        "projection": encoded,
+                    },
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "task projection update refused; writer authority is stale"
+                    )
+        return _projection_from_row(row)
+
+    def read_primary_task_projection(
+        self, task_id: str
+    ) -> PrimaryTaskProjection | None:
+        _require_id(task_id, "task_id")
+        with self._pool.connection() as connection:
+            row = self._optional_row(
+                connection,
+                f"""
+                SELECT task_id, engine_owner, input_digest,
+                       intake_fencing_generation, projection_version,
+                       projection_digest, projection
+                FROM {self._schema}.director_primary_task_projection
+                WHERE task_id = %(task_id)s
+                """,
+                {"task_id": task_id},
+            )
+        return None if row is None else _projection_from_row(row)
+
+    def read_primary_command_receipt(
+        self, *, task_id: str, operation: str, command_id: str
+    ) -> PrimaryCommandReceipt | None:
+        """Read one immutable command identity independently of current state."""
+
+        _require_id(task_id, "task_id")
+        _require_code(operation, "operation")
+        _require_id(command_id, "command_id")
+        with self._pool.connection() as connection:
+            row = self._optional_row(
+                connection,
+                f"""
+                SELECT task_id, operation, command_id, command_digest,
+                       resulting_projection_digest,
+                       resulting_projection_version,
+                       writer_fencing_generation
+                FROM {self._schema}.director_primary_command_receipt
+                WHERE task_id = %(task_id)s
+                  AND operation = %(operation)s
+                  AND command_id = %(command_id)s
+                """,
+                {
+                    "task_id": task_id,
+                    "operation": operation,
+                    "command_id": command_id,
+                },
+            )
+        return None if row is None else _command_receipt_from_row(row)
+
+    def record_primary_command_receipt(
+        self,
+        *,
+        task_id: str,
+        operation: str,
+        command_id: str,
+        command_digest: str,
+        resulting_projection_digest: str,
+        resulting_projection_version: int,
+        owner_token: str,
+        fencing_generation: int,
+    ) -> PrimaryCommandReceipt:
+        """Append or verify a command receipt under the current writer fence.
+
+        The immutable key is ``task_id + operation + command_id``. Exact
+        command redelivery resolves to the original resulting projection even
+        after the live projection advances. Reuse with changed content is
+        refused. A new receipt is accepted only when both its writer fence and
+        its resulting projection still identify the authoritative rows.
+        """
+
+        _require_id(task_id, "task_id")
+        _require_code(operation, "operation")
+        _require_id(command_id, "command_id")
+        _require_digest(command_digest, "command_digest")
+        _require_digest(resulting_projection_digest, "resulting_projection_digest")
+        version = _require_generation(
+            resulting_projection_version, "resulting_projection_version", minimum=1
+        )
+        _require_id(owner_token, "owner_token")
+        generation = _require_generation(
+            fencing_generation, "fencing_generation", minimum=1
+        )
+        schema = self._schema
+        parameters = {
+            "task_id": task_id,
+            "operation": operation,
+            "command_id": command_id,
+            "command_digest": command_digest,
+            "projection_digest": resulting_projection_digest,
+            "projection_version": version,
+            "owner_token": owner_token,
+            "generation": generation,
+        }
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {
+                        "key": _advisory_key(
+                            "command-receipt", schema, task_id, operation, command_id
+                        )
+                    },
+                )
+                existing = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT task_id, operation, command_id, command_digest,
+                           resulting_projection_digest,
+                           resulting_projection_version,
+                           writer_fencing_generation
+                    FROM {schema}.director_primary_command_receipt
+                    WHERE task_id = %(task_id)s
+                      AND operation = %(operation)s
+                      AND command_id = %(command_id)s
+                    """,
+                    parameters,
+                )
+                if existing is not None:
+                    receipt = _command_receipt_from_row(existing)
+                    if receipt.command_digest != command_digest:
+                        raise PostgresControlPlaneError(
+                            "command identity was replayed with different content"
+                        )
+                    return receipt
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_command_receipt (
+                        task_id, operation, command_id, command_digest,
+                        resulting_projection_digest,
+                        resulting_projection_version,
+                        writer_fencing_generation
+                    )
+                    SELECT projected.task_id, %(operation)s, %(command_id)s,
+                           %(command_digest)s, projected.projection_digest,
+                           projected.projection_version,
+                           writer.fencing_generation
+                    FROM {schema}.director_primary_task_projection projected
+                    JOIN {schema}.director_primary_task_writer writer
+                      ON writer.task_id = projected.task_id
+                    WHERE projected.task_id = %(task_id)s
+                      AND projected.projection_digest = %(projection_digest)s
+                      AND projected.projection_version = %(projection_version)s
+                      AND writer.engine_owner = 'langgraph'
+                      AND writer.owner_token = %(owner_token)s
+                      AND writer.fencing_generation = %(generation)s
+                      AND writer.lease_expires_at > now()
+                    ON CONFLICT (task_id, operation, command_id) DO NOTHING
+                    RETURNING task_id, operation, command_id, command_digest,
+                              resulting_projection_digest,
+                              resulting_projection_version,
+                              writer_fencing_generation
+                    """,
+                    parameters,
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "command receipt refused; projection or writer authority is stale"
+                    )
+        return _command_receipt_from_row(row)
+
+    # -- provider activation evidence -----------------------------------
+
+    def load(
+        self,
+        binding: ProviderActivationBinding,
+        surface: ProviderActivationSurface,
+    ) -> tuple[ProviderActivationEvidence, ...]:
+        """Load one immutable activation chain in revision order.
+
+        The fully versioned binding is part of the database key.  A gap is
+        treated as corrupt authority and fails closed rather than allowing the
+        registry to infer readiness from an incomplete chain.
+        """
+
+        if not isinstance(binding, ProviderActivationBinding):
+            raise PostgresControlPlaneError(
+                "provider activation binding must be fully versioned"
+            )
+        if not isinstance(surface, ProviderActivationSurface):
+            raise PostgresControlPlaneError(
+                "provider activation surface is unsupported"
+            )
+        parameters = self._activation_binding_parameters(binding, surface)
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT provider_id, workspace_id, provider_version,
+                           app_version, runtime_adapter_version,
+                           workspace_version, binding_version, surface,
+                           revision, schema_version, stage, evidence_id,
+                           evidence_digest, observed_at, expires_at
+                    FROM {self._schema}.director_provider_activation_evidence
+                    WHERE provider_id = %(provider_id)s
+                      AND workspace_id = %(workspace_id)s
+                      AND provider_version = %(provider_version)s
+                      AND app_version = %(app_version)s
+                      AND runtime_adapter_version = %(runtime_adapter_version)s
+                      AND workspace_version = %(workspace_version)s
+                      AND binding_version = %(binding_version)s
+                      AND surface = %(surface)s
+                    ORDER BY revision
+                    """,
+                    parameters,
+                )
+                rows = cursor.fetchall()
+        records = tuple(_activation_evidence_from_row(row) for row in rows)
+        for expected_revision, record in enumerate(records, start=1):
+            if record.revision != expected_revision:
+                raise PostgresControlPlaneError(
+                    "provider activation evidence contains a revision gap"
+                )
+        return records
+
+    def append(
+        self,
+        evidence: ProviderActivationEvidence,
+        *,
+        expected_revision: int,
+    ) -> bool:
+        """Atomically compare-and-append one provider activation revision.
+
+        Exact concurrent redelivery succeeds without inserting another row.
+        Changed content, stale expectations, and revision gaps return ``False``;
+        a pre-existing corrupt gap raises and cannot grant readiness.
+        """
+
+        if not isinstance(evidence, ProviderActivationEvidence):
+            raise PostgresControlPlaneError(
+                "provider activation evidence must use the validated contract"
+            )
+        expected = _require_generation(
+            expected_revision, "expected_revision", minimum=0
+        )
+        if evidence.revision != expected + 1:
+            raise PostgresControlPlaneError(
+                "provider activation evidence revision must follow expected_revision"
+            )
+        parameters = self._activation_binding_parameters(
+            evidence.binding, evidence.surface
+        )
+        parameters.update(
+            {
+                "revision": evidence.revision,
+                "schema_version": evidence.schema_version,
+                "stage": evidence.stage.value,
+                "evidence_id": evidence.evidence_id,
+                "evidence_digest": evidence.evidence_digest,
+                "observed_at": evidence.observed_at,
+                "expires_at": evidence.expires_at,
+            }
+        )
+        lock_parts = (
+            evidence.binding.provider_id,
+            evidence.binding.workspace_id,
+            evidence.binding.provider_version,
+            evidence.binding.app_version,
+            evidence.binding.runtime_adapter_version,
+            evidence.binding.workspace_version,
+            evidence.binding.binding_version,
+            evidence.surface.value,
+        )
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {"key": _advisory_key("provider-activation", schema, *lock_parts)},
+                )
+                summary = self._one_row(
+                    connection,
+                    f"""
+                    SELECT count(*) AS revision_count,
+                           coalesce(max(revision), 0) AS latest_revision
+                    FROM {schema}.director_provider_activation_evidence
+                    WHERE provider_id = %(provider_id)s
+                      AND workspace_id = %(workspace_id)s
+                      AND provider_version = %(provider_version)s
+                      AND app_version = %(app_version)s
+                      AND runtime_adapter_version = %(runtime_adapter_version)s
+                      AND workspace_version = %(workspace_version)s
+                      AND binding_version = %(binding_version)s
+                      AND surface = %(surface)s
+                    """,
+                    parameters,
+                    missing="provider activation revision summary did not resolve",
+                )
+                count = int(summary["revision_count"])
+                latest = int(summary["latest_revision"])
+                if count != latest:
+                    raise PostgresControlPlaneError(
+                        "provider activation evidence contains a revision gap"
+                    )
+                if latest == evidence.revision:
+                    recorded = self._one_row(
+                        connection,
+                        f"""
+                        SELECT provider_id, workspace_id, provider_version,
+                               app_version, runtime_adapter_version,
+                               workspace_version, binding_version, surface,
+                               revision, schema_version, stage, evidence_id,
+                               evidence_digest, observed_at, expires_at
+                        FROM {schema}.director_provider_activation_evidence
+                        WHERE provider_id = %(provider_id)s
+                          AND workspace_id = %(workspace_id)s
+                          AND provider_version = %(provider_version)s
+                          AND app_version = %(app_version)s
+                          AND runtime_adapter_version =
+                              %(runtime_adapter_version)s
+                          AND workspace_version = %(workspace_version)s
+                          AND binding_version = %(binding_version)s
+                          AND surface = %(surface)s
+                          AND revision = %(revision)s
+                        """,
+                        parameters,
+                        missing="provider activation revision disappeared",
+                    )
+                    return _activation_evidence_from_row(recorded) == evidence
+                if latest != expected:
+                    return False
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_provider_activation_evidence (
+                        provider_id, workspace_id, provider_version,
+                        app_version, runtime_adapter_version,
+                        workspace_version, binding_version, surface, revision,
+                        schema_version, stage, evidence_id, evidence_digest,
+                        observed_at, expires_at
+                    )
+                    VALUES (
+                        %(provider_id)s, %(workspace_id)s, %(provider_version)s,
+                        %(app_version)s, %(runtime_adapter_version)s,
+                        %(workspace_version)s, %(binding_version)s, %(surface)s,
+                        %(revision)s, %(schema_version)s, %(stage)s,
+                        %(evidence_id)s, %(evidence_digest)s, %(observed_at)s,
+                        %(expires_at)s
+                    )
+                    ON CONFLICT DO NOTHING
+                    RETURNING revision
+                    """,
+                    parameters,
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "provider activation append lost its serialized authority"
+                    )
+        return True
+
+    @staticmethod
+    def _activation_binding_parameters(
+        binding: ProviderActivationBinding,
+        surface: ProviderActivationSurface,
+    ) -> dict[str, Any]:
+        return {
+            "provider_id": binding.provider_id,
+            "workspace_id": binding.workspace_id,
+            "provider_version": binding.provider_version,
+            "app_version": binding.app_version,
+            "runtime_adapter_version": binding.runtime_adapter_version,
+            "workspace_version": binding.workspace_version,
+            "binding_version": binding.binding_version,
+            "surface": surface.value,
+        }
+
+    def primary_control_plane_metrics(self) -> PrimaryControlPlaneMetrics:
+        """Read observed task and unresolved-reconciliation counts."""
+
+        schema = self._schema
+        with self._pool.connection() as connection:
+            row = self._one_row(
+                connection,
+                f"""
+                SELECT
+                    (SELECT count(*)
+                     FROM {schema}.director_primary_task_projection)
+                        AS graph_task_count,
+                    (SELECT count(DISTINCT reconciliation.claim_key)
+                     FROM {schema}.director_primary_reconciliation_event reconciliation
+                     LEFT JOIN {schema}.director_primary_terminal_evidence terminal
+                       ON terminal.claim_key = reconciliation.claim_key
+                     WHERE terminal.claim_key IS NULL)
+                        AS ambiguous_effect_count
+                """,
+                {},
+                missing="primary control-plane metrics did not resolve",
+            )
+        return PrimaryControlPlaneMetrics(
+            graph_task_count=int(row["graph_task_count"]),
+            ambiguous_effect_count=int(row["ambiguous_effect_count"]),
+        )
+
+    def list_primary_task_ids(self, *, limit: int = 1000) -> tuple[str, ...]:
+        """List a bounded stable recovery batch without exposing task content."""
+
+        if type(limit) is not int or not 1 <= limit <= 10_000:
+            raise ValueError("limit must be between 1 and 10000")
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT task_id
+                    FROM {self._schema}.director_primary_task_projection
+                    ORDER BY created_at, task_id
+                    LIMIT %(limit)s
+                    """,
+                    {"limit": limit},
+                )
+                rows = cursor.fetchall()
+        return tuple(str(row["task_id"]) for row in rows)
 
     def acquire_task_writer(
         self,
@@ -905,6 +2077,143 @@ class PostgresConditionalClaimStore:
                 {"task_id": task_id},
             )
         return None if row is None else _lease_from_row(row)
+
+    def record_work_packet_artifact(
+        self,
+        *,
+        task_id: str,
+        assignment_id: str,
+        packet: Mapping[str, Any],
+        owner_token: str,
+        fencing_generation: int,
+    ) -> PrimaryWorkPacketArtifact:
+        """Append or verify one immutable validated work-packet artifact.
+
+        The task writer row is locked and its lease is checked before either a
+        first insert or an exact replay.  This keeps writer takeover from
+        crossing the authorization decision while the artifact is recorded.
+        A packet identity can never be reused for different canonical content.
+        """
+
+        _require_id(task_id, "task_id")
+        _require_id(assignment_id, "assignment_id")
+        _require_id(owner_token, "owner_token")
+        generation = _require_generation(
+            fencing_generation, "fencing_generation", minimum=1
+        )
+        validated, digest, authority_digest = _validated_work_packet(
+            packet, task_id=task_id, assignment_id=assignment_id
+        )
+        canonical = canonical_json_bytes(validated).decode("utf-8")
+        schema = self._schema
+        parameters = {
+            "task_id": task_id,
+            "assignment_id": assignment_id,
+            "authority_snapshot_digest": authority_digest,
+            "document_digest": digest,
+            "canonical_document": canonical,
+            "owner_token": owner_token,
+            "generation": generation,
+        }
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {
+                        "key": _advisory_key(
+                            "work-packet", schema, task_id, assignment_id
+                        )
+                    },
+                )
+                writer = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT task_id
+                    FROM {schema}.director_primary_task_writer
+                    WHERE task_id = %(task_id)s
+                      AND engine_owner = 'langgraph'
+                      AND owner_token = %(owner_token)s
+                      AND fencing_generation = %(generation)s
+                      AND lease_expires_at > now()
+                    FOR UPDATE
+                    """,
+                    parameters,
+                )
+                if writer is None:
+                    raise PostgresControlPlaneError(
+                        "work packet refused; writer authority is stale or expired"
+                    )
+                existing = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT task_id, assignment_id, authority_snapshot_digest,
+                           document_digest, canonical_document,
+                           writer_fencing_generation
+                    FROM {schema}.director_primary_work_packet_artifact
+                    WHERE task_id = %(task_id)s
+                      AND assignment_id = %(assignment_id)s
+                    """,
+                    parameters,
+                )
+                if existing is not None:
+                    artifact = _work_packet_artifact_from_row(existing)
+                    if artifact.document_digest != digest:
+                        raise PostgresControlPlaneError(
+                            "work packet identity was replayed with different content"
+                        )
+                    return artifact
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_work_packet_artifact (
+                        task_id, assignment_id, authority_snapshot_digest,
+                        document_digest, canonical_document,
+                        writer_fencing_generation
+                    )
+                    SELECT writer.task_id, %(assignment_id)s,
+                           %(authority_snapshot_digest)s, %(document_digest)s,
+                           %(canonical_document)s, writer.fencing_generation
+                    FROM {schema}.director_primary_task_writer writer
+                    WHERE writer.task_id = %(task_id)s
+                      AND writer.engine_owner = 'langgraph'
+                      AND writer.owner_token = %(owner_token)s
+                      AND writer.fencing_generation = %(generation)s
+                      AND writer.lease_expires_at > now()
+                    ON CONFLICT (task_id, assignment_id) DO NOTHING
+                    RETURNING task_id, assignment_id, authority_snapshot_digest,
+                              document_digest, canonical_document,
+                              writer_fencing_generation
+                    """,
+                    parameters,
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "work packet insert lost its immutable identity race"
+                    )
+        return _work_packet_artifact_from_row(row)
+
+    def read_work_packet_artifact(
+        self, *, task_id: str, assignment_id: str
+    ) -> PrimaryWorkPacketArtifact | None:
+        """Load and revalidate one immutable work packet after restart."""
+
+        _require_id(task_id, "task_id")
+        _require_id(assignment_id, "assignment_id")
+        with self._pool.connection() as connection:
+            row = self._optional_row(
+                connection,
+                f"""
+                SELECT task_id, assignment_id, authority_snapshot_digest,
+                       document_digest, canonical_document,
+                       writer_fencing_generation
+                FROM {self._schema}.director_primary_work_packet_artifact
+                WHERE task_id = %(task_id)s
+                  AND assignment_id = %(assignment_id)s
+                """,
+                {"task_id": task_id, "assignment_id": assignment_id},
+            )
+        return None if row is None else _work_packet_artifact_from_row(row)
 
     # -- protocol ---------------------------------------------------------
 
@@ -2087,3 +3396,7 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude | Claude Opus 5 | 2026-08-31 | 15:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:35 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | END]]

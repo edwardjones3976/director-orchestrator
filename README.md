@@ -1,8 +1,10 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]] -->
@@ -128,6 +130,64 @@ The bootstrap script creates `.env` with random local secrets and starts the sta
 Open `http://localhost:5678`, create the local n8n owner login, and import `n8n/workflows/director-intake.json`. Activate that workflow after inspection.
 
 For always-on operation, enable Docker Desktop's start-on-sign-in option, disable sleep/hibernation for the host while plugged in, keep Windows and Docker auto-restart behavior enabled, and use a UPS if this desktop is expected to act as infrastructure. Containers use `restart: unless-stopped`; in-progress provider polls resume from durable task state after the orchestrator restarts.
+
+### Default LangGraph-primary database (inactive by default)
+
+Compose provisions `langgraph-primary-db` and its
+`langgraph-primary-db-data` volume separately from n8n's database and volume.
+The orchestrator waits for this database's readiness check, but the database
+does not make LangGraph primary: `LANGGRAPH_PRIMARY_ENABLED=false`,
+`LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=false`, and `ALLOW_PAID_RUNS=false` keep
+new intake, provider calls, and external effects closed. Before any supervised
+activation, replace both primary placeholders through the approved secret store,
+keep `LANGGRAPH_PRIMARY_POSTGRES_SCHEMA=director_primary_v1`, and give every
+deployment a distinct versioned `LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE`.
+
+The bundled database intentionally uses unencrypted container-network transport
+while `LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=false`. That combination
+is a fail-closed staging and backup surface, not an activation configuration:
+the primary runtime will reject it. Do not weaken the flag for the non-loopback
+Compose hostname. A supervised activation must instead supply a trusted
+Postgres endpoint with `sslmode=verify-full`, an explicit trusted root
+certificate, and a matching versioned schema and checkpoint namespace.
+
+`LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED` and
+`LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` are mutually exclusive. Live
+dispatch additionally requires paid runs and an exact non-secret activation
+binding for every required provider. Each binding is only an identity/version
+tuple; authentication secrets remain in the provider's approved credential
+store. Observed app and runtime-adapter evidence must both reach `LIVE_OK`
+before that provider can cross the primary dispatch boundary.
+
+Back up the Default primary database with the activation switches still off:
+
+```powershell
+$env:DIRECTOR_ENV_FILE = ".env"
+$backupName = "director-primary-$(Get-Date -Format yyyyMMdd-HHmmss).dump"
+New-Item -ItemType Directory -Force ".\backups" | Out-Null
+docker compose --env-file .env exec -T langgraph-primary-db pg_dump --username=director_primary --dbname=director_primary --format=custom --file="/tmp/$backupName"
+docker compose --env-file .env cp "langgraph-primary-db:/tmp/$backupName" ".\backups\$backupName"
+docker compose --env-file .env exec -T langgraph-primary-db rm -f "/tmp/$backupName"
+```
+
+Restore only during a supervised maintenance window. Keep both primary switches
+and paid execution off, stop every Director client of the database, and restore
+one explicitly named backup. n8n is not stopped or restored because it uses a
+different database and volume.
+
+```powershell
+$env:DIRECTOR_ENV_FILE = ".env"
+$backupName = "director-primary-YYYYMMDD-HHMMSS.dump"
+docker compose --env-file .env stop orchestrator slackbot
+docker compose --env-file .env cp ".\backups\$backupName" "langgraph-primary-db:/tmp/$backupName"
+docker compose --env-file .env exec -T langgraph-primary-db pg_restore --username=director_primary --dbname=director_primary --clean --if-exists --no-owner --no-privileges --exit-on-error --single-transaction "/tmp/$backupName"
+docker compose --env-file .env exec -T langgraph-primary-db rm -f "/tmp/$backupName"
+docker compose --env-file .env up -d orchestrator slackbot
+docker compose --env-file .env ps
+```
+
+Treat backup files as sensitive operational data. Store them encrypted, restrict
+access, verify a disposable restore before relying on them, and never commit them.
 
 ## Slack app setup
 
@@ -271,3 +331,5 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]] -->

@@ -1,5 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
@@ -159,6 +161,12 @@ def _default_langgraph_runtime_namespace() -> str:
     return f"director-{safe_profile}-runtime-v1"
 
 
+def _default_langgraph_primary_namespace() -> str:
+    profile = os.getenv("APP_ENV", "local").strip().lower() or "local"
+    safe_profile = "-".join(part for part in profile.replace("_", "-").split("-") if part)
+    return f"director-{safe_profile}-primary-v1"
+
+
 def _pairwise_isolated(paths: tuple[str, ...]) -> bool:
     """Every configured store must be a distinct file from every other one.
 
@@ -241,6 +249,59 @@ class Settings:
     )
     langgraph_runtime_task_writer_enabled: bool = field(
         default_factory=lambda: _bool("LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED", False)
+    )
+    # The primary runtime is separate from the historical SQLite packet runtime.
+    # Both switches default off. The second switch is deliberately narrower: it
+    # authorizes an atomic ownership transition only after the application has
+    # constructed and validated the production coordinator.
+    langgraph_primary_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_PRIMARY_ENABLED", False)
+    )
+    langgraph_primary_new_intake_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED", False)
+    )
+    langgraph_primary_offline_simulation_enabled: bool = field(
+        default_factory=lambda: _bool(
+            "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED", False
+        )
+    )
+    langgraph_primary_live_provider_dispatch_enabled: bool = field(
+        default_factory=lambda: _bool(
+            "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", False
+        )
+    )
+    langgraph_primary_required_providers: tuple[str, ...] = field(
+        default_factory=lambda: _csv(
+            "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS",
+            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github,windows-copilot",
+        )
+    )
+    langgraph_primary_provider_activation_bindings_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "{}"
+        ).strip()
+    )
+    langgraph_primary_postgres_dsn: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_POSTGRES_DSN", "")
+    )
+    langgraph_primary_postgres_schema: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA", "director_primary_v1"
+        ).strip()
+    )
+    langgraph_primary_checkpoint_namespace: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE",
+            _default_langgraph_primary_namespace(),
+        ).strip()
+    )
+    langgraph_primary_owner_token: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_OWNER_TOKEN", "")
+    )
+    langgraph_primary_allow_insecure_local_postgres: bool = field(
+        default_factory=lambda: _bool(
+            "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES", False
+        )
     )
     langgraph_runtime_checkpoint_path: str = field(
         default_factory=lambda: os.getenv(
@@ -1062,6 +1123,185 @@ class Settings:
                 + "; ".join(problems)
             )
 
+    def langgraph_primary_configuration_readiness(self) -> dict[str, bool]:
+        """Report configuration prerequisites without claiming live authority."""
+
+        dsn_configured = bool(self.langgraph_primary_postgres_dsn.strip())
+        schema_configured = bool(
+            re.fullmatch(
+                r"[a-z][a-z0-9_]{0,62}",
+                self.langgraph_primary_postgres_schema,
+            )
+        )
+        namespace_configured = bool(
+            self.langgraph_primary_checkpoint_namespace.strip()
+        )
+        namespace_isolated = namespace_configured and all(
+            self.langgraph_primary_checkpoint_namespace.strip() != item
+            for item in (
+                self.langgraph_checkpoint_namespace.strip(),
+                self.langgraph_runtime_checkpoint_namespace.strip(),
+            )
+        )
+        owner_token_configured = len(self.langgraph_primary_owner_token) >= 32
+        authority_root_configured = bool(self.repository_snapshot_root.strip())
+        single_repository_configured = len(self.repository_allowlist) == 1
+        single_starting_ref_configured = len(self.allowed_starting_refs) == 1
+        required_providers_valid = bool(self.langgraph_primary_required_providers) and (
+            len(set(self.langgraph_primary_required_providers))
+            == len(self.langgraph_primary_required_providers)
+        )
+        try:
+            activation_bindings_configured = (
+                set(self.primary_provider_activation_bindings())
+                == set(self.langgraph_primary_required_providers)
+            )
+        except ValueError:
+            activation_bindings_configured = False
+        configuration_valid = (
+            dsn_configured
+            and schema_configured
+            and namespace_configured
+            and namespace_isolated
+            and owner_token_configured
+            and authority_root_configured
+            and single_repository_configured
+            and single_starting_ref_configured
+        )
+        return {
+            "enabled": self.langgraph_primary_enabled,
+            "new_intake_requested": self.langgraph_primary_new_intake_enabled,
+            "postgres_dsn_configured": dsn_configured,
+            "postgres_schema_configured": schema_configured,
+            "checkpoint_namespace_configured": namespace_configured,
+            "checkpoint_namespace_isolated": namespace_isolated,
+            "owner_token_configured": owner_token_configured,
+            "authority_root_configured": authority_root_configured,
+            "single_repository_configured": single_repository_configured,
+            "single_starting_ref_configured": single_starting_ref_configured,
+            "required_providers_valid": required_providers_valid,
+            "provider_activation_bindings_configured": (
+                activation_bindings_configured
+            ),
+            "offline_simulation_requested": (
+                self.langgraph_primary_offline_simulation_enabled
+            ),
+            "live_provider_dispatch_requested": (
+                self.langgraph_primary_live_provider_dispatch_enabled
+            ),
+            "configuration_valid": configuration_valid,
+            "startup_allowed": (
+                not self.langgraph_primary_enabled or configuration_valid
+            ),
+            # Ownership is observed from Postgres by the activation component;
+            # configuration alone can never claim it.
+            "primary_runtime_active": False,
+            "legacy_new_intake_disabled": False,
+        }
+
+    def validate_langgraph_primary_configuration(self) -> None:
+        """Reject incomplete primary activation before opening PostgreSQL."""
+
+        if not self.langgraph_primary_enabled:
+            if (
+                self.langgraph_primary_new_intake_enabled
+                or self.langgraph_primary_offline_simulation_enabled
+                or self.langgraph_primary_live_provider_dispatch_enabled
+            ):
+                raise ValueError(
+                    "A LangGraph primary execution switch requires "
+                    "LANGGRAPH_PRIMARY_ENABLED"
+                )
+            return
+        readiness = self.langgraph_primary_configuration_readiness()
+        problems: list[str] = []
+        if (
+            self.langgraph_primary_offline_simulation_enabled
+            and self.langgraph_primary_live_provider_dispatch_enabled
+        ):
+            problems.append(
+                "offline simulation and live provider dispatch are mutually exclusive"
+            )
+        if not readiness["required_providers_valid"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS must be non-empty and unique"
+            )
+        if self.langgraph_primary_live_provider_dispatch_enabled:
+            if not self.allow_paid_runs:
+                problems.append(
+                    "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED requires ALLOW_PAID_RUNS"
+                )
+            if not readiness["provider_activation_bindings_configured"]:
+                problems.append(
+                    "live provider dispatch requires exact provider activation bindings"
+                )
+        if not readiness["postgres_dsn_configured"]:
+            problems.append("LANGGRAPH_PRIMARY_POSTGRES_DSN must be configured")
+        if not readiness["postgres_schema_configured"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA must be a safe versioned identifier"
+            )
+        if not readiness["checkpoint_namespace_configured"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE must be configured"
+            )
+        elif not readiness["checkpoint_namespace_isolated"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE must differ from shadow and runtime namespaces"
+            )
+        if not readiness["owner_token_configured"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_OWNER_TOKEN must contain at least 32 characters"
+            )
+        if not readiness["authority_root_configured"]:
+            problems.append("REPOSITORY_SNAPSHOT_ROOT must be configured")
+        if not readiness["single_repository_configured"]:
+            problems.append(
+                "REPOSITORY_ALLOWLIST must contain exactly one repository"
+            )
+        if not readiness["single_starting_ref_configured"]:
+            problems.append(
+                "ALLOWED_STARTING_REFS must contain exactly one starting ref"
+            )
+        if problems:
+            raise ValueError(
+                "Invalid enabled LangGraph primary configuration: "
+                + "; ".join(problems)
+            )
+
+    def primary_provider_activation_bindings(self):
+        """Parse bounded, non-secret provider activation identities."""
+
+        from .provider_activation import ProviderActivationBinding
+
+        try:
+            payload = json.loads(
+                self.langgraph_primary_provider_activation_bindings_json or "{}"
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError("provider activation bindings must be valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("provider activation bindings must be an object")
+        expected_fields = {
+            "workspace_id",
+            "provider_version",
+            "app_version",
+            "runtime_adapter_version",
+            "workspace_version",
+            "binding_version",
+        }
+        bindings = {}
+        for provider_id, raw in payload.items():
+            if not isinstance(provider_id, str) or not isinstance(raw, dict):
+                raise ValueError("provider activation binding is malformed")
+            if set(raw) != expected_fields:
+                raise ValueError("provider activation binding fields are invalid")
+            bindings[provider_id] = ProviderActivationBinding(
+                provider_id=provider_id,
+                **raw,
+            )
+        return bindings
+
     def completion_gate_readiness(self) -> dict[str, bool]:
         """Report Completion Gate evidence readiness without claiming authority.
 
@@ -1462,3 +1702,5 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:34 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]

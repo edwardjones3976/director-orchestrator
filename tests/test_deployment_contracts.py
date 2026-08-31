@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
 from __future__ import annotations
@@ -11,6 +12,75 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeploymentContractTests(unittest.TestCase):
+    def test_default_primary_postgres_is_dedicated_healthy_and_default_off(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        primary_db = compose.split("  langgraph-primary-db:\n", 1)[1].split(
+            "\n  slackbot:", 1
+        )[0]
+        orchestrator = compose.split("  orchestrator:\n", 1)[1].split(
+            "\n  langgraph-primary-db:", 1
+        )[0]
+        n8n_db = compose.split("  n8n-db:\n", 1)[1].split("\n  n8n:", 1)[0]
+
+        self.assertIn("postgres:17-alpine@sha256:", primary_db)
+        self.assertIn("POSTGRES_USER: director_primary", primary_db)
+        self.assertIn("POSTGRES_DB: director_primary", primary_db)
+        self.assertIn(
+            "POSTGRES_PASSWORD: ${LANGGRAPH_PRIMARY_POSTGRES_PASSWORD}", primary_db
+        )
+        self.assertIn(
+            "langgraph-primary-db-data:/var/lib/postgresql/data", primary_db
+        )
+        self.assertIn("pg_isready -U director_primary -d director_primary", primary_db)
+        self.assertIn("langgraph-primary-db:\n        condition: service_healthy", orchestrator)
+        self.assertIn("LANGGRAPH_PRIMARY_POSTGRES_DSN:", orchestrator)
+        self.assertIn("?sslmode=disable", orchestrator)
+        self.assertNotIn("n8n-db-data", primary_db)
+        self.assertNotIn("langgraph-primary-db-data", n8n_db)
+
+        self.assertIn("LANGGRAPH_PRIMARY_ENABLED=false", environment)
+        self.assertIn("LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=false", environment)
+        self.assertIn("ALLOW_PAID_RUNS=false", environment)
+        self.assertIn(
+            "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA=director_primary_v1", environment
+        )
+        self.assertIn(
+            "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE=default-director-primary-v1",
+            environment,
+        )
+        self.assertIn("LANGGRAPH_PRIMARY_POSTGRES_DSN=\n", environment)
+        self.assertIn(
+            "LANGGRAPH_PRIMARY_OWNER_TOKEN=REPLACE_WITH_DISTINCT_RANDOM_SECRET",
+            environment,
+        )
+        self.assertIn(
+            "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD=REPLACE_WITH_DISTINCT_RANDOM_SECRET",
+            environment,
+        )
+        self.assertIn(
+            "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=false", environment
+        )
+
+    def test_default_primary_backup_and_restore_are_bounded_to_its_service(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        section = readme.split(
+            "### Default LangGraph-primary database (inactive by default)", 1
+        )[1].split("\n## Slack app setup", 1)[0]
+
+        self.assertIn("LANGGRAPH_PRIMARY_ENABLED=false", section)
+        self.assertIn("LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=false", section)
+        self.assertIn("fail-closed staging and backup surface", section)
+        self.assertIn("sslmode=verify-full", section)
+        self.assertIn("pg_dump", section)
+        self.assertIn("pg_restore", section)
+        self.assertIn("--clean --if-exists", section)
+        self.assertIn("--exit-on-error --single-transaction", section)
+        self.assertIn("stop orchestrator slackbot", section)
+        self.assertIn("langgraph-primary-db:/tmp/$backupName", section)
+        self.assertNotIn("n8n-db:/tmp/$backupName", section)
+        self.assertIn("never commit them", section)
+
     def test_n8n_forwards_the_authenticated_caller_header(self):
         workflow = json.loads(
             (ROOT / "n8n" / "workflows" / "director-intake.json").read_text(encoding="utf-8")
@@ -119,3 +189,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]]

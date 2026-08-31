@@ -1,4 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
@@ -6,12 +8,15 @@
 # [[Codex | GPT-5.6 | 2026-08-22 23:24 UTC | CHANGE]]
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import contextmanager
 from multiprocessing import get_context
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -50,6 +55,27 @@ from director_orchestrator.models import (
 
 AUTHORITY_A = "sha256:" + "a" * 64
 AUTHORITY_B = "sha256:" + "b" * 64
+
+
+@contextmanager
+def hardlink_identity(source: Path, target: Path):
+    try:
+        target.hardlink_to(source)
+    except (OSError, NotImplementedError, AttributeError):
+        target.touch()
+        original_samefile = os.path.samefile
+        identity = frozenset(
+            (os.path.normcase(str(source.resolve())), os.path.normcase(str(target.resolve())))
+        )
+
+        def samefile(left: str, right: str) -> bool:
+            candidate = frozenset((os.path.normcase(left), os.path.normcase(right)))
+            return candidate == identity or original_samefile(left, right)
+
+        with patch("director_orchestrator.config.os.path.samefile", side_effect=samefile):
+            yield
+    else:
+        yield
 
 
 def _resume_process(
@@ -943,3 +969,5 @@ class LangGraphResumeTests(unittest.TestCase):
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
