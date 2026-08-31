@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]] -->
@@ -9,7 +10,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=46eec94317569507ce257f6b411903ae6d2dff5b7dd934bce59c0d8846589d76 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=71af6d650239331d78c55368c3fc8f0eb5cca9a3470b629d0d8f8f9516dea5e3 -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -54,8 +55,8 @@ report or submission envelope.
 - **Selected modules:** <active modules>
 - **Team routing:** <providers, roles, and discovered workflow skills>
 - **Provider roles contract:** <path to the project's `provider-roles-contract.yaml`, or none; it records the eight responsibility areas and the Cursor, Antigravity, Perplexity, and OpenAI boundaries>
-- **Director/control plane:** <OpenAI Director duties; never a specialist assignment target; counted in overall effort but separate from its external 1% direct-production share>
-- **Direct-production routing:** <Claude 60%, Cursor 14%, Grok 14%, Gemini/Antigravity 7%, Perplexity 4%, separately owner-authorized external Codex/OpenAI 1%; target, accepted actual, deviation, and rationale>
+- **Director/control plane:** <OpenAI Director duties; never a specialist assignment target; counted in overall effort but separate from its external 25% direct-production share>
+- **Direct-production routing:** <Claude 25%, Cursor 20%, Grok 11%, Gemini/Antigravity 15%, Perplexity 4%, separately owner-authorized external Codex/OpenAI 25%; target, accepted actual, deviation, and rationale>
 - **Overall-effort routing:** <Claude 36%, Cursor 20%, Grok 20%, OpenAI 8%, Antigravity 11%, Perplexity 5%; assignment and rolling-20 target, actual immutable effort points, deviation, and rationale>
 - **Workload enforcement:** <±3-point normal tolerance; Claude/Cursor/Grok/OpenAI/Gemini/Perplexity hard thresholds 45/25/25/13/16/10; separate primary caps Claude 45 and Cursor/Grok/OpenAI 27; automatic correction or exact blocked/reshaped state; no OpenAI exception>
 - **External OpenAI production:** <none, or exact owner authorization, authenticated candidate identity, different-provider exact-candidate review, and current security/CI/merge evidence>
@@ -137,3 +138,4 @@ published, enabled, or otherwise changed>.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]] -->

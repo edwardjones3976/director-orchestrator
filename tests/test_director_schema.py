@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | BEGIN]]
@@ -301,12 +302,12 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             directive["direct_workload_percent"],
             {
-                "claude": 60,
-                "cursor": 14,
-                "grok": 14,
-                "gemini": 7,
+                "claude": 25,
+                "cursor": 20,
+                "grok": 11,
+                "gemini": 15,
                 "perplexity": 4,
-                "external_openai": 1,
+                "external_openai": 25,
             },
         )
         self.assertEqual(
@@ -1144,3 +1145,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]

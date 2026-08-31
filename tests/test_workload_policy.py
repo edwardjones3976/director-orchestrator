@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | BEGIN]]
@@ -164,12 +165,12 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                DirectProductionProvider.CLAUDE: 60,
-                DirectProductionProvider.CURSOR: 14,
-                DirectProductionProvider.GROK: 14,
-                DirectProductionProvider.GEMINI: 7,
+                DirectProductionProvider.CLAUDE: 25,
+                DirectProductionProvider.CURSOR: 20,
+                DirectProductionProvider.GROK: 11,
+                DirectProductionProvider.GEMINI: 15,
                 DirectProductionProvider.PERPLEXITY: 4,
-                DirectProductionProvider.EXTERNAL_OPENAI: 1,
+                DirectProductionProvider.EXTERNAL_OPENAI: 25,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
@@ -219,7 +220,7 @@ class WorkloadTargetTests(unittest.TestCase):
             DEFAULT_POLICY.direct_production_target(
                 DirectProductionProvider.CLAUDE
             ),
-            60,
+            25,
         )
         self.assertEqual(DEFAULT_POLICY.primary_cap(Provider.CLAUDE), 45)
         self.assertEqual(DEFAULT_POLICY.hard_threshold(Provider.OPENAI), 13)
@@ -615,7 +616,7 @@ class DirectProductionRoutingTests(unittest.TestCase):
     )
 
     def test_direct_production_thresholds_are_target_plus_five(self):
-        for _, direct_provider in self.PROVIDER_CASES:
+        for direct_provider in DirectProductionProvider:
             with self.subTest(provider=direct_provider):
                 self.assertEqual(
                     DEFAULT_POLICY.direct_production_hard_threshold(
@@ -683,17 +684,21 @@ class DirectProductionRoutingTests(unittest.TestCase):
         )
 
         result = evaluate_assignment(
-            assignment(Provider.CURSOR, kind=WorkKind.IMPLEMENTATION),
+            assignment(
+                Provider.CURSOR,
+                kind=WorkKind.IMPLEMENTATION,
+                effort_units=2,
+            ),
             direct_production_history=history,
         )
 
         self.assertFalse(result.allowed)
         self.assertIn(
-            "prospective_direct_production_share:cursor:5/20",
+            "prospective_direct_production_share:cursor:6/21",
             result.advisories,
         )
         self.assertIn(
-            "direct_production_hard_threshold_exceeded:cursor:19",
+            "direct_production_hard_threshold_exceeded:cursor:25",
             result.violations,
         )
 
@@ -717,7 +722,7 @@ class DirectProductionRoutingTests(unittest.TestCase):
 
         self.assertFalse(result.allowed)
         self.assertIn(
-            "direct_production_hard_threshold_exceeded:claude:65",
+            "direct_production_hard_threshold_exceeded:claude:30",
             result.violations,
         )
 
@@ -1078,3 +1083,4 @@ class InputValidationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]

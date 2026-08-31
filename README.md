@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]] -->
@@ -11,7 +12,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=46eec94317569507ce257f6b411903ae6d2dff5b7dd934bce59c0d8846589d76 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=71af6d650239331d78c55368c3fc8f0eb5cca9a3470b629d0d8f8f9516dea5e3 -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -25,7 +26,7 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
 - An OpenAI Director planner/reviewer using Structured Outputs.
 - A primary OpenAI–Claude–Cursor–Grok team, with Claude as the mandatory medium/long-form programming lane and Gemini/Antigravity and Perplexity retained as supplemental specialists.
-- Separate effort ledgers: overall effort targets of Claude 36%, Cursor 20%, Grok 20%, OpenAI 8%, Antigravity 11%, and Perplexity 5%; direct-production targets of Claude 60%, Cursor 14%, Grok 14%, Gemini/Antigravity 7%, Perplexity 4%, and a 1% separately owner-authorized external Codex/OpenAI lane.
+- Separate effort ledgers: overall effort targets of Claude 36%, Cursor 20%, Grok 20%, OpenAI 8%, Antigravity 11%, and Perplexity 5%; direct-production targets of Claude 25%, Cursor 20%, Grok 11%, Gemini/Antigravity 15%, Perplexity 4%, and a 25% separately owner-authorized external Codex/OpenAI lane.
 - Default-on deterministic workload enforcement, an immutable pre-stage packet, rolling 20-assignment drift control, and a five-action ordinary review-to-merge ceiling.
 - Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
 - Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
@@ -69,7 +70,7 @@ Milestone updates lead with evidence, exact candidate identity, blockers, and on
 next action rather than activity summaries.
 
 Repository oversight is read-only. The Director runtime never emits OpenAI as a
-specialist assignment target. The 1% OpenAI production share applies only to
+specialist assignment target. The 25% OpenAI production share applies only to
 separately owner-authorized Codex/OpenAI work outside this runtime; it requires a
 different-provider exact-candidate review, and a changed candidate invalidates
 review, security, CI, and merge evidence. It grants no external-action authority.
@@ -246,3 +247,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]] -->

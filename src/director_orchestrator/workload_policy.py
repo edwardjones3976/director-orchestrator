@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:39 UTC | BEGIN]]
@@ -18,7 +19,7 @@ Two percentage ledgers are intentionally separate:
   external OpenAI lane is distinct from OpenAI's overall control-plane work.
 
 Keeping the ledgers typed separately prevents the 36 percent overall Claude
-target from being confused with the 60 percent direct-production target.
+target from being confused with the 25 percent direct-production target.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ class DirectProductionProvider(str, Enum):
     """Providers represented in the direct-production ledger.
 
     ``EXTERNAL_OPENAI`` is intentionally not ``Provider.OPENAI``: the former is
-    the separately assigned one-percent production lane, while the latter also
+    the separately assigned external production lane, while the latter also
     performs control-plane work counted in the overall-effort ledger.
     """
 
@@ -162,12 +163,12 @@ OVERALL_TARGETS: tuple[OverallTarget, ...] = (
 )
 
 DIRECT_PRODUCTION_TARGETS: tuple[DirectProductionTarget, ...] = (
-    DirectProductionTarget(DirectProductionProvider.CLAUDE, 60),
-    DirectProductionTarget(DirectProductionProvider.CURSOR, 14),
-    DirectProductionTarget(DirectProductionProvider.GROK, 14),
-    DirectProductionTarget(DirectProductionProvider.GEMINI, 7),
+    DirectProductionTarget(DirectProductionProvider.CLAUDE, 25),
+    DirectProductionTarget(DirectProductionProvider.CURSOR, 20),
+    DirectProductionTarget(DirectProductionProvider.GROK, 11),
+    DirectProductionTarget(DirectProductionProvider.GEMINI, 15),
     DirectProductionTarget(DirectProductionProvider.PERPLEXITY, 4),
-    DirectProductionTarget(DirectProductionProvider.EXTERNAL_OPENAI, 1),
+    DirectProductionTarget(DirectProductionProvider.EXTERNAL_OPENAI, 25),
 )
 
 PRIMARY_CAPS: tuple[PrimaryCap, ...] = (
@@ -268,12 +269,12 @@ class WorkloadPolicy:
             target.provider: target.percent
             for target in self.direct_production_targets
         } != {
-            DirectProductionProvider.CLAUDE: 60,
-            DirectProductionProvider.CURSOR: 14,
-            DirectProductionProvider.GROK: 14,
-            DirectProductionProvider.GEMINI: 7,
+            DirectProductionProvider.CLAUDE: 25,
+            DirectProductionProvider.CURSOR: 20,
+            DirectProductionProvider.GROK: 11,
+            DirectProductionProvider.GEMINI: 15,
             DirectProductionProvider.PERPLEXITY: 4,
-            DirectProductionProvider.EXTERNAL_OPENAI: 1,
+            DirectProductionProvider.EXTERNAL_OPENAI: 25,
         }:
             raise WorkloadPolicyError(
                 "direct-production targets do not match owner policy"
@@ -1088,3 +1089,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]

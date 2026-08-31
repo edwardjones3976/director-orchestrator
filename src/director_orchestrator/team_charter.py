@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -137,12 +138,12 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         ],
         "duties_excluded_from_openai_direct_production_share": True,
         "direct_workload_percent": {
-            "claude": 60,
-            "cursor": 14,
-            "grok": 14,
-            "gemini": 7,
+            "claude": 25,
+            "cursor": 20,
+            "grok": 11,
+            "gemini": 15,
             "perplexity": 4,
-            "external_openai": 1,
+            "external_openai": 25,
         },
         "overall_effort_percent": {
             "claude": 36,
@@ -768,3 +769,4 @@ def tally_advisory_votes(
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]

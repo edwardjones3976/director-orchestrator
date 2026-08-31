@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
@@ -568,16 +569,16 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertEqual(
             targets,
             {
-                "claude": 60,
-                "cursor": 14,
-                "grok": 14,
-                "gemini": 7,
+                "claude": 25,
+                "cursor": 20,
+                "grok": 11,
+                "gemini": 15,
                 "perplexity": 4,
-                "external_openai": 1,
+                "external_openai": 25,
             },
         )
         self.assertEqual(sum(targets.values()), 100)
-        self.assertEqual(targets["external_openai"], 1)
+        self.assertEqual(targets["external_openai"], 25)
         overall = self.directive["overall_effort_percent"]
         self.assertEqual(
             overall,
@@ -2073,3 +2074,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]

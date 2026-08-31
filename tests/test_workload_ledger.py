@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:53 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
@@ -650,14 +651,11 @@ class WorkloadLedgerTests(unittest.TestCase):
 
     def test_direct_window_blocks_while_accepted_credit_is_unresolved(self) -> None:
         direct_seeds = (
-            [(Provider.CURSOR, 8)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CLAUDE, 1)]
-            + [(Provider.GROK, 2)]
-            + [(Provider.GROK, 1)] * 3
-            + [(Provider.GEMINI, 2)]
-            + [(Provider.GEMINI, 1)] * 2
-            + [(Provider.PERPLEXITY, 1)] * 4
+            [(Provider.CLAUDE, 6)] * 5
+            + [(Provider.CURSOR, 6)] * 4
+            + [(Provider.GROK, 6), (Provider.GROK, 5), (Provider.GROK, 5)]
+            + [(Provider.GEMINI, 5)] * 4
+            + [(Provider.PERPLEXITY, 3)] * 3
         )
         self.assertEqual(len(direct_seeds), 19)
         for index, (provider, effort_units) in enumerate(direct_seeds):
@@ -703,7 +701,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         candidate = self.reserve(
             "direct-candidate",
             Provider.CLAUDE,
-            effort_units=8,
+            effort_units=6,
             kind=WorkKind.IMPLEMENTATION,
         )
 
@@ -774,11 +772,12 @@ class WorkloadLedgerTests(unittest.TestCase):
         self,
     ) -> None:
         direct_seeds = (
-            [(Provider.CLAUDE, 3)] * 9
-            + [(Provider.CURSOR, 2)] * 4
-            + [(Provider.GROK, 2)] * 4
-            + [(Provider.GEMINI, 1)]
-            + [(Provider.PERPLEXITY, 1)]
+            [(Provider.GEMINI, 1)]
+            + [(Provider.CLAUDE, 6)] * 5
+            + [(Provider.CURSOR, 5)] * 5
+            + [(Provider.GROK, 6), (Provider.GROK, 5), (Provider.GROK, 5)]
+            + [(Provider.GEMINI, 6)] * 3
+            + [(Provider.PERPLEXITY, 5), (Provider.PERPLEXITY, 4)]
         )
         self.assertEqual(len(direct_seeds), 19)
         for index, (provider, effort_units) in enumerate(direct_seeds):
@@ -819,7 +818,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         self.assertTrue(pending.decision.allowed, pending.decision.violations)
         sibling = self.reserve(
             "direct-sibling-candidate",
-            Provider.PERPLEXITY,
+            Provider.GEMINI,
             effort_units=1,
             kind=WorkKind.IMPLEMENTATION,
         )
@@ -901,14 +900,11 @@ class WorkloadLedgerTests(unittest.TestCase):
 
     def test_direct_window_projects_invoked_terminal_task_awaiting_credit(self) -> None:
         direct_seeds = (
-            [(Provider.CURSOR, 8)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CLAUDE, 1)]
-            + [(Provider.GROK, 2)]
-            + [(Provider.GROK, 1)] * 3
-            + [(Provider.GEMINI, 2)]
-            + [(Provider.GEMINI, 1)] * 2
-            + [(Provider.PERPLEXITY, 1)] * 4
+            [(Provider.CLAUDE, 6)] * 5
+            + [(Provider.CURSOR, 6)] * 4
+            + [(Provider.GROK, 6), (Provider.GROK, 5), (Provider.GROK, 5)]
+            + [(Provider.GEMINI, 5)] * 4
+            + [(Provider.PERPLEXITY, 3)] * 3
         )
         self.assertEqual(len(direct_seeds), 19)
         for index, (provider, effort_units) in enumerate(direct_seeds):
@@ -964,7 +960,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         candidate = self.reserve(
             "direct-candidate",
             Provider.CLAUDE,
-            effort_units=8,
+            effort_units=6,
             kind=WorkKind.IMPLEMENTATION,
         )
 
@@ -999,11 +995,12 @@ class WorkloadLedgerTests(unittest.TestCase):
         )
 
         canonical_tail = (
-            [Provider.CLAUDE] * 10
-            + [Provider.CURSOR] * 2
-            + [Provider.GROK] * 3
-            + [Provider.GEMINI] * 2
-            + [Provider.PERPLEXITY]
+            [(Provider.CLAUDE, 6)] * 4
+            + [(Provider.CLAUDE, 5)]
+            + [(Provider.CURSOR, 6)] * 4
+            + [(Provider.GROK, 8)] * 2
+            + [(Provider.GEMINI, 5)] * 4
+            + [(Provider.PERPLEXITY, 3)] * 3
         )
         self.assertEqual(len(canonical_tail), 18)
         for index in range(20):
@@ -1014,12 +1011,13 @@ class WorkloadLedgerTests(unittest.TestCase):
                 effort_units = 8
                 recorded_at = new_recorded_at
             elif index == 1:
-                provider = Provider.CLAUDE
+                # Match the unresolved Cursor unit so either projection keeps
+                # the exact 30/25/16/20/9 direct-production boundary.
+                provider = Provider.CURSOR
                 effort_units = 1
                 recorded_at = old_recorded_at
             else:
-                provider = canonical_tail[index - 2]
-                effort_units = 1
+                provider, effort_units = canonical_tail[index - 2]
                 recorded_at = old_recorded_at
             self._insert_raw_direct_credit(
                 task_id=task_id,
@@ -1075,3 +1073,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:53 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
