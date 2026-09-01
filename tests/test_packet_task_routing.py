@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -99,12 +100,24 @@ class PacketTaskRoutingTests(unittest.TestCase):
         self.assertEqual(packet["authority_base_ref"], "main")
         self.assertEqual(packet["authority_snapshot"][0]["commit_sha"], COMMIT_SHA)
         self.assertEqual(packet["limits"]["max_revisions"], 2)
+        self.assertEqual(packet["limits"]["retry_limit"], 3)
         self.assertEqual(packet["allowed_external_effects"], [
             "WRITE_ISOLATED_BRANCH",
             "OPEN_DRAFT_PULL_REQUEST",
         ])
         self.assertIn("MERGE_PULL_REQUEST", packet["prohibited_actions"])
         self.assertIn(":2:1:", packet["idempotency_key"])
+
+    def test_router_binds_assignment_specific_retry_limit(self) -> None:
+        assignment = self.assignment.model_copy(update={"retry_limit": 1})
+        record = self.record.model_copy(
+            update={"plan": self.record.plan.model_copy(update={"assignments": [assignment]})}
+        )
+
+        packet = self.router.work_packet(record, assignment)
+
+        self.assertEqual(packet["limits"]["retry_limit"], 1)
+        self.assertEqual(packet["limits"]["max_revisions"], 0)
 
     def test_writer_token_is_stable_for_restart_and_task_scoped(self) -> None:
         first = self.router.writer_token(self.record)
@@ -296,3 +309,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

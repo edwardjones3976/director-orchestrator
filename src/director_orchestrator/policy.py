@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | BEGIN]]
@@ -47,12 +51,12 @@ from .workload_policy import (
     Provider,
     WorkKind,
     WorkSize,
+    WorkloadRecord,
     WorkloadPolicy,
     WorkloadPolicyError,
-    WorkloadRecord,
     direct_production_provider,
     evaluate_assignment,
-    is_direct_production_kind,
+    is_accepted_productive_kind,
 )
 
 
@@ -329,9 +333,10 @@ def _trusted_v1_assignment(assignment: Assignment) -> Assignment:
 
     kind = _work_kind(assignment)
     if kind == WorkKind.IMPLEMENTATION:
-        # Antigravity is the only short implementation lane because its output is
-        # non-authoritative and must be independently reproduced by a primary-team
-        # consumer. Model-selected subordinate labels cannot downgrade direct work.
+        # This minimum is provider-neutral. It preserves deterministic effort
+        # sizing without implying that medium or long work belongs to Claude.
+        # Antigravity remains short because a primary-team consumer must reproduce
+        # or reject its non-authoritative output.
         minimum_size = (
             WorkSize.SHORT
             if assignment.agent == ProviderName.GEMINI
@@ -463,14 +468,14 @@ def _independent_review_binding_errors(plan: DirectorPlan) -> set[str]:
 
 
 def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
-    """Validate v1 routing without manufacturing assignments to hit percentages."""
+    """Validate v1 routing without manufacturing accepted production credit."""
 
     if plan.workload_policy_version != "v1":
         return set()
 
     errors: set[str] = set()
-    history: list[WorkloadRecord] = []
     direct_history: list[DirectProductionRecord] = []
+    overall_history: list[WorkloadRecord] = []
     for assignment in sorted(plan.assignments, key=lambda item: item.sequence):
         try:
             provider = _workload_provider(assignment.agent)
@@ -487,7 +492,7 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         )
         decision = evaluate_assignment(
             request,
-            history=history,
+            history=overall_history,
             direct_production_history=direct_history,
             mode=EnforcementMode.ENFORCED,
         )
@@ -495,7 +500,10 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
             f"assignment {assignment.sequence}: workload policy {violation}"
             for violation in decision.violations
         )
-        history.append(
+        # Total effort is prospective and assignment ordered. Every proposed
+        # assignment, including non-productive work, becomes history for the
+        # next assignment in this exact plan.
+        overall_history.append(
             WorkloadRecord(
                 assignment_id=request.assignment_id,
                 provider=provider,
@@ -503,7 +511,9 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
             )
         )
         direct_provider = direct_production_provider(provider)
-        if direct_provider is not None and is_direct_production_kind(request.kind):
+        if direct_provider is not None and is_accepted_productive_kind(
+            provider, request.kind
+        ):
             direct_history.append(
                 DirectProductionRecord(
                     assignment_id=request.assignment_id,
@@ -564,10 +574,18 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         errors.add("pre-stage goal must exactly match the normalized plan outcome")
     if prestage.terminal_condition != "\n".join(plan.final_acceptance):
         errors.add("pre-stage terminal condition must exactly bind final acceptance")
-    if prestage.retry_limit != plan.execution_limits.total_route_attempt_limit:
-        errors.add("pre-stage retry limit must match the plan route-attempt limit")
     if prestage.budget_units < sum(item.effort_points for item in plan.assignments):
         errors.add("pre-stage budget units do not cover planned assignment effort")
+    over_prestage_retry_budget = [
+        item.sequence
+        for item in plan.assignments
+        if item.retry_limit > prestage.retry_limit
+    ]
+    if over_prestage_retry_budget:
+        errors.add(
+            "assignment retry limits exceed the digest-bound pre-stage retry limit: "
+            + ", ".join(str(sequence) for sequence in over_prestage_retry_budget)
+        )
 
     repository_scope: list[tuple[str, str]] = []
     repository_scope_unbound = False
@@ -1158,6 +1176,84 @@ def enforce_plan(
     return safe
 
 
+def synchronize_trusted_provider_selection(
+    plan: DirectorPlan,
+    selected_providers: dict[int, ProviderName],
+    settings: Settings,
+) -> DirectorPlan:
+    """Bind deterministic runtime provider choices into the exact plan packet.
+
+    Selection happens outside model output, using authenticated runtime/config
+    evidence. This function owns only the immutable plan rewrite: every sequence
+    must be accounted for, stale provider model labels are removed, trusted size
+    rules are re-applied, and the pre-stage producer/reviewer/digest are rebuilt.
+    """
+
+    safe = deepcopy(plan)
+    expected_sequences = {item.sequence for item in safe.assignments}
+    if set(selected_providers) != expected_sequences:
+        raise WorkloadPolicyError(
+            "trusted provider selection must account for every plan assignment"
+        )
+    if any(
+        not isinstance(sequence, int) or not isinstance(provider, ProviderName)
+        for sequence, provider in selected_providers.items()
+    ):
+        raise WorkloadPolicyError(
+            "trusted provider selection requires typed sequence/provider bindings"
+        )
+
+    rewritten: list[Assignment] = []
+    for item in safe.assignments:
+        selected = selected_providers[item.sequence]
+        if selected in {ProviderName.OWNER, ProviderName.OPENAI}:
+            raise WorkloadPolicyError(
+                "ordinary trusted routing cannot select owner or OpenAI Director"
+            )
+        updates: dict[str, object] = {"agent": selected}
+        if selected != item.agent:
+            updates["model_label"] = None
+        rewritten.append(_trusted_v1_assignment(item.model_copy(update=updates)))
+    safe.assignments = rewritten
+
+    if safe.prestage is not None:
+        ordered = sorted(safe.assignments, key=lambda item: item.sequence)
+        reviews = [item for item in ordered if _work_kind(item) == WorkKind.REVIEW]
+        reviewer = reviews[0] if reviews else None
+        by_sequence = {item.sequence: item for item in ordered}
+        producer = None
+        if reviewer is not None:
+            producer = next(
+                (
+                    by_sequence[sequence]
+                    for sequence in reviewer.depends_on
+                    if sequence in by_sequence
+                    and _work_kind(by_sequence[sequence]) != WorkKind.REVIEW
+                ),
+                None,
+            )
+        if producer is None:
+            producer = next(
+                (item for item in ordered if _work_kind(item) != WorkKind.REVIEW),
+                None,
+            )
+        if producer is None or reviewer is None:
+            raise WorkloadPolicyError(
+                "trusted provider selection requires a producer and independent reviewer"
+            )
+        safe.prestage = _canonical_prestage_record(
+            safe.prestage.model_copy(
+                update={
+                    "producer": producer.agent,
+                    "independent_reviewer": reviewer.agent,
+                    "digest": None,
+                }
+            )
+        )
+    safe.workload_enforcement = _workload_enforcement_record(safe, settings)
+    return safe
+
+
 def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     lowered = text.lower()
     if any(word in lowered for word in ("research", "sources", "current", "verify facts")):
@@ -1331,3 +1427,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]

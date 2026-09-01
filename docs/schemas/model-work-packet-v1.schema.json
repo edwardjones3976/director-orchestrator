@@ -185,7 +185,8 @@
         "budget_usd",
         "timeout_seconds",
         "max_hops",
-        "max_revisions"
+        "max_revisions",
+        "retry_limit"
       ],
       "properties": {
         "budget_usd": {
@@ -203,6 +204,11 @@
         "max_revisions": {
           "type": "integer",
           "minimum": 0
+        },
+        "retry_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
         }
       }
     },

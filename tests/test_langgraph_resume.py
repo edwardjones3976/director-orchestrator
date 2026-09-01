@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
@@ -250,7 +251,7 @@ class LangGraphResumeTests(unittest.TestCase):
         try:
             claim_path.hardlink_to(self.legacy_database)
         except OSError as exc:
-            self.skipTest(f"hardlinks unavailable: {exc}")
+            self.fail(f"hard-link resume coverage is required: {exc}")
 
         with self.assertRaisesRegex(ValueError, "databases must be isolated"):
             LangGraphResumeRuntime(
@@ -941,3 +942,4 @@ class LangGraphResumeTests(unittest.TestCase):
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:02 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

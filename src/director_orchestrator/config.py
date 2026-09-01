@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
@@ -418,7 +420,15 @@ class Settings:
     primary_team: tuple[str, ...] = _csv(
         "PRIMARY_TEAM", "openai,claude,cursor,grok"
     )
-    primary_workhorse: str = os.getenv("PRIMARY_WORKHORSE", "claude").strip().lower()
+    primary_workhorse: str = os.getenv(
+        "PRIMARY_WORKHORSE", "cheapest_capable"
+    ).strip().lower()
+    # Operator-authored ordinal ranks are intentionally required instead of a
+    # built-in provider order. Lower positive integers are cheaper, and ranks
+    # must be unique so the runtime never invents a tie-breaking cost order.
+    trusted_provider_cost_ranks_json: str = os.getenv(
+        "TRUSTED_PROVIDER_COST_RANKS", ""
+    ).strip()
     claude_account_context: str = os.getenv("CLAUDE_ACCOUNT_CONTEXT", "Claude Pro 20x")
     openai_account_context: str = os.getenv(
         "OPENAI_ACCOUNT_CONTEXT", "ChatGPT Plus; OpenAI API usage is billed separately"
@@ -685,6 +695,15 @@ class Settings:
         if effective_mode is not None and effective_mode not in {"enforced", "shadow"}:
             raise ValueError("effective workload mode must be enforced or shadow")
         active_mode = effective_mode or self.workload_policy_mode
+        try:
+            cost_ranks = self.trusted_provider_cost_ranks()
+        except ValueError:
+            cost_ranks = {}
+        ready_specialists = {
+            provider
+            for provider in ("claude", "cursor", "gemini", "grok", "perplexity")
+            if self.readiness().get(provider, False)
+        }
         return {
             "enabled": self.workload_policy_enabled,
             "enforced": (
@@ -697,7 +716,74 @@ class Settings:
             "mode_valid": self.workload_policy_mode in {"enforced", "shadow"},
             "window_valid": self.workload_policy_window_assignments == 20,
             "shadow_sample_valid": self.workload_policy_shadow_assignments == 5,
+            "selector_mode_valid": self.primary_workhorse == "cheapest_capable",
+            "cost_ranks_valid": bool(cost_ranks),
+            "ready_provider_ranks_complete": bool(ready_specialists)
+            and ready_specialists.issubset(cost_ranks),
         }
+
+    def trusted_provider_cost_ranks(self) -> dict[str, int]:
+        """Parse explicit operator-controlled comparable cost ranks.
+
+        The setting is a JSON object such as ``{"claude": 2, "cursor": 1}``.
+        No default order exists: missing, malformed, unknown, duplicate-after-
+        normalization, boolean, zero, and negative values all fail closed.
+        """
+
+        raw = self.trusted_provider_cost_ranks_json
+        if not raw:
+            raise ValueError("TRUSTED_PROVIDER_COST_RANKS must be configured")
+
+        def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            value: dict[str, object] = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError(
+                        "TRUSTED_PROVIDER_COST_RANKS provider names must be unique"
+                    )
+                value[key] = item
+            return value
+
+        try:
+            payload = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "TRUSTED_PROVIDER_COST_RANKS must be a JSON object"
+            ) from exc
+        if not isinstance(payload, dict) or not payload:
+            raise ValueError(
+                "TRUSTED_PROVIDER_COST_RANKS must be a non-empty JSON object"
+            )
+        allowed = {"claude", "cursor", "gemini", "grok", "perplexity"}
+        parsed: dict[str, int] = {}
+        for raw_provider, raw_rank in payload.items():
+            if not isinstance(raw_provider, str):
+                raise ValueError(
+                    "TRUSTED_PROVIDER_COST_RANKS provider names must be strings"
+                )
+            provider = raw_provider.strip().lower()
+            if provider not in allowed:
+                raise ValueError(
+                    "TRUSTED_PROVIDER_COST_RANKS contains an unsupported provider"
+                )
+            if provider in parsed:
+                raise ValueError(
+                    "TRUSTED_PROVIDER_COST_RANKS provider names must be unique"
+                )
+            if (
+                isinstance(raw_rank, bool)
+                or not isinstance(raw_rank, int)
+                or raw_rank < 1
+            ):
+                raise ValueError(
+                    "TRUSTED_PROVIDER_COST_RANKS values must be positive integers"
+                )
+            parsed[provider] = raw_rank
+        if len(set(parsed.values())) != len(parsed):
+            raise ValueError(
+                "TRUSTED_PROVIDER_COST_RANKS values must define a unique total order"
+            )
+        return dict(sorted(parsed.items()))
 
     def validate_workload_policy_configuration(self) -> None:
         readiness = self.workload_policy_readiness()
@@ -713,6 +799,21 @@ class Settings:
             raise ValueError(
                 "WORKLOAD_POLICY_SHADOW_ASSIGNMENTS must remain exactly 5"
             )
+        # Dry-run/local validation remains possible without paid-provider
+        # credentials. A paid runtime, however, must have an operator-supplied
+        # selector and comparable ranks before even the OpenAI planning call.
+        if self.allow_paid_runs and self.workload_policy_enabled:
+            if not readiness["selector_mode_valid"]:
+                raise ValueError(
+                    "PRIMARY_WORKHORSE must be 'cheapest_capable' for paid workload routing"
+                )
+            if not readiness["cost_ranks_valid"]:
+                # Re-run the parser to preserve the precise structural error.
+                self.trusted_provider_cost_ranks()
+            if not readiness["ready_provider_ranks_complete"]:
+                raise ValueError(
+                    "TRUSTED_PROVIDER_COST_RANKS must cover every configured ready specialist"
+                )
 
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
     def chatgpt_bridge_readiness(self) -> dict[str, bool]:
@@ -1248,7 +1349,7 @@ class Settings:
         return {
             "claude": {
                 "team": "primary",
-                "priority": "primary_workhorse",
+                "priority": "trusted_fit_allocation_and_cost_selected",
                 "account_context": self.claude_account_context,
                 "strengths": [
                     "coding implementation",
@@ -1359,3 +1460,5 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:34 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]

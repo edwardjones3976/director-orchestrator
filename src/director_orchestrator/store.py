@@ -1,3 +1,9 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:50 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:56 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
@@ -13,6 +19,7 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
+import hmac
 import json
 import secrets
 import sqlite3
@@ -31,6 +38,7 @@ from .interactions import (
     ProviderInteractionPhase,
     ProviderInteractionState,
     TransportEvidenceSource,
+    acceptance_review_candidate_digest,
     append_interaction_event,
     canonical_content_digest,
     canonical_identifier_digest,
@@ -38,18 +46,24 @@ from .interactions import (
 )
 from .models import (
     IntakeAuthentication,
+    LeanExecutionLimits,
     TaskEffectEvidence,
     TaskRecord,
     TaskStatus,
     UsageCheckRecord,
 )
 from .policy import trusted_work_kind
+from .productive_work import (
+    ExternalOpenAIProductionAuthorization,
+    ExternalOpenAIProductionEvidence,
+)
 from .workload_policy import (
     DEFAULT_POLICY,
     AssignmentRequest,
     DecisionOutcome,
     DecisionResult,
     DirectProductionRecord,
+    DirectProductionProvider,
     EnforcementMode,
     Provider,
     WorkKind,
@@ -57,7 +71,7 @@ from .workload_policy import (
     WorkloadRecord,
     direct_production_provider,
     evaluate_assignment,
-    is_direct_production_kind,
+    is_accepted_productive_kind,
 )
 
 
@@ -487,6 +501,116 @@ class TaskStore:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS direct_production_integration_evidence (
+                    credit_key TEXT PRIMARY KEY,
+                    integration_credit_key TEXT NOT NULL,
+                    integration_assignment_id TEXT NOT NULL,
+                    integration_provider TEXT NOT NULL CHECK(
+                        integration_provider IN ('claude', 'cursor', 'grok')
+                    ),
+                    integration_provider_event_digest TEXT NOT NULL,
+                    integration_provider_result_digest TEXT NOT NULL,
+                    integration_review_event_digest TEXT NOT NULL,
+                    integration_review_result_digest TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    FOREIGN KEY(credit_key)
+                        REFERENCES direct_production_credits(credit_key),
+                    FOREIGN KEY(integration_credit_key)
+                        REFERENCES direct_production_credits(credit_key)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS direct_production_integration_consumption (
+                    credit_key TEXT PRIMARY KEY,
+                    integration_credit_key TEXT NOT NULL,
+                    integration_provider_event_digest TEXT NOT NULL,
+                    integration_request_payload_digest TEXT NOT NULL,
+                    consumed_artifact_digest TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    FOREIGN KEY(credit_key)
+                        REFERENCES direct_production_credits(credit_key),
+                    FOREIGN KEY(integration_credit_key)
+                        REFERENCES direct_production_credits(credit_key)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS external_openai_production_authorizations (
+                    authorization_id TEXT PRIMARY KEY,
+                    owner_authorization_digest TEXT NOT NULL UNIQUE,
+                    owner_user_id_digest TEXT NOT NULL,
+                    authority_source TEXT NOT NULL CHECK(
+                        authority_source IN ('api', 'slack_command', 'slack_button')
+                    ),
+                    productive_unit_key TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL,
+                    plan_generation INTEGER NOT NULL CHECK(plan_generation >= 0),
+                    assignment_sequence INTEGER NOT NULL
+                        CHECK(assignment_sequence BETWEEN 1 AND 20),
+                    repository TEXT NOT NULL,
+                    base_sha TEXT NOT NULL,
+                    candidate_head_sha TEXT,
+                    candidate_digest TEXT,
+                    producer TEXT NOT NULL CHECK(producer = 'external_openai'),
+                    effort_units INTEGER NOT NULL CHECK(effort_units > 0),
+                    reviewer_provider TEXT NOT NULL CHECK(
+                        reviewer_provider IN ('claude', 'cursor', 'grok')
+                    ),
+                    recorded_at TEXT NOT NULL,
+                    CHECK(
+                        (candidate_head_sha IS NULL)
+                        <> (candidate_digest IS NULL)
+                    ),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS external_openai_production_evidence (
+                    replay_id TEXT PRIMARY KEY,
+                    authorization_id TEXT NOT NULL UNIQUE,
+                    credit_key TEXT NOT NULL UNIQUE,
+                    productive_unit_key TEXT NOT NULL UNIQUE,
+                    owner_authorization_digest TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    plan_generation INTEGER NOT NULL CHECK(plan_generation >= 0),
+                    assignment_sequence INTEGER NOT NULL
+                        CHECK(assignment_sequence BETWEEN 1 AND 20),
+                    repository TEXT NOT NULL,
+                    base_sha TEXT NOT NULL,
+                    candidate_head_sha TEXT,
+                    candidate_digest TEXT,
+                    producer TEXT NOT NULL CHECK(producer = 'external_openai'),
+                    effort_units INTEGER NOT NULL CHECK(effort_units > 0),
+                    reviewer_provider TEXT NOT NULL CHECK(
+                        reviewer_provider IN ('claude', 'cursor', 'grok')
+                    ),
+                    producer_event_digest TEXT NOT NULL,
+                    producer_result_digest TEXT NOT NULL,
+                    acceptance_event_digest TEXT NOT NULL,
+                    acceptance_result_digest TEXT NOT NULL,
+                    ci_evidence_digest TEXT NOT NULL,
+                    security_evidence_digest TEXT NOT NULL,
+                    review_verdict TEXT NOT NULL CHECK(review_verdict = 'ACCEPT'),
+                    recorded_at TEXT NOT NULL,
+                    CHECK(
+                        (candidate_head_sha IS NULL)
+                        <> (candidate_digest IS NULL)
+                    ),
+                    FOREIGN KEY(authorization_id)
+                        REFERENCES external_openai_production_authorizations(authorization_id),
+                    FOREIGN KEY(credit_key)
+                        REFERENCES direct_production_credits(credit_key),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS direct_production_no_credit_no_update
                 BEFORE UPDATE ON direct_production_no_credit
                 BEGIN SELECT RAISE(ABORT, 'direct-production dispositions are append-only'); END
@@ -513,6 +637,38 @@ class TaskStore:
                 BEGIN SELECT RAISE(ABORT, 'direct-production credits are append-only'); END
                 """
             )
+            for table, label in (
+                (
+                    "direct_production_integration_evidence",
+                    "direct-production integration evidence",
+                ),
+                (
+                    "direct_production_integration_consumption",
+                    "direct-production integration consumption evidence",
+                ),
+                (
+                    "external_openai_production_authorizations",
+                    "external OpenAI production authorizations",
+                ),
+                (
+                    "external_openai_production_evidence",
+                    "external OpenAI production evidence",
+                ),
+            ):
+                connection.execute(
+                    f"""
+                    CREATE TRIGGER IF NOT EXISTS {table}_no_update
+                    BEFORE UPDATE ON {table}
+                    BEGIN SELECT RAISE(ABORT, '{label} is append-only'); END
+                    """
+                )
+                connection.execute(
+                    f"""
+                    CREATE TRIGGER IF NOT EXISTS {table}_no_delete
+                    BEFORE DELETE ON {table}
+                    BEGIN SELECT RAISE(ABORT, '{label} is append-only'); END
+                    """
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS slack_gateway_nonces (
@@ -1129,6 +1285,142 @@ class TaskStore:
         )
 
     @staticmethod
+    def _stored_direct_production_provider(value: str) -> DirectProductionProvider:
+        """Parse ledger identities without mapping runtime OpenAI authority."""
+
+        try:
+            return DirectProductionProvider(value)
+        except ValueError as exc:
+            raise WorkloadReservationConflict(
+                "direct-production ledger contains an unknown provider"
+            ) from exc
+
+    @staticmethod
+    def _is_creditable_accepted_work(provider: Provider, kind: WorkKind) -> bool:
+        """Recognize implementation plus Perplexity's bounded research product."""
+
+        return is_accepted_productive_kind(provider, kind)
+
+    @staticmethod
+    def _antigravity_integration_identity(
+        connection: sqlite3.Connection,
+        record: TaskRecord,
+        assignments: dict[int, Any],
+        persisted_events: list[ProviderInteractionEvent],
+        antigravity_sequence: int,
+        antigravity_artifact_digest: str,
+        *,
+        preferred_credit_key: str | None = None,
+    ) -> tuple[object, ...] | None:
+        """Return durable downstream integration evidence, or defer the credit.
+
+        Antigravity may produce a useful artifact, but the artifact earns no
+        accepted-production credit until a later Claude, Cursor, or Grok
+        implementation with a direct dependency has itself earned an
+        authenticated accepted-production credit.
+        """
+
+        eligible_providers = {
+            Provider.CLAUDE,
+            Provider.CURSOR,
+            Provider.GROK,
+        }
+        candidates: list[tuple[Any, Provider]] = []
+        for assignment in assignments.values():
+            if (
+                assignment.sequence <= antigravity_sequence
+                or antigravity_sequence not in assignment.depends_on
+                or trusted_work_kind(assignment) is not WorkKind.IMPLEMENTATION
+            ):
+                continue
+            try:
+                provider = Provider(assignment.agent.value)
+            except ValueError:
+                continue
+            if provider in eligible_providers:
+                candidates.append((assignment, provider))
+        for assignment, provider in sorted(
+            candidates, key=lambda item: item[0].sequence
+        ):
+            integration_assignment_id = (
+                f"{record.task_id}:{record.plan_generation}:{assignment.sequence}"
+            )
+            row = connection.execute(
+                """SELECT credit_key, task_id, plan_generation,
+                          assignment_sequence, assignment_id, provider,
+                          effort_units, provider_event_digest,
+                          provider_result_digest, review_event_digest,
+                          review_result_digest
+                FROM direct_production_credits
+                WHERE assignment_id = ?""",
+                (integration_assignment_id,),
+            ).fetchone()
+            if row is None:
+                continue
+            if (
+                preferred_credit_key is not None
+                and str(row["credit_key"]) != preferred_credit_key
+            ):
+                continue
+            expected = (
+                record.task_id,
+                record.plan_generation,
+                assignment.sequence,
+                integration_assignment_id,
+                provider.value,
+                assignment.effort_points,
+            )
+            persisted = (
+                str(row["task_id"]),
+                int(row["plan_generation"]),
+                int(row["assignment_sequence"]),
+                str(row["assignment_id"]),
+                str(row["provider"]),
+                int(row["effort_units"]),
+            )
+            if persisted != expected:
+                raise WorkloadReservationConflict(
+                    "Antigravity integration credit identity changed"
+                )
+            integration_event = next(
+                (
+                    event
+                    for event in persisted_events
+                    if event.event_digest == str(row["provider_event_digest"])
+                    and event.task_id == record.task_id
+                    and event.plan_generation == record.plan_generation
+                    and event.assignment_sequence == assignment.sequence
+                    and event.provider.value == provider.value
+                    and event.state is ProviderInteractionState.VERIFIED
+                    and event.phase
+                    in {
+                        ProviderInteractionPhase.DISPATCH,
+                        ProviderInteractionPhase.REVISION,
+                    }
+                ),
+                None,
+            )
+            if (
+                integration_event is None
+                or integration_event.request_payload_digest is None
+                or antigravity_artifact_digest
+                not in integration_event.consumed_artifact_digests
+            ):
+                continue
+            return (
+                str(row["credit_key"]),
+                integration_assignment_id,
+                provider.value,
+                str(row["provider_event_digest"]),
+                str(row["provider_result_digest"]),
+                str(row["review_event_digest"]),
+                str(row["review_result_digest"]),
+                integration_event.request_payload_digest,
+                antigravity_artifact_digest,
+            )
+        return None
+
+    @staticmethod
     def _record_no_credit_disposition(
         connection: sqlite3.Connection,
         assignment_id: str,
@@ -1190,6 +1482,385 @@ class TaskStore:
             )
 
     @staticmethod
+    def _require_current_task_generation(
+        connection: sqlite3.Connection, task_id: str, plan_generation: int
+    ) -> None:
+        row = connection.execute(
+            "SELECT record_json FROM tasks WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        if row is None:
+            raise WorkloadReservationConflict(
+                "external OpenAI production authority names an unknown task"
+            )
+        record = TaskStore._task_record_from_persisted_json(str(row["record_json"]))
+        if record.plan_generation != plan_generation:
+            raise WorkloadReservationConflict(
+                "external OpenAI production authority names a stale plan generation"
+            )
+
+    def record_external_openai_production_authorization(
+        self, authorization: ExternalOpenAIProductionAuthorization
+    ) -> bool:
+        """Persist one exact authorization after trusted owner authentication.
+
+        This is intentionally a store-only primitive.  It must be called by an
+        already-authenticated owner command path; no generic HTTP ingestion
+        route is created here.  ``True`` means appended and ``False`` means an
+        exact idempotent replay.
+        """
+
+        if not isinstance(authorization, ExternalOpenAIProductionAuthorization):
+            raise TypeError(
+                "external OpenAI authorization must use its typed evidence contract"
+        )
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """SELECT authorization_id, owner_authorization_digest,
+                          owner_user_id_digest, authority_source,
+                          productive_unit_key, task_id, plan_generation,
+                          assignment_sequence, repository, base_sha,
+                          candidate_head_sha, candidate_digest, producer,
+                          effort_units, reviewer_provider
+                FROM external_openai_production_authorizations
+                WHERE authorization_id = ?
+                   OR owner_authorization_digest = ?""",
+                (
+                    authorization.authorization_id,
+                    authorization.owner_authorization_digest,
+                ),
+            ).fetchone()
+            if existing is not None:
+                persisted = (
+                    str(existing["authorization_id"]),
+                    str(existing["owner_authorization_digest"]),
+                    str(existing["owner_user_id_digest"]),
+                    str(existing["authority_source"]),
+                    str(existing["productive_unit_key"]),
+                    str(existing["task_id"]),
+                    int(existing["plan_generation"]),
+                    int(existing["assignment_sequence"]),
+                    str(existing["repository"]),
+                    str(existing["base_sha"]),
+                    existing["candidate_head_sha"],
+                    existing["candidate_digest"],
+                    str(existing["producer"]),
+                    int(existing["effort_units"]),
+                    str(existing["reviewer_provider"]),
+                )
+                if persisted != authorization.binding_identity():
+                    raise WorkloadReservationConflict(
+                        "external OpenAI owner authorization replay identity changed"
+                    )
+                return False
+            self._require_current_task_generation(
+                connection,
+                authorization.task_id,
+                authorization.plan_generation,
+            )
+            existing_unit = connection.execute(
+                """SELECT 1
+                FROM external_openai_production_authorizations
+                WHERE productive_unit_key = ?""",
+                (authorization.productive_unit_key,),
+            ).fetchone()
+            if existing_unit is not None:
+                raise WorkloadReservationConflict(
+                    "external OpenAI owner authorization replay identity changed"
+                )
+            connection.execute(
+                """INSERT INTO external_openai_production_authorizations(
+                    authorization_id, owner_authorization_digest,
+                    owner_user_id_digest, authority_source,
+                    productive_unit_key, task_id, plan_generation,
+                    assignment_sequence, repository, base_sha,
+                    candidate_head_sha, candidate_digest, producer,
+                    effort_units, reviewer_provider, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (*authorization.binding_identity(), datetime.now(timezone.utc).isoformat()),
+            )
+            return True
+
+    @staticmethod
+    def _enforce_external_openai_direct_production_cap(
+        connection: sqlite3.Connection,
+        evidence: ExternalOpenAIProductionEvidence,
+    ) -> None:
+        """Reject one candidate that would exceed its enforced rolling hard cap.
+
+        The caller holds the same ``BEGIN IMMEDIATE`` transaction used to append
+        the evidence and credit.  The accepted owner authorization supplies the
+        immutable, pre-staged effort points; no provider-authored estimate is
+        consulted here.
+        """
+
+        rows = connection.execute(
+            """SELECT credit.assignment_id, credit.provider,
+                      credit.effort_units
+            FROM direct_production_credits AS credit
+            WHERE credit.provider <> 'gemini'
+               OR EXISTS (
+                   SELECT 1
+                   FROM direct_production_integration_evidence AS integration
+                   WHERE integration.credit_key = credit.credit_key
+                     AND EXISTS (
+                         SELECT 1
+                         FROM direct_production_integration_consumption AS consumption
+                         WHERE consumption.credit_key = credit.credit_key
+                     )
+               )
+            ORDER BY credit.credit_id DESC
+            LIMIT ?""",
+            (DEFAULT_POLICY.rolling_window_size - 1,),
+        ).fetchall()
+        history = [
+            DirectProductionRecord(
+                assignment_id=str(row["assignment_id"]),
+                provider=TaskStore._stored_direct_production_provider(
+                    str(row["provider"])
+                ),
+                effort_units=int(row["effort_units"]),
+            )
+            for row in reversed(rows)
+        ]
+        if any(
+            record.assignment_id == evidence.productive_unit_key
+            for record in history
+        ):
+            raise WorkloadReservationConflict(
+                "external OpenAI productive unit already exists in direct history"
+            )
+        candidate = DirectProductionRecord(
+            assignment_id=evidence.productive_unit_key,
+            provider=DirectProductionProvider.EXTERNAL_OPENAI,
+            effort_units=evidence.effort_units,
+        )
+        window = history + [candidate]
+        if len(window) < DEFAULT_POLICY.rolling_window_size:
+            return
+        total_units = sum(record.effort_units for record in window)
+        provider_units = sum(
+            record.effort_units
+            for record in window
+            if record.provider is DirectProductionProvider.EXTERNAL_OPENAI
+        )
+        threshold = DEFAULT_POLICY.direct_production_hard_threshold(
+            DirectProductionProvider.EXTERNAL_OPENAI
+        )
+        if provider_units * 100 > threshold * total_units:
+            raise WorkloadReservationConflict(
+                "direct_production_hard_threshold_exceeded:"
+                f"external_openai:{threshold}"
+            )
+
+    def record_external_openai_production_credit(
+        self, evidence: ExternalOpenAIProductionEvidence
+    ) -> bool:
+        """Append one accepted external OpenAI credit under exact prior authority.
+
+        The accepted candidate, effort, repository, reviewer, owner evidence,
+        trusted CI, and security evidence are immutable.  ``True`` means a new
+        credit; ``False`` is an exact replay.  Any partial or changed replay
+        fails closed.
+        """
+
+        if not isinstance(evidence, ExternalOpenAIProductionEvidence):
+            raise TypeError(
+                "external OpenAI credit must use its typed evidence contract"
+            )
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            authorization = connection.execute(
+                """SELECT authorization_id, owner_authorization_digest,
+                          productive_unit_key, task_id, plan_generation,
+                          assignment_sequence, repository, base_sha,
+                          candidate_head_sha, candidate_digest, producer,
+                          effort_units, reviewer_provider
+                FROM external_openai_production_authorizations
+                WHERE authorization_id = ?""",
+                (evidence.authorization_id,),
+            ).fetchone()
+            if authorization is None:
+                raise WorkloadReservationConflict(
+                    "external OpenAI production lacks exact stored owner authorization"
+                )
+            if not hmac.compare_digest(
+                str(authorization["owner_authorization_digest"]),
+                evidence.owner_authorization_digest,
+            ):
+                raise WorkloadReservationConflict(
+                    "external OpenAI owner authorization digest changed"
+                )
+            authorized_binding = (
+                str(authorization["authorization_id"]),
+                str(authorization["owner_authorization_digest"]),
+                str(authorization["productive_unit_key"]),
+                str(authorization["task_id"]),
+                int(authorization["plan_generation"]),
+                int(authorization["assignment_sequence"]),
+                str(authorization["repository"]),
+                str(authorization["base_sha"]),
+                authorization["candidate_head_sha"],
+                authorization["candidate_digest"],
+                str(authorization["producer"]),
+                int(authorization["effort_units"]),
+                str(authorization["reviewer_provider"]),
+            )
+            if authorized_binding != evidence.authorization_binding():
+                raise WorkloadReservationConflict(
+                    "external OpenAI accepted candidate exceeds exact owner authorization"
+                )
+            existing = connection.execute(
+                """SELECT replay_id, authorization_id, credit_key,
+                          owner_authorization_digest, productive_unit_key,
+                          task_id, plan_generation, assignment_sequence,
+                          repository, base_sha, candidate_head_sha,
+                          candidate_digest, producer, effort_units,
+                          reviewer_provider,
+                          producer_event_digest, producer_result_digest,
+                          acceptance_event_digest, acceptance_result_digest,
+                          ci_evidence_digest, security_evidence_digest,
+                          review_verdict
+                FROM external_openai_production_evidence
+                WHERE replay_id = ? OR authorization_id = ? OR credit_key = ?""",
+                (
+                    evidence.replay_id,
+                    evidence.authorization_id,
+                    evidence.credit_key,
+                ),
+            ).fetchone()
+            if existing is not None:
+                persisted = tuple(
+                    existing[name]
+                    for name in (
+                        "replay_id",
+                        "authorization_id",
+                        "credit_key",
+                        "owner_authorization_digest",
+                        "productive_unit_key",
+                        "task_id",
+                        "plan_generation",
+                        "assignment_sequence",
+                        "repository",
+                        "base_sha",
+                        "candidate_head_sha",
+                        "candidate_digest",
+                        "producer",
+                        "effort_units",
+                        "reviewer_provider",
+                        "producer_event_digest",
+                        "producer_result_digest",
+                        "acceptance_event_digest",
+                        "acceptance_result_digest",
+                        "ci_evidence_digest",
+                        "security_evidence_digest",
+                        "review_verdict",
+                    )
+                )
+                persisted = tuple(
+                    int(value) if index in {6, 7, 13} else value
+                    for index, value in enumerate(persisted)
+                )
+                if persisted != evidence.evidence_identity():
+                    raise WorkloadReservationConflict(
+                        "external OpenAI production replay identity changed"
+                    )
+                direct = connection.execute(
+                    """SELECT task_id, plan_generation, assignment_sequence,
+                              assignment_id, provider, effort_units,
+                              provider_event_digest, provider_result_digest,
+                              review_event_digest, review_result_digest
+                    FROM direct_production_credits WHERE credit_key = ?""",
+                    (evidence.credit_key,),
+                ).fetchone()
+                direct_identity = (
+                    evidence.task_id,
+                    evidence.plan_generation,
+                    evidence.assignment_sequence,
+                    evidence.credit_key,
+                    DirectProductionProvider.EXTERNAL_OPENAI.value,
+                    evidence.effort_units,
+                    evidence.producer_event_digest,
+                    evidence.producer_result_digest,
+                    evidence.acceptance_event_digest,
+                    evidence.acceptance_result_digest,
+                )
+                persisted_direct = (
+                    None
+                    if direct is None
+                    else (
+                        str(direct["task_id"]),
+                        int(direct["plan_generation"]),
+                        int(direct["assignment_sequence"]),
+                        str(direct["assignment_id"]),
+                        str(direct["provider"]),
+                        int(direct["effort_units"]),
+                        str(direct["provider_event_digest"]),
+                        str(direct["provider_result_digest"]),
+                        str(direct["review_event_digest"]),
+                        str(direct["review_result_digest"]),
+                    )
+                )
+                if persisted_direct != direct_identity:
+                    raise WorkloadReservationConflict(
+                        "external OpenAI direct-production credit binding changed"
+                    )
+                return False
+            self._require_current_task_generation(
+                connection, evidence.task_id, evidence.plan_generation
+            )
+            conflicting_credit = connection.execute(
+                """SELECT 1 FROM direct_production_credits
+                WHERE credit_key = ? OR assignment_id = ?""",
+                (evidence.credit_key, evidence.credit_key),
+            ).fetchone()
+            if conflicting_credit is not None:
+                raise WorkloadReservationConflict(
+                    "external OpenAI credit exists without matching replay evidence"
+                )
+            self._enforce_external_openai_direct_production_cap(
+                connection, evidence
+            )
+            recorded_at = datetime.now(timezone.utc).isoformat()
+            connection.execute(
+                """INSERT INTO direct_production_credits(
+                    credit_key, task_id, plan_generation, assignment_sequence,
+                    assignment_id, provider, effort_units,
+                    provider_event_digest, provider_result_digest,
+                    review_event_digest, review_result_digest, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    evidence.credit_key,
+                    evidence.task_id,
+                    evidence.plan_generation,
+                    evidence.assignment_sequence,
+                    evidence.credit_key,
+                    DirectProductionProvider.EXTERNAL_OPENAI.value,
+                    evidence.effort_units,
+                    evidence.producer_event_digest,
+                    evidence.producer_result_digest,
+                    evidence.acceptance_event_digest,
+                    evidence.acceptance_result_digest,
+                    recorded_at,
+                ),
+            )
+            connection.execute(
+                """INSERT INTO external_openai_production_evidence(
+                    replay_id, authorization_id, credit_key,
+                    owner_authorization_digest, productive_unit_key, task_id,
+                    plan_generation, assignment_sequence, repository, base_sha,
+                    candidate_head_sha, candidate_digest, producer,
+                    effort_units, reviewer_provider,
+                    producer_event_digest, producer_result_digest,
+                    acceptance_event_digest, acceptance_result_digest,
+                    ci_evidence_digest, security_evidence_digest,
+                    review_verdict, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (*evidence.evidence_identity(), recorded_at),
+            )
+            return True
+
+    @staticmethod
     def _append_direct_production_credits(
         connection: sqlite3.Connection, record: TaskRecord
     ) -> None:
@@ -1202,7 +1873,19 @@ class TaskStore:
         persisted_events = TaskStore._load_provider_interactions(
             connection, record.task_id
         )
-        for outcome in record.assignment_outcomes:
+        # Downstream primary-team integrations are projected before their
+        # Antigravity inputs so the latter can bind to durable accepted evidence
+        # in the same transaction.
+        ordered_outcomes = [
+            outcome
+            for outcome in record.assignment_outcomes
+            if outcome.provider.value != Provider.GEMINI.value
+        ] + [
+            outcome
+            for outcome in record.assignment_outcomes
+            if outcome.provider.value == Provider.GEMINI.value
+        ]
+        for outcome in ordered_outcomes:
             assignment = assignments.get(outcome.assignment_sequence)
             if assignment is not None and assignment.agent != outcome.provider:
                 raise WorkloadReservationConflict(
@@ -1243,9 +1926,12 @@ class TaskStore:
                     recorded_at=record.updated_at,
                 )
                 continue
-            if not is_direct_production_kind(trusted_work_kind(assignment)):
-                # Accepted research, review, debate, and coordination outcomes
-                # are real provider work, but they are not production credits.
+            trusted_kind = trusted_work_kind(assignment)
+            if not TaskStore._is_creditable_accepted_work(provider, trusted_kind):
+                # Accepted review, debate, and coordination outcomes are real
+                # provider work, but they are not accepted productive-work
+                # credits. Perplexity's authenticated accepted public research
+                # is the deliberately narrow non-code exception.
                 continue
             if not TaskStore._workload_unit_exists(connection, assignment_id):
                 raise WorkloadReservationConflict(
@@ -1281,7 +1967,9 @@ class TaskStore:
                 raise WorkloadReservationConflict(
                     "accepted direct-production workload authority binding changed"
                 )
-            if not is_direct_production_kind(authoritative_kind):
+            if not TaskStore._is_creditable_accepted_work(
+                provider, authoritative_kind
+            ):
                 continue
             if not outcome.interaction_id or not outcome.director_review_interaction_id:
                 raise WorkloadReservationConflict(
@@ -1344,6 +2032,37 @@ class TaskStore:
                 and provider_event.transport_evidence.provider_run_id_digest
                 == expected_run_id_digest
             )
+            expected_review_candidate_digest = acceptance_review_candidate_digest(
+                task_id=record.task_id,
+                plan_generation=record.plan_generation,
+                assignment_sequence=assignment.sequence,
+                provider=outcome.provider.value,
+                provider_run_id=outcome.run_id,
+                provider_event_digest=(
+                    provider_event.event_digest if provider_event is not None else "0" * 64
+                ),
+                provider_result_digest=expected_provider_result_digest,
+            )
+            review_effect_valid = (
+                review_event is not None
+                and review_event.effect_key is not None
+                and any(
+                    effect.effect_key == review_event.effect_key
+                    and effect.kind == "director_intent"
+                    and effect.phase == "acceptance_review"
+                    and effect.plan_generation == record.plan_generation
+                    and effect.outcome == "reserved"
+                    for effect in record.task_effect_ledger
+                )
+                and any(
+                    effect.effect_key == review_event.effect_key
+                    and effect.kind == "director_observation"
+                    and effect.phase == "acceptance_review"
+                    and effect.plan_generation == record.plan_generation
+                    and effect.outcome == "completed"
+                    for effect in record.task_effect_ledger
+                )
+            )
             review_binding_valid = (
                 review_event is not None
                 and review_projection.task_id == record.task_id
@@ -1359,6 +2078,9 @@ class TaskStore:
                 is ProviderInteractionPhase.ACCEPTANCE_REVIEW
                 and review_event.transport_evidence.source
                 is TransportEvidenceSource.AUTHENTICATED_PROVIDER
+                and review_event.candidate_binding_digest
+                == expected_review_candidate_digest
+                and review_effect_valid
             )
             if not provider_binding_valid or not review_binding_valid:
                 raise WorkloadReservationConflict(
@@ -1384,6 +2106,84 @@ class TaskStore:
                 FROM direct_production_credits WHERE credit_key = ?""",
                 (assignment_id,),
             ).fetchone()
+            integration_identity: tuple[object, ...] | None = None
+            append_integration_for_existing = False
+            append_consumption_for_existing = False
+            if provider is Provider.GEMINI:
+                if existing is not None:
+                    stored_integration = connection.execute(
+                        """SELECT integration_credit_key,
+                                  integration_assignment_id,
+                                  integration_provider,
+                                  integration_provider_event_digest,
+                                  integration_provider_result_digest,
+                                  integration_review_event_digest,
+                                  integration_review_result_digest
+                        FROM direct_production_integration_evidence
+                        WHERE credit_key = ?""",
+                        (assignment_id,),
+                    ).fetchone()
+                    stored_consumption = connection.execute(
+                        """SELECT integration_credit_key,
+                                  integration_provider_event_digest,
+                                  integration_request_payload_digest,
+                                  consumed_artifact_digest
+                        FROM direct_production_integration_consumption
+                        WHERE credit_key = ?""",
+                        (assignment_id,),
+                    ).fetchone()
+                    integration_identity = TaskStore._antigravity_integration_identity(
+                        connection,
+                        record,
+                        assignments,
+                        persisted_events,
+                        assignment.sequence,
+                        expected_provider_result_digest,
+                        preferred_credit_key=(
+                            str(stored_integration["integration_credit_key"])
+                            if stored_integration is not None
+                            else None
+                        ),
+                    )
+                    if integration_identity is None:
+                        # Legacy dependency-only evidence remains present but is
+                        # never sufficient to make the Antigravity credit visible.
+                        continue
+                    if (
+                        stored_integration is not None
+                        and tuple(stored_integration) != integration_identity[:7]
+                    ):
+                        raise WorkloadReservationConflict(
+                            "Antigravity downstream integration evidence changed"
+                        )
+                    consumption_identity = (
+                        integration_identity[0],
+                        integration_identity[3],
+                        integration_identity[7],
+                        integration_identity[8],
+                    )
+                    if (
+                        stored_consumption is not None
+                        and tuple(stored_consumption) != consumption_identity
+                    ):
+                        raise WorkloadReservationConflict(
+                            "Antigravity request-consumption evidence changed"
+                        )
+                    append_integration_for_existing = stored_integration is None
+                    append_consumption_for_existing = stored_consumption is None
+                else:
+                    integration_identity = TaskStore._antigravity_integration_identity(
+                        connection,
+                        record,
+                        assignments,
+                        persisted_events,
+                        assignment.sequence,
+                        expected_provider_result_digest,
+                    )
+                    if integration_identity is None:
+                        # The artifact remains uncredited until an eligible
+                        # downstream integration is independently accepted.
+                        continue
             if existing is not None:
                 persisted = (
                     str(existing["task_id"]),
@@ -1401,6 +2201,39 @@ class TaskStore:
                     raise WorkloadReservationConflict(
                         "accepted direct-production credit identity changed"
                     )
+                if append_integration_for_existing and integration_identity is not None:
+                    connection.execute(
+                        """INSERT INTO direct_production_integration_evidence(
+                            credit_key, integration_credit_key,
+                            integration_assignment_id, integration_provider,
+                            integration_provider_event_digest,
+                            integration_provider_result_digest,
+                            integration_review_event_digest,
+                            integration_review_result_digest, recorded_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            assignment_id,
+                            *integration_identity[:7],
+                            record.updated_at.isoformat(),
+                        ),
+                    )
+                if append_consumption_for_existing and integration_identity is not None:
+                    connection.execute(
+                        """INSERT INTO direct_production_integration_consumption(
+                            credit_key, integration_credit_key,
+                            integration_provider_event_digest,
+                            integration_request_payload_digest,
+                            consumed_artifact_digest, recorded_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (
+                            assignment_id,
+                            integration_identity[0],
+                            integration_identity[3],
+                            integration_identity[7],
+                            integration_identity[8],
+                            record.updated_at.isoformat(),
+                        ),
+                    )
                 continue
             connection.execute(
                 """INSERT INTO direct_production_credits(
@@ -1411,6 +2244,38 @@ class TaskStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (assignment_id, *identity, record.updated_at.isoformat()),
             )
+            if integration_identity is not None:
+                connection.execute(
+                    """INSERT INTO direct_production_integration_evidence(
+                        credit_key, integration_credit_key,
+                        integration_assignment_id, integration_provider,
+                        integration_provider_event_digest,
+                        integration_provider_result_digest,
+                        integration_review_event_digest,
+                        integration_review_result_digest, recorded_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        assignment_id,
+                        *integration_identity[:7],
+                        record.updated_at.isoformat(),
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO direct_production_integration_consumption(
+                        credit_key, integration_credit_key,
+                        integration_provider_event_digest,
+                        integration_request_payload_digest,
+                        consumed_artifact_digest, recorded_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        assignment_id,
+                        integration_identity[0],
+                        integration_identity[3],
+                        integration_identity[7],
+                        integration_identity[8],
+                        record.updated_at.isoformat(),
+                    ),
+                )
 
     def save(self, record: TaskRecord) -> TaskRecord:
         self._attempt_privacy_cleanup()
@@ -1712,8 +2577,8 @@ class TaskStore:
             model_label,
         )
         direct_provider = direct_production_provider(provider)
-        direct_relevant = direct_provider is not None and is_direct_production_kind(
-            kind
+        direct_relevant = direct_provider is not None and self._is_creditable_accepted_work(
+            provider, kind
         )
 
         with self._lock:
@@ -1755,7 +2620,12 @@ class TaskStore:
                     # block.  Each relevant pending row is projected both ways
                     # (invoked / not invoked); a sibling is safe only when every
                     # projection agrees it clears the caps.
-                    extra_violations: list[str] = list(
+                    # Total effort controls only prospective usage. Project every
+                    # pending sibling both ways so concurrent reservations cannot
+                    # cross a provider ceiling, while accepted-production credit
+                    # remains exclusively in the separate direct ledger.
+                    extra_violations: list[str] = []
+                    extra_violations.extend(
                         self._overall_rollover_violations(
                             overall_rows,
                             request=committed_request,
@@ -1830,20 +2700,28 @@ class TaskStore:
                         # append-only credit window instead of mixing unrelated
                         # table clocks and ordinals.
                         direct_rows = connection.execute(
-                            """SELECT assignment_id, provider, effort_units
-                            FROM direct_production_credits
-                            ORDER BY credit_id DESC
+                            """SELECT credit.assignment_id, credit.provider,
+                                      credit.effort_units
+                            FROM direct_production_credits AS credit
+                            WHERE credit.provider <> 'gemini'
+                                OR EXISTS (
+                                    SELECT 1
+                                    FROM direct_production_integration_evidence AS integration
+                                    WHERE integration.credit_key = credit.credit_key
+                                      AND EXISTS (
+                                          SELECT 1
+                                          FROM direct_production_integration_consumption AS consumption
+                                          WHERE consumption.credit_key = credit.credit_key
+                                      )
+                                )
+                            ORDER BY credit.credit_id DESC
                             LIMIT ?""",
                             (DEFAULT_POLICY.rolling_window_size - 1,),
                         ).fetchall()
                         for row in reversed(direct_rows):
-                            mapped_provider = direct_production_provider(
-                                Provider(str(row["provider"]))
+                            mapped_provider = self._stored_direct_production_provider(
+                                str(row["provider"])
                             )
-                            if mapped_provider is None:
-                                raise WorkloadReservationConflict(
-                                    "ordinary OpenAI cannot enter direct-production history"
-                                )
                             direct_history.append(
                                 DirectProductionRecord(
                                     assignment_id=str(row["assignment_id"]),
@@ -1957,6 +2835,8 @@ class TaskStore:
                 (SELECT COUNT(*) FROM direct_production_credits),
                 (SELECT COALESCE(MAX(credit_id), 0)
                    FROM direct_production_credits),
+                (SELECT COUNT(*) FROM direct_production_integration_evidence),
+                (SELECT COUNT(*) FROM direct_production_integration_consumption),
                 (SELECT COUNT(*) FROM direct_production_no_credit),
                 (SELECT COALESCE(MAX(disposition_id), 0)
                    FROM direct_production_no_credit)"""
@@ -2195,12 +3075,31 @@ class TaskStore:
             FROM workload_assignment_reservations AS reservation
             LEFT JOIN workload_assignment_events AS event
               ON event.reservation_key = reservation.reservation_key
-            WHERE reservation.work_kind = 'implementation'
+            WHERE (
+                  reservation.work_kind = 'implementation'
+                  OR (
+                      reservation.provider = 'perplexity'
+                      AND reservation.work_kind = 'research'
+                  )
+              )
               AND reservation.provider <> 'openai'
               AND reservation.assignment_id <> ?
               AND NOT EXISTS (
                   SELECT 1 FROM direct_production_credits AS credit
                   WHERE credit.assignment_id = reservation.assignment_id
+                    AND (
+                        credit.provider <> 'gemini'
+                        OR EXISTS (
+                            SELECT 1
+                            FROM direct_production_integration_evidence AS integration
+                            WHERE integration.credit_key = credit.credit_key
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM direct_production_integration_consumption AS consumption
+                                  WHERE consumption.credit_key = credit.credit_key
+                              )
+                        )
+                    )
               )
               AND NOT EXISTS (
                   SELECT 1 FROM direct_production_no_credit AS disposition
@@ -2215,30 +3114,38 @@ class TaskStore:
         ).fetchall()
         unresolved: dict[str, DirectProductionRecord] = {}
         for row in unresolved_rows:
-            mapped = direct_production_provider(Provider(str(row["provider"])))
-            if mapped is None:
-                raise WorkloadReservationConflict(
-                    "ordinary OpenAI cannot enter direct-production history"
-                )
+            mapped = TaskStore._stored_direct_production_provider(
+                str(row["provider"])
+            )
             unresolved[str(row["assignment_id"])] = DirectProductionRecord(
                 assignment_id=str(row["assignment_id"]),
                 provider=mapped,
                 effort_units=int(row["effort_units"]),
             )
         credit_rows = connection.execute(
-            """SELECT assignment_id, provider, effort_units
-            FROM direct_production_credits
-            ORDER BY credit_id DESC
+            """SELECT credit.assignment_id, credit.provider,
+                      credit.effort_units
+            FROM direct_production_credits AS credit
+            WHERE credit.provider <> 'gemini'
+               OR EXISTS (
+                   SELECT 1
+                   FROM direct_production_integration_evidence AS integration
+                   WHERE integration.credit_key = credit.credit_key
+                     AND EXISTS (
+                         SELECT 1
+                         FROM direct_production_integration_consumption AS consumption
+                         WHERE consumption.credit_key = credit.credit_key
+                     )
+               )
+            ORDER BY credit.credit_id DESC
             LIMIT ?""",
             (window - 1,),
         ).fetchall()
         credits: list[DirectProductionRecord] = []
         for row in reversed(credit_rows):
-            mapped = direct_production_provider(Provider(str(row["provider"])))
-            if mapped is None:
-                raise WorkloadReservationConflict(
-                    "ordinary OpenAI cannot enter direct-production history"
-                )
+            mapped = TaskStore._stored_direct_production_provider(
+                str(row["provider"])
+            )
             credits.append(
                 DirectProductionRecord(
                     assignment_id=str(row["assignment_id"]),
@@ -2247,7 +3154,19 @@ class TaskStore:
                 )
             )
         credit_total = connection.execute(
-            "SELECT COUNT(*) AS count FROM direct_production_credits"
+            """SELECT COUNT(*) AS count
+            FROM direct_production_credits AS credit
+            WHERE credit.provider <> 'gemini'
+               OR EXISTS (
+                   SELECT 1
+                   FROM direct_production_integration_evidence AS integration
+                   WHERE integration.credit_key = credit.credit_key
+                     AND EXISTS (
+                         SELECT 1
+                         FROM direct_production_integration_consumption AS consumption
+                         WHERE consumption.credit_key = credit.credit_key
+                     )
+               )"""
         ).fetchone()
         return list(unresolved.values()), credits, int(credit_total["count"])
 
@@ -2431,17 +3350,29 @@ class TaskStore:
             )
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                """SELECT assignment_id, provider, effort_units
-                FROM direct_production_credits
-                ORDER BY credit_id DESC
+                """SELECT credit.assignment_id, credit.provider,
+                          credit.effort_units
+                FROM direct_production_credits AS credit
+                WHERE credit.provider <> 'gemini'
+                   OR EXISTS (
+                       SELECT 1
+                       FROM direct_production_integration_evidence AS integration
+                       WHERE integration.credit_key = credit.credit_key
+                         AND EXISTS (
+                             SELECT 1
+                             FROM direct_production_integration_consumption AS consumption
+                             WHERE consumption.credit_key = credit.credit_key
+                         )
+                   )
+                ORDER BY credit.credit_id DESC
                 LIMIT ?""",
                 (limit,),
             ).fetchall()
         return [
             DirectProductionRecord(
                 assignment_id=str(row["assignment_id"]),
-                provider=direct_production_provider(
-                    Provider(str(row["provider"]))
+                provider=self._stored_direct_production_provider(
+                    str(row["provider"])
                 ),
                 effort_units=int(row["effort_units"]),
             )
@@ -2479,7 +3410,91 @@ class TaskStore:
             "intake_authentication",
             IntakeAuthentication.BEARER_DRY_RUN.value,
         )
+        TaskStore._validate_and_normalize_persisted_execution_limits(payload)
         return TaskRecord.model_validate(payload)
+
+    @staticmethod
+    def _validate_and_normalize_persisted_execution_limits(
+        payload: dict[str, object],
+    ) -> None:
+        """Validate current or translate one exact historical limit contract.
+
+        Raw persisted authority must be complete before Pydantic sees it. Stored
+        JSON remains untouched; no omitted field can acquire a model default.
+        """
+
+        plan = payload.get("plan")
+        if plan is None:
+            return
+        if not isinstance(plan, dict):
+            raise ValueError("Persisted task plan must be an object")
+        limits = plan.get("execution_limits")
+        if not isinstance(limits, dict):
+            raise ValueError("Persisted execution limits must be a complete object")
+
+        current_contract = LeanExecutionLimits().model_dump(mode="json")
+        current_authority_fields = {
+            "retry_limit_source",
+            "additional_attempt_requires_classified_failure",
+            "additional_attempt_requires_positive_information_gain",
+            "additional_attempt_requires_changed_basis",
+            "token_cost_timeout_and_cancellation_budgets_enforced",
+        }
+        legacy_authority = {
+            "primary_attempt_limit": 1,
+            "transient_recovery_attempt_limit": 1,
+            "total_route_attempt_limit": 3,
+            "third_attempt_requires_new_information_or_transport": True,
+        }
+        legacy_contract = {
+            field: value
+            for field, value in current_contract.items()
+            if field not in current_authority_fields
+        }
+        legacy_contract.update(legacy_authority)
+
+        if limits.keys() == current_contract.keys():
+            selected_contract = current_contract
+            is_legacy = False
+        elif limits.keys() == legacy_contract.keys():
+            selected_contract = legacy_contract
+            is_legacy = True
+        else:
+            raise ValueError("Persisted execution limits have incomplete or mixed authority")
+        for field, expected in selected_contract.items():
+            value = limits[field]
+            if type(value) is not type(expected) or value != expected:
+                raise ValueError(
+                    f"Persisted execution limit {field} is not authoritative"
+                )
+
+        assignments = plan.get("assignments")
+        if not isinstance(assignments, list):
+            raise ValueError("Persisted plan assignments must be a list")
+        for assignment in assignments:
+            if not isinstance(assignment, dict):
+                raise ValueError("Persisted assignment must be an object")
+            has_retry_limit = "retry_limit" in assignment
+            if is_legacy and has_retry_limit:
+                raise ValueError("Persisted legacy assignment mixes retry authority")
+            if not is_legacy and not has_retry_limit:
+                raise ValueError("Persisted current assignment omits retry authority")
+            if has_retry_limit:
+                retry_limit = assignment["retry_limit"]
+                if type(retry_limit) is not int or not 1 <= retry_limit <= 3:
+                    raise ValueError("Persisted assignment retry limit is not authoritative")
+            else:
+                assignment["retry_limit"] = legacy_authority["total_route_attempt_limit"]
+
+        if not is_legacy:
+            return
+        normalized = dict(limits)
+        for field in legacy_authority:
+            normalized.pop(field)
+        normalized.update(
+            {field: current_contract[field] for field in current_authority_fields}
+        )
+        plan["execution_limits"] = normalized
 
     def _record_from_row(
         self, connection: sqlite3.Connection, row: sqlite3.Row
@@ -2794,3 +3809,9 @@ class TaskStore:
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:21 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:50 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | END]]

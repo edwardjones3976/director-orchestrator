@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | BEGIN]]
@@ -254,6 +256,7 @@ class Assignment(BaseModel):
     # pre-stage packet; deterministic policy validates the resulting route.
     workload_size: WorkSize = WorkSize.SIMPLE
     effort_points: int = Field(default=1, ge=1, le=100)
+    retry_limit: int = Field(default=3, ge=1, le=3)
     model_label: str | None = Field(default=None, min_length=1, max_length=255)
     task: str = Field(min_length=1, max_length=10_000)
     acceptance: list[str] = Field(min_length=1, max_length=20)
@@ -376,10 +379,13 @@ class LeanExecutionLimits(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    primary_attempt_limit: Literal[1] = 1
-    transient_recovery_attempt_limit: Literal[1] = 1
-    total_route_attempt_limit: Literal[3] = 3
-    third_attempt_requires_new_information_or_transport: Literal[True] = True
+    retry_limit_source: Literal["immutable_assignment_prestage"] = (
+        "immutable_assignment_prestage"
+    )
+    additional_attempt_requires_classified_failure: Literal[True] = True
+    additional_attempt_requires_positive_information_gain: Literal[True] = True
+    additional_attempt_requires_changed_basis: Literal[True] = True
+    token_cost_timeout_and_cancellation_budgets_enforced: Literal[True] = True
     ambiguous_paid_dispatch_retry_allowed: Literal[False] = False
     unchanged_green_validation_rerun_allowed: Literal[False] = False
     preferred_completion_signal: Literal["callback_or_event"] = "callback_or_event"
@@ -504,6 +510,43 @@ class DebateContribution(BaseModel):
         return self
 
 
+class RetryEvidenceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    acceptance_index: int = Field(ge=0)
+    evidence_index: int = Field(ge=0)
+    evidence_digest: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+
+
+class RetryBasis(BaseModel):
+    """Structured, candidate-bound justification for one additional attempt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    failed_acceptance_indexes: tuple[int, ...] = Field(min_length=1, max_length=20)
+    prior_result_digest: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    corrected_approach: str = Field(min_length=24, max_length=10_000)
+    evidence_refs: tuple[RetryEvidenceRef, ...] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def require_unique_nonnegative_indexes(self) -> RetryBasis:
+        indexes = self.failed_acceptance_indexes
+        if any(index < 0 for index in indexes) or len(indexes) != len(set(indexes)):
+            raise ValueError("failed acceptance indexes must be unique and nonnegative")
+        reference_pairs = {
+            (item.acceptance_index, item.evidence_index) for item in self.evidence_refs
+        }
+        if len(reference_pairs) != len(self.evidence_refs):
+            raise ValueError("retry evidence references must be unique")
+        if {item.acceptance_index for item in self.evidence_refs} != set(indexes):
+            raise ValueError("every failed acceptance must have exact new evidence")
+        return self
+
+
 class ReviewDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -511,6 +554,7 @@ class ReviewDecision(BaseModel):
     summary: str = Field(min_length=1, max_length=10_000)
     evidence: list[str] = Field(default_factory=list, max_length=30)
     revision_prompt: str | None = Field(default=None, max_length=10_000)
+    retry_basis: RetryBasis | None = None
     owner_question: str | None = Field(default=None, max_length=2_000)
     debate_contribution: DebateContribution | None = None
 
@@ -936,6 +980,11 @@ class TaskRecord(BaseModel):
     oracle_recovery: OracleRecoveryState | None = None
     next_assignment_index: int = Field(default=0, ge=0, le=20)
     revision_count: int = 0
+    revision_prompt_digests: list[str] = Field(default_factory=list, max_length=20)
+    retry_basis_digests: list[str] = Field(default_factory=list, max_length=20)
+    # A cancellation is retry authority, not transient process state. Persist the
+    # authenticated request so recovery cannot silently recreate retry headroom.
+    cancellation_requested_at: datetime | None = None
     # Approval that the plan as a whole may proceed. Does not by itself clear
     # any individual gated assignment -- see approved_assignments.
     owner_approved: bool = False
@@ -1153,3 +1202,5 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]

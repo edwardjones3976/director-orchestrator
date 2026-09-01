@@ -1,3 +1,7 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]] -->
@@ -39,17 +43,40 @@ An absent project allowlist blocks every live plan. Cursor cannot use an implici
 ## Owner account and routing context
 
 - **The primary team is OpenAI, Claude, Cursor, and Grok.** These should cover planning, implementation, review, and repository execution; periodic-check membership remains independently configurable.
-- **Claude Pro 20x is the primary workhorse.** Route coding implementation, repository-scale reasoning, code/document review, and Claude-strong analysis there first when its routine is configured and healthy.
+- **Implementation uses cheap-capable-model-first routing.** Establish scope, transport, readiness, capability, tools, context, risk, and reviewer independence; then prefer an under-target eligible provider and the lowest trusted comparable estimated cost. Missing cost is unknown, not zero. An exact trusted assignment requirement may select Claude, but workload length alone does not.
 - **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
 - **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.
 - **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.
 
+The accepted-productive-work allocation remains external OpenAI/Codex
+25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity
+4%. Total effort is also enforced prospectively: Claude 36%, Cursor 20%,
+Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, and Perplexity 5%, with normal
+bands of 33–39%, 17–23%, 17–23%, 8–14%, 5–11%, and 1–7%, and hard ceilings
+of 41%, 33%, 25%, 16%, 13%, and 9%, respectively. Cursor's 33% total-effort
+ceiling is intentional; it is not the direct-production threshold.
+
 Practical operating patterns:
 
-1. **Claude-first coding lane:** Claude implements and tests; OpenAI reviews the acceptance evidence; the owner approves any gated action.
-2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
+1. **Cheap-capable implementation lane:** select Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, and independence; apply total-effort eligibility and corrective under-band preference before direct-production rank, then trusted cost and deterministic tie-break; retain the assigned provider's transport and authority limits.
+2. **Exact-requirement lane:** when a trusted work order explicitly requires Claude or a named model profile, honor it; otherwise do not infer a provider requirement from task length.
 3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate artifacts. A primary model independently verifies and integrates or rejects their evidence.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
+
+For each selection, record the eligible models, exclusions, trusted comparable
+costs, selected provider/model, and tie-break reason. Track accepted productive
+units, first-pass yield, correction rate, duplicate validation, and categorized
+waste. Compute provider-reported cost ROI only from correlated returned cost;
+never invent missing telemetry or treat it as zero.
+
+Before enabling paid workload routing, set `PRIMARY_WORKHORSE=cheapest_capable`
+and populate `TRUSTED_PROVIDER_COST_RANKS` in the ignored deployment profile as a
+JSON object. Include every configured ready specialist among `claude`, `cursor`,
+`gemini`, `grok`, and `perplexity`. Each value must be a unique positive integer;
+lower means cheaper. The Director has no built-in provider order and fails closed
+before the planning call when the setting is absent, malformed, or incomplete.
+Use current operator-verified comparable cost evidence rather than copying a
+sample ranking from documentation.
 
 ## Trusted OpenAI debate-turn accounting
 
@@ -64,11 +91,22 @@ non-positive or non-finite configured value prevents the service from starting.
 | Role | Supported bridge in this package | Required values | Completion path |
 | --- | --- | --- | --- |
 | Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
-| Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
+| Primary — full-spectrum implementation/review | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
 | Primary — Cursor-family teammate | xAI Responses API plus separately authorized Grok Build/Bot contacts | `GROK_ENABLED`, `XAI_API_KEY`, `GROK_MODEL` and the fail-closed controls below | Synchronous API response or named-worktree CLI/Bot evidence |
 | Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
+
+GitHub Copilot Lite is not another provider bridge. It is an optional one-time
+hygiene observation requested only after required checks are green and the exact
+candidate is frozen: an unscored reporting-only 0–4% effort lane with a hard 6%
+ceiling, no provider adapter or automatic routing, and no production credit,
+independent acceptance role, gate, merge authority, or every-push automation.
+Without an authenticated contact it fails closed as unavailable.
+Quota/unavailability and rejected findings are recorded as waste.
+A confirmed defect follows the normal correction path, and any substantive
+Copilot-authored fix makes Copilot a material author ineligible to independently
+review that candidate.
 
 ## Grok primary Cursor-family profile
 
@@ -204,7 +242,7 @@ A revision reuses that same fixed work contract and the prior sandbox
 `environment_id`, failing closed rather than transmitting reviewer prose or
 provisioning an unrelated sandbox. Preview routing selects Antigravity only for
 an explicit boilerplate, scaffolding, low-level, mechanical, or
-alternate-ideation request; Claude remains the default.
+alternate-ideation request; other work follows cheap-capable-model-first routing.
 
 Debate is the deliberate, narrow prose-bearing exception—not an ordinary work
 packet. Antigravity may return an independent position and bounded rebuttal only
@@ -310,3 +348,7 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->

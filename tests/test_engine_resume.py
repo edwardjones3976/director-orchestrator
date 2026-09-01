@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:08 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | BEGIN]]
@@ -23,6 +25,7 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -68,12 +71,15 @@ from director_orchestrator.models import (
     PlanPrestageRecord,
     ProviderName,
     ProviderRun,
+    RetryBasis,
+    RetryEvidenceRef,
     ReviewDecision,
     ReviewVerdict,
     RiskLevel,
     SlackIntake,
     TaskRecord,
     TaskStatus,
+    canonical_task_effect_digest,
 )
 from director_orchestrator.policy import enforce_plan
 from director_orchestrator.workload_policy import WorkSize
@@ -1515,7 +1521,182 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
         engine._available_workload_primary_providers = lambda record: PRIMARY_PROVIDERS
         return database, store, engine, record
 
-    async def test_v1_revision_passes_the_workload_gate_and_is_finalized_invoked(self):
+    def test_v1_retry_facts_are_structured_durable_and_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, NoRedispatchAdapter(), AcceptingDirector()
+            )
+            assignment = record.plan.assignments[0]
+            run = record.provider_runs[0]
+            prompt = "Add the exact candidate digest required by acceptance."
+            evidence = "sha256 candidate digest is now recorded"
+            basis = RetryBasis(
+                failed_acceptance_indexes=(0,),
+                prior_result_digest=canonical_content_digest(run.result or ""),
+                corrected_approach=prompt,
+                evidence_refs=(
+                    RetryEvidenceRef(
+                        acceptance_index=0,
+                        evidence_index=0,
+                        evidence_digest=canonical_content_digest(evidence),
+                    ),
+                ),
+            )
+            decision = ReviewDecision(
+                verdict=ReviewVerdict.REVISE,
+                summary="Exact evidence is missing.",
+                evidence=[evidence],
+                revision_prompt=prompt,
+                retry_basis=basis,
+            )
+
+            missing_deadline = engine._retry_request_from_persisted_authority(
+                record, assignment, run, decision
+            )
+            self.assertFalse(missing_deadline.token_budget_remaining)
+            self.assertFalse(missing_deadline.timeout_budget_remaining)
+            self.assertTrue(missing_deadline.materially_new_information)
+            self.assertTrue(missing_deadline.corrected_approach)
+            self.assertTrue(missing_deadline.positive_expected_information_gain)
+
+            reserve_provider_effect(
+                record,
+                assignment,
+                phase="dispatch",
+                max_task_budget_usd=engine.settings.max_task_budget_usd,
+            )
+            live = engine._retry_request_from_persisted_authority(
+                record, assignment, run, decision
+            )
+            self.assertTrue(live.timeout_budget_remaining)
+            self.assertFalse(live.cancellation_requested)
+
+            record.cancellation_requested_at = datetime.now(timezone.utc)
+            cancelled = engine._retry_request_from_persisted_authority(
+                record, assignment, run, decision
+            )
+            self.assertTrue(cancelled.cancellation_requested)
+
+            basis_digest = canonical_content_digest(
+                json.dumps(
+                    basis.model_dump(mode="json"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            record.retry_basis_digests.append(basis_digest)
+            reused = engine._retry_request_from_persisted_authority(
+                record, assignment, run, decision
+            )
+            self.assertFalse(reused.positive_expected_information_gain)
+
+            intent = next(
+                item for item in record.task_effect_ledger if item.kind == "provider_intent"
+            )
+            record.task_effect_ledger[0] = intent.model_copy(
+                update={
+                    "recorded_at": datetime.now(timezone.utc)
+                    - timedelta(seconds=record.plan.prestage.timeout_seconds + 1),
+                    "effect_digest": intent.effect_digest,
+                }
+            )
+            # Rebuild through the canonical model after changing its timestamp.
+            changed = record.task_effect_ledger[0].model_dump(mode="python")
+            changed["effect_digest"] = canonical_task_effect_digest(changed)
+            record.task_effect_ledger[0] = type(intent).model_validate(changed)
+            expired = engine._retry_request_from_persisted_authority(
+                record, assignment, run, decision
+            )
+            self.assertFalse(expired.timeout_budget_remaining)
+
+            record.cumulative_estimated_cost_usd = engine.settings.max_task_budget_usd
+            at_limit = engine._retry_request_from_persisted_authority(
+                record, assignment, run, decision
+            )
+            self.assertTrue(at_limit.cost_budget_remaining)
+            over_limit = engine._retry_request_from_persisted_authority(
+                record,
+                assignment.model_copy(update={"estimated_cost_usd": 0.01}),
+                run,
+                decision,
+            )
+            self.assertFalse(over_limit.cost_budget_remaining)
+
+    def test_revision_reservation_cannot_overwrite_concurrent_stop_or_cancellation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, NoRedispatchAdapter(), AcceptingDirector()
+            )
+            assignment = record.plan.assignments[0]
+            record.status = TaskStatus.REVIEWING
+            store.save(record)
+            stale = store.get(record.task_id)
+            stopped = store.get(record.task_id)
+            stopped.status = TaskStatus.OWNER_DECISION_REQUIRED
+            store.save(stopped)
+
+            self.assertIsNone(
+                engine._reserve_effect_intent(
+                    stale,
+                    assignment,
+                    phase="revision",
+                    retry_basis_digest="a" * 64,
+                    revision_prompt_digest="b" * 64,
+                )
+            )
+            self.assertEqual(
+                store.get(record.task_id).status, TaskStatus.OWNER_DECISION_REQUIRED
+            )
+
+            cancelled = store.get(record.task_id)
+            cancelled.status = TaskStatus.REVIEWING
+            cancelled.cancellation_requested_at = datetime.now(timezone.utc)
+            store.save(cancelled)
+            current = store.get(record.task_id)
+            self.assertIsNone(
+                engine._reserve_effect_intent(
+                    current,
+                    assignment,
+                    phase="revision",
+                    retry_basis_digest="c" * 64,
+                    revision_prompt_digest="d" * 64,
+                )
+            )
+            persisted = store.get(record.task_id)
+            self.assertEqual(persisted.status, TaskStatus.REVIEWING)
+            self.assertIsNotNone(persisted.cancellation_requested_at)
+            self.assertFalse(
+                any(
+                    item.kind == "provider_intent" and item.phase == "revision"
+                    for item in persisted.task_effect_ledger
+                )
+            )
+
+    def test_revision_reservation_atomically_consumes_structured_basis(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database, store, engine, record = self._v1_revision_fixture(
+                directory, NoRedispatchAdapter(), AcceptingDirector()
+            )
+            assignment = record.plan.assignments[0]
+            record.status = TaskStatus.REVIEWING
+            store.save(record)
+            current = store.get(record.task_id)
+
+            reservation = engine._reserve_effect_intent(
+                current,
+                assignment,
+                phase="revision",
+                retry_basis_digest="e" * 64,
+                revision_prompt_digest="f" * 64,
+            )
+
+            self.assertIsNotNone(reservation)
+            persisted = store.get(record.task_id)
+            self.assertEqual(persisted.retry_basis_digests, ["e" * 64])
+            self.assertEqual(persisted.revision_prompt_digests, ["f" * 64])
+            self.assertEqual(persisted.status, TaskStatus.RUNNING)
+
+    async def test_v1_revision_without_token_authority_fails_closed_before_dispatch(self):
         class RevisingDirector:
             def __init__(self):
                 self.reviews = 0
@@ -1561,15 +1742,15 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await engine.run(record.task_id)
 
             completed = store.get(record.task_id)
-            self.assertEqual(adapter.revisions, 1)
+            self.assertEqual(adapter.revisions, 0)
             self.assertEqual(completed.revision_count, 0)
             self.assertEqual(
                 [run.run_id for run in completed.provider_runs],
-                ["claude-original", "claude-revision"],
+                ["claude-original"],
             )
-            self.assertEqual(
-                self._workload_ledger_rows(database), [("revision", "invoked")]
-            )
+            self.assertEqual(completed.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertIn("token_budget_exhausted", completed.message or "")
+            self.assertEqual(self._workload_ledger_rows(database), [])
 
     async def test_v1_ambiguous_revision_is_counted_invoked_and_never_retried(self):
         class RevisionDirector:
@@ -1609,18 +1790,13 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             stopped = store.get(record.task_id)
             self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
             self.assertEqual(stopped.revision_count, 0)
-            self.assertEqual(adapter.revisions, 1)
-            self.assertIn("reconciliation is required", stopped.message or "")
-            # The ambiguous attempt consumed workload capacity and is terminal.
-            self.assertEqual(
-                self._workload_ledger_rows(database), [("revision", "invoked")]
-            )
+            self.assertEqual(adapter.revisions, 0)
+            self.assertIn("token_budget_exhausted", stopped.message or "")
+            self.assertEqual(self._workload_ledger_rows(database), [])
 
             await engine.run(record.task_id)
-            self.assertEqual(adapter.revisions, 1)
-            self.assertEqual(
-                self._workload_ledger_rows(database), [("revision", "invoked")]
-            )
+            self.assertEqual(adapter.revisions, 0)
+            self.assertEqual(self._workload_ledger_rows(database), [])
 
     async def test_v1_revision_pre_submit_provider_error_finalizes_failed_pre_submit(
         self,
@@ -1657,34 +1833,17 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await engine.run(record.task_id)
 
             stopped = store.get(record.task_id)
-            self.assertEqual(stopped.status, TaskStatus.FAILED)
-            self.assertIn("ProviderError", stopped.error or "")
-            self.assertIn(
-                "revision rejected before provider I/O", stopped.error or ""
-            )
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertIn("token_budget_exhausted", stopped.message or "")
             self.assertEqual(stopped.revision_count, 0)
-            self.assertEqual(adapter.revisions, 1)
-            self.assertEqual(
-                self._workload_ledger_rows(database),
-                [("revision", "failed_pre_submit")],
-            )
+            self.assertEqual(adapter.revisions, 0)
+            self.assertEqual(self._workload_ledger_rows(database), [])
             revision_effects = [
                 item.outcome
                 for item in stopped.task_effect_ledger
                 if item.kind == "provider_observation" and item.phase == "revision"
             ]
-            self.assertEqual(revision_effects, ["failed_pre_submit"])
-            revision_interaction_id = next(
-                event.interaction_id
-                for event in reversed(stopped.provider_interaction_ledger)
-                if event.phase == ProviderInteractionPhase.REVISION
-            )
-            revision_projection = project_interaction(
-                stopped.provider_interaction_ledger, revision_interaction_id
-            )
-            self.assertEqual(
-                revision_projection.state, ProviderInteractionState.FAILED
-            )
+            self.assertEqual(revision_effects, [])
             self.assertEqual(store.list_recent_direct_production(), [])
             self.assertEqual(
                 [
@@ -1728,29 +1887,18 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
             stopped = store.get(record.task_id)
             self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
             self.assertEqual(stopped.revision_count, 0)
-            self.assertEqual(adapter.revisions, 1)
-            self.assertEqual(
-                self._workload_ledger_rows(database), [("revision", "invoked")]
-            )
+            self.assertEqual(adapter.revisions, 0)
+            self.assertIn("token_budget_exhausted", stopped.message or "")
+            self.assertEqual(self._workload_ledger_rows(database), [])
             revision_effects = [
                 item.outcome
                 for item in stopped.task_effect_ledger
                 if item.kind == "provider_observation" and item.phase == "revision"
             ]
-            self.assertEqual(revision_effects, ["ambiguous"])
-            self.assertEqual(
-                [item.outcome for item in stopped.provider_contact_attempts],
-                ["ambiguous_dispatch"],
-            )
+            self.assertEqual(revision_effects, [])
+            self.assertEqual(stopped.provider_contact_attempts, [])
 
-            with self.assertRaises(EffectAlreadyClaimed):
-                reserve_provider_effect(
-                    stopped,
-                    stopped.plan.assignments[0],
-                    phase="revision",
-                    max_task_budget_usd=engine.settings.max_task_budget_usd,
-                )
-            self.assertEqual(adapter.revisions, 1)
+            self.assertEqual(adapter.revisions, 0)
     # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:15 UTC | END]]
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
 
@@ -2319,6 +2467,123 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "accepted result 1",
             )
 
+    def test_early_direct_gemini_dependency_remains_in_exact_handoff_evidence(self):
+        assignments = [
+            Assignment(
+                sequence=1,
+                agent=ProviderName.GEMINI,
+                kind=AssignmentKind.LOW_LEVEL_IMPLEMENTATION,
+                task="Produce one bounded source-free artifact",
+                acceptance=["Artifact digest is recorded"],
+            )
+        ]
+        assignments.extend(
+            Assignment(
+                sequence=sequence,
+                agent=ProviderName.CURSOR,
+                task=f"Unrelated accepted outcome {sequence}",
+                acceptance=["Outcome is recorded"],
+            )
+            for sequence in range(2, 12)
+        )
+        consumer = Assignment(
+            sequence=12,
+            agent=ProviderName.CLAUDE,
+            kind=AssignmentKind.IMPLEMENTATION,
+            task="Independently reproduce and integrate the Gemini artifact",
+            acceptance=["Exact consumed artifact is reported"],
+            depends_on=[1],
+        )
+        assignments.append(consumer)
+        gemini_result = "bounded Antigravity artifact"
+        gemini_digest = canonical_content_digest(gemini_result)
+        outcomes = [
+            AssignmentOutcome(
+                assignment_sequence=1,
+                provider=ProviderName.GEMINI,
+                run_id="gemini-artifact-run",
+                result=gemini_result,
+                review_summary="Accepted for independent integration",
+                provider_result_digest=gemini_digest,
+            )
+        ]
+        outcomes.extend(
+            AssignmentOutcome(
+                assignment_sequence=sequence,
+                provider=ProviderName.CURSOR,
+                run_id=f"intervening-run-{sequence}",
+                result=f"intervening accepted result {sequence}",
+                review_summary="Accepted unrelated outcome",
+                provider_result_digest=canonical_content_digest(
+                    f"intervening accepted result {sequence}"
+                ),
+            )
+            for sequence in range(2, 12)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+            record = TaskRecord(
+                task_id="DIR-OLD-GEMINI-HANDOFF",
+                status=TaskStatus.RUNNING,
+                intake=SlackIntake(
+                    source_event_id="evt-old-gemini-handoff",
+                    channel_id="C123",
+                    thread_ts="123.99",
+                    user_id="U123",
+                    text="Integrate one bounded dependency",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="Integrate one bounded dependency",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=12,
+                    max_revisions=0,
+                    assignments=assignments,
+                    final_acceptance=["Integration accepted"],
+                ),
+                assignment_outcomes=outcomes,
+            )
+            engine = OrchestrationEngine(
+                replace(Settings(), sqlite_path=store.path), store
+            )
+
+            context = engine._handoff_context(record, consumer)
+            payload = json.loads(context)
+            consumed = engine._consumed_dependency_artifact_digests(
+                record, consumer
+            )
+
+            self.assertEqual(consumed, (gemini_digest,))
+            self.assertEqual(
+                [item["assignment_sequence"] for item in payload["dependency_outcomes"]],
+                [1],
+            )
+            self.assertEqual(
+                payload["dependency_outcomes"][0]["provider_result_digest"],
+                gemini_digest,
+            )
+            interaction_id = engine._begin_provider_interaction(
+                record,
+                consumer,
+                phase="dispatch",
+                attempt=1,
+                effect_key="e" * 64,
+                request_payload=context,
+                consumed_artifact_digests=consumed,
+            )
+            drafted = next(
+                event
+                for event in record.provider_interaction_ledger
+                if event.interaction_id == interaction_id
+                and event.transition_ordinal == 1
+            )
+            self.assertEqual(drafted.consumed_artifact_digests, (gemini_digest,))
+            self.assertEqual(
+                drafted.request_payload_digest,
+                canonical_content_digest(context),
+            )
+
     async def test_max_revisions_runs_every_bounded_revision_before_acceptance(self):
         class Director:
             def __init__(self):
@@ -2528,4 +2793,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:17 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:08 UTC | END]]
-
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:52 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]

@@ -45,7 +45,8 @@
     "budget_usd": 1.0,
     "timeout_seconds": 900,
     "max_hops": 1,
-    "max_revisions": 1
+    "max_revisions": 1,
+    "retry_limit": 3
   },
   "idempotency_key": "DIR-EXAMPLE:1:review",
   "correlation": {

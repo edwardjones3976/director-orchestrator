@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -640,8 +641,20 @@ class CompletionGateRuntimeTests(unittest.TestCase):
                 link = repository / f"link-{label}"
                 try:
                     link.symlink_to(target, target_is_directory=True)
-                except (OSError, NotImplementedError):
-                    self.skipTest("this environment cannot create directory links")
+                except (OSError, NotImplementedError) as exc:
+                    if os.name != "nt":
+                        self.fail(f"directory-link coverage is required: {exc}")
+                    created = subprocess.run(
+                        ("cmd", "/c", "mklink", "/J", str(link), str(target)),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(
+                        created.returncode,
+                        0,
+                        f"directory junction coverage is required: {created.stderr}",
+                    )
                 gate = verified.document["director_gates"][0]
                 gate["working_directory"] = link.name
                 rebind_ledger(verified.document)
@@ -828,9 +841,12 @@ class CompletionGateRuntimeTests(unittest.TestCase):
             try:
                 os.link(script, alias)
             except (OSError, NotImplementedError, AttributeError) as exc:
-                self.skipTest(f"this platform cannot create hard links: {exc}")
-            if script.lstat().st_nlink < 2:
-                self.skipTest("this platform does not report hard-link counts")
+                self.fail(f"hard-link safety coverage is required: {exc}")
+            self.assertGreaterEqual(
+                script.lstat().st_nlink,
+                2,
+                "hard-link count coverage is required",
+            )
 
             with self.assertRaisesRegex(CompletionGateError, "hard link"):
                 execute()
@@ -860,3 +876,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

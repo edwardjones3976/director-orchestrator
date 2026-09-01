@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:23 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
@@ -426,15 +429,18 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             encoding="utf-8"
         )
         for expected in (
-            "Chief Programmer | Claude | 60% | 36%",
-            "Project Secretary | Cursor | 14% | 20%",
-            "Cursor-family primary teammate | Grok | 14% | 20%",
-            "Specialist and Backup Programmer | Gemini/Antigravity | 7% | 11%",
+            "Chief Programmer | Claude | 25% | 36%",
+            "Project Secretary | Cursor | 20% | 20%",
+            "Cursor-family primary teammate | Grok | 11% | 11%",
+            "Specialist and Backup Programmer | Gemini/Antigravity | 15% | 20%",
             "Research Programmers | Perplexity.ai | 4% | 5%",
-            "Director and separately authorized production lane | OpenAI/Codex | 1% | 8%",
+            "Director and separately authorized production lane | OpenAI/Codex | 25% | 8%",
         ):
             self.assertIn(expected, charter)
-        self.assertIn("Maintain two distinct ledgers", prompt)
+        self.assertIn("Enforce two prospective workload controls", prompt)
+        self.assertIn("Total effort may route or block", prompt)
+        self.assertIn("cheapest capable trusted model first", prompt)
+        self.assertIn("GitHub Copilot Lite", prompt)
         self.assertIn("canonical matching UTC contribution", prompt)
         self.assertIn("never authenticate provider", charter.lower())
 
@@ -1194,3 +1200,6 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

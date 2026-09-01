@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 """Default-on and isolation contracts for the LangGraph proof lanes."""
 
@@ -115,7 +116,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
             try:
                 os.link(legacy, checkpoint)
             except OSError as exc:
-                self.skipTest(f"hardlinks unavailable: {exc}")
+                self.fail(f"hard-link configuration coverage is required: {exc}")
             self.assertTrue(os.path.samefile(legacy, checkpoint))
             settings = replace(
                 self.base_settings(),
@@ -136,7 +137,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
             try:
                 os.link(legacy, checkpoint)
             except OSError as exc:
-                self.skipTest(f"hardlinks unavailable: {exc}")
+                self.fail(f"hard-link configuration coverage is required: {exc}")
             settings = replace(
                 self.base_settings(),
                 langgraph_shadow_enabled=True,
@@ -161,7 +162,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
             try:
                 os.link(legacy, claim)
             except OSError as exc:
-                self.skipTest(f"hardlinks unavailable: {exc}")
+                self.fail(f"hard-link configuration coverage is required: {exc}")
             settings = replace(
                 self.base_settings(),
                 langgraph_approval_resume_enabled=True,
@@ -183,7 +184,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
             try:
                 os.link(checkpoint, claim)
             except OSError as exc:
-                self.skipTest(f"hardlinks unavailable: {exc}")
+                self.fail(f"hard-link configuration coverage is required: {exc}")
             settings = replace(
                 self.base_settings(),
                 langgraph_approval_resume_enabled=True,
@@ -276,3 +277,4 @@ class LangGraphConfigurationTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
