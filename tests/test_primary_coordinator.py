@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
 from __future__ import annotations
@@ -201,6 +202,35 @@ class PrimaryTaskCoordinatorCommandReceiptUnitTests(unittest.TestCase):
             )
         self.store.record_primary_command_receipt.assert_not_called()
 
+    def test_expired_writer_is_reacquired_at_observed_generation(self) -> None:
+        expired = TaskWriterLease(
+            task_id="task-1",
+            engine_owner="langgraph",
+            owner_token="owner-1",
+            fencing_generation=3,
+            lease_expires_at="earlier",
+            lease_live=False,
+        )
+        successor = TaskWriterLease(
+            task_id="task-1",
+            engine_owner="langgraph",
+            owner_token="owner-1",
+            fencing_generation=4,
+            lease_expires_at="later",
+            lease_live=True,
+        )
+        self.store.current_task_writer.return_value = expired
+        self.store.acquire_task_writer.return_value = successor
+
+        self.assertEqual(successor, self.coordinator._task_writer("task-1"))
+        self.store.renew_task_writer.assert_not_called()
+        self.store.acquire_task_writer.assert_called_once_with(
+            "task-1",
+            engine_owner="langgraph",
+            owner_token="owner-1",
+            expected_generation=3,
+        )
+
 
 class PrimaryTaskCoordinatorIntegrationTests(unittest.TestCase):
     @classmethod
@@ -246,6 +276,54 @@ class PrimaryTaskCoordinatorIntegrationTests(unittest.TestCase):
         self.assertTrue(readiness["writer_lease_ready"])
         self.assertEqual("langgraph", readiness["new_intake_owner"])
         self.assertTrue(readiness["legacy_new_intake_disabled"])
+
+    def test_restart_reacquires_expired_writer_and_recovers_approval_task(self):
+        self.coordinator.activate_new_intake(expected_generation=0)
+        task_id = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
+        before = self.coordinator.create_intake(request(task_id))
+        self.assertEqual("PAUSED", before.projection["run_status"])
+        self.assertIsNotNone(before.projection["pending_approval"])
+        first_writer = self.coordinator.get_task_writer(task_id)
+        assert first_writer is not None
+        self.assertEqual(1, first_writer.fencing_generation)
+
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"""
+                UPDATE {self.schema}.director_primary_task_writer
+                SET lease_expires_at = now() - interval '1 second'
+                WHERE task_id = %s
+                """,
+                (task_id,),
+            )
+        expired = self.coordinator.get_task_writer(task_id)
+        assert expired is not None
+        self.assertFalse(expired.lease_live)
+
+        restarted = PrimaryTaskCoordinator(
+            self.handle,
+            handlers(),
+            owner_token="default-director-owner",
+            checkpoint_namespace="default-director-primary-v1",
+        )
+        recovered = restarted.recover(task_id)
+        successor = restarted.get_task_writer(task_id)
+        assert successor is not None
+
+        self.assertEqual(before.projection_digest, recovered.projection_digest)
+        self.assertEqual("langgraph", successor.engine_owner)
+        self.assertEqual("default-director-owner", successor.owner_token)
+        self.assertEqual(
+            first_writer.fencing_generation + 1,
+            successor.fencing_generation,
+        )
+        self.assertTrue(successor.lease_live)
+        with self.assertRaisesRegex(PostgresControlPlaneError, "no longer holds"):
+            self.handle.claim_store.renew_task_writer(
+                task_id,
+                owner_token="default-director-owner",
+                fencing_generation=first_writer.fencing_generation,
+            )
 
     def test_wrong_writer_flags_and_competing_intake_fail_closed(self):
         self.coordinator.activate_new_intake(expected_generation=0)
@@ -368,3 +446,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]

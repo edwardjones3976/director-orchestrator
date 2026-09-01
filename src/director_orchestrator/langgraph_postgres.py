@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
@@ -856,6 +857,7 @@ class TaskWriterLease:
     owner_token: str
     fencing_generation: int
     lease_expires_at: Any
+    lease_live: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -938,6 +940,7 @@ def _lease_from_row(row: Mapping[str, Any]) -> TaskWriterLease:
         owner_token=str(row["owner_token"]),
         fencing_generation=int(row["fencing_generation"]),
         lease_expires_at=row["lease_expires_at"],
+        lease_live=bool(row.get("lease_live", True)),
     )
 
 
@@ -1961,7 +1964,8 @@ class PostgresConditionalClaimStore:
                         VALUES (%(task_id)s, %(engine_owner)s, %(owner_token)s, 1,
                                 now() + make_interval(secs => %(lease)s))
                         RETURNING task_id, engine_owner, owner_token,
-                                  fencing_generation, lease_expires_at
+                                  fencing_generation, lease_expires_at,
+                                  lease_expires_at > now() AS lease_live
                         """,
                         {
                             "task_id": task_id,
@@ -1999,7 +2003,8 @@ class PostgresConditionalClaimStore:
                     WHERE task_id = %(task_id)s
                       AND fencing_generation = %(expected)s
                     RETURNING task_id, engine_owner, owner_token,
-                              fencing_generation, lease_expires_at
+                              fencing_generation, lease_expires_at,
+                              lease_expires_at > now() AS lease_live
                     """,
                     {
                         "task_id": task_id,
@@ -2045,7 +2050,8 @@ class PostgresConditionalClaimStore:
                       AND fencing_generation = %(generation)s
                       AND lease_expires_at > now()
                     RETURNING task_id, engine_owner, owner_token,
-                              fencing_generation, lease_expires_at
+                              fencing_generation, lease_expires_at,
+                              lease_expires_at > now() AS lease_live
                     """,
                     {
                         "task_id": task_id,
@@ -2070,7 +2076,7 @@ class PostgresConditionalClaimStore:
                 connection,
                 f"""
                 SELECT task_id, engine_owner, owner_token, fencing_generation,
-                       lease_expires_at
+                       lease_expires_at, lease_expires_at > now() AS lease_live
                 FROM {self._schema}.director_primary_task_writer
                 WHERE task_id = %(task_id)s
                 """,
@@ -3400,3 +3406,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]

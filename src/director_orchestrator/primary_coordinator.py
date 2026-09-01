@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:50 UTC | BEGIN]]
 """Postgres-owned application boundary for the primary LangGraph runtime."""
@@ -187,12 +188,24 @@ class PrimaryTaskCoordinator:
             )
         if current.engine_owner != "langgraph":
             raise PrimaryCoordinatorError("task engine_owner is not LangGraph")
-        if not hmac.compare_digest(current.owner_token, self._owner_token):
-            raise PrimaryCoordinatorError("another process owns the task writer lease")
-        return self._store.renew_task_writer(
+        if current.lease_live:
+            if not hmac.compare_digest(current.owner_token, self._owner_token):
+                raise PrimaryCoordinatorError(
+                    "another process owns the task writer lease"
+                )
+            return self._store.renew_task_writer(
+                task_id,
+                owner_token=self._owner_token,
+                fencing_generation=current.fencing_generation,
+            )
+        # An expired row is durable fencing history, not renewable authority.
+        # Reacquire it through the store's exact-generation CAS so any
+        # concurrent successor makes this observation stale and fails closed.
+        return self._store.acquire_task_writer(
             task_id,
+            engine_owner="langgraph",
             owner_token=self._owner_token,
-            fencing_generation=current.fencing_generation,
+            expected_generation=current.fencing_generation,
         )
 
     def _persist_outcome(
@@ -413,3 +426,4 @@ class PrimaryTaskCoordinator:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:50 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]
