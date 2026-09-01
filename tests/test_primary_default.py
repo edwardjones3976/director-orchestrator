@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
@@ -21,8 +22,14 @@ from director_orchestrator.langgraph_primary import (
     ApprovalDecision,
     ApprovalKind,
     ApprovalResume,
+    HandlerContext,
 )
-from director_orchestrator.models import IntakeAuthentication, SlackIntake, TaskStatus
+from director_orchestrator.models import (
+    IntakeAuthentication,
+    SlackIntake,
+    TaskRecord,
+    TaskStatus,
+)
 from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.packet_routing import DirectorPacketTaskRouter
 from director_orchestrator.primary_coordinator import PrimaryTaskCoordinator
@@ -144,6 +151,60 @@ class DefaultPrimaryPinnedAuthorityTests(unittest.TestCase):
                     langgraph_primary_pinned_tree_sha="",
                 )
             )
+
+    def test_real_default_planning_binds_exact_pins_without_tracking_ref(self) -> None:
+        settings = self.settings()
+        services = DefaultDryRunServices(settings)
+        record = TaskRecord(
+            task_id="DIR-PINNED-PLAN",
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id="event-pinned-plan",
+                channel_id="CPINNED",
+                thread_ts="1720000000.000002",
+                user_id="UOWNER",
+                text="Project: default\nImplement the bounded pinned change.",
+            ),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        services.register(record)
+        context = HandlerContext(
+            task_id=record.task_id,
+            source_event_id=record.intake.source_event_id,
+            correlation_id="corr-pinned-plan",
+            intake_digest=digest("intake"),
+            scope_digest=digest("scope"),
+            authority_snapshot_digest=digest("authority"),
+            work_packet_digest=None,
+            idempotency_key_digest=digest("idempotency"),
+            starting_sha=self.commit_sha,
+            candidate_sha=self.commit_sha,
+            plan_digest=None,
+            scheduled_producer_id=None,
+            provider_attempt_digest=None,
+            provider_dispatch_status="NOT_STARTED",
+            provider_result_digest=None,
+            producer_id=None,
+            reviewer_id=None,
+            revision_count=0,
+            budget_limit_units=10,
+            budget_used_units=0,
+            effect_key_digest=None,
+            effect_attempt_digest=None,
+            writer_owner_id="langgraph",
+        )
+
+        result = services.plan(context)
+        planned = services._record(record.task_id).plan
+
+        self.assertTrue(result.work_packet_digest.startswith("sha256:"))
+        assert planned is not None and planned.prestage is not None
+        self.assertEqual(self.commit_sha, planned.prestage.base_sha)
+        self.assertEqual(self.commit_sha, planned.prestage.branch)
+        self.assertEqual(str(self.root.resolve()), planned.prestage.worktree)
+        self.assertTrue(
+            all(item.starting_ref == self.commit_sha for item in planned.assignments)
+        )
 
     def test_pins_preserve_origin_clean_head_ref_and_tree_checks(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "remote does not match"):
@@ -635,3 +696,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]

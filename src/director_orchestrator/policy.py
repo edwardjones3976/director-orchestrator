@@ -1,7 +1,9 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:18 UTC | BEGIN]]
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from pathlib import Path
 from urllib.parse import urlparse
 
 from .antigravity import (
@@ -1299,6 +1302,15 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         if settings.repository_allowlist
         else "dry-run/preview"
     )
+    pinned_commit = settings.langgraph_primary_pinned_commit_sha.strip().lower()
+    pinned_tree = settings.langgraph_primary_pinned_tree_sha.strip().lower()
+    pinned_mode = bool(pinned_commit and pinned_tree)
+    plan_starting_ref = pinned_commit if pinned_mode else "main"
+    plan_worktree = (
+        str(Path(settings.repository_snapshot_root).resolve())
+        if pinned_mode
+        else "DRY-RUN-NO-WORKTREE"
+    )
     assignment_repository = (
         None
         if provider in {ProviderName.GEMINI, ProviderName.PERPLEXITY}
@@ -1321,6 +1333,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         acceptance=["Owner-defined outcome is demonstrably satisfied", "Evidence and unresolved risks are reported"],
         public_research_query=public_research_query,
         repository=assignment_repository,
+        starting_ref=plan_starting_ref,
         requires_approval=False,
         estimated_cost_usd=0,
     )
@@ -1336,6 +1349,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
                 task=ANTIGRAVITY_CONSUMER_TASK,
                 acceptance=list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
                 repository=preview_repository,
+                starting_ref=plan_starting_ref,
                 depends_on=[1],
                 estimated_cost_usd=0,
             )
@@ -1357,6 +1371,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             task="Independently review the bounded dry-run plan and required evidence",
             acceptance=["Report contradictions, missing evidence, and unresolved risk"],
             repository=preview_repository,
+            starting_ref=plan_starting_ref,
             depends_on=[reviewed_sequence],
             estimated_cost_usd=0,
         )
@@ -1385,9 +1400,9 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             goal=text.strip(),
             terminal_condition="\n".join(final_acceptance),
             repository=preview_repository,
-            worktree="DRY-RUN-NO-WORKTREE",
-            branch="main",
-            base_sha="0" * 40,
+            worktree=plan_worktree,
+            branch=plan_starting_ref,
+            base_sha=pinned_commit if pinned_mode else "0" * 40,
             candidate_sha=None,
             producer=producer,
             independent_reviewer=reviewer,
@@ -1431,3 +1446,5 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:23 UTC | END]]
