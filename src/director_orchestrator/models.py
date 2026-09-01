@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
@@ -256,7 +257,7 @@ class Assignment(BaseModel):
     # pre-stage packet; deterministic policy validates the resulting route.
     workload_size: WorkSize = WorkSize.SIMPLE
     effort_points: int = Field(default=1, ge=1, le=100)
-    retry_limit: int = Field(default=3, ge=1, le=3)
+    retry_limit: int = Field(default=3, ge=3, le=3)
     model_label: str | None = Field(default=None, min_length=1, max_length=255)
     task: str = Field(min_length=1, max_length=10_000)
     acceptance: list[str] = Field(min_length=1, max_length=20)
@@ -428,7 +429,7 @@ class PlanPrestageRecord(BaseModel):
     required_security_evidence: tuple[str, ...] = Field(min_length=1, max_length=100)
     budget_units: int = Field(ge=1, le=100_000)
     timeout_seconds: int = Field(ge=1, le=604_800)
-    retry_limit: int = Field(ge=1, le=3)
+    retry_limit: int = Field(ge=3, le=3)
     merge_eligibility_conditions: tuple[str, ...] = Field(
         min_length=1, max_length=50
     )
@@ -1204,3 +1205,5 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

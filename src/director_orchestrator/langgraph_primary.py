@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
@@ -253,7 +255,7 @@ class ClaimStoreUnavailableError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ClaimRequest:
-    """One attempt to fence exactly one side-effecting status transition."""
+    """Fence one side-effecting status transition within an attempt."""
 
     claim_key: str
     task_id: str
@@ -2192,6 +2194,7 @@ class PrimaryWorkflowRuntime:
         interrupt_after: Sequence[str] | None = None,
         auto_execute_provider: bool = True,
         auto_execute_effect: bool = True,
+        reconcile_executing_effect: bool = False,
         claim_store: ConditionalClaimStore | None = None,
         owner_token: str | None = None,
     ) -> None:
@@ -2200,6 +2203,12 @@ class PrimaryWorkflowRuntime:
             raise ValueError("auto_execute_provider must be a boolean")
         if type(auto_execute_effect) is not bool:
             raise ValueError("auto_execute_effect must be a boolean")
+        if type(reconcile_executing_effect) is not bool:
+            raise ValueError("reconcile_executing_effect must be a boolean")
+        if reconcile_executing_effect and not auto_execute_effect:
+            raise ValueError(
+                "reconcile_executing_effect requires auto_execute_effect"
+            )
         if claim_store is not None and not callable(getattr(claim_store, "claim", None)):
             raise ValueError("claim_store must expose a callable claim(request)")
         if (
@@ -2216,6 +2225,7 @@ class PrimaryWorkflowRuntime:
         self._namespace = checkpoint_namespace
         self._auto_execute_provider = auto_execute_provider
         self._auto_execute_effect = auto_execute_effect
+        self._reconcile_executing_effect = reconcile_executing_effect
         self._claim_store = claim_store
         self._owner_token = (
             _require_id(owner_token, "owner_token")
@@ -2403,6 +2413,19 @@ class PrimaryWorkflowRuntime:
         held = snapshot.values.get("parallel_plan_digest")
         if held is not None and not _secure_equal(str(held), plan_digest):
             raise ValueError("parallel plan binding changed")
+        if snapshot.values.get("parallel_terminal") is True:
+            if not (
+                terminal
+                and bool(snapshot.values.get("parallel_succeeded")) == succeeded
+                and _secure_equal(
+                    str(snapshot.values.get("parallel_aggregate_digest") or ""),
+                    aggregate_digest,
+                )
+                and int(snapshot.values.get("parallel_ambiguous_slot_count", 0))
+                == ambiguous_slot_count
+            ):
+                raise ValueError("terminal parallel aggregate cannot be rewritten")
+            return self._outcome(task_id)
         self._graph.update_state(
             self._config(task_id),
             {
@@ -2414,6 +2437,64 @@ class PrimaryWorkflowRuntime:
             },
         )
         return self._outcome(task_id)
+
+    def resume_parallel_aggregate(
+        self,
+        task_id: str,
+        *,
+        aggregate_digest: str,
+        succeeded: bool,
+        candidate_sha: str,
+    ) -> PrimaryOutcome:
+        """Consume one terminal all-assignment aggregate through the graph edge.
+
+        The parallel ledger is evidence, not a second workflow engine.  This
+        method therefore resumes the existing provider interrupt exactly once;
+        every downstream evidence, independent-review, CI/security, effect and
+        terminal transition remains graph-owned.
+        """
+
+        _require_digest(aggregate_digest, "aggregate_digest")
+        _require_sha(candidate_sha, "candidate_sha")
+        snapshot = self._snapshot(task_id)
+        state = snapshot.values
+        if not state:
+            raise ValueError("primary graph checkpoint does not exist")
+        if not bool(state.get("parallel_terminal")):
+            raise ValueError("parallel aggregate is not terminal")
+        if bool(state.get("parallel_succeeded")) != succeeded or not _secure_equal(
+            str(state.get("parallel_aggregate_digest") or ""), aggregate_digest
+        ):
+            raise ValueError("parallel aggregate binding changed")
+        if int(state.get("parallel_ambiguous_slot_count", 0)):
+            raise ValueError("ambiguous parallel aggregate requires reconciliation")
+        if state.get("provider_result_receipt_digest") is not None:
+            return self._outcome(task_id)
+        status = ProviderDispatchStatus(str(state["provider_dispatch_status"]))
+        if status == ProviderDispatchStatus.CLAIMED:
+            self.prepare_provider_dispatch(task_id)
+            state = self._snapshot(task_id).values
+        elif status != ProviderDispatchStatus.DISPATCHING:
+            raise ValueError("parallel aggregate has no pending graph provider edge")
+        result = ProviderSubgraphResult(
+            provider_attempt_digest=str(state["provider_attempt_digest"]),
+            idempotency_key_digest=str(state["idempotency_key_digest"]),
+            authority_snapshot_digest=str(state["authority_snapshot_digest"]),
+            producer_id=str(state["scheduled_producer_id"]),
+            disposition=(
+                ProviderDisposition.COMPLETED
+                if succeeded
+                else ProviderDisposition.FAILED
+            ),
+            result_digest=aggregate_digest,
+            candidate_sha=candidate_sha if succeeded else None,
+            reason_code=(
+                "parallel_aggregate_completed"
+                if succeeded
+                else "parallel_aggregate_failed"
+            ),
+        )
+        return self.record_provider_result(task_id, result)
 
     @staticmethod
     def _provider_intent(state: Mapping[str, Any]) -> ProviderDispatchIntent:
@@ -2435,7 +2516,7 @@ class PrimaryWorkflowRuntime:
         target: str,
         attempt_digest: str,
     ) -> str:
-        """Return the stable fence identity for one attempt at one transition.
+        """Return the stable fence identity for each transition attempt.
 
         The key is derived only from durable, replayable facts, so a restarted
         process, a second runtime instance, and a sibling host all address the
@@ -2470,7 +2551,7 @@ class PrimaryWorkflowRuntime:
 
         Guaranteed by the injected :class:`ConditionalClaimStore`: for one
         ``claim_key`` at most one caller is ever granted the fence, so at most
-        one owner may run the paid handler for one attempt, whatever else races
+        one owner may run the paid handler for the claimed attempt, whatever else races
         it.  That grant is the only exclusion mechanism here.
 
         NOT guaranteed by the checkpointer, and deliberately not claimed:
@@ -2766,21 +2847,25 @@ class PrimaryWorkflowRuntime:
             return
         state = snapshot.values
         effect_status = EffectStatus(str(state["effect_status"]))
-        if effect_status == EffectStatus.EXECUTING:
+        if (
+            effect_status == EffectStatus.EXECUTING
+            and not self._reconcile_executing_effect
+        ):
             self._resume_ambiguous_effect(task_id, "effect_outcome_unknown")
             return
-        if effect_status != EffectStatus.CLAIMED:
+        if effect_status not in {EffectStatus.CLAIMED, EffectStatus.EXECUTING}:
             self._resume_ambiguous_effect(task_id, "effect_state_invalid")
             return
 
-        try:
-            self.prepare_effect_execution(task_id)
-        except ClaimStoreUnavailableError:
-            self._resume_ambiguous_effect(task_id, "effect_claim_store_unavailable")
-            return
-        except ValueError:
-            self._resume_ambiguous_effect(task_id, "effect_claim_contended")
-            return
+        if effect_status == EffectStatus.CLAIMED:
+            try:
+                self.prepare_effect_execution(task_id)
+            except ClaimStoreUnavailableError:
+                self._resume_ambiguous_effect(task_id, "effect_claim_store_unavailable")
+                return
+            except ValueError:
+                self._resume_ambiguous_effect(task_id, "effect_claim_contended")
+                return
         state = self._snapshot(task_id).values
         try:
             result = self._handlers.effect_execution_readback(_context(state))
@@ -3066,3 +3151,5 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]

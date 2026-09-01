@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | BEGIN]]
 """Postgres-native dependency-ready dispatch for the primary coordinator.
@@ -106,16 +109,16 @@ class ParallelAssignment:
     deployment_id: str
     dependencies: tuple[str, ...] = ()
     write_surfaces: tuple[str, ...] = ()
-    retry_limit: int = 1
+    retry_limit: int = 3
 
     def __post_init__(self) -> None:
         _require_id(self.assignment_id, "assignment_id")
         _require_id(self.provider_id, "provider_id")
         _require_id(self.deployment_id, "deployment_id")
-        if type(self.sequence) is not int or not 1 <= self.sequence <= 20:
-            raise ParallelDispatchError("sequence must be between 1 and 20")
-        if type(self.retry_limit) is not int or not 1 <= self.retry_limit <= 3:
-            raise ParallelDispatchError("retry_limit must be between 1 and 3")
+        if type(self.sequence) is not int or self.sequence < 1:
+            raise ParallelDispatchError("sequence must be a positive integer")
+        if type(self.retry_limit) is not int or self.retry_limit != 3:
+            raise ParallelDispatchError("retry_limit must be exactly 3")
         if len(set(self.dependencies)) != len(self.dependencies):
             raise ParallelDispatchError("dependencies must be unique")
         canonical_surfaces = tuple(
@@ -192,13 +195,53 @@ class ParallelDispatchOutcome:
     reason_code: str
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderAttemptReservation:
+    """One immutable, writer-fenced child attempt under an assignment."""
+
+    task_id: str
+    assignment_id: str
+    attempt_ordinal: int
+    provider_id: str
+    format_id: str
+    transport_id: str
+    idempotency_key_digest: str
+    attempt_digest: str
+    budget_evidence_digest: str
+
+
+def deterministic_format_roster(formats: Iterable[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
+    """Canonicalize configured format/transport pairs and fail closed above three."""
+
+    roster = tuple(sorted(set(formats)))
+    if not roster:
+        raise ParallelDispatchError("provider format roster is empty")
+    if len(roster) > 3:
+        raise ParallelDispatchError("provider format roster exceeds three-attempt budget")
+    for format_id, transport_id in roster:
+        if _CODE.fullmatch(format_id) is None or _CODE.fullmatch(transport_id) is None:
+            raise ParallelDispatchError("provider format roster contains an invalid identity")
+    return roster
+
+
+def format_for_attempt(
+    roster: Sequence[tuple[str, str]], attempt_ordinal: int
+) -> tuple[str, str]:
+    """Use every configured format once before deterministic reuse."""
+
+    canonical = deterministic_format_roster(roster)
+    if type(attempt_ordinal) is not int or not 1 <= attempt_ordinal <= 3:
+        raise ParallelDispatchError("attempt ordinal must be between one and three")
+    return canonical[(attempt_ordinal - 1) % len(canonical)]
+
+
 def validate_assignment_dag(
     assignments: Sequence[ParallelAssignment],
 ) -> tuple[ParallelAssignment, ...]:
     """Return a deterministic topological order or reject the plan."""
 
-    if not assignments or len(assignments) > 20:
-        raise ParallelDispatchError("parallel plans require 1 through 20 assignments")
+    if not assignments:
+        raise ParallelDispatchError("parallel plans require at least one assignment")
     by_id = {item.assignment_id: item for item in assignments}
     if len(by_id) != len(assignments):
         raise ParallelDispatchError("assignment IDs must be unique")
@@ -536,6 +579,207 @@ class PostgresParallelDispatch:
                     available -= 1
         return tuple(reserved)
 
+    def reserve_provider_attempt(
+        self,
+        *,
+        reservation: ParallelReservation,
+        writer: TaskWriterLease,
+        attempt_ordinal: int,
+        format_roster: Sequence[tuple[str, str]],
+        idempotency_key_digest: str,
+        budget_evidence_digest: str,
+    ) -> ProviderAttemptReservation:
+        """Append one STARTED child event before I/O; never reuse an open attempt."""
+
+        format_id, transport_id = format_for_attempt(format_roster, attempt_ordinal)
+        _require_digest(idempotency_key_digest, "idempotency_key_digest")
+        _require_digest(budget_evidence_digest, "budget_evidence_digest")
+        attempt_digest = _digest(
+            {
+                "task_id": reservation.task_id,
+                "assignment_id": reservation.assignment_id,
+                "attempt_ordinal": attempt_ordinal,
+                "provider_id": reservation.provider_id,
+                "format_id": format_id,
+                "transport_id": transport_id,
+                "idempotency_key_digest": idempotency_key_digest,
+                "budget_evidence_digest": budget_evidence_digest,
+            }
+        )
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._writer(
+                    connection,
+                    task_id=reservation.task_id,
+                    owner_token=writer.owner_token,
+                    fencing_generation=writer.fencing_generation,
+                )
+                held = self._row(
+                    connection,
+                    f"""
+                    SELECT provider_id, status, attempt_digest
+                    FROM {schema}.director_primary_provider_attempt
+                    WHERE task_id = %(task_id)s
+                      AND assignment_id = %(assignment_id)s
+                    ORDER BY attempt_ordinal DESC, event_sequence DESC
+                    LIMIT 1 FOR UPDATE
+                    """,
+                    {
+                        "task_id": reservation.task_id,
+                        "assignment_id": reservation.assignment_id,
+                    },
+                )
+                if held is not None:
+                    if str(held["provider_id"]) != reservation.provider_id:
+                        raise ParallelDispatchError("provider attempt identity changed")
+                    if str(held["status"]) == "STARTED":
+                        raise ParallelDispatchError(
+                            "provider attempt reconciliation required before redispatch"
+                        )
+                    if str(held["status"]) == "AMBIGUOUS":
+                        raise ParallelDispatchError(
+                            "ambiguous provider attempt must reconcile before redispatch"
+                        )
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            f"""
+                            SELECT max(attempt_ordinal) AS ordinal
+                            FROM {schema}.director_primary_provider_attempt
+                            WHERE task_id = %(task_id)s
+                              AND assignment_id = %(assignment_id)s
+                            """,
+                            {
+                                "task_id": reservation.task_id,
+                                "assignment_id": reservation.assignment_id,
+                            },
+                        )
+                        maximum = int(cursor.fetchone()["ordinal"])
+                    if attempt_ordinal != maximum + 1:
+                        raise ParallelDispatchError("provider attempt ordinal is not next")
+                elif attempt_ordinal != 1:
+                    raise ParallelDispatchError("first provider attempt ordinal must be one")
+                row = self._row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_provider_attempt (
+                        task_id, assignment_id, attempt_ordinal, event_sequence,
+                        provider_id, format_id, transport_id,
+                        idempotency_key_digest, attempt_digest, status,
+                        reason_code, budget_evidence_digest
+                    ) VALUES (
+                        %(task_id)s, %(assignment_id)s, %(ordinal)s, 1,
+                        %(provider_id)s, %(format_id)s, %(transport_id)s,
+                        %(idempotency)s, %(attempt)s, 'STARTED',
+                        'provider_attempt_started', %(budget)s
+                    ) ON CONFLICT DO NOTHING RETURNING attempt_digest
+                    """,
+                    {
+                        "task_id": reservation.task_id,
+                        "assignment_id": reservation.assignment_id,
+                        "ordinal": attempt_ordinal,
+                        "provider_id": reservation.provider_id,
+                        "format_id": format_id,
+                        "transport_id": transport_id,
+                        "idempotency": idempotency_key_digest,
+                        "attempt": attempt_digest,
+                        "budget": budget_evidence_digest,
+                    },
+                )
+                if row is None:
+                    raise ParallelDispatchError("provider attempt identity already exists")
+        return ProviderAttemptReservation(
+            reservation.task_id,
+            reservation.assignment_id,
+            attempt_ordinal,
+            reservation.provider_id,
+            format_id,
+            transport_id,
+            idempotency_key_digest,
+            attempt_digest,
+            budget_evidence_digest,
+        )
+
+    def record_provider_attempt(
+        self,
+        *,
+        attempt: ProviderAttemptReservation,
+        writer: TaskWriterLease,
+        status: ParallelAssignmentStatus,
+        result_digest: str | None,
+        reason_code: str,
+    ) -> None:
+        """Append the immutable outcome for one exact child attempt."""
+
+        if status not in {
+            ParallelAssignmentStatus.SUCCEEDED,
+            ParallelAssignmentStatus.FAILED,
+            ParallelAssignmentStatus.AMBIGUOUS,
+        }:
+            raise ParallelDispatchError("provider attempt outcome is invalid")
+        if result_digest is not None:
+            _require_digest(result_digest, "result_digest")
+        if _CODE.fullmatch(reason_code) is None:
+            raise ParallelDispatchError("reason_code is invalid")
+        outcome_evidence_digest = _digest(
+            {
+                "attempt_digest": attempt.attempt_digest,
+                "task_id": attempt.task_id,
+                "assignment_id": attempt.assignment_id,
+                "attempt_ordinal": attempt.attempt_ordinal,
+                "provider_id": attempt.provider_id,
+                "format_id": attempt.format_id,
+                "transport_id": attempt.transport_id,
+                "idempotency_key_digest": attempt.idempotency_key_digest,
+                "budget_evidence_digest": attempt.budget_evidence_digest,
+                "status": status.value,
+                "result_digest": result_digest,
+                "reason_code": reason_code,
+            }
+        )
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._writer(
+                    connection,
+                    task_id=attempt.task_id,
+                    owner_token=writer.owner_token,
+                    fencing_generation=writer.fencing_generation,
+                )
+                row = self._row(
+                    connection,
+                    f"""
+                    INSERT INTO {self._schema}.director_primary_provider_attempt (
+                        task_id, assignment_id, attempt_ordinal, event_sequence,
+                        provider_id, format_id, transport_id,
+                        idempotency_key_digest, attempt_digest, status,
+                        result_digest, outcome_evidence_digest, reason_code,
+                        budget_evidence_digest
+                    ) VALUES (
+                        %(task_id)s, %(assignment_id)s, %(ordinal)s, 2,
+                        %(provider_id)s, %(format_id)s, %(transport_id)s,
+                        %(idempotency)s, %(attempt)s, %(status)s,
+                        %(result)s, %(outcome_evidence)s, %(reason)s, %(budget)s
+                    ) ON CONFLICT DO NOTHING RETURNING attempt_digest
+                    """,
+                    {
+                        "task_id": attempt.task_id,
+                        "assignment_id": attempt.assignment_id,
+                        "ordinal": attempt.attempt_ordinal,
+                        "provider_id": attempt.provider_id,
+                        "format_id": attempt.format_id,
+                        "transport_id": attempt.transport_id,
+                        "idempotency": attempt.idempotency_key_digest,
+                        "attempt": attempt.attempt_digest,
+                        "status": status.value,
+                        "result": result_digest,
+                        "outcome_evidence": outcome_evidence_digest,
+                        "reason": reason_code,
+                        "budget": attempt.budget_evidence_digest,
+                    },
+                )
+                if row is None:
+                    raise ParallelDispatchError("provider attempt outcome already recorded")
+
     def record_result(
         self,
         *,
@@ -619,6 +863,270 @@ class PostgresParallelDispatch:
                     },
                 )
 
+    def reservation_for_callback(
+        self,
+        *,
+        task_id: str,
+        assignment_id: str,
+        provider_id: str,
+        attempt_digest: str,
+        writer: TaskWriterLease,
+    ) -> ParallelReservation:
+        """Resolve an authenticated callback only to its exact ledger slot."""
+
+        _require_digest(attempt_digest, "attempt_digest")
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._writer(
+                    connection,
+                    task_id=task_id,
+                    owner_token=writer.owner_token,
+                    fencing_generation=writer.fencing_generation,
+                )
+                row = self._row(
+                    connection,
+                    f"""
+                    SELECT a.sequence, a.provider_id, a.deployment_id,
+                           a.reservation_digest, a.status
+                    FROM {self._schema}.director_primary_parallel_assignment a
+                    JOIN {self._schema}.director_primary_provider_attempt p
+                      ON p.task_id = a.task_id
+                     AND p.assignment_id = a.assignment_id
+                    WHERE a.task_id = %(task_id)s
+                      AND a.assignment_id = %(assignment_id)s
+                      AND p.attempt_digest = %(attempt_digest)s
+                    ORDER BY p.event_sequence DESC
+                    LIMIT 1 FOR UPDATE OF a
+                    """,
+                    {
+                        "task_id": task_id,
+                        "assignment_id": assignment_id,
+                        "attempt_digest": attempt_digest,
+                    },
+                )
+                if row is None:
+                    raise ParallelDispatchError("callback attempt binding is unknown")
+                if str(row["provider_id"]) != provider_id:
+                    raise ParallelDispatchError("callback provider binding changed")
+                if str(row["status"]) not in {"ACTIVE", "AMBIGUOUS"}:
+                    raise ParallelDispatchError("callback assignment is already settled")
+                reservation_digest = str(row["reservation_digest"] or "")
+                _require_digest(reservation_digest, "reservation_digest")
+                return ParallelReservation(
+                    task_id=task_id,
+                    assignment_id=assignment_id,
+                    sequence=int(row["sequence"]),
+                    provider_id=provider_id,
+                    deployment_id=str(row["deployment_id"]),
+                    reservation_digest=reservation_digest,
+                )
+
+    def record_callback_result(
+        self,
+        *,
+        task_id: str,
+        assignment_id: str,
+        provider_id: str,
+        attempt_digest: str,
+        provider_run_id_digest: str,
+        writer: TaskWriterLease,
+        status: ParallelAssignmentStatus,
+        result_digest: str | None,
+        reason_code: str,
+    ) -> ParallelReservation:
+        """Atomically append an exact run-bound callback and settle its slot."""
+
+        _require_digest(attempt_digest, "attempt_digest")
+        _require_digest(provider_run_id_digest, "provider_run_id_digest")
+        if status not in {
+            ParallelAssignmentStatus.SUCCEEDED,
+            ParallelAssignmentStatus.FAILED,
+            ParallelAssignmentStatus.AMBIGUOUS,
+        }:
+            raise ParallelDispatchError("callback outcome is invalid")
+        if status == ParallelAssignmentStatus.SUCCEEDED:
+            _require_digest(result_digest or "", "result_digest")
+        elif result_digest is not None:
+            _require_digest(result_digest, "result_digest")
+        if _CODE.fullmatch(reason_code) is None:
+            raise ParallelDispatchError("reason_code is invalid")
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._writer(
+                    connection,
+                    task_id=task_id,
+                    owner_token=writer.owner_token,
+                    fencing_generation=writer.fencing_generation,
+                )
+                row = self._row(
+                    connection,
+                    f"""
+                    SELECT a.sequence, a.provider_id, a.deployment_id,
+                           a.reservation_digest, a.status AS assignment_status,
+                           p.attempt_ordinal, p.format_id, p.transport_id,
+                           p.idempotency_key_digest, p.budget_evidence_digest
+                    FROM {self._schema}.director_primary_parallel_assignment a
+                    JOIN {self._schema}.director_primary_provider_attempt p
+                      ON p.task_id = a.task_id
+                     AND p.assignment_id = a.assignment_id
+                     AND p.event_sequence = 1
+                    WHERE a.task_id = %(task_id)s
+                      AND a.assignment_id = %(assignment_id)s
+                      AND p.attempt_digest = %(attempt_digest)s
+                    FOR UPDATE OF a
+                    """,
+                    {
+                        "task_id": task_id,
+                        "assignment_id": assignment_id,
+                        "attempt_digest": attempt_digest,
+                    },
+                )
+                if row is None:
+                    raise ParallelDispatchError("callback attempt binding is unknown")
+                if str(row["provider_id"]) != provider_id:
+                    raise ParallelDispatchError("callback provider binding changed")
+                existing = self._row(
+                    connection,
+                    f"""
+                    SELECT provider_run_id_digest, status, result_digest, reason_code
+                    FROM {self._schema}.director_primary_provider_attempt
+                    WHERE task_id = %(task_id)s
+                      AND assignment_id = %(assignment_id)s
+                      AND attempt_ordinal = %(attempt_ordinal)s
+                      AND event_sequence = 3
+                    """,
+                    {
+                        "task_id": task_id,
+                        "assignment_id": assignment_id,
+                        "attempt_ordinal": int(row["attempt_ordinal"]),
+                    },
+                )
+                if existing is not None:
+                    if not (
+                        hmac.compare_digest(
+                            str(existing["provider_run_id_digest"] or ""),
+                            provider_run_id_digest,
+                        )
+                        and str(existing["status"]) == status.value
+                        and (existing["result_digest"] or None) == result_digest
+                        and str(existing["reason_code"]) == reason_code
+                    ):
+                        raise ParallelDispatchError("callback run identity conflicts")
+                else:
+                    if str(row["assignment_status"]) not in {"ACTIVE", "AMBIGUOUS"}:
+                        raise ParallelDispatchError("callback assignment is already settled")
+                    outcome_evidence_digest = _digest(
+                        {
+                            "task_id": task_id,
+                            "assignment_id": assignment_id,
+                            "attempt_ordinal": int(row["attempt_ordinal"]),
+                            "provider_id": provider_id,
+                            "attempt_digest": attempt_digest,
+                            "provider_run_id_digest": provider_run_id_digest,
+                            "status": status.value,
+                            "result_digest": result_digest,
+                            "reason_code": reason_code,
+                        }
+                    )
+                    self._row(
+                        connection,
+                        f"""
+                        INSERT INTO {self._schema}.director_primary_provider_attempt (
+                            task_id, assignment_id, attempt_ordinal, event_sequence,
+                            provider_id, format_id, transport_id,
+                            idempotency_key_digest, attempt_digest,
+                            provider_run_id_digest, status, result_digest,
+                            outcome_evidence_digest, reason_code,
+                            budget_evidence_digest
+                        ) VALUES (
+                            %(task_id)s, %(assignment_id)s, %(attempt_ordinal)s, 3,
+                            %(provider_id)s, %(format_id)s, %(transport_id)s,
+                            %(idempotency)s, %(attempt_digest)s,
+                            %(provider_run_id_digest)s, %(status)s, %(result_digest)s,
+                            %(outcome_evidence_digest)s, %(reason_code)s,
+                            %(budget_evidence_digest)s
+                        ) RETURNING attempt_digest
+                        """,
+                        {
+                            "task_id": task_id,
+                            "assignment_id": assignment_id,
+                            "attempt_ordinal": int(row["attempt_ordinal"]),
+                            "provider_id": provider_id,
+                            "format_id": str(row["format_id"]),
+                            "transport_id": str(row["transport_id"]),
+                            "idempotency": str(row["idempotency_key_digest"]),
+                            "attempt_digest": attempt_digest,
+                            "provider_run_id_digest": provider_run_id_digest,
+                            "status": status.value,
+                            "result_digest": result_digest,
+                            "outcome_evidence_digest": outcome_evidence_digest,
+                            "reason_code": reason_code,
+                            "budget_evidence_digest": str(row["budget_evidence_digest"]),
+                        },
+                    )
+                    self._row(
+                        connection,
+                        f"""
+                        UPDATE {self._schema}.director_primary_parallel_assignment
+                        SET status = %(status)s, result_digest = %(result_digest)s,
+                            reason_code = %(reason_code)s,
+                            completed_at = CASE
+                                WHEN %(status)s IN ('SUCCEEDED', 'FAILED') THEN now()
+                                ELSE NULL END
+                        WHERE task_id = %(task_id)s
+                          AND assignment_id = %(assignment_id)s
+                        RETURNING assignment_id
+                        """,
+                        {
+                            "status": status.value,
+                            "result_digest": result_digest,
+                            "reason_code": reason_code,
+                            "task_id": task_id,
+                            "assignment_id": assignment_id,
+                        },
+                    )
+                reservation_digest = str(row["reservation_digest"] or "")
+                _require_digest(reservation_digest, "reservation_digest")
+                return ParallelReservation(
+                    task_id=task_id,
+                    assignment_id=assignment_id,
+                    sequence=int(row["sequence"]),
+                    provider_id=provider_id,
+                    deployment_id=str(row["deployment_id"]),
+                    reservation_digest=reservation_digest,
+                )
+
+    def reconcile_stranded_active(
+        self, *, task_id: str, writer: TaskWriterLease
+    ) -> int:
+        """Classify restart-visible ACTIVE rows as ambiguous without dispatch."""
+
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._writer(
+                    connection,
+                    task_id=task_id,
+                    owner_token=writer.owner_token,
+                    fencing_generation=writer.fencing_generation,
+                )
+                self._row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%(key)s, 0))",
+                    {"key": f"director-primary-parallel:{self._schema}:{task_id}"},
+                )
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"""
+                        UPDATE {self._schema}.director_primary_parallel_assignment
+                        SET status = 'AMBIGUOUS',
+                            reason_code = 'provider_outcome_unknown'
+                        WHERE task_id = %(task_id)s AND status = 'ACTIVE'
+                        RETURNING assignment_id
+                        """,
+                        {"task_id": task_id},
+                    )
+                    return len(cursor.fetchall())
+
     def execute_ready(
         self,
         *,
@@ -680,6 +1188,21 @@ class PostgresParallelDispatch:
                     {"task_id": task_id},
                 )
                 rows = list(cursor.fetchall())
+                cursor.execute(
+                    f"""
+                    SELECT assignment_id, attempt_ordinal, event_sequence,
+                           provider_id, format_id, transport_id,
+                           idempotency_key_digest, attempt_digest,
+                           provider_run_id_digest, status,
+                           result_digest, outcome_evidence_digest,
+                           reason_code, budget_evidence_digest
+                    FROM {self._schema}.director_primary_provider_attempt
+                    WHERE task_id = %(task_id)s
+                    ORDER BY assignment_id, attempt_ordinal, event_sequence
+                    """,
+                    {"task_id": task_id},
+                )
+                attempt_rows = [dict(row) for row in cursor.fetchall()]
         if not rows:
             raise ParallelDispatchError("parallel plan is unavailable")
         statuses = {str(row["assignment_id"]): str(row["status"]) for row in rows}
@@ -699,6 +1222,7 @@ class PostgresParallelDispatch:
                 "task_id": task_id,
                 "statuses": sorted(projected.items()),
                 "results": sorted(results.items()),
+                "attempt_events": attempt_rows,
             }
         )
         terminal = all(value in {"SUCCEEDED", "FAILED", "BLOCKED"} for value in projected.values())
@@ -715,3 +1239,7 @@ class PostgresParallelDispatch:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

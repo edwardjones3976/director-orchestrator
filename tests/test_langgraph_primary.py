@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
@@ -941,7 +942,7 @@ class PrimaryWorkflowTests(unittest.TestCase):
         self.assertEqual(replay.state_digest, completed.state_digest)
         self.assertEqual(counters.get("provider_subgraph"), 1)
         self.assertEqual(counters.get("exact_sha_review"), 1)
-        # One attempt, one fence: the restart never asked for a second one.
+        # Each claimed attempt has one fence: the restart never duplicated it.
         self.assertEqual(len(store.held_keys()), 1)
 
     def test_restart_after_durable_provider_reservation_never_redispatches(self):
@@ -2275,3 +2276,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]

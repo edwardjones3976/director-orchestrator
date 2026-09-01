@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -1582,11 +1583,11 @@ class TaskStore:
             return True
 
     @staticmethod
-    def _enforce_external_openai_direct_production_cap(
+    def _observe_external_openai_direct_production_share(
         connection: sqlite3.Connection,
         evidence: ExternalOpenAIProductionEvidence,
     ) -> None:
-        """Reject one candidate that would exceed its enforced rolling hard cap.
+        """Validate immutable share-accounting identity without blocking by share.
 
         The caller holds the same ``BEGIN IMMEDIATE`` transaction used to append
         the evidence and credit.  The accepted owner authorization supplies the
@@ -1644,14 +1645,7 @@ class TaskStore:
             for record in window
             if record.provider is DirectProductionProvider.EXTERNAL_OPENAI
         )
-        threshold = DEFAULT_POLICY.direct_production_hard_threshold(
-            DirectProductionProvider.EXTERNAL_OPENAI
-        )
-        if provider_units * 100 > threshold * total_units:
-            raise WorkloadReservationConflict(
-                "direct_production_hard_threshold_exceeded:"
-                f"external_openai:{threshold}"
-            )
+        _ = (provider_units, total_units)
 
     def record_external_openai_production_credit(
         self, evidence: ExternalOpenAIProductionEvidence
@@ -1818,7 +1812,7 @@ class TaskStore:
                 raise WorkloadReservationConflict(
                     "external OpenAI credit exists without matching replay evidence"
                 )
-            self._enforce_external_openai_direct_production_cap(
+            self._observe_external_openai_direct_production_share(
                 connection, evidence
             )
             recorded_at = datetime.now(timezone.utc).isoformat()
@@ -2622,7 +2616,7 @@ class TaskStore:
                     # projection agrees it clears the caps.
                     # Total effort controls only prospective usage. Project every
                     # pending sibling both ways so concurrent reservations cannot
-                    # cross a provider ceiling, while accepted-production credit
+                    # move beyond a provider's soft share band, while accepted-production credit
                     # remains exclusively in the separate direct ledger.
                     extra_violations: list[str] = []
                     extra_violations.extend(
@@ -3481,7 +3475,7 @@ class TaskStore:
                 raise ValueError("Persisted current assignment omits retry authority")
             if has_retry_limit:
                 retry_limit = assignment["retry_limit"]
-                if type(retry_limit) is not int or not 1 <= retry_limit <= 3:
+                if type(retry_limit) is not int or retry_limit != 3:
                     raise ValueError("Persisted assignment retry limit is not authoritative")
             else:
                 assignment["retry_limit"] = legacy_authority["total_route_attempt_limit"]
@@ -3815,3 +3809,5 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

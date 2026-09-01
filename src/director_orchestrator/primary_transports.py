@@ -1,4 +1,5 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | BEGIN]]
@@ -21,11 +22,13 @@ import tempfile
 import hashlib
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import httpx
+import jwt
 
 from .host_provider_bridge import (
     HostBridgeChallengeEvidence,
@@ -161,25 +164,27 @@ MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER = (
 )
 _WORK_IQ_ROOT = "https://workiq.svc.cloud.microsoft/rest"
 _WORK_IQ_SCOPE = "api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask"
+_WORK_IQ_AUDIENCE = "api://workiq.svc.cloud.microsoft"
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True, slots=True)
 class Microsoft365CopilotCapabilityEvidence:
-    """Non-secret receipt for a prompt-free Work IQ capability challenge."""
+    """Non-secret receipt produced from an authenticated Work IQ response."""
 
     conversation_id: str
     endpoint: str
     tenant_id: str
     issuer: str
+    audience: str
     delegated_scope: str
-    admin_consent_observed: bool
-    tenant_enabled_observed: bool
-    billing_entitlement_observed: bool
+    token_subject_digest: str
     challenge_id: str
+    response_request_id: str
+    response_digest: str
+    observed_at: int
     expires_at: int
-    receipt_digest: str
 
     def validate(self, *, now: int | None = None) -> None:
         if _UUID.fullmatch(self.conversation_id) is None:
@@ -190,26 +195,152 @@ class Microsoft365CopilotCapabilityEvidence:
             raise ValueError("Work IQ tenant id is invalid")
         if self.issuer != f"https://login.microsoftonline.com/{self.tenant_id}/v2.0":
             raise ValueError("Work IQ delegated issuer is not bound to tenant")
+        if self.audience != _WORK_IQ_AUDIENCE:
+            raise ValueError("Work IQ delegated audience is not exact")
         if self.delegated_scope != _WORK_IQ_SCOPE:
             raise ValueError("Work IQ delegated scope is not exact")
-        if not all((self.admin_consent_observed, self.tenant_enabled_observed, self.billing_entitlement_observed)):
-            raise ValueError("Work IQ capability evidence is incomplete")
-        if not self.challenge_id or self.expires_at <= (int(time.time()) if now is None else now):
+        if _SHA256.fullmatch(self.token_subject_digest) is None:
+            raise ValueError("Work IQ token subject binding is invalid")
+        if not self.challenge_id or not self.response_request_id:
+            raise ValueError("Work IQ authenticated response provenance is absent")
+        if _SHA256.fullmatch(self.response_digest) is None:
+            raise ValueError("Work IQ authenticated response digest is invalid")
+        current = int(time.time()) if now is None else now
+        if self.observed_at > current or self.expires_at <= current:
             raise ValueError("Work IQ capability challenge is absent or expired")
-        bound = {
-            "endpoint": self.endpoint, "tenant_id": self.tenant_id,
-            "issuer": self.issuer, "delegated_scope": self.delegated_scope,
-            "conversation_id": self.conversation_id, "challenge_id": self.challenge_id,
-            "admin_consent_observed": self.admin_consent_observed,
-            "tenant_enabled_observed": self.tenant_enabled_observed,
-            "billing_entitlement_observed": self.billing_entitlement_observed,
-            "expires_at": self.expires_at,
-        }
-        expected = "sha256:" + hashlib.sha256(
-            json.dumps(bound, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        if _SHA256.fullmatch(self.receipt_digest) is None or self.receipt_digest != expected:
-            raise ValueError("Work IQ capability receipt digest is invalid")
+
+
+class MicrosoftOIDCDelegatedTokenVerifier:
+    """Verify a tenant-bound delegated token against cached Microsoft OIDC keys."""
+
+    def __init__(self, *, client_factory: Any | None = None, cache_seconds: int = 3600) -> None:
+        self._client_factory = client_factory or httpx.Client
+        self._cache_seconds = min(max(int(cache_seconds), 60), 3600)
+        self._cache: dict[str, tuple[int, Mapping[str, Any]]] = {}
+
+    def verify(
+        self, access_token: str, *, tenant_id: str, now: int | None = None
+    ) -> Mapping[str, Any]:
+        current = int(time.time()) if now is None else int(now)
+        if _UUID.fullmatch(tenant_id) is None:
+            raise ValueError("Work IQ tenant id is invalid")
+        issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
+        metadata_url = f"{issuer}/.well-known/openid-configuration"
+        cached = self._cache.get(tenant_id)
+        if cached is None or cached[0] <= current:
+            with self._client_factory(timeout=15, follow_redirects=False) as client:
+                metadata_response = client.get(metadata_url)
+                metadata_response.raise_for_status()
+                metadata = metadata_response.json()
+                expected_jwks = (
+                    f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
+                )
+                if not isinstance(metadata, dict) or metadata.get("issuer") != issuer:
+                    raise ValueError("Microsoft OIDC issuer metadata is not tenant-bound")
+                if metadata.get("jwks_uri") != expected_jwks:
+                    raise ValueError("Microsoft OIDC JWKS URI is not tenant-bound")
+                jwks_response = client.get(expected_jwks)
+                jwks_response.raise_for_status()
+                jwks = jwks_response.json()
+            if not isinstance(jwks, dict) or not isinstance(jwks.get("keys"), list):
+                raise ValueError("Microsoft OIDC JWKS document is invalid")
+            cached = (current + self._cache_seconds, jwks)
+            self._cache[tenant_id] = cached
+        header = jwt.get_unverified_header(access_token)
+        if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str):
+            raise ValueError("Work IQ delegated token header is invalid")
+        matches = [key for key in cached[1]["keys"] if key.get("kid") == header["kid"]]
+        if len(matches) != 1:
+            raise ValueError("Work IQ delegated token signing key is unavailable")
+        signing_key = jwt.PyJWK.from_dict(matches[0], algorithm="RS256").key
+        claims = jwt.decode(
+            access_token,
+            signing_key,
+            algorithms=["RS256"],
+            audience=_WORK_IQ_AUDIENCE,
+            issuer=issuer,
+            options={"require": ["iss", "aud", "exp", "nbf", "tid", "sub", "scp"]},
+        )
+        if claims.get("tid") != tenant_id:
+            raise ValueError("Work IQ delegated token tenant is not exact")
+        if claims.get("aud") != _WORK_IQ_AUDIENCE:
+            raise ValueError("Work IQ delegated token audience is not exact")
+        if str(claims.get("scp", "")) != _WORK_IQ_SCOPE:
+            raise ValueError("Work IQ delegated token lacks exact delegated scope")
+        if int(claims["nbf"]) > current or int(claims["exp"]) <= current:
+            raise ValueError("Work IQ delegated token is not currently valid")
+        return claims
+
+
+class Microsoft365CopilotReadinessVerifier:
+    """Produce readiness only from a signed token and prompt-free Work IQ call."""
+
+    def __init__(
+        self,
+        *,
+        token_verifier: MicrosoftOIDCDelegatedTokenVerifier | None = None,
+        client_factory: Any | None = None,
+        challenge_factory: Any | None = None,
+    ) -> None:
+        self._token_verifier = token_verifier or MicrosoftOIDCDelegatedTokenVerifier()
+        self._client_factory = client_factory or httpx.Client
+        self._challenge_factory = challenge_factory or (lambda: str(uuid.uuid4()))
+
+    def verify(
+        self, access_token: str, *, tenant_id: str, now: int | None = None
+    ) -> Microsoft365CopilotCapabilityEvidence:
+        current = int(time.time()) if now is None else int(now)
+        claims = self._token_verifier.verify(
+            access_token, tenant_id=tenant_id, now=current
+        )
+        endpoint = f"{_WORK_IQ_ROOT}/conversations"
+        challenge_id = str(self._challenge_factory())
+        if _UUID.fullmatch(challenge_id) is None:
+            raise ValueError("Work IQ capability challenge id is invalid")
+        with self._client_factory(timeout=30, follow_redirects=False) as client:
+            response = client.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "client-request-id": challenge_id,
+                    "return-client-request-id": "true",
+                },
+                json={},
+            )
+            response.raise_for_status()
+            if len(response.content) > 65_536:
+                raise ValueError("Work IQ capability response exceeds its safe bound")
+            body = response.json()
+        conversation_id = body.get("id") if isinstance(body, dict) else None
+        request_id = response.headers.get("request-id") or response.headers.get("x-ms-request-id")
+        echoed_challenge = response.headers.get("client-request-id")
+        if response.status_code != 201:
+            raise ValueError("Work IQ capability response is not 201 Created")
+        if not isinstance(conversation_id, str) or _UUID.fullmatch(conversation_id) is None:
+            raise ValueError("Work IQ capability response lacks a conversation id")
+        if body.get("status") != "active" or body.get("turnCount") != 0:
+            raise ValueError("Work IQ capability response is not prompt-free and active")
+        if not request_id or echoed_challenge != challenge_id:
+            raise ValueError("Work IQ capability response lacks Microsoft provenance")
+        subject = f"{tenant_id}:{claims['sub']}".encode("utf-8")
+        evidence = Microsoft365CopilotCapabilityEvidence(
+            conversation_id=conversation_id,
+            endpoint=_WORK_IQ_ROOT,
+            tenant_id=tenant_id,
+            issuer=str(claims["iss"]),
+            audience=str(claims["aud"]),
+            delegated_scope=_WORK_IQ_SCOPE,
+            token_subject_digest="sha256:" + hashlib.sha256(subject).hexdigest(),
+            challenge_id=str(challenge_id),
+            response_request_id=str(request_id),
+            response_digest="sha256:" + hashlib.sha256(response.content).hexdigest(),
+            observed_at=current,
+            expires_at=min(int(claims["exp"]), current + 300),
+        )
+        evidence.validate(now=current)
+        return evidence
 
 
 class Microsoft365CopilotWorkIQTransport:
@@ -830,7 +961,8 @@ def discover_local_primary_command_transports(
     host_bridge_writer_owner_token_digest: str = "",
     host_bridge_challenge: HostBridgeChallengeEvidence | None = None,
     microsoft_365_copilot_access_token: str = "",
-    microsoft_365_copilot_evidence: Microsoft365CopilotCapabilityEvidence | None = None,
+    microsoft_365_copilot_tenant_id: str = "",
+    microsoft_365_copilot_readiness_verifier: Microsoft365CopilotReadinessVerifier | None = None,
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
     """Discover documented noninteractive CLIs; never launch or authenticate them."""
 
@@ -932,10 +1064,23 @@ def discover_local_primary_command_transports(
                 executable_observed=True,
                 authenticated_observed=True,
             )
-    if microsoft_365_copilot_access_token and microsoft_365_copilot_evidence is not None:
-        microsoft_365_copilot_evidence.validate()
+    work_iq_evidence = None
+    if microsoft_365_copilot_access_token and microsoft_365_copilot_tenant_id:
+        verifier = (
+            microsoft_365_copilot_readiness_verifier
+            or Microsoft365CopilotReadinessVerifier()
+        )
+        try:
+            work_iq_evidence = verifier.verify(
+                microsoft_365_copilot_access_token,
+                tenant_id=microsoft_365_copilot_tenant_id,
+            )
+            work_iq_evidence.validate()
+        except (ValueError, httpx.HTTPError, jwt.PyJWTError):
+            work_iq_evidence = None
+    if work_iq_evidence is not None:
         transports["microsoft-365-copilot"] = Microsoft365CopilotWorkIQTransport(
-            microsoft_365_copilot_access_token, microsoft_365_copilot_evidence
+            microsoft_365_copilot_access_token, work_iq_evidence
         )
         capabilities["microsoft-365-copilot"] = PrimaryProviderCapability(
             provider_id="microsoft-365-copilot", backend_identity="microsoft-365-copilot",
@@ -951,8 +1096,9 @@ def discover_local_primary_command_transports(
                 code=MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER,
                 requirement=(
                     "Prove the production Work IQ endpoint, delegated WorkIQAgent.Ask "
-                    "scope and admin consent, tenant enablement, current license, and "
-                    "a prompt-free conversation capability receipt."
+                    "scope and admin consent with a tenant-bound signed token, plus "
+                    "tenant enablement and current license/billing through an "
+                    "authenticated prompt-free Work IQ conversation response."
                 ),
             ),
         )
@@ -1031,4 +1177,5 @@ def provider_lane_external_blockers(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

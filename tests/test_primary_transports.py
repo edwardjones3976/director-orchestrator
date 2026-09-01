@@ -1,4 +1,5 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
@@ -11,10 +12,13 @@ import os
 import sys
 import time
 import unittest
+import jwt
+import httpx
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.host_provider_bridge import (
@@ -25,7 +29,9 @@ from director_orchestrator.primary_default import build_automatic_primary_live_d
 from director_orchestrator.primary_transports import (
     BoundedJsonCommandTransport,
     Microsoft365CopilotCapabilityEvidence,
+    Microsoft365CopilotReadinessVerifier,
     Microsoft365CopilotWorkIQTransport,
+    MicrosoftOIDCDelegatedTokenVerifier,
     NativeCommandPacketTransport,
     OpenAIResponsesPacketTransport,
     PRIMARY_PROVIDER_LANES,
@@ -46,24 +52,36 @@ class _Transport:
 
 
 def work_iq_evidence(**overrides):
+    current = int(time.time())
     values = {
         "conversation_id": "0d110e7e-2b7e-4270-a899-fd2af6fde333",
         "endpoint": "https://workiq.svc.cloud.microsoft/rest",
         "tenant_id": "11111111-1111-4111-8111-111111111111",
         "issuer": "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111/v2.0",
+        "audience": "api://workiq.svc.cloud.microsoft",
         "delegated_scope": "api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask",
-        "admin_consent_observed": True,
-        "tenant_enabled_observed": True,
-        "billing_entitlement_observed": True,
+        "token_subject_digest": "sha256:" + "a" * 64,
         "challenge_id": "challenge-1",
-        "expires_at": int(time.time()) + 3600,
+        "response_request_id": "request-1",
+        "response_digest": "sha256:" + "b" * 64,
+        "observed_at": current,
+        "expires_at": current + 300,
     }
     values.update(overrides)
-    bound = dict(values)
-    values["receipt_digest"] = "sha256:" + hashlib.sha256(
-        json.dumps(bound, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
     return Microsoft365CopilotCapabilityEvidence(**values)
+
+
+class _FakeReadinessVerifier:
+    def __init__(self, evidence=None, error=None):
+        self.evidence = evidence
+        self.error = error
+        self.calls = []
+
+    def verify(self, token, *, tenant_id, now=None):
+        self.calls.append((token, tenant_id, now))
+        if self.error is not None:
+            raise self.error
+        return self.evidence
 
 
 def capabilities(*, unavailable: str | None = None):
@@ -550,6 +568,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 
     def test_microsoft_365_copilot_requires_exact_work_iq_capability_evidence(self):
         evidence = work_iq_evidence()
+        verifier = _FakeReadinessVerifier(evidence)
         with TemporaryDirectory() as directory, patch(
             "director_orchestrator.primary_transports._which", return_value=None
         ):
@@ -557,7 +576,8 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 cwd=directory,
                 authenticated={},
                 microsoft_365_copilot_access_token="delegated-token",
-                microsoft_365_copilot_evidence=evidence,
+                microsoft_365_copilot_tenant_id=evidence.tenant_id,
+                microsoft_365_copilot_readiness_verifier=verifier,
             )
         self.assertIsInstance(
             transports["microsoft-365-copilot"], Microsoft365CopilotWorkIQTransport
@@ -567,17 +587,184 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             "work-iq-rest-production",
             observed["microsoft-365-copilot"].transport_kind,
         )
+        self.assertEqual(
+            [("delegated-token", evidence.tenant_id, None)], verifier.calls
+        )
 
-        incomplete = work_iq_evidence(admin_consent_observed=False)
-        with TemporaryDirectory() as directory, self.assertRaisesRegex(
-            ValueError, "capability evidence is incomplete"
-        ):
-            discover_local_primary_command_transports(
+        invalid = _FakeReadinessVerifier(error=ValueError("invalid token"))
+        with TemporaryDirectory() as directory:
+            failed_transports, failed_observed = discover_local_primary_command_transports(
                 cwd=directory,
                 authenticated={},
                 microsoft_365_copilot_access_token="delegated-token",
-                microsoft_365_copilot_evidence=incomplete,
+                microsoft_365_copilot_tenant_id=evidence.tenant_id,
+                microsoft_365_copilot_readiness_verifier=invalid,
             )
+        self.assertNotIn("microsoft-365-copilot", failed_transports)
+        self.assertFalse(failed_observed["microsoft-365-copilot"].callable)
+
+    def test_microsoft_oidc_verifier_checks_signature_tenant_audience_scope_and_cache(self):
+        tenant = "11111111-1111-4111-8111-111111111111"
+        issuer = f"https://login.microsoftonline.com/{tenant}/v2.0"
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key()))
+        jwk.update({"kid": "key-1", "use": "sig", "alg": "RS256"})
+        now = int(time.time())
+        claims = {
+            "iss": issuer,
+            "aud": "api://workiq.svc.cloud.microsoft",
+            "exp": now + 600,
+            "nbf": now - 1,
+            "tid": tenant,
+            "sub": "user-1",
+            "scp": "api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask",
+        }
+        token = jwt.encode(claims, key, algorithm="RS256", headers={"kid": "key-1"})
+        metadata = Mock()
+        metadata.json.return_value = {
+            "issuer": issuer,
+            "jwks_uri": f"https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys",
+        }
+        keys = Mock()
+        keys.json.return_value = {"keys": [jwk]}
+        client = Mock()
+        client.get.side_effect = [metadata, keys]
+        factory = MagicMock()
+        factory.return_value.__enter__.return_value = client
+        verifier = MicrosoftOIDCDelegatedTokenVerifier(client_factory=factory)
+
+        self.assertEqual("user-1", verifier.verify(token, tenant_id=tenant)["sub"])
+        self.assertEqual("user-1", verifier.verify(token, tenant_id=tenant)["sub"])
+        self.assertEqual(2, client.get.call_count)
+
+        wrong_scope = jwt.encode(
+            {**claims, "scp": claims["scp"] + " User.Read"},
+            key,
+            algorithm="RS256",
+            headers={"kid": "key-1"},
+        )
+        with self.assertRaisesRegex(ValueError, "lacks exact delegated scope"):
+            verifier.verify(wrong_scope, tenant_id=tenant)
+
+        wrong_audience = jwt.encode(
+            {**claims, "aud": "api://other"},
+            key,
+            algorithm="RS256",
+            headers={"kid": "key-1"},
+        )
+        with self.assertRaises(jwt.InvalidAudienceError):
+            verifier.verify(wrong_audience, tenant_id=tenant)
+
+        wrong_tenant = jwt.encode(
+            {**claims, "tid": "22222222-2222-4222-8222-222222222222"},
+            key,
+            algorithm="RS256",
+            headers={"kid": "key-1"},
+        )
+        with self.assertRaisesRegex(ValueError, "tenant is not exact"):
+            verifier.verify(wrong_tenant, tenant_id=tenant)
+
+        not_yet_valid = jwt.encode(
+            {**claims, "nbf": now + 600},
+            key,
+            algorithm="RS256",
+            headers={"kid": "key-1"},
+        )
+        with self.assertRaises(jwt.ImmatureSignatureError):
+            verifier.verify(not_yet_valid, tenant_id=tenant)
+
+        attacker = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        forged = jwt.encode(
+            claims, attacker, algorithm="RS256", headers={"kid": "key-1"}
+        )
+        with self.assertRaises(jwt.InvalidSignatureError):
+            verifier.verify(forged, tenant_id=tenant)
+
+    def test_work_iq_readiness_is_bound_to_authenticated_prompt_free_response(self):
+        evidence = work_iq_evidence()
+        token_verifier = Mock()
+        token_verifier.verify.return_value = {
+            "iss": evidence.issuer,
+            "aud": evidence.audience,
+            "exp": int(time.time()) + 600,
+            "nbf": int(time.time()) - 1,
+            "tid": evidence.tenant_id,
+            "sub": "user-1",
+            "scp": evidence.delegated_scope,
+        }
+        response = Mock()
+        response.status_code = 201
+        response.content = json.dumps(
+            {"id": evidence.conversation_id, "status": "active", "turnCount": 0}
+        ).encode()
+        response.json.return_value = {
+            "id": evidence.conversation_id,
+            "status": "active",
+            "turnCount": 0,
+        }
+        response.headers = {
+            "request-id": "server-request-1",
+            "client-request-id": "22222222-2222-4222-8222-222222222222",
+        }
+        client = Mock()
+        client.post.return_value = response
+        factory = MagicMock()
+        factory.return_value.__enter__.return_value = client
+        verifier = Microsoft365CopilotReadinessVerifier(
+            token_verifier=token_verifier,
+            client_factory=factory,
+            challenge_factory=lambda: "22222222-2222-4222-8222-222222222222",
+        )
+
+        observed = verifier.verify(
+            "signed-token", tenant_id=evidence.tenant_id
+        )
+
+        client.post.assert_called_once_with(
+            "https://workiq.svc.cloud.microsoft/rest/conversations",
+            headers={
+                "Authorization": "Bearer signed-token",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "client-request-id": "22222222-2222-4222-8222-222222222222",
+                "return-client-request-id": "true",
+            },
+            json={},
+        )
+        self.assertEqual("server-request-1", observed.response_request_id)
+        self.assertEqual(evidence.conversation_id, observed.conversation_id)
+
+    def test_work_iq_readiness_rejects_unproven_entitlement_response(self):
+        evidence = work_iq_evidence()
+        token_verifier = Mock()
+        token_verifier.verify.return_value = {
+            "iss": evidence.issuer,
+            "aud": evidence.audience,
+            "exp": int(time.time()) + 600,
+            "nbf": int(time.time()) - 1,
+            "tid": evidence.tenant_id,
+            "sub": "user-1",
+            "scp": evidence.delegated_scope,
+        }
+        response = Mock()
+        response.content = b'{"error":"license required"}'
+        response.status_code = 403
+        response.json.return_value = {"error": "license required"}
+        response.headers = {}
+        response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "forbidden", request=Mock(), response=Mock()
+        )
+        client = Mock()
+        client.post.return_value = response
+        factory = MagicMock()
+        factory.return_value.__enter__.return_value = client
+        verifier = Microsoft365CopilotReadinessVerifier(
+            token_verifier=token_verifier,
+            client_factory=factory,
+            challenge_factory=lambda: "22222222-2222-4222-8222-222222222222",
+        )
+        with self.assertRaises(httpx.HTTPStatusError):
+            verifier.verify("signed-token", tenant_id=evidence.tenant_id)
 
     def test_microsoft_365_copilot_uses_one_exact_production_work_iq_turn(self):
         evidence = work_iq_evidence()
@@ -634,4 +821,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

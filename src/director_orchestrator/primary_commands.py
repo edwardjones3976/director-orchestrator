@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | BEGIN]]
@@ -64,6 +65,7 @@ class PrimaryCommandOperation(StrEnum):
     APPROVAL_RESUME = "approval_resume"
     PROVIDER_RESULT = "provider_result"
     EFFECT_RECONCILIATION = "effect_reconciliation"
+    COMPLETION_EVIDENCE = "completion_evidence"
     CANCELLATION = "cancellation"
     RECOVERY = "recovery"
 
@@ -246,6 +248,41 @@ class EffectReconciliationRequest(_BoundCommandRequest):
         )
 
 
+class CompletionEvidenceRequest(_BoundCommandRequest):
+    """Authenticated immutable CI/security evidence for one exact candidate."""
+
+    schema_version: Literal["langgraph-primary-completion-evidence/v1"] = (
+        "langgraph-primary-completion-evidence/v1"
+    )
+    evidence_actor_id: str = Field(pattern=_ACTOR_ID_PATTERN)
+    candidate_sha: str = Field(pattern=_SHA_PATTERN)
+    provider_result_digest: str = Field(pattern=_DIGEST_PATTERN)
+    ledger: dict[str, Any]
+    results: tuple[dict[str, Any], ...] = Field(min_length=1, max_length=64)
+    ci_gate_id: str = Field(min_length=1, max_length=255)
+    security_gate_id: str = Field(min_length=1, max_length=255)
+    evidence_proof: PrimaryIngressProof | None = None
+
+    def to_evidence(self):
+        # Deferred imports keep the command-envelope module independent of the
+        # gate execution implementation. The immutable store revalidates every
+        # digest and candidate/result binding before accepting this bundle.
+        from .completion_gates import VerifiedGateLedger, VerifiedGateResult
+        from .primary_completion import CompletionEvidence
+
+        ledger_digest = str(self.ledger.get("ledger_digest", ""))
+        verified_results = tuple(
+            VerifiedGateResult(document=dict(item), digest=str(item.get("result_digest", "")))
+            for item in self.results
+        )
+        return CompletionEvidence(
+            ledger=VerifiedGateLedger(document=dict(self.ledger), digest=ledger_digest),
+            results=verified_results,
+            ci_gate_id=self.ci_gate_id,
+            security_gate_id=self.security_gate_id,
+        )
+
+
 class CancellationRequest(_BoundCommandRequest):
     schema_version: Literal["langgraph-primary-cancellation/v1"] = (
         "langgraph-primary-cancellation/v1"
@@ -253,6 +290,7 @@ class CancellationRequest(_BoundCommandRequest):
     reason_code: str = Field(
         default="owner_cancelled", pattern=r"^[a-z0-9][a-z0-9_.:-]{0,127}$"
     )
+    gateway_proof: PrimaryIngressProof | None = None
 
     def to_task_id(self) -> str:
         return self.task_id
@@ -274,6 +312,7 @@ class RecoveryRequest(_BoundCommandRequest):
     reason_code: str = Field(
         default="operator_recovery", pattern=r"^[a-z0-9][a-z0-9_.:-]{0,127}$"
     )
+    gateway_proof: PrimaryIngressProof | None = None
 
     def to_task_id(self) -> str:
         return self.task_id
@@ -503,3 +542,4 @@ def verify_primary_ingress_proof(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]

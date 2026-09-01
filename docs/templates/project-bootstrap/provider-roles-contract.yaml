@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]]
@@ -69,22 +70,8 @@ allocation_and_selection:
     grok: [8, 14]
     openai: [5, 11]
     perplexity: [1, 7]
-  total_effort_hard_ceilings_percent:
-    claude: 41
-    cursor: 33
-    gemini_antigravity: 25
-    grok: 16
-    openai: 13
-    perplexity: 9
-  total_effort_status: "prospective_routing_and_hard_ceiling_guard"
+  total_effort_status: "prospective_soft_routing_preference"
   normal_tolerance_percentage_points: 3
-  hard_thresholds_percent:
-    external_openai_codex: 30
-    claude: 30
-    cursor: 25
-    gemini_antigravity: 20
-    grok: 16
-    perplexity: 9
   selection_policy: "cheap_capable_model_first"
   selection_order:
     - "exact scope, allowlists, transport, and readiness"
@@ -326,7 +313,6 @@ supplemental_reviewers:
     provider_or_committee_member: false
     workload_percentage: null
     effort_band_percent: [0, 4]
-    effort_hard_ceiling_percent: 6
     accounting_status: "unscored_reporting_only_no_production_credit"
     provider_adapter: "none"
     automatic_routing: false
@@ -366,3 +352,4 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:10 UTC | END]]

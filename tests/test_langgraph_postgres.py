@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
@@ -2028,9 +2030,12 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
             "director_primary_task_projection",
             "director_primary_task_writer",
             "director_primary_work_packet_artifact",
+            "director_primary_provider_attempt",
             "director_primary_claim",
             "director_primary_budget",
             "director_primary_effect_reservation",
+            "director_primary_effect_approval_binding",
+            "director_primary_typed_effect_intent",
             "director_primary_remote_binding",
             "director_primary_reconciliation_event",
             "director_primary_terminal_evidence",
@@ -2251,7 +2256,7 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
                 INSERT INTO {self.schema}.director_primary_parallel_assignment
                     (task_id, assignment_id, sequence, provider_id, deployment_id,
                      dependencies, write_surfaces, retry_limit, status)
-                VALUES (%s, 'assignment-q', 1, 'claude', 'deployment-q', '[]', '[]', 1, 'ACTIVE')
+                VALUES (%s, 'assignment-q', 1, 'claude', 'deployment-q', '[]', '[]', 3, 'ACTIVE')
                 """,
                 (task,),
             )
@@ -2351,6 +2356,45 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         self.assertEqual(
             self.handle.database_instance_id, restarted.database_instance_id
         )
+
+    def test_signed_primary_command_nonce_is_durable_and_cannot_be_rebound(self):
+        task_id = self.task_id
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"""INSERT INTO {self.schema}.director_primary_task_projection
+                    (task_id, engine_owner, input_digest,
+                     intake_fencing_generation, projection_digest, projection)
+                    VALUES (%s, 'langgraph', %s, 1, %s, '{{}}'::jsonb)""",
+                (task_id, DIGEST_A, DIGEST_B),
+            )
+            connection.execute(
+                f"""INSERT INTO {self.schema}.director_primary_task_writer
+                    (task_id, engine_owner, owner_token, fencing_generation,
+                     lease_expires_at)
+                    VALUES (%s, 'langgraph', 'owner-command', 1,
+                            now() + interval '5 minutes')""",
+                (task_id,),
+            )
+        arguments = {
+            "task_id": task_id,
+            "operation": "cancellation",
+            "command_id": "cancel-1",
+            "command_digest": DIGEST_C,
+            "nonce_digest": DIGEST_D,
+            "proof_version": "v1",
+            "actor_id": "owner-1",
+            "fencing_generation": 1,
+            "proof_expires_at": int(datetime.now(timezone.utc).timestamp()) + 300,
+        }
+        self.assertFalse(self.store.claim_primary_command_authorization(**arguments))
+        restarted = self.second_store()
+        self.assertTrue(restarted.claim_primary_command_authorization(**arguments))
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "conflicts with durable authority"
+        ):
+            restarted.claim_primary_command_authorization(
+                **{**arguments, "command_digest": DIGEST_A}
+            )
 
     def test_work_packet_artifact_survives_restart_and_rejects_mutation(self):
         import psycopg
@@ -3335,3 +3379,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | END]]

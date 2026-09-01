@@ -1,3 +1,7 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:31 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]] -->
@@ -137,6 +141,15 @@ mutation, merge/deployment action) requires:
    original intent bindings.
 7. **Reconciliation for ambiguity** — timeout, process loss, or conflicting callback
    moves to `RECONCILIATION_REQUIRED`; no blind resend.
+
+The primary effect executor adds an append-only execution marker between intent
+reservation and the mutating call. Exactly one current writer can create that
+marker. A restart that sees the marker but no remote binding records ambiguity
+and never calls the mutation again; a restart with a binding performs bounded
+readback only. The mutating and readback transports are explicit injected
+dependencies with fixed timeouts. Live startup fails closed when either is
+missing, and `/health.langgraph_primary.effect_executor_ready` must be true for
+`primary_runtime_active` to become true.
 
 Ambiguous effects never receive a second unreserved attempt. Owner or authenticated
 readback must settle reconciliation before progression.
@@ -357,11 +370,17 @@ limited to one synchronous, text-only research/review turn with web grounding
 disabled and no external-effect authority.
 
 The lane reports
-`microsoft_365_copilot_work_iq_capability_evidence_missing` until preflight proves
-the exact production endpoint, delegated scope and admin consent, tenant
-enablement, current Microsoft 365 Copilot licensing/billing, and a prompt-free
-conversation capability receipt. Configuration or a consumer-app installation
-alone is not evidence. Beta endpoint paths are never accepted.
+`microsoft_365_copilot_work_iq_capability_evidence_missing` until Director
+cryptographically verifies the delegated JWT against the configured tenant's
+Microsoft OIDC discovery document and cached JWKS. The token must have the exact
+tenant, issuer, Work IQ audience and `WorkIQAgent.Ask` scope, and must be within
+its signed `nbf`/`exp` window. Director then creates a prompt-free production
+Work IQ conversation. Only the successful authenticated response, bound to its
+Microsoft request ID, body digest, conversation ID, signed token subject, and a
+five-minute-or-shorter expiry, proves tenant enablement and the current Copilot
+license/billing entitlement. Environment booleans, self-computed digests,
+configuration, or a consumer-app installation are not evidence. The preflight
+sends no model prompt and beta endpoint paths are never accepted.
 
 Official contract references:
 
@@ -443,8 +462,51 @@ container names, private-network IPs, mixed remote `hostaddr` values, and every
 other non-loopback target fail closed. Managed or remote production PostgreSQL
 must use `verify-ca` or `verify-full` with an explicit CA root; the local Compose
 exception is not production TLS evidence.
+
+## Default parallel assignment lifecycle
+
+The Default primary application registers the complete validated assignment DAG
+in the Postgres parallel ledger before an execution approval can cross the
+provider boundary. After approval, the historical single-assignment graph edge
+is an interrupt only: it never owns provider transport. The parallel ledger is
+the sole dispatch owner and commits each assignment reservation before invoking
+its exact packet adapter.
+
+Each wave concurrently consumes every dependency-ready assignment allowed by
+the configured task, provider, deployment, and write-surface caps. A dependent
+packet is built only after all named upstream result packets are durably accepted.
+Provider exceptions are ambiguous and are never resent. Restart recovery may
+consume still-pending rows but does not redispatch a reserved or settled row.
+The graph task is successful only when the deterministic aggregate proves every
+assignment succeeded; a pending, active, ambiguous, failed, or dependency-blocked
+member cannot be reported as successful completion.
+
+## Authenticated recovery and completion ingress
+
+The periodic recovery worker heartbeats only task-writer leases touched by its
+current process. A live database-clock lease proves normal `DISPATCHING` or
+`EXECUTING` work is still owned and is never recovered by the sweep. Only a
+nonterminal task with an absent or expired lease may be taken over through the
+next fencing generation and reconciled; terminal tasks are ignored.
+
+Cancel and recover commands require a fresh Slack-channel HMAC proof bound to
+the exact route, task, command body, projection digest, writer generation,
+actor, timestamp, and nonce. The nonce and command identity are claimed in an
+append-only Postgres row under that live writer fence before state changes. An
+exact redelivery is idempotent; nonce or command rebinding is rejected.
+
+Completion evidence enters through the signed adapter-callback route only when
+the transport actor equals the evidence actor. The route binds the exact task,
+candidate SHA, provider-result digest, projection, and writer generation, then
+uses the immutable writer-fenced completion store. Evidence without a valid
+signature, exact gate/result digests, current writer lease, or exact replay
+identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:31 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]] -->

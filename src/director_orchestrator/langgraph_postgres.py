@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:41 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
@@ -435,13 +440,18 @@ _APPEND_ONLY_TABLES = (
     "director_primary_intake_auth_claim",
     "director_primary_intake_dedup",
     "director_primary_command_receipt",
+    "director_primary_command_authorization",
     "director_provider_activation_evidence",
     "director_provider_activation_authorization",
     "director_primary_work_packet_artifact",
     "director_primary_result_packet_artifact",
+    "director_primary_provider_attempt",
     "director_primary_completion_evidence",
     "director_primary_claim",
     "director_primary_effect_reservation",
+    "director_primary_typed_effect_intent",
+    "director_primary_effect_approval_binding",
+    "director_primary_effect_execution",
     "director_primary_remote_binding",
     "director_primary_reconciliation_event",
     "director_primary_terminal_evidence",
@@ -631,6 +641,28 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_command_authorization (
+            nonce_digest text PRIMARY KEY CHECK (
+                nonce_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            task_id text NOT NULL
+                REFERENCES {schema}.director_primary_task_projection (task_id),
+            operation text NOT NULL,
+            command_id text NOT NULL,
+            command_digest text NOT NULL CHECK (
+                command_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            proof_version text NOT NULL,
+            actor_id text NOT NULL,
+            writer_fencing_generation bigint NOT NULL CHECK (
+                writer_fencing_generation >= 1
+            ),
+            proof_expires_at timestamptz NOT NULL,
+            claimed_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (task_id, operation, command_id)
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_provider_activation_authorization (
             nonce_digest text PRIMARY KEY CHECK (nonce_digest ~ '^[0-9a-f]{{64}}$'),
             command_digest text NOT NULL CHECK (command_digest ~ '^[0-9a-f]{{64}}$'),
@@ -794,6 +826,72 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_effect_approval_binding (
+            task_id text PRIMARY KEY,
+            effect_key_digest text NOT NULL UNIQUE CHECK (
+                effect_key_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            approval_request_digest text NOT NULL CHECK (
+                approval_request_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            approval_receipt_digest text NOT NULL UNIQUE CHECK (
+                approval_receipt_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            command_digest text NOT NULL UNIQUE CHECK (
+                command_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            authorization_nonce_digest text NOT NULL UNIQUE CHECK (
+                authorization_nonce_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            actor_id text NOT NULL,
+            writer_owner_id text NOT NULL,
+            writer_fencing_generation bigint NOT NULL CHECK (
+                writer_fencing_generation >= 1
+            ),
+            recorded_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_typed_effect_intent (
+            reservation_key text PRIMARY KEY REFERENCES
+                {schema}.director_primary_effect_reservation (reservation_key),
+            task_id text NOT NULL,
+            intent_digest text NOT NULL UNIQUE CHECK (
+                intent_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            system text NOT NULL,
+            action text NOT NULL,
+            target jsonb NOT NULL,
+            sanitized_payload jsonb NOT NULL,
+            payload_digest text NOT NULL CHECK (
+                payload_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            idempotency_key_digest text NOT NULL UNIQUE CHECK (
+                idempotency_key_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            authority_binding_digest text NOT NULL,
+            approval_binding_digest text NOT NULL,
+            writer_owner_id text NOT NULL,
+            writer_fencing_generation bigint NOT NULL CHECK (
+                writer_fencing_generation >= 1
+            ),
+            budget_units bigint NOT NULL CHECK (budget_units >= 0),
+            canonical_intent text NOT NULL,
+            recorded_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_effect_execution (
+            reservation_key text PRIMARY KEY
+                REFERENCES {schema}.director_primary_effect_reservation
+                    (reservation_key),
+            task_id text NOT NULL,
+            owner_token text NOT NULL,
+            fencing_generation bigint NOT NULL CHECK (fencing_generation > 0),
+            started_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_parallel_batch (
             task_id text PRIMARY KEY
                 REFERENCES {schema}.director_primary_task_writer (task_id),
@@ -822,7 +920,7 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             deployment_id text NOT NULL,
             dependencies jsonb NOT NULL,
             write_surfaces jsonb NOT NULL,
-            retry_limit integer NOT NULL CHECK (retry_limit BETWEEN 1 AND 3),
+            retry_limit integer NOT NULL CHECK (retry_limit = 3),
             status text NOT NULL CHECK (status IN (
                 'PENDING', 'ACTIVE', 'AMBIGUOUS', 'SUCCEEDED', 'FAILED'
             )),
@@ -844,6 +942,67 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         f"""
         CREATE INDEX IF NOT EXISTS director_primary_parallel_status
         ON {schema}.director_primary_parallel_assignment (task_id, status, sequence)
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_provider_attempt (
+            task_id text NOT NULL,
+            assignment_id text NOT NULL,
+            attempt_ordinal integer NOT NULL CHECK (attempt_ordinal BETWEEN 1 AND 3),
+            event_sequence integer NOT NULL CHECK (event_sequence IN (1, 2, 3)),
+            provider_id text NOT NULL,
+            format_id text NOT NULL,
+            transport_id text NOT NULL,
+            idempotency_key_digest text NOT NULL CHECK (
+                idempotency_key_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            attempt_digest text NOT NULL CHECK (
+                attempt_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            provider_run_id_digest text CHECK (
+                provider_run_id_digest IS NULL OR
+                provider_run_id_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            status text NOT NULL CHECK (status IN (
+                'STARTED', 'SUCCEEDED', 'FAILED', 'AMBIGUOUS'
+            )),
+            result_digest text CHECK (
+                result_digest IS NULL OR result_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            outcome_evidence_digest text CHECK (
+                outcome_evidence_digest IS NULL OR
+                outcome_evidence_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            reason_code text NOT NULL,
+            budget_evidence_digest text NOT NULL CHECK (
+                budget_evidence_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            recorded_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (task_id, assignment_id, attempt_ordinal, event_sequence),
+            FOREIGN KEY (task_id, assignment_id)
+                REFERENCES {schema}.director_primary_parallel_assignment (
+                    task_id, assignment_id
+                )
+        )
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_provider_attempt
+        ADD COLUMN IF NOT EXISTS provider_run_id_digest text CHECK (
+            provider_run_id_digest IS NULL OR
+            provider_run_id_digest ~ '^sha256:[0-9a-f]{{64}}$'
+        )
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_provider_attempt
+        DROP CONSTRAINT IF EXISTS director_primary_provider_attempt_event_sequence_check
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_provider_attempt
+        ADD CONSTRAINT director_primary_provider_attempt_event_sequence_check
+        CHECK (event_sequence IN (1, 2, 3))
+        """,
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS director_primary_provider_attempt_digest
+        ON {schema}.director_primary_provider_attempt (attempt_digest, event_sequence)
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_audit_event (
@@ -1951,6 +2110,119 @@ class PostgresConditionalClaimStore:
                 },
             )
         return None if row is None else _command_receipt_from_row(row)
+
+    def claim_primary_command_authorization(
+        self,
+        *,
+        task_id: str,
+        operation: str,
+        command_id: str,
+        command_digest: str,
+        nonce_digest: str,
+        proof_version: str,
+        actor_id: str,
+        fencing_generation: int,
+        proof_expires_at: int,
+    ) -> bool:
+        """Atomically claim one signed command proof under the live writer fence.
+
+        Returns ``True`` only for an exact durable redelivery. A nonce or
+        command identity can never be rebound to changed content, another task,
+        or another writer generation.
+        """
+
+        _require_id(task_id, "task_id")
+        _require_code(operation, "operation")
+        _require_id(command_id, "command_id")
+        _require_digest(command_digest, "command_digest")
+        _require_digest(nonce_digest, "nonce_digest")
+        _require_code(proof_version, "proof_version")
+        _require_id(actor_id, "actor_id")
+        generation = _require_generation(
+            fencing_generation, "fencing_generation", minimum=1
+        )
+        if not isinstance(proof_expires_at, int) or proof_expires_at < 0:
+            raise PostgresControlPlaneError("proof_expires_at must be an epoch second")
+        schema = self._schema
+        parameters = {
+            "task_id": task_id,
+            "operation": operation,
+            "command_id": command_id,
+            "command_digest": command_digest,
+            "nonce_digest": nonce_digest,
+            "proof_version": proof_version,
+            "actor_id": actor_id,
+            "generation": generation,
+            "proof_expires_at": proof_expires_at,
+        }
+        columns = (
+            "nonce_digest, task_id, operation, command_id, command_digest, "
+            "proof_version, actor_id, writer_fencing_generation"
+        )
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {
+                        "key": _advisory_key(
+                            "command-authorization", schema, task_id, operation, command_id
+                        )
+                    },
+                )
+                existing = self._optional_row(
+                    connection,
+                    f"""SELECT {columns}
+                        FROM {schema}.director_primary_command_authorization
+                        WHERE nonce_digest=%(nonce_digest)s OR (
+                            task_id=%(task_id)s AND operation=%(operation)s
+                            AND command_id=%(command_id)s
+                        )
+                        FOR UPDATE""",
+                    parameters,
+                )
+                if existing is not None:
+                    expected = {
+                        "nonce_digest": nonce_digest,
+                        "task_id": task_id,
+                        "operation": operation,
+                        "command_id": command_id,
+                        "command_digest": command_digest,
+                        "proof_version": proof_version,
+                        "actor_id": actor_id,
+                        "writer_fencing_generation": generation,
+                    }
+                    if any(str(existing[key]) != str(value) for key, value in expected.items()):
+                        raise PostgresControlPlaneError(
+                            "primary command proof replay conflicts with durable authority"
+                        )
+                    return True
+                row = self._optional_row(
+                    connection,
+                    f"""INSERT INTO {schema}.director_primary_command_authorization (
+                            nonce_digest, task_id, operation, command_id,
+                            command_digest, proof_version, actor_id,
+                            writer_fencing_generation, proof_expires_at
+                        )
+                        SELECT %(nonce_digest)s, writer.task_id, %(operation)s,
+                               %(command_id)s, %(command_digest)s,
+                               %(proof_version)s, %(actor_id)s,
+                               writer.fencing_generation,
+                               to_timestamp(%(proof_expires_at)s)
+                        FROM {schema}.director_primary_task_writer writer
+                        WHERE writer.task_id=%(task_id)s
+                          AND writer.engine_owner='langgraph'
+                          AND writer.fencing_generation=%(generation)s
+                          AND writer.lease_expires_at > now()
+                        ON CONFLICT DO NOTHING
+                        RETURNING nonce_digest""",
+                    parameters,
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "primary command proof refused; writer authority is stale or replayed"
+                    )
+        return False
 
     def record_primary_command_receipt(
         self,
@@ -3392,6 +3664,73 @@ class PostgresConditionalClaimStore:
 
     # -- remote binding ---------------------------------------------------
 
+    def claim_effect_execution(
+        self, *, reservation_key: str, owner_token: str
+    ) -> bool:
+        """Atomically mark the one permitted mutating call before it starts.
+
+        ``True`` is returned only to the process that inserted the durable
+        marker.  Any concurrent call or restart observes ``False`` and must
+        reconcile/read back without invoking the remote mutation again.
+        """
+
+        _require_digest(reservation_key, "reservation_key")
+        _require_id(owner_token, "owner_token")
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_effect_execution (
+                        reservation_key, task_id, owner_token,
+                        fencing_generation
+                    )
+                    SELECT reserved.reservation_key, held.task_id,
+                           held.owner_token, held.fencing_generation
+                    FROM {schema}.director_primary_effect_reservation reserved
+                    JOIN {schema}.director_primary_claim held
+                      ON held.claim_key = reserved.claim_key
+                    JOIN {schema}.director_primary_task_writer writer
+                      ON writer.task_id = held.task_id
+                     AND writer.owner_token = held.owner_token
+                     AND writer.fencing_generation = held.fencing_generation
+                     AND writer.lease_expires_at > now()
+                    WHERE reserved.reservation_key = %(reservation_key)s
+                      AND reserved.owner_token = %(owner_token)s
+                    ON CONFLICT (reservation_key) DO NOTHING
+                    RETURNING reservation_key
+                    """,
+                    {
+                        "reservation_key": reservation_key,
+                        "owner_token": owner_token,
+                    },
+                )
+                if row is not None:
+                    return True
+                authority = self._reservation_authority(
+                    connection, reservation_key, owner_token
+                )
+                if authority is None:
+                    raise PostgresControlPlaneError(
+                        "effect execution refused; the reservation is not "
+                        "backed by the current unexpired writer"
+                    )
+                existing = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT reservation_key
+                    FROM {schema}.director_primary_effect_execution
+                    WHERE reservation_key = %(reservation_key)s
+                    """,
+                    {"reservation_key": reservation_key},
+                )
+                if existing is None:
+                    raise PostgresControlPlaneError(
+                        "effect execution marker did not resolve"
+                    )
+                return False
+
     def read_effect_reservation(
         self,
         *,
@@ -4382,3 +4721,9 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:41 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:25 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

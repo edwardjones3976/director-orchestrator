@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
@@ -337,23 +338,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 "unconditional_claude_medium_or_long_requirement"
             ]
         )
-        self.assertEqual(
-            directive["workload_enforcement"]["hard_thresholds_percent"],
-            {
-                "claude": 30,
-                "cursor": 25,
-                "grok": 16,
-                "gemini": 20,
-                "perplexity": 9,
-                "external_openai": 30,
-            },
-        )
-        self.assertTrue(
+        self.assertFalse(
             directive["workload_enforcement"]["overall_effort_can_block_or_route"]
-        )
-        self.assertEqual(
-            directive["workload_enforcement"]["overall_effort_hard_ceilings_percent"]["cursor"],
-            33,
         )
         self.assertIn("estimated_roi", directive["roi_and_waste"])
         self.assertFalse(directive["copilot_lite_hygiene_review"]["gating"])
@@ -364,13 +350,13 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             directive["coding_routing"]["selection_order"][2],
             "total_effort_eligibility_and_corrective_under_band_preference",
         )
-        self.assertEqual(
-            directive["workload_enforcement"]["overall_effort_normal_bands_percent"]["github_copilot_cli_lite"],
-            [0, 4],
+        self.assertNotIn(
+            "github_copilot_cli_lite",
+            directive["workload_enforcement"]["overall_effort_normal_bands_percent"],
         )
         self.assertEqual(
-            directive["workload_enforcement"]["overall_effort_hard_ceilings_percent"]["github_copilot_cli_lite"],
-            6,
+            directive["copilot_lite_hygiene_review"]["attempts"],
+            "three_each_configured_format_before_reuse",
         )
         self.assertTrue(
             directive["pre_staging"]["required_before_provider_dispatch"]
@@ -438,7 +424,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("information gain" in rule for rule in efficiency["rules"]))
         self.assertTrue(any("safety evidence" in rule for rule in efficiency["rules"]))
         self.assertTrue(any("dependencies" in rule for rule in efficiency["rules"]))
-        self.assertEqual(efficiency["minimal_fix_attempt_limit"], 1)
+        self.assertEqual(efficiency["minimal_fix_attempt_limit"], 3)
         self.assertTrue(efficiency["minimal_fix_invalidates_evidence"])
 
     async def test_repeated_plans_inject_one_bounded_immutable_charter_each(self):
@@ -696,7 +682,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             root / "docs" / "templates" / "project-bootstrap" / "project-profile.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("minimal_fix:", profile)
-        self.assertIn("attempt_limit: 1", profile)
+        self.assertIn("attempt_limit: 3", profile)
         self.assertIn("changed_candidate_invalidates_evidence: true", profile)
 
     def test_pplx_cli_skill_is_installed_and_research_only_across_surfaces(self):
@@ -743,7 +729,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             team_operating_charter()["efficiency_policy"]["minimal_fix_attempt_limit"],
-            1,
+            3,
         )
         with self.assertRaises(ValueError):
             AdvisoryVote.model_validate(
@@ -854,9 +840,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
             "grok: 11",
             "total_effort_normal_bands_percent:",
             "cursor: [17, 23]",
-            "total_effort_hard_ceilings_percent:",
-            "cursor: 33",
-            'total_effort_status: "prospective_routing_and_hard_ceiling_guard"',
+            'total_effort_status: "prospective_soft_routing_preference"',
         ):
             with self.subTest(field=field):
                 self.assertIn(field, contract)
@@ -1165,7 +1149,7 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
     def test_slack_retry_policy_is_synchronized(self):
         profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
         for field in (
-            'retry_limit: "<immutable integer 1..3>"',
+            "retry_limit: 3",
             'additional_attempt_requires: "classified_failure_positive_expected_information_gain_and_new_evidence_corrected_approach_or_different_transport"',
             "resource_budget_required: true",
             'ambiguous_slack_side_effect: "do_not_retry_reconcile_first"',
@@ -1267,3 +1251,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

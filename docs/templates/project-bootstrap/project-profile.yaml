@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]]
@@ -162,7 +163,7 @@ controls:
   provider_contact_attempt_limit: 3
   minimal_fix:
     enabled: true
-    attempt_limit: 1
+    attempt_limit: 3
     changed_candidate_invalidates_evidence: true
   revision_limit: "<bounded count>"
   hop_limit: "<bounded count>"
@@ -204,7 +205,7 @@ fallbacks:
   incomplete_evidence: "<research, experiment, pause, or owner decision>"
   ambiguous_paid_dispatch: "reconcile_existing_run_before_retry"
   slack_delivery:
-    retry_limit: "<immutable integer 1..3>"
+    retry_limit: 3
     additional_attempt_requires: "classified_failure_positive_expected_information_gain_and_new_evidence_corrected_approach_or_different_transport"
     resource_budget_required: true
     ambiguous_slack_side_effect: "do_not_retry_reconcile_first"
@@ -222,3 +223,5 @@ next:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

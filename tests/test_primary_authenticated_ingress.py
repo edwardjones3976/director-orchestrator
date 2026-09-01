@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:02 UTC | BEGIN]]
@@ -18,6 +19,8 @@ from director_orchestrator.langgraph_primary import ApprovalKind
 from director_orchestrator.models import IntakeAuthentication, SlackIntake
 from director_orchestrator.primary_commands import (
     ApprovalResumeRequest,
+    CancellationRequest,
+    CompletionEvidenceRequest,
     PrimaryCommandBindingError,
     PrimaryIngressProof,
     build_primary_ingress_proof,
@@ -184,6 +187,113 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
             main.primary_reconcile_effect("task-1", request)
         self.assertEqual(caught.exception.status_code, 409)
 
+    def test_cancel_requires_signed_gateway_proof_and_durable_nonce_claim(self) -> None:
+        settings = replace(
+            main.settings,
+            shared_secret=SHARED,
+            slack_gateway_secret=SECRET,
+            slack_owner_user_id="owner-1",
+            slack_channel_id="channel-1",
+        )
+        placeholder = PrimaryIngressProof(
+            issued_at=2_000_000_000,
+            nonce="c" * 32,
+            signature="0" * 64,
+            channel_id="channel-1",
+        )
+        request = CancellationRequest(
+            task_id="task-1",
+            command_id="cancel-1",
+            actor_id="owner-1",
+            expected_projection_digest=DIGEST,
+            expected_fencing_generation=7,
+            gateway_proof=placeholder,
+        )
+        proof = build_primary_ingress_proof(
+            SECRET,
+            SHARED,
+            request,
+            path="/v1/primary/tasks/task-1/cancel",
+            proof_field="gateway_proof",
+            issued_at=placeholder.issued_at,
+            nonce=placeholder.nonce,
+            channel_id="channel-1",
+        )
+        request = request.model_copy(update={"gateway_proof": proof})
+        coordinator = MagicMock()
+        projection = SimpleNamespace(
+            task_id="task-1", projection_digest=DIGEST, projection={}
+        )
+        writer = SimpleNamespace(fencing_generation=7)
+        with patch.object(main, "settings", settings), patch.object(
+            main, "_primary_command_projection",
+            return_value=(coordinator, projection, writer, None),
+        ), patch("director_orchestrator.primary_commands.datetime") as clock:
+            clock.now.return_value = datetime.fromtimestamp(2_000_000_001, timezone.utc)
+            main._verify_primary_owner_command_proof(
+                "task-1", request, main.PrimaryCommandOperation.CANCELLATION
+            )
+        coordinator.claim_command_authorization.assert_called_once()
+
+        with patch.object(main, "settings", settings):
+            with self.assertRaises(HTTPException) as caught:
+                main._verify_primary_owner_command_proof(
+                    "task-1",
+                    request.model_copy(update={"gateway_proof": None}),
+                    main.PrimaryCommandOperation.CANCELLATION,
+                )
+        self.assertEqual(403, caught.exception.status_code)
+
+    def test_completion_evidence_requires_authenticated_actor_and_writer_path(self) -> None:
+        placeholder = PrimaryIngressProof(
+            issued_at=2_000_000_000,
+            nonce="e" * 32,
+            signature="0" * 64,
+        )
+        request = CompletionEvidenceRequest(
+            task_id="task-1",
+            command_id="evidence-1",
+            actor_id="gate-worker-1",
+            evidence_actor_id="gate-worker-1",
+            expected_projection_digest=DIGEST,
+            expected_fencing_generation=7,
+            candidate_sha="1" * 40,
+            provider_result_digest=DIGEST,
+            ledger={"ledger_digest": DIGEST},
+            results=({"result_digest": DIGEST},),
+            ci_gate_id="ci",
+            security_gate_id="security",
+            evidence_proof=placeholder,
+        )
+        proof = build_primary_ingress_proof(
+            SECRET,
+            SHARED,
+            request,
+            path="/v1/primary/tasks/task-1/completion-evidence",
+            proof_field="evidence_proof",
+            issued_at=placeholder.issued_at,
+            nonce=placeholder.nonce,
+        )
+        request = request.model_copy(update={"evidence_proof": proof})
+        coordinator = MagicMock()
+        projection = SimpleNamespace(
+            task_id="task-1", projection_digest=DIGEST, projection={}
+        )
+        settings = replace(
+            main.settings,
+            shared_secret=SHARED,
+            langgraph_primary_adapter_callback_secret=SECRET,
+        )
+        with patch.object(main, "settings", settings), patch.object(
+            main, "_primary_command_projection",
+            return_value=(coordinator, projection, SimpleNamespace(), None),
+        ), patch.object(main, "_record_primary_command", return_value=MagicMock()), patch(
+            "director_orchestrator.primary_commands.datetime"
+        ) as clock:
+            clock.now.return_value = datetime.fromtimestamp(2_000_000_001, timezone.utc)
+            main.primary_completion_evidence("task-1", request)
+        coordinator.record_completion_evidence.assert_called_once()
+
     def test_provider_activation_route_requires_exact_signed_owner_gateway_proof(self) -> None:
         settings = replace(
             main.settings,
@@ -250,3 +360,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:02 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]

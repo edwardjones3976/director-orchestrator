@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]]
@@ -181,34 +182,19 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "workload_enforcement": {
             "enforced_measure": "accepted_productive_work",
             "normal_tolerance_percentage_points": 3,
-            "hard_overage_percentage_points": 5,
-            "hard_thresholds_percent": {
-                "claude": 30,
-                "cursor": 25,
-                "grok": 16,
-                "gemini": 20,
-                "perplexity": 9,
-                "external_openai": 30,
-            },
             "evaluate": [
                 "assignment_projected_accepted_productive_work",
                 "rolling_20_projected_accepted_productive_work",
             ],
             "soft_action": "route_next_eligible_work_to_an_under_target_provider",
-            "hard_action": "block_dispatch_and_reshape",
+            "share_pressure_action": "soft_preference_only",
             "automatic_drift_correction": True,
             "automatic_enforcement_after_shadow": True,
-            "overall_effort_can_block_or_route": True,
+            "overall_effort_can_block_or_route": False,
             "overall_effort_normal_bands_percent": {
                 "claude": [33, 39], "cursor": [17, 23],
                 "gemini": [17, 23], "grok": [8, 14],
                 "openai": [5, 11], "perplexity": [1, 7],
-                "github_copilot_cli_lite": [0, 4],
-            },
-            "overall_effort_hard_ceilings_percent": {
-                "claude": 41, "cursor": 33, "gemini": 25,
-                "grok": 16, "openai": 13, "perplexity": 9,
-                "github_copilot_cli_lite": 6,
             },
             "degraded_team_rule": "no_threshold_relaxation_or_implicit_external_openai_spill",
             "filler_work_prohibited": True,
@@ -230,7 +216,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "model_output_cannot_expand_eligibility": True,
             "unavailable_action": "stop_and_reshape_without_silent_substitution",
             "one_writer_lease_per_file_or_error_surface": True,
-            "reviewer_rotation": "least_recent_eligible_under_cap_non_author",
+            "reviewer_rotation": "least_recent_eligible_non_author",
             "reviewer_must_differ_from_producer_and_material_authors": True,
         },
         "roi_and_waste": {
@@ -261,7 +247,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "copilot_lite_hygiene_review": {
             "provider_or_committee_member": False,
             "workload_percentage": None,
-            "trigger": "one_request_after_checks_green_and_exact_candidate_freeze",
+            "trigger": "request_after_checks_green_and_exact_candidate_freeze",
+            "attempts": "three_each_configured_format_before_reuse",
             "automatic_every_push": False,
             "gating": False,
             "authority_granted": [],
@@ -400,7 +387,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "starting_and_current_refs_shas_and_artifact_digests",
                 "authenticated_provider_participation_unavailable_abstaining_and_labels",
                 "target_and_actual_enforced_direct_production_by_provider_deviations_and_rationale",
-                "prospective_total_effort_bands_ceilings_and_dispatch_decision",
+                "prospective_total_effort_soft_bands_and_share_advisories",
                 "prestage_packet_digest_workload_size_effort_points_and_deltas",
                 "status_validation_action_counts_reduction_baselines_and_browser_use",
                 "openai_moderator_participant_director_actions_and_vote",
@@ -409,7 +396,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "unresolved_risks_limitations_blockers_and_confidence",
                 "measured_cost_token_usage_elapsed_time_and_unavailable_telemetry",
                 "roi_first_pass_yield_correction_rate_and_categorized_waste_with_missing_telemetry",
-                "copilot_lite_one_time_result_quota_state_validated_findings_and_material_authorship",
+                "copilot_lite_result_attempt_formats_quota_state_validated_findings_and_material_authorship",
                 "rolling_commit_baseline_current_measurement_delta_and_exclusions",
                 "scope_or_authority_changes_and_exact_stored_owner_authorization",
                 "recovery_state_rollback_and_restart_evidence_integrity",
@@ -421,7 +408,9 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "participation_source": "authenticated_provider_response_only",
         },
         "availability": {
-            "attempts": "immutable_assignment_prestage_retry_limit",
+            "attempts": "exactly_three_per_assignment",
+            "format_roster": "each_configured_format_transport_once_before_reuse_maximum_three",
+            "attempt_ledger": "append_only_postgres_child_events",
             "additional_attempt_requires": [
                 "classified_failure",
                 "positive_expected_information_gain",
@@ -520,6 +509,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     "availability_policy": {
         "nonresponse_attempt_limit": 3,
         "requirements": [
+            "Every assignment has exactly three authorized attempt slots.",
+            "Invoke every configured provider format and transport once before reuse; fail closed above three.",
             "Never duplicate an ambiguous paid dispatch.",
             "Ambiguous reconciliation binds IDs only; results need provider authentication, and owner recovery text cannot authorize exact-SHA review or merge.",
         ],
@@ -527,7 +518,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     "efficiency_policy": {
         "concise_evidence_first": True,
         "repeat_requires_new_information": True,
-        "minimal_fix_attempt_limit": 1,
+        "minimal_fix_attempt_limit": 3,
         "minimal_fix_invalidates_evidence": True,
         "event_driven_status": True,
         "browser_enabled_lower_priority": True,
@@ -834,3 +825,5 @@ def tally_advisory_votes(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
@@ -30,7 +31,7 @@ Every model receives the same bounded work packet and returns the same bounded r
 - acceptance checks and evidence requirements
 - approval requirements
 - budget, timeout, hop, and revision ceilings, including an immutable
-  assignment-specific retry limit from 1 through 3
+  assignment retry limit of exactly 3
 - idempotency key and correlation identifiers
 
 A packet missing its authority snapshot, acceptance checks, or repository boundary is invalid and must not dispatch.
@@ -135,3 +136,5 @@ A self-contained digest detects accidental or unsynchronized modification; it is
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->

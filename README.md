@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
@@ -20,7 +21,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=867ee22ad06cab7797617f39ee404f6d704972487cd8978cc020de9b5fde99bd -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=98b9d155991e0867d55d48400ebb62ce390bfde533044e062c7932da6b97c63c -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -35,8 +36,8 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - An OpenAI Director planner/reviewer using Structured Outputs.
 - A primary OpenAI–Claude–Cursor–Grok team selected through a cheap-capable-model-first policy, with Gemini/Antigravity and Perplexity retained as bounded supplemental specialists.
 - Two prospective workload controls: accepted productive work targets of external OpenAI/Codex 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%; and total-effort targets of Claude 36%, Cursor 20%, Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, and Perplexity 5%.
-- Default-on deterministic accepted-productive-work and total-effort enforcement, an immutable pre-stage packet, rolling 20-assignment drift control, cheap-capable-model selection, and a five-action ordinary review-to-merge ceiling. The total-effort normal bands are Claude 33–39%, Cursor 17–23%, Gemini/Antigravity 17–23%, Grok 8–14%, OpenAI 5–11%, and Perplexity 1–7%; hard ceilings are 41%, 33%, 25%, 16%, 13%, and 9%, respectively.
-- An optional one-time GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It is an unscored reporting-only 0–4% effort lane with a hard 6% ceiling, no provider adapter or automatic routing, and no production credit, gate, authority, or every-push trigger; without an authenticated contact it fails closed as unavailable.
+- Default-on deterministic accepted-productive-work and total-effort accounting, an immutable pre-stage packet, rolling 20-assignment soft drift preferences, cheap-capable-model selection, and a five-action ordinary review-to-merge ceiling. The total-effort normal bands are Claude 33–39%, Cursor 17–23%, Gemini/Antigravity 17–23%, Grok 8–14%, OpenAI 5–11%, and Perplexity 1–7%; provider share never blocks an otherwise safe route.
+- An optional GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It has no assigned workload share, range, or ceiling, no provider adapter or automatic routing, and no production credit, gate, authority, or every-push trigger; without an authenticated contact it fails closed as unavailable. A requested review uses exactly three attempt slots, exercising every configured eligible format once before reuse.
 - Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
 - Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
@@ -346,3 +347,5 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->

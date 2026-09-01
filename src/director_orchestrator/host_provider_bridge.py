@@ -1,7 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:42 UTC | BEGIN]]
-"""Authenticated one-attempt bridge between Linux containers and Windows CLIs.
+"""Authenticated single-dispatch bridge between Linux containers and Windows CLIs.
 
 The bridge is deliberately a narrow packet transport.  It neither discovers
 providers nor grants authority.  Every request binds the provider, canonical
@@ -588,3 +589,4 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]

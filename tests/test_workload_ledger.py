@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
@@ -481,7 +482,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         )
         self.assertEqual(self.store.list_recent_workload_attempts(), [])
 
-    def test_cursor_30_percent_remains_below_33_ceiling_and_is_accounted(self) -> None:
+    def test_cursor_30_percent_is_allowed_and_accounted(self) -> None:
         providers = [Provider.CURSOR] * 5 + [Provider.CLAUDE] * 7 + [Provider.GROK] * 7
         for index, provider in enumerate(providers):
             reservation = self.reserve(f"seed-{index}", provider)
@@ -492,10 +493,7 @@ class WorkloadLedgerTests(unittest.TestCase):
 
         candidate = self.reserve("twentieth", Provider.CURSOR)
         self.assertTrue(candidate.decision.allowed)
-        self.assertNotIn(
-            "overall_hard_threshold_exceeded:cursor:25",
-            candidate.decision.violations,
-        )
+        self.assertEqual(candidate.decision.violations, ())
         self.assertIn(
             "total_effort_prospective_usage_guard", candidate.decision.advisories
         )
@@ -504,7 +502,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         )
         self.assertEqual(len(self.store.list_recent_workload_attempts(limit=20)), 20)
 
-    def test_shadow_total_effort_under_ceiling_is_accounted_once(self) -> None:
+    def test_shadow_total_effort_is_accounted_once(self) -> None:
         providers = [Provider.CURSOR] * 5 + [Provider.CLAUDE] * 7 + [Provider.GROK] * 7
         for index, provider in enumerate(providers):
             reservation = self.reserve(f"shadow-seed-{index}", provider)
@@ -576,20 +574,12 @@ class WorkloadLedgerTests(unittest.TestCase):
         pending = self.reserve(
             "weighted-pending", Provider.GROK, effort_units=1
         )
-        self.assertFalse(pending.decision.allowed)
-        self.assertIn(
-            "total_effort_hard_ceiling_exceeded:grok:16",
-            pending.decision.violations,
-        )
+        self.assertTrue(pending.decision.allowed)
         candidate = self.reserve(
             "weighted-candidate", Provider.CLAUDE, effort_units=8
         )
 
-        self.assertFalse(candidate.decision.allowed)
-        self.assertIn(
-            "total_effort_hard_ceiling_exceeded:claude:41",
-            candidate.decision.violations,
-        )
+        self.assertTrue(candidate.decision.allowed)
 
     def test_same_provider_pending_overall_history_does_not_block(self) -> None:
         providers = (
@@ -1034,11 +1024,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             kind=WorkKind.IMPLEMENTATION,
         )
 
-        self.assertFalse(candidate.decision.allowed)
-        self.assertIn(
-            "direct_production_rollover_pending_unresolved",
-            candidate.decision.violations,
-        )
+        self.assertTrue(candidate.decision.allowed)
 
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
     _SIBLING_SEEDS = (
@@ -1152,11 +1138,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             effort_units=1,
             kind=WorkKind.IMPLEMENTATION,
         )
-        self.assertFalse(sibling.decision.allowed)
-        self.assertIn(
-            "direct_production_rollover_pending_unresolved",
-            sibling.decision.violations,
-        )
+        self.assertTrue(sibling.decision.allowed)
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
 
     @staticmethod
@@ -1294,11 +1276,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             kind=WorkKind.IMPLEMENTATION,
         )
 
-        self.assertFalse(candidate.decision.allowed)
-        self.assertIn(
-            "direct_production_rollover_pending_unresolved",
-            candidate.decision.violations,
-        )
+        self.assertTrue(candidate.decision.allowed)
 
     def test_direct_rollover_window_uses_credit_id_not_recorded_at(self) -> None:
         old_recorded_at = "2026-08-01T00:00:00+00:00"
@@ -1365,10 +1343,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         )
 
         self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
-        self.assertNotIn(
-            "direct_production_hard_threshold_exceeded:claude:",
-            candidate.decision.violations,
-        )
+        self.assertEqual(candidate.decision.violations, ())
 
     def test_sqlite_cas_allows_one_cross_process_creator(self) -> None:
         context = multiprocessing.get_context("spawn")
@@ -1407,3 +1382,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

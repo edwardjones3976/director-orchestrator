@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
@@ -7,7 +12,7 @@
 from __future__ import annotations
 
 import hmac
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Callable, Mapping
 
 from .langgraph_postgres import (
@@ -39,8 +44,11 @@ from .primary_parallel import (
     ParallelDispatchPolicy,
     ParallelDispatchOutcome,
     ParallelReservation,
+    ProviderAttemptReservation,
     PostgresParallelDispatch,
 )
+from .primary_effects import DeterministicExternalEffectExecutor
+from .primary_completion import CompletionEvidence
 
 
 class PrimaryCoordinatorError(RuntimeError):
@@ -55,6 +63,7 @@ class PrimaryCoordinatorReadiness:
     checkpoint_schema_current: bool
     claim_store_ready: bool
     effect_ledger_ready: bool
+    effect_executor_ready: bool
     writer_lease_ready: bool
     reconciliation_worker_ready: bool
     primary_runtime_active: bool
@@ -121,6 +130,7 @@ class PrimaryTaskCoordinator:
         checkpoint_namespace: str,
         auto_execute_provider: bool = False,
         auto_execute_effect: bool = False,
+        effect_executor: DeterministicExternalEffectExecutor | None = None,
         application_projection_provider: (
             Callable[[str], Mapping[str, Any] | None] | None
         ) = None,
@@ -132,16 +142,27 @@ class PrimaryTaskCoordinator:
         self._store: PostgresConditionalClaimStore = binding.claim_store
         self._owner_token = owner_token
         self._intake_generation: int | None = None
+        self._active_task_ids: set[str] = set()
         self._application_projection_provider = application_projection_provider
+        self._effect_executor = effect_executor
         self.parallel = PostgresParallelDispatch(binding.claim_store)
+        runtime_handlers = (
+            handlers
+            if effect_executor is None
+            else replace(
+                handlers,
+                effect_execution_readback=effect_executor,
+            )
+        )
         self._runtime = PrimaryWorkflowRuntime(
             binding.checkpointer,
-            handlers,
+            runtime_handlers,
             checkpoint_namespace=checkpoint_namespace,
             claim_store=binding.claim_store,
             owner_token=owner_token,
             auto_execute_provider=auto_execute_provider,
-            auto_execute_effect=auto_execute_effect,
+            auto_execute_effect=(auto_execute_effect or effect_executor is not None),
+            reconcile_executing_effect=effect_executor is not None,
         )
 
     def activate_new_intake(
@@ -198,12 +219,14 @@ class PrimaryTaskCoordinator:
     def _task_writer(self, task_id: str) -> TaskWriterLease:
         current = self._store.current_task_writer(task_id)
         if current is None:
-            return self._store.acquire_task_writer(
+            writer = self._store.acquire_task_writer(
                 task_id,
                 engine_owner="langgraph",
                 owner_token=self._owner_token,
                 expected_generation=INITIAL_FENCING_GENERATION,
             )
+            self._mark_active_task(task_id)
+            return writer
         if current.engine_owner != "langgraph":
             raise PrimaryCoordinatorError("task engine_owner is not LangGraph")
         if current.lease_live:
@@ -211,20 +234,57 @@ class PrimaryTaskCoordinator:
                 raise PrimaryCoordinatorError(
                     "another process owns the task writer lease"
                 )
-            return self._store.renew_task_writer(
+            writer = self._store.renew_task_writer(
                 task_id,
                 owner_token=self._owner_token,
                 fencing_generation=current.fencing_generation,
             )
+            self._mark_active_task(task_id)
+            return writer
         # An expired row is durable fencing history, not renewable authority.
         # Reacquire it through the store's exact-generation CAS so any
         # concurrent successor makes this observation stale and fails closed.
-        return self._store.acquire_task_writer(
+        writer = self._store.acquire_task_writer(
             task_id,
             engine_owner="langgraph",
             owner_token=self._owner_token,
             expected_generation=current.fencing_generation,
         )
+        self._mark_active_task(task_id)
+        return writer
+
+    def _mark_active_task(self, task_id: str) -> None:
+        active = getattr(self, "_active_task_ids", None)
+        if active is None:
+            active = set()
+            self._active_task_ids = active
+        active.add(task_id)
+
+    def heartbeat_active_task_writers(self) -> int:
+        """Renew only tasks this process actually touched since startup."""
+
+        renewed = 0
+        active = getattr(self, "_active_task_ids", set())
+        for task_id in tuple(active):
+            current = self._store.current_task_writer(task_id)
+            if (
+                current is None
+                or not current.lease_live
+                or not hmac.compare_digest(current.owner_token, self._owner_token)
+            ):
+                active.discard(task_id)
+                continue
+            try:
+                self._store.renew_task_writer(
+                    task_id,
+                    owner_token=self._owner_token,
+                    fencing_generation=current.fencing_generation,
+                )
+            except PostgresControlPlaneError:
+                active.discard(task_id)
+                continue
+            renewed += 1
+        return renewed
 
     def _persist_outcome(
         self, outcome: PrimaryOutcome, writer: TaskWriterLease
@@ -442,6 +502,45 @@ class PrimaryTaskCoordinator:
         writer = self._task_writer(task_id)
         return self.parallel.reserve_ready(task_id=task_id, writer=writer, policy=policy)
 
+    def parallel_aggregate(self, task_id: str) -> ParallelAggregate:
+        """Read the deterministic all-assignment aggregate without mutation."""
+
+        return self.parallel.aggregate(task_id)
+
+    def reserve_provider_attempt(
+        self,
+        *,
+        reservation: ParallelReservation,
+        attempt_ordinal: int,
+        format_roster: tuple[tuple[str, str], ...],
+        idempotency_key_digest: str,
+        budget_evidence_digest: str,
+    ) -> ProviderAttemptReservation:
+        return self.parallel.reserve_provider_attempt(
+            reservation=reservation,
+            writer=self._task_writer(reservation.task_id),
+            attempt_ordinal=attempt_ordinal,
+            format_roster=format_roster,
+            idempotency_key_digest=idempotency_key_digest,
+            budget_evidence_digest=budget_evidence_digest,
+        )
+
+    def record_provider_attempt(
+        self,
+        *,
+        attempt: ProviderAttemptReservation,
+        status: ParallelAssignmentStatus,
+        result_digest: str | None,
+        reason_code: str,
+    ) -> None:
+        self.parallel.record_provider_attempt(
+            attempt=attempt,
+            writer=self._task_writer(attempt.task_id),
+            status=status,
+            result_digest=result_digest,
+            reason_code=reason_code,
+        )
+
     def record_parallel_result(
         self,
         *,
@@ -463,6 +562,50 @@ class PrimaryTaskCoordinator:
         self._persist_outcome(
             self._runtime.record_parallel_aggregate(
                 reservation.task_id,
+                plan_digest=plan_digest,
+                aggregate_digest=aggregate.aggregate_digest,
+                terminal=aggregate.terminal,
+                succeeded=aggregate.succeeded,
+                ambiguous_slot_count=aggregate.ambiguous_slot_count,
+            ),
+            writer,
+        )
+        return aggregate
+
+    def record_parallel_callback(
+        self,
+        *,
+        task_id: str,
+        assignment_id: str,
+        provider_id: str,
+        attempt_digest: str,
+        provider_run_id_digest: str,
+        status: ParallelAssignmentStatus,
+        result_digest: str | None,
+        reason_code: str,
+    ) -> ParallelAggregate:
+        """Settle only the callback's exact assignment/attempt ledger slot."""
+
+        writer = self._task_writer(task_id)
+        self.parallel.record_callback_result(
+            task_id=task_id,
+            assignment_id=assignment_id,
+            provider_id=provider_id,
+            attempt_digest=attempt_digest,
+            provider_run_id_digest=provider_run_id_digest,
+            writer=writer,
+            status=status,
+            result_digest=result_digest,
+            reason_code=reason_code,
+        )
+        state = self._runtime.compact_state(task_id)
+        plan_digest = state.get("parallel_plan_digest")
+        if not isinstance(plan_digest, str):
+            raise PrimaryCoordinatorError("callback has no graph-bound parallel plan")
+        aggregate = self.parallel.aggregate(task_id)
+        self._persist_outcome(
+            self._runtime.record_parallel_aggregate(
+                task_id,
                 plan_digest=plan_digest,
                 aggregate_digest=aggregate.aggregate_digest,
                 terminal=aggregate.terminal,
@@ -509,12 +652,76 @@ class PrimaryTaskCoordinator:
             task_id=task_id, writer=self._task_writer(task_id)
         )
 
+    def resume_parallel_aggregate(
+        self,
+        *,
+        task_id: str,
+        aggregate: ParallelAggregate,
+        candidate_sha: str,
+    ) -> PrimaryTaskProjection:
+        """Return terminal ledger evidence to the sole graph lifecycle."""
+
+        writer = self._task_writer(task_id)
+        observed = self.parallel.aggregate(task_id)
+        if observed != aggregate:
+            raise PrimaryCoordinatorError("parallel aggregate changed before graph resume")
+        if not aggregate.terminal or aggregate.ambiguous_slot_count:
+            raise PrimaryCoordinatorError("parallel aggregate is not resumable")
+        return self._persist_outcome(
+            self._runtime.resume_parallel_aggregate(
+                task_id,
+                aggregate_digest=aggregate.aggregate_digest,
+                succeeded=aggregate.succeeded,
+                candidate_sha=candidate_sha,
+            ),
+            writer,
+        )
+
     def cancel(self, task_id: str) -> PrimaryTaskProjection:
         writer = self._task_writer(task_id)
+        # New reservations must be fenced before the graph records cancellation.
+        # Existing ACTIVE rows remain occupied and are reconciled rather than
+        # being freed for an ambiguous duplicate dispatch.
+        self.parallel.engage_kill_switch(task_id=task_id, writer=writer)
+        stranded = self.parallel.reconcile_stranded_active(
+            task_id=task_id, writer=writer
+        )
+        if stranded:
+            aggregate = self.parallel.aggregate(task_id)
+            state = self._runtime.compact_state(task_id)
+            plan_digest = state.get("parallel_plan_digest")
+            if isinstance(plan_digest, str):
+                self._runtime.record_parallel_aggregate(
+                    task_id,
+                    plan_digest=plan_digest,
+                    aggregate_digest=aggregate.aggregate_digest,
+                    terminal=aggregate.terminal,
+                    succeeded=aggregate.succeeded,
+                    ambiguous_slot_count=aggregate.ambiguous_slot_count,
+                )
         return self._persist_outcome(self._runtime.cancel(task_id), writer)
 
     def recover(self, task_id: str) -> PrimaryTaskProjection:
         writer = self._task_writer(task_id)
+        stranded = self.parallel.reconcile_stranded_active(
+            task_id=task_id, writer=writer
+        )
+        if stranded:
+            aggregate = self.parallel.aggregate(task_id)
+            state = self._runtime.compact_state(task_id)
+            plan_digest = state.get("parallel_plan_digest")
+            if not isinstance(plan_digest, str):
+                raise PrimaryCoordinatorError(
+                    "stranded parallel reservations lack a graph plan binding"
+                )
+            self._runtime.record_parallel_aggregate(
+                task_id,
+                plan_digest=plan_digest,
+                aggregate_digest=aggregate.aggregate_digest,
+                terminal=aggregate.terminal,
+                succeeded=aggregate.succeeded,
+                ambiguous_slot_count=aggregate.ambiguous_slot_count,
+            )
         return self._persist_outcome(self._runtime.recover(task_id), writer)
 
     def get_projection(self, task_id: str) -> PrimaryTaskProjection | None:
@@ -556,6 +763,42 @@ class PrimaryTaskCoordinator:
             fencing_generation=writer.fencing_generation,
         )
 
+    def claim_command_authorization(self, **authorization: Any) -> bool:
+        """Durably claim a verified short-lived ingress proof."""
+
+        return self._store.claim_primary_command_authorization(**authorization)
+
+    def pending_effect_key(self, task_id: str) -> str:
+        """Return the exact graph effect key awaiting owner approval."""
+
+        state = self._runtime.compact_state(task_id)
+        effect_key = state.get("effect_key_digest")
+        if not isinstance(effect_key, str):
+            raise PrimaryCoordinatorError(
+                "external effect key is not durably bound in the graph checkpoint"
+            )
+        return effect_key
+
+    def record_completion_evidence(
+        self,
+        *,
+        task_id: str,
+        candidate_sha: str,
+        provider_result_digest: str,
+        evidence: CompletionEvidence,
+    ) -> None:
+        """Persist authenticated completion evidence under the live writer fence."""
+
+        writer = self._task_writer(task_id)
+        self._store.record_completion_evidence(
+            task_id=task_id,
+            candidate_sha=candidate_sha,
+            provider_result_digest=provider_result_digest,
+            evidence=evidence,
+            owner_token=self._owner_token,
+            fencing_generation=writer.fencing_generation,
+        )
+
     def get_task_writer(self, task_id: str) -> TaskWriterLease | None:
         """Expose the observed writer fence for command binding, never its token."""
 
@@ -593,6 +836,7 @@ class PrimaryTaskCoordinator:
                 checkpoint_schema_current=False,
                 claim_store_ready=False,
                 effect_ledger_ready=False,
+                effect_executor_ready=False,
                 writer_lease_ready=False,
                 reconciliation_worker_ready=False,
                 primary_runtime_active=False,
@@ -618,6 +862,9 @@ class PrimaryTaskCoordinator:
             checkpoint_schema_current=True,
             claim_store_ready=True,
             effect_ledger_ready=True,
+            effect_executor_ready=bool(
+                self._effect_executor is not None and self._effect_executor.ready
+            ),
             writer_lease_ready=owned,
             reconciliation_worker_ready=False,
             primary_runtime_active=False,
@@ -633,3 +880,8 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:45 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]

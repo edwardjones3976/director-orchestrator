@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:49 UTC | BEGIN]]
 from __future__ import annotations
@@ -9,6 +11,8 @@ from director_orchestrator.primary_parallel import (
     ParallelAssignment,
     ParallelDispatchError,
     ParallelDispatchPolicy,
+    deterministic_format_roster,
+    format_for_attempt,
     validate_assignment_dag,
     write_surfaces_overlap,
 )
@@ -110,11 +114,37 @@ class ParallelPlanValidationTests(unittest.TestCase):
         )
         self.assertEqual(policy.max_concurrency, 3)
 
-    def test_retry_limit_preserves_pr80_one_through_three_boundary(self) -> None:
-        for value in (0, 4):
+    def test_retry_limit_is_exactly_three(self) -> None:
+        for value in (0, 1, 2, 4):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(ParallelDispatchError, "retry_limit"):
                     ParallelAssignment("a", 1, "openai", "codex", retry_limit=value)
+
+    def test_formats_are_exhausted_before_reuse_within_three_attempts(self) -> None:
+        roster = deterministic_format_roster(
+            (("json", "api"), ("text", "cli"), ("json", "api"))
+        )
+        self.assertEqual(("json", "api"), format_for_attempt(roster, 1))
+        self.assertEqual(("text", "cli"), format_for_attempt(roster, 2))
+        self.assertEqual(("json", "api"), format_for_attempt(roster, 3))
+        with self.assertRaisesRegex(ParallelDispatchError, "exceeds"):
+            deterministic_format_roster(
+                (("a", "api"), ("b", "api"), ("c", "api"), ("d", "api"))
+            )
+
+    def test_plan_size_and_sequence_have_no_parallel_workload_ceiling(self) -> None:
+        assignments = tuple(
+            ParallelAssignment(
+                f"assignment-{sequence}",
+                sequence,
+                "openai",
+                "codex",
+                retry_limit=3,
+            )
+            for sequence in range(1, 26)
+        )
+
+        self.assertEqual(assignments, validate_assignment_dag(assignments))
 
 
 if __name__ == "__main__":
@@ -123,3 +153,6 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

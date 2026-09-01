@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -41,6 +42,9 @@ def _request(**updates: object) -> ProviderResultRequest:
         "idempotency_key_digest": _digest("c"),
         "authority_snapshot_digest": _digest("d"),
         "producer_id": "external_openai.worker",
+        "assignment_id": "assignment-1",
+        "provider_id": "external_openai.worker",
+        "provider_run_id": "provider-run-1",
         "disposition": ProviderDisposition.COMPLETED,
         "result_digest": _digest("e"),
         "candidate_sha": "1" * 40,
@@ -99,7 +103,7 @@ class PrimaryCommandRouteReceiptTests(unittest.TestCase):
 
         self.assertEqual(response.run_status, "ALREADY_APPLIED")
         self.assertEqual(response.projection_digest, _digest("f"))
-        activation.application.record_provider_result.assert_not_called()
+        activation.application.record_provider_callback.assert_not_called()
         activation.coordinator.record_command_receipt.assert_not_called()
 
     def test_changed_content_under_existing_command_identity_is_conflict(self) -> None:
@@ -119,7 +123,7 @@ class PrimaryCommandRouteReceiptTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.status_code, 409)
         self.assertIn("different content", caught.exception.detail)
-        activation.application.record_provider_result.assert_not_called()
+        activation.application.record_provider_callback.assert_not_called()
 
     def test_success_records_receipt_under_resulting_projection(self) -> None:
         request = _request()
@@ -133,7 +137,13 @@ class PrimaryCommandRouteReceiptTests(unittest.TestCase):
         with patch.object(main, "primary_default_activation", activation):
             response = main.primary_provider_result("task-1", request)
 
-        activation.application.record_provider_result.assert_called_once()
+        activation.application.record_provider_callback.assert_called_once_with(
+            task_id="task-1",
+            assignment_id="assignment-1",
+            provider_id="external_openai.worker",
+            provider_run_id="provider-run-1",
+            command=request.to_command(),
+        )
         activation.coordinator.record_command_receipt.assert_called_once_with(
             task_id="task-1",
             operation="provider_result",
@@ -153,7 +163,13 @@ class PrimaryCommandRouteReceiptTests(unittest.TestCase):
         with patch.object(main, "primary_default_activation", activation):
             response = main.primary_provider_result("task-1", request)
 
-        activation.application.record_provider_result.assert_called_once()
+        activation.application.record_provider_callback.assert_called_once_with(
+            task_id="task-1",
+            assignment_id="assignment-1",
+            provider_id="external_openai.worker",
+            provider_run_id="provider-run-1",
+            command=request.to_command(),
+        )
         activation.coordinator.record_command_receipt.assert_called_once()
         self.assertEqual(response.projection_digest, _digest("f"))
 
@@ -165,10 +181,11 @@ class PrimaryCommandRouteReceiptTests(unittest.TestCase):
                 main.primary_provider_result("task-1", request)
         self.assertEqual(caught.exception.status_code, 409)
         self.assertIn("stale task projection", caught.exception.detail)
-        unevidenced.application.record_provider_result.assert_not_called()
+        unevidenced.application.record_provider_callback.assert_not_called()
 
 
 if __name__ == "__main__":
     unittest.main()
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | END]]

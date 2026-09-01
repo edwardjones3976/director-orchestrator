@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
@@ -106,6 +111,7 @@ from .parallel_dispatch import (
 from .primary_commands import (
     ApprovalResumeRequest,
     CancellationRequest,
+    CompletionEvidenceRequest,
     EffectReconciliationRequest,
     PrimaryCommandBindingError,
     PrimaryCommandOperation,
@@ -478,6 +484,7 @@ def health() -> dict:
                 "checkpoint_schema_current": False,
                 "claim_store_ready": False,
                 "effect_ledger_ready": False,
+                "effect_executor_ready": False,
                 "writer_lease_ready": False,
                 "reconciliation_worker_ready": False,
                 "primary_runtime_active": False,
@@ -773,6 +780,54 @@ def _require_primary_owner_actor(actor_id: str) -> None:
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
 
 
+def _verify_primary_owner_command_proof(
+    task_id: str,
+    request: CancellationRequest | RecoveryRequest,
+    operation: PrimaryCommandOperation,
+) -> None:
+    proof = request.gateway_proof
+    if (
+        proof is None
+        or not settings.slack_channel_id
+        or proof.channel_id is None
+        or not hmac.compare_digest(proof.channel_id, settings.slack_channel_id)
+    ):
+        raise HTTPException(status_code=403, detail="Slack command channel mismatch")
+    suffix = "cancel" if operation == PrimaryCommandOperation.CANCELLATION else "recover"
+    path = f"/v1/primary/tasks/{task_id}/{suffix}"
+    try:
+        nonce_digest = verify_primary_ingress_proof(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            request,
+            path=path,
+            proof_field="gateway_proof",
+        )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    _require_primary_owner_actor(request.actor_id)
+    coordinator, _, writer, replay = _primary_command_projection(
+        task_id, request, operation
+    )
+    if replay is not None:
+        return
+    assert writer is not None
+    try:
+        coordinator.claim_command_authorization(
+            task_id=task_id,
+            operation=operation.value,
+            command_id=request.command_id,
+            command_digest=request.command_digest,
+            nonce_digest=nonce_digest,
+            proof_version=proof.version,
+            actor_id=request.actor_id,
+            fencing_generation=writer.fencing_generation,
+            proof_expires_at=proof.issued_at + 300,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post(
     "/v1/primary/provider-activations/{provider_id}/advance",
     response_model=dict[str, bool],
@@ -874,7 +929,7 @@ def primary_resume_approval(
     ):
         raise HTTPException(status_code=403, detail="Slack approval channel mismatch")
     try:
-        verify_primary_ingress_proof(
+        nonce_digest = verify_primary_ingress_proof(
             settings.slack_gateway_secret,
             settings.shared_secret,
             request,
@@ -883,18 +938,60 @@ def primary_resume_approval(
         )
     except PrimaryCommandBindingError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    _, _, _, replay = _primary_command_projection(
+    coordinator, _, writer, replay = _primary_command_projection(
         task_id, request, PrimaryCommandOperation.APPROVAL_RESUME
     )
     if replay is not None:
         return replay
+    assert writer is not None
+    try:
+        coordinator.claim_command_authorization(
+            task_id=task_id,
+            operation=PrimaryCommandOperation.APPROVAL_RESUME.value,
+            command_id=request.command_id,
+            command_digest=request.command_digest,
+            nonce_digest=nonce_digest,
+            proof_version=request.slack_gateway_proof.version,
+            actor_id=request.actor_id,
+            fencing_generation=writer.fencing_generation,
+            proof_expires_at=request.slack_gateway_proof.issued_at + 300,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     assert primary_default_activation is not None
     assert primary_default_activation.application is not None
     try:
-        primary_default_activation.application.resume_approval(request.to_command())
-        return _record_primary_command(
+        command = request.to_command()
+        if (
+            request.kind.value == "external_effect"
+            and command.decision.value == "approve"
+        ):
+            # Keep the external-effect persistence chain behind the primary-mode
+            # route. Default-off startup must not import this Postgres-backed
+            # effect implementation merely to construct the legacy app.
+            from .primary_effect_gateways import PostgresTypedEffectIntentStore
+
+            assert primary_default_activation.handle is not None
+            PostgresTypedEffectIntentStore(
+                pool=primary_default_activation.handle.pool,
+                schema=settings.langgraph_primary_postgres_schema,
+            ).record_approval_binding(
+                task_id=task_id,
+                effect_key_digest=coordinator.pending_effect_key(task_id),
+                approval_request_digest=request.request_digest,
+                approval_receipt_digest=command.receipt_digest,
+                command_id=request.command_id,
+                command_digest=request.command_digest,
+                authorization_nonce_digest=nonce_digest,
+                actor_id=request.actor_id,
+                writer_owner_id="langgraph",
+                writer_fencing_generation=writer.fencing_generation,
+            )
+        primary_default_activation.application.resume_approval(command)
+        response = _record_primary_command(
             request, PrimaryCommandOperation.APPROVAL_RESUME
         )
+        return response
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -942,8 +1039,20 @@ def primary_provider_result(
     assert primary_default_activation is not None
     assert primary_default_activation.application is not None
     try:
-        primary_default_activation.application.record_provider_result(
-            task_id, request.to_command()
+        if (
+            request.assignment_id is None
+            or request.provider_id is None
+            or request.provider_run_id is None
+        ):
+            raise ValueError(
+                "parallel provider callback requires assignment, provider, and run identity"
+            )
+        primary_default_activation.application.record_provider_callback(
+            task_id=task_id,
+            assignment_id=request.assignment_id,
+            provider_id=request.provider_id,
+            provider_run_id=request.provider_run_id,
+            command=request.to_command(),
         )
         return _record_primary_command(
             request, PrimaryCommandOperation.PROVIDER_RESULT
@@ -996,6 +1105,45 @@ def primary_reconcile_effect(
 
 
 @app.post(
+    "/v1/primary/tasks/{task_id}/completion-evidence",
+    response_model=PrimaryCommandResponse,
+)
+def primary_completion_evidence(
+    task_id: str,
+    request: CompletionEvidenceRequest,
+) -> PrimaryCommandResponse:
+    if request.actor_id != request.evidence_actor_id:
+        raise HTTPException(status_code=403, detail="Completion evidence actor mismatch")
+    try:
+        verify_primary_ingress_proof(
+            settings.langgraph_primary_adapter_callback_secret,
+            settings.shared_secret,
+            request,
+            path=f"/v1/primary/tasks/{task_id}/completion-evidence",
+            proof_field="evidence_proof",
+        )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    coordinator, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.COMPLETION_EVIDENCE
+    )
+    if replay is not None:
+        return replay
+    try:
+        coordinator.record_completion_evidence(
+            task_id=task_id,
+            candidate_sha=request.candidate_sha,
+            provider_result_digest=request.provider_result_digest,
+            evidence=request.to_evidence(),
+        )
+        return _record_primary_command(
+            request, PrimaryCommandOperation.COMPLETION_EVIDENCE
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
     "/v1/primary/tasks/{task_id}/cancel",
     response_model=PrimaryCommandResponse,
     dependencies=[Depends(require_auth)],
@@ -1003,7 +1151,9 @@ def primary_reconcile_effect(
 def primary_cancel(
     task_id: str, request: CancellationRequest
 ) -> PrimaryCommandResponse:
-    _require_primary_owner_actor(request.actor_id)
+    _verify_primary_owner_command_proof(
+        task_id, request, PrimaryCommandOperation.CANCELLATION
+    )
     _, _, _, replay = _primary_command_projection(
         task_id, request, PrimaryCommandOperation.CANCELLATION
     )
@@ -1026,7 +1176,9 @@ def primary_cancel(
 def primary_recover(
     task_id: str, request: RecoveryRequest
 ) -> PrimaryCommandResponse:
-    _require_primary_owner_actor(request.actor_id)
+    _verify_primary_owner_command_proof(
+        task_id, request, PrimaryCommandOperation.RECOVERY
+    )
     _, _, _, replay = _primary_command_projection(
         task_id, request, PrimaryCommandOperation.RECOVERY
     )
@@ -1358,3 +1510,8 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:29 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | END]]

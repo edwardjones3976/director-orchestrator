@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
@@ -19,6 +24,7 @@ from unittest.mock import patch
 import uuid
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from director_orchestrator.config import Settings
 from director_orchestrator.langgraph_postgres import open_postgres_control_plane
@@ -27,7 +33,10 @@ from director_orchestrator.langgraph_primary import (
     ApprovalKind,
     ApprovalResume,
     HandlerContext,
+    ProviderDisposition,
+    ProviderSubgraphResult,
 )
+from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
 from director_orchestrator.models import (
     IntakeAuthentication,
     ProviderName,
@@ -39,12 +48,25 @@ from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.packet_routing import DirectorPacketTaskRouter
 from director_orchestrator.policy import preview_plan
 from director_orchestrator.primary_coordinator import PrimaryTaskCoordinator
+from director_orchestrator.primary_effect_gateways import (
+    ExactEffectGatewayRegistry,
+    GITHUB_MARK_READY,
+    SLACK_POST_MESSAGE,
+)
+from director_orchestrator.primary_parallel import (
+    ParallelAssignmentStatus,
+    ParallelDispatchError,
+    ParallelDispatchOutcome,
+    PostgresParallelDispatch,
+    ProviderAttemptReservation,
+)
 from director_orchestrator.primary_default import (
     DefaultDryRunServices,
     DefaultOfflineSimulationServices,
     DefaultPrimaryActivation,
     DefaultPrimaryApplication,
     DefaultPrimaryAuthority,
+    _execute_three_attempt_roster,
     _primary_provider_lane,
     build_automatic_primary_live_dependencies,
     resolve_default_primary_authority,
@@ -74,7 +96,151 @@ def packet_router(settings: Settings) -> DirectorPacketTaskRouter:
     )
 
 
+class ProviderAttemptRosterTests(unittest.TestCase):
+    def test_first_format_success_still_invokes_every_distinct_adapter(self) -> None:
+        roster = (("json", "api"), ("text", "cli"))
+        invoked: list[tuple[str, str]] = []
+        settled: list[tuple[int, ParallelAssignmentStatus]] = []
+        adapters = {
+            roster[0]: lambda ordinal: {"status": "SUCCEEDED", "attempt": ordinal},
+            roster[1]: lambda ordinal: {"status": "FAILED", "attempt": ordinal},
+        }
+        self.assertIsNot(adapters[roster[0]], adapters[roster[1]])
+
+        def reserve(ordinal: int) -> ProviderAttemptReservation:
+            format_id, transport_id = roster[(ordinal - 1) % len(roster)]
+            return ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai", format_id,
+                transport_id, digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"),
+                digest("budget"),
+            )
+
+        def record(attempt, status, _result_digest, _reason) -> None:
+            settled.append((attempt.attempt_ordinal, status))
+
+        def dispatch(attempt) -> dict[str, object]:
+            identity = (attempt.format_id, attempt.transport_id)
+            invoked.append(identity)
+            return adapters[identity](attempt.attempt_ordinal)
+
+        status, result, _result_digest, reason = _execute_three_attempt_roster(
+            format_roster=roster,
+            reserve_attempt=reserve,
+            record_attempt=record,
+            dispatch_attempt=dispatch,
+        )
+
+        self.assertEqual(list(roster), invoked)
+        self.assertEqual(
+            [(1, ParallelAssignmentStatus.SUCCEEDED),
+             (2, ParallelAssignmentStatus.FAILED)],
+            settled,
+        )
+        self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, status)
+        assert result is not None
+        self.assertEqual(1, result["attempt"])
+        self.assertEqual("provider_result_authenticated", reason)
+
+
 class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
+    def test_live_activation_composes_a_ready_typed_effect_executor(self):
+        class Gateway:
+            def __init__(self, system, action):
+                self.system = system
+                self.action = action
+
+            def mutate(self, intent, timeout_seconds):  # pragma: no cover
+                raise AssertionError("composition test must not call a gateway")
+
+            def readback(self, intent, remote_identifier, timeout_seconds):  # pragma: no cover
+                raise AssertionError("composition test must not call a gateway")
+
+        registry = ExactEffectGatewayRegistry(
+            (
+                Gateway("slack", SLACK_POST_MESSAGE),
+                Gateway("github", GITHUB_MARK_READY),
+            ),
+            allowed_actions=frozenset(
+                {("slack", SLACK_POST_MESSAGE), ("github", GITHUB_MARK_READY)}
+            ),
+        )
+        settings = replace(
+            Settings(),
+            langgraph_primary_enabled=True,
+            langgraph_primary_live_provider_dispatch_enabled=True,
+            allow_paid_runs=True,
+            langgraph_primary_owner_token="o" * 32,
+            repository_allowlist=("owner/repository",),
+            allowed_starting_refs=("main",),
+            repository_snapshot_root=str(Path.cwd()),
+        )
+        handle = SimpleNamespace(
+            claim_store=SimpleNamespace(), pool=SimpleNamespace(), close=lambda: None
+        )
+        dependencies = SimpleNamespace(
+            validate=lambda _required: None,
+            adapters={
+                "openai": PacketBoundaryAdapter(
+                    "openai", SimpleNamespace(dispatch=lambda *_args, **_kwargs: {})
+                )
+            },
+            packet_result_resolver=lambda _context: None,
+            completion_evidence_resolver=lambda _context: None,
+            external_effect_resolver=lambda _context: None,
+            evidence_debate_handler=lambda _context: None,
+            acceptance_handler=lambda _context: None,
+            candidate_sha_resolver=lambda *_args: SHA,
+            format_roster=lambda _provider: (("api", "api"),),
+            adapter_for_format=lambda *_args: None,
+        )
+        provider_activation = SimpleNamespace(
+            health=lambda: {"combined_live_ready": True},
+            provider_ready=lambda *_args, **_kwargs: True,
+        )
+        captured = {}
+
+        class Coordinator:
+            def __init__(self, *_args, **kwargs):
+                captured.update(kwargs)
+
+        with (
+            patch(
+                "director_orchestrator.primary_default.resolve_default_primary_authority",
+                return_value=DefaultPrimaryAuthority(SHA, digest("authority")),
+            ),
+            patch(
+                "director_orchestrator.primary_default.open_postgres_control_plane",
+                return_value=handle,
+            ),
+            patch.object(Settings, "primary_provider_activation_bindings", return_value={"openai": object()}),
+            patch(
+                "director_orchestrator.primary_default.PrimaryProviderActivationService",
+                return_value=provider_activation,
+            ),
+            patch(
+                "director_orchestrator.primary_default.PrimaryTaskCoordinator",
+                Coordinator,
+            ),
+        ):
+            activation = DefaultPrimaryActivation(
+                settings,
+                live_dependencies=dependencies,
+                effect_gateways=registry,
+            )
+
+        self.assertTrue(captured["effect_executor"].ready)
+        self.assertIsNotNone(activation.application)
+
+    def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
+        gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
+        with self.assertRaisesRegex(ValueError, "exactly match"):
+            ExactEffectGatewayRegistry(
+                (gateway,),
+                allowed_actions=frozenset(
+                    {("slack", SLACK_POST_MESSAGE), ("github", GITHUB_MARK_READY)}
+                ),
+            )
+
     def test_antigravity_lane_is_an_explicit_gemini_backend_mapping(self):
         self.assertEqual("antigravity", _primary_provider_lane(ProviderName.GEMINI))
         self.assertEqual("claude", _primary_provider_lane(ProviderName.CLAUDE))
@@ -170,6 +336,26 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
             "ALLOW_PAID_RUNS is enabled.*LIVE_PROVIDER_DISPATCH_ENABLED is disabled",
         ):
             DefaultPrimaryActivation(settings)
+
+    def test_reconciliation_readiness_is_not_sticky_after_failed_pass(self):
+        activation = object.__new__(DefaultPrimaryActivation)
+        activation.application = SimpleNamespace(
+            recover=lambda _task_id: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+        activation.services = object()
+        projection = SimpleNamespace(
+            task_id="task-freshness",
+            projection={"terminal_classification": None},
+        )
+        activation.coordinator = SimpleNamespace(
+            list_projections=lambda: (projection,),
+            get_task_writer=lambda _task_id: None,
+        )
+        activation._reconciliation_worker_ready = True
+
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            activation.reconcile_once()
+        self.assertFalse(activation._reconciliation_worker_ready)
 
     def test_automatic_live_discovery_fails_closed_for_missing_lanes(self):
         settings = replace(
@@ -430,6 +616,80 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(readiness.writer_lease_ready)
         self.assertTrue(readiness.legacy_new_intake_disabled)
 
+    def test_provider_attempt_ledger_orders_formats_and_restart_blocks_ambiguity(self):
+        record = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "attempt-ledger"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        reservation = self.coordinator.reserve_parallel_ready(
+            task_id=record.task_id,
+            policy=self.application._parallel_policy(),
+        )[0]
+        first = self.coordinator.reserve_provider_attempt(
+            reservation=reservation,
+            attempt_ordinal=1,
+            format_roster=(("json", "api"), ("text", "cli")),
+            idempotency_key_digest=digest("attempt-1-key"),
+            budget_evidence_digest=digest("budget"),
+        )
+        self.assertEqual(("json", "api"), (first.format_id, first.transport_id))
+        self.coordinator.record_provider_attempt(
+            attempt=first,
+            status=ParallelAssignmentStatus.FAILED,
+            result_digest=digest("failed-result"),
+            reason_code="authenticated_failure",
+        )
+
+        restarted = PostgresParallelDispatch(self.handle.claim_store)
+        writer = self.handle.claim_store.current_task_writer(record.task_id)
+        assert writer is not None
+        second = restarted.reserve_provider_attempt(
+            reservation=reservation,
+            writer=writer,
+            attempt_ordinal=2,
+            format_roster=(("json", "api"), ("text", "cli")),
+            idempotency_key_digest=digest("attempt-2-key"),
+            budget_evidence_digest=digest("budget"),
+        )
+        self.assertEqual(("text", "cli"), (second.format_id, second.transport_id))
+        with self.assertRaisesRegex(ParallelDispatchError, "reconciliation required"):
+            restarted.reserve_provider_attempt(
+                reservation=reservation,
+                writer=writer,
+                attempt_ordinal=2,
+                format_roster=(("json", "api"), ("text", "cli")),
+                idempotency_key_digest=digest("attempt-2-key"),
+                budget_evidence_digest=digest("budget"),
+            )
+        restarted.record_provider_attempt(
+            attempt=second,
+            writer=writer,
+            status=ParallelAssignmentStatus.AMBIGUOUS,
+            result_digest=None,
+            reason_code="provider_outcome_unknown",
+        )
+        with self.assertRaisesRegex(ParallelDispatchError, "must reconcile"):
+            restarted.reserve_provider_attempt(
+                reservation=reservation,
+                writer=writer,
+                attempt_ordinal=3,
+                format_roster=(("json", "api"), ("text", "cli")),
+                idempotency_key_digest=digest("attempt-3-key"),
+                budget_evidence_digest=digest("budget"),
+            )
+        with self.handle.pool.connection() as connection:
+            rows = connection.execute(
+                f"SELECT attempt_ordinal, event_sequence, status, format_id, "
+                f"transport_id, outcome_evidence_digest "
+                f"FROM {self.schema}.director_primary_provider_attempt "
+                "WHERE task_id = %s ORDER BY attempt_ordinal, event_sequence",
+                (record.task_id,),
+            ).fetchall()
+        self.assertEqual(4, len(rows))
+        self.assertEqual([1, 1, 2, 2], [row["attempt_ordinal"] for row in rows])
+        self.assertTrue(rows[1]["outcome_evidence_digest"])
+        self.assertTrue(rows[3]["outcome_evidence_digest"])
+
     def test_repository_free_research_is_approval_bound_and_restart_stable(self):
         intake = self.intake().model_copy(
             update={
@@ -498,6 +758,438 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(
             "execution_approval_required",
             restarted_projection.projection["reason_code"],
+        )
+
+    def parallel_plan(self):
+        plan = preview_plan(self.intake().text, self.settings)
+        template = plan.assignments[0]
+        assignments = [
+            template.model_copy(
+                update={
+                    "sequence": 1,
+                    "agent": ProviderName.CLAUDE,
+                    "task": "Independent left assignment",
+                    "depends_on": [],
+                    "retry_limit": 3,
+                }
+            ),
+            template.model_copy(
+                update={
+                    "sequence": 2,
+                    "agent": ProviderName.CURSOR,
+                    "task": "Independent right assignment",
+                    "depends_on": [],
+                    "retry_limit": 3,
+                }
+            ),
+            template.model_copy(
+                update={
+                    "sequence": 3,
+                    "agent": ProviderName.OPENAI,
+                    "task": "Dependent aggregation assignment",
+                    "depends_on": [1, 2],
+                    "retry_limit": 3,
+                }
+            ),
+        ]
+        return plan.model_copy(update={"assignments": assignments})
+
+    def approve(self, application, coordinator, task_id):
+        projection = coordinator.get_projection(task_id)
+        assert projection is not None
+        approval = projection.projection["pending_approval"]
+        return application.resume_approval(
+            ApprovalResume(
+                task_id=task_id,
+                kind=ApprovalKind(approval["kind"]),
+                request_digest=approval["request_digest"],
+                approval_event_id=f"approve-{task_id.lower()}",
+                decision=ApprovalDecision.APPROVE,
+            )
+        )
+
+    def use_parallel_graph_completion_services(self, dispatcher):
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings)
+        )
+        coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-test-v1",
+            application_projection_provider=services.application_projection,
+        )
+        coordinator.adopt_or_activate_new_intake()
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator,
+            services,
+            DefaultPrimaryAuthority(SHA, digest("authority")),
+            parallel_dispatcher=dispatcher,
+        )
+        self.settings = settings
+        self.services = services
+        self.coordinator = coordinator
+        self.application = application
+
+    def test_parallel_default_dispatches_all_ready_then_dependency(self):
+        barrier = threading.Barrier(2)
+        entered: list[int] = []
+        completed: list[int] = []
+        worker_threads: set[int] = set()
+        lock = threading.Lock()
+
+        def dispatch(reservation):
+            with lock:
+                entered.append(reservation.sequence)
+                worker_threads.add(threading.get_ident())
+                if reservation.sequence == 3:
+                    self.assertEqual({1, 2}, set(completed))
+            if reservation.sequence in {1, 2}:
+                barrier.wait(timeout=5)
+            with lock:
+                completed.append(reservation.sequence)
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"parallel-result-{reservation.sequence}"),
+                "provider_result_authenticated",
+            )
+
+        self.use_parallel_graph_completion_services(dispatch)
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake(),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        finished = self.approve(self.application, self.coordinator, pending.task_id)
+        aggregate = self.coordinator.parallel_aggregate(pending.task_id)
+        with self.handle.pool.connection() as connection:
+            retry_limits = connection.execute(
+                f"SELECT retry_limit FROM {self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id = %s ORDER BY sequence",
+                (pending.task_id,),
+            ).fetchall()
+
+        self.assertEqual([1, 2, 3], sorted(entered))
+        self.assertEqual([3, 3, 3], [row["retry_limit"] for row in retry_limits])
+        self.assertGreaterEqual(len(worker_threads), 2)
+        self.assertTrue(aggregate.terminal)
+        self.assertTrue(aggregate.succeeded)
+        self.assertEqual(TaskStatus.DONE, finished.status)
+        self.assertTrue(all(value == "SUCCEEDED" for value in aggregate.statuses.values()))
+        projection = self.coordinator.get_projection(pending.task_id)
+        assert projection is not None
+        state = self.coordinator._runtime.compact_state(pending.task_id)
+        self.assertEqual(
+            aggregate.aggregate_digest,
+            state["provider_result_digest"],
+        )
+        self.assertIn("exact_sha_review", projection.projection["visited_nodes"])
+        self.assertIn(
+            "ci_security_completion", projection.projection["visited_nodes"]
+        )
+        self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
+
+    def test_parallel_restart_resumes_pending_rows_without_duplicate_dispatch(self):
+        self.use_parallel_graph_completion_services(None)
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake().model_copy(update={"source_event_id": "parallel-restart"}),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        self.approve(self.application, self.coordinator, pending.task_id)
+        self.assertTrue(
+            all(
+                value == "PENDING"
+                for value in self.coordinator.parallel_aggregate(pending.task_id).statuses.values()
+            )
+        )
+
+        calls: list[str] = []
+
+        def dispatch(reservation):
+            calls.append(reservation.assignment_id)
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest("restart:" + reservation.assignment_id),
+                "provider_result_authenticated",
+            )
+
+        restarted_services = DefaultOfflineSimulationServices(
+            self.settings, packet_router=packet_router(self.settings)
+        )
+        restarted_coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            restarted_services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-test-v1",
+            application_projection_provider=restarted_services.application_projection,
+        )
+        restarted_coordinator.adopt_or_activate_new_intake()
+        restarted = DefaultPrimaryApplication(
+            self.settings,
+            restarted_coordinator,
+            restarted_services,
+            DefaultPrimaryAuthority(SHA, digest("authority")),
+            parallel_dispatcher=dispatch,
+        )
+
+        first = restarted.recover(pending.task_id)
+        second = restarted.recover(pending.task_id)
+
+        self.assertEqual(3, len(calls))
+        self.assertEqual(3, len(set(calls)))
+        self.assertEqual(TaskStatus.DONE, first.status)
+        self.assertEqual(TaskStatus.DONE, second.status)
+
+    def test_parallel_task_is_not_terminal_until_every_assignment_settles(self):
+        def dispatch(reservation):
+            if reservation.sequence == 2:
+                return ParallelDispatchOutcome(
+                    ParallelAssignmentStatus.AMBIGUOUS,
+                    None,
+                    "provider_outcome_unknown",
+                )
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"partial-{reservation.sequence}"),
+                "provider_result_authenticated",
+            )
+
+        self.application._parallel_dispatcher = dispatch
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake().model_copy(update={"source_event_id": "parallel-partial"}),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        result = self.approve(self.application, self.coordinator, pending.task_id)
+        aggregate = self.coordinator.parallel_aggregate(pending.task_id)
+
+        self.assertFalse(aggregate.terminal)
+        self.assertFalse(aggregate.succeeded)
+        self.assertEqual(1, aggregate.ambiguous_slot_count)
+        self.assertNotEqual(TaskStatus.DONE, result.status)
+        self.assertIn("PENDING", aggregate.statuses.values())
+
+    def test_parallel_restart_classifies_active_without_redispatch(self):
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake().model_copy(update={"source_event_id": "parallel-active"}),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        self.application.settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        self.approve(self.application, self.coordinator, pending.task_id)
+        reservations = self.coordinator.reserve_parallel_ready(
+            task_id=pending.task_id,
+            policy=self.application._parallel_policy(),
+        )
+        self.assertEqual(2, len(reservations))
+
+        calls: list[str] = []
+        restarted_services = DefaultDryRunServices(
+            self.settings, packet_router=packet_router(self.settings)
+        )
+        restarted_coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            restarted_services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-test-v1",
+            application_projection_provider=restarted_services.application_projection,
+        )
+        restarted_coordinator.adopt_or_activate_new_intake()
+        restarted = DefaultPrimaryApplication(
+            self.settings,
+            restarted_coordinator,
+            restarted_services,
+            DefaultPrimaryAuthority(SHA, digest("authority")),
+            parallel_dispatcher=lambda reservation: calls.append(
+                reservation.assignment_id
+            ),  # type: ignore[arg-type]
+        )
+
+        result = restarted.recover(pending.task_id)
+        aggregate = restarted_coordinator.parallel_aggregate(pending.task_id)
+        projection = restarted_coordinator.get_projection(pending.task_id)
+
+        self.assertEqual([], calls)
+        self.assertEqual(2, aggregate.ambiguous_slot_count)
+        self.assertFalse(aggregate.terminal)
+        self.assertNotEqual(TaskStatus.DONE, result.status)
+        assert projection is not None
+        self.assertEqual(2, projection.projection["parallel_ambiguous_slot_count"])
+
+    def test_parallel_cancellation_fences_new_work_before_graph_cancel(self):
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake().model_copy(update={"source_event_id": "parallel-cancel-race"}),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        active = self.coordinator.reserve_parallel_ready(
+            task_id=pending.task_id,
+            policy=self.application._parallel_policy(),
+        )
+        self.assertEqual(2, len(active))
+
+        cancelled = self.application.cancel(pending.task_id)
+        aggregate = self.coordinator.parallel_aggregate(pending.task_id)
+        self.assertEqual(TaskStatus.FAILED, cancelled.status)
+        self.assertEqual(2, aggregate.ambiguous_slot_count)
+        self.assertEqual(
+            (),
+            self.coordinator.reserve_parallel_ready(
+                task_id=pending.task_id,
+                policy=self.application._parallel_policy(),
+            ),
+        )
+        projection = self.coordinator.get_projection(pending.task_id)
+        assert projection is not None
+        self.assertEqual("CANCELLED", projection.projection["terminal_classification"])
+
+    def test_recover_repairs_missing_parallel_registration_after_intake_crash(self):
+        pending = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "intake-registration-repair"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        with self.handle.pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    f"DELETE FROM {self.schema}.director_primary_parallel_assignment "
+                    "WHERE task_id = %s",
+                    (pending.task_id,),
+                )
+                connection.execute(
+                    f"DELETE FROM {self.schema}.director_primary_parallel_batch "
+                    "WHERE task_id = %s",
+                    (pending.task_id,),
+                )
+
+        repaired = self.application.recover(pending.task_id)
+        aggregate = self.coordinator.parallel_aggregate(pending.task_id)
+        self.assertEqual(pending.task_id, repaired.task_id)
+        self.assertTrue(aggregate.statuses)
+        projection = self.coordinator.get_projection(pending.task_id)
+        assert projection is not None
+        self.assertEqual(
+            projection.projection["parallel_plan_digest"],
+            self.coordinator._runtime.compact_state(pending.task_id)[
+                "parallel_plan_digest"
+            ],
+        )
+
+    def test_callback_settles_only_exact_assignment_attempt_not_graph_edge(self):
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake().model_copy(update={"source_event_id": "parallel-callback"}),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        self.application.settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        self.approve(self.application, self.coordinator, pending.task_id)
+        reservations = self.coordinator.reserve_parallel_ready(
+            task_id=pending.task_id,
+            policy=self.application._parallel_policy(),
+        )
+        first, second = reservations
+        attempt = self.coordinator.reserve_provider_attempt(
+            reservation=first,
+            attempt_ordinal=1,
+            format_roster=(("json", "callback"),),
+            idempotency_key_digest=digest("callback-key"),
+            budget_evidence_digest=digest("callback-budget"),
+        )
+        command = ProviderSubgraphResult(
+            provider_attempt_digest=attempt.attempt_digest,
+            idempotency_key_digest=attempt.idempotency_key_digest,
+            authority_snapshot_digest=digest("callback-authority"),
+            producer_id=first.provider_id,
+            disposition=ProviderDisposition.COMPLETED,
+            result_digest=digest("callback-result"),
+            candidate_sha=SHA,
+            reason_code="callback_authenticated",
+        )
+        with self.assertRaisesRegex(ParallelDispatchError, "unknown"):
+            self.application.record_provider_callback(
+                task_id=pending.task_id,
+                assignment_id=second.assignment_id,
+                provider_id=second.provider_id,
+                provider_run_id="run-wrong-assignment",
+                command=command,
+            )
+
+        self.application.record_provider_callback(
+            task_id=pending.task_id,
+            assignment_id=first.assignment_id,
+            provider_id=first.provider_id,
+            provider_run_id="run-exact-attempt",
+            command=command,
+        )
+        # Exact redelivery is idempotent; the same attempt with another remote
+        # run identity is a binding conflict even when every other field agrees.
+        self.application.record_provider_callback(
+            task_id=pending.task_id,
+            assignment_id=first.assignment_id,
+            provider_id=first.provider_id,
+            provider_run_id="run-exact-attempt",
+            command=command,
+        )
+        with self.assertRaisesRegex(ParallelDispatchError, "run identity conflicts"):
+            self.application.record_provider_callback(
+                task_id=pending.task_id,
+                assignment_id=first.assignment_id,
+                provider_id=first.provider_id,
+                provider_run_id="run-rebound",
+                command=command,
+            )
+        aggregate = self.coordinator.parallel_aggregate(pending.task_id)
+        self.assertEqual("SUCCEEDED", aggregate.statuses[first.assignment_id])
+        self.assertEqual("ACTIVE", aggregate.statuses[second.assignment_id])
+        state = self.coordinator._runtime.compact_state(pending.task_id)
+        self.assertIsNone(state["provider_result_receipt_digest"])
+        with self.handle.pool.connection() as connection:
+            callback_rows = connection.execute(
+                f"SELECT provider_run_id_digest FROM "
+                f"{self.schema}.director_primary_provider_attempt "
+                "WHERE task_id = %s AND assignment_id = %s "
+                "AND event_sequence = 3",
+                (pending.task_id, first.assignment_id),
+            ).fetchall()
+        self.assertEqual(1, len(callback_rows))
+        self.assertEqual(
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    {"provider_run_id": "run-exact-attempt"},
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest(),
+            callback_rows[0]["provider_run_id_digest"],
         )
 
     def test_repository_free_research_approval_reaches_dispatch_boundary_without_call(self):
@@ -828,6 +1520,8 @@ class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):
                     "SQLITE_PATH": str(Path(directory) / "legacy.sqlite3"),
                     "ORCHESTRATOR_SHARED_SECRET": "test-shared-secret",
                     "SLACK_OWNER_USER_ID": "UOWNER",
+                    "SLACK_DIRECTOR_CHANNEL_ID": "CDEFAULT",
+                    "SLACK_GATEWAY_SECRET": "g" * 40,
                     "ALLOW_PAID_RUNS": "false",
                     "LANGGRAPH_SHADOW_ENABLED": "false",
                     "LANGGRAPH_APPROVAL_RESUME_ENABLED": "false",
@@ -848,8 +1542,13 @@ class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):
             )
             program = r'''
 import json
+import time
 from fastapi.testclient import TestClient
 from director_orchestrator.main import app
+from director_orchestrator.primary_commands import (
+    CancellationRequest, RecoveryRequest, PrimaryIngressProof,
+    build_primary_ingress_proof,
+)
 
 payload = {
     "source_event_id": "default-api-event-1",
@@ -874,19 +1573,40 @@ with TestClient(app) as client:
             restored.headers["X-Primary-Writer-Generation"]
         )
     }
+    def signed_request(model, path):
+        nonce = ("n" if model is CancellationRequest else "r") * 32
+        placeholder = PrimaryIngressProof(
+            issued_at=int(time.time()), nonce=nonce, signature="0" * 64,
+            channel_id="CDEFAULT",
+        )
+        request = model(**model_payload, gateway_proof=placeholder)
+        proof = build_primary_ingress_proof(
+            "g" * 40, "test-shared-secret", request, path=path,
+            proof_field="gateway_proof", issued_at=placeholder.issued_at,
+            nonce=nonce, channel_id="CDEFAULT",
+        )
+        return request.model_copy(update={"gateway_proof": proof}).model_dump(mode="json")
+    model_payload = {**command_binding, "command_id": "cancel-default-api-1"}
+    cancel_path = f"/v1/primary/tasks/{task_id}/cancel"
     cancelled = client.post(
-        f"/v1/primary/tasks/{task_id}/cancel",
+        cancel_path,
         headers=headers,
-        json={**command_binding, "command_id": "cancel-default-api-1"}
+        json=signed_request(CancellationRequest, cancel_path)
     )
+
+
+    if cancelled.status_code != 200:
+        raise RuntimeError(cancelled.text)
+    model_payload = {
+        **command_binding,
+        "command_id": "recover-default-api-1",
+        "expected_projection_digest": cancelled.json()["projection_digest"],
+    }
+    recover_path = f"/v1/primary/tasks/{task_id}/recover"
     recovered = client.post(
-        f"/v1/primary/tasks/{task_id}/recover",
+        recover_path,
         headers=headers,
-        json={
-            **command_binding,
-            "command_id": "recover-default-api-1",
-            "expected_projection_digest": cancelled.json()["projection_digest"]
-        }
+        json=signed_request(RecoveryRequest, recover_path)
     )
     print(json.dumps({
         "health": health,
@@ -957,3 +1677,9 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

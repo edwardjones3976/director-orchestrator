@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:02 UTC | BEGIN]]
@@ -275,12 +278,12 @@ if ($Action -eq "RestoreDrill") {
         if ($LASTEXITCODE -ne 0) { throw "Restore drill failed." }
         $schema = [string]$values['LANGGRAPH_PRIMARY_POSTGRES_SCHEMA']
         $proof = [string](@(& docker exec $container psql -U director_primary -d $database -v ON_ERROR_STOP=1 -Atc `
-            "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('director_primary_control_plane','director_primary_intake_authority','director_primary_task_projection','director_primary_task_writer','director_primary_claim','director_primary_effect_reservation','director_primary_reconciliation_event','director_primary_terminal_evidence','director_provider_activation_evidence','director_provider_activation_authorization','director_primary_parallel_batch','director_primary_parallel_assignment')) || '|' || (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('checkpoints','checkpoint_blobs','checkpoint_writes','checkpoint_migrations')) || '|' || (SELECT count(*) FROM $schema.director_primary_control_plane WHERE database_instance_id = '$databaseInstanceId');" ) | Select-Object -Last 1)
+            "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('director_primary_control_plane','director_primary_intake_authority','director_primary_task_projection','director_primary_task_writer','director_primary_claim','director_primary_effect_reservation','director_primary_effect_approval_binding','director_primary_typed_effect_intent','director_primary_effect_execution','director_primary_reconciliation_event','director_primary_terminal_evidence','director_provider_activation_evidence','director_provider_activation_authorization','director_primary_parallel_batch','director_primary_parallel_assignment','director_primary_provider_attempt')) || '|' || (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('checkpoints','checkpoint_blobs','checkpoint_writes','checkpoint_migrations')) || '|' || (SELECT count(*) FROM $schema.director_primary_control_plane WHERE database_instance_id = '$databaseInstanceId');" ) | Select-Object -Last 1)
         if ($LASTEXITCODE -ne 0 -or $proof -notmatch '^(\d+)\|(\d+)\|(\d+)$') { throw "Restored schema verification failed." }
         $requiredTableCount = [int]$matches[1]
         $checkpointTableCount = [int]$matches[2]
         $schemaEvidenceRows = [int]$matches[3]
-        if ($requiredTableCount -ne 12 -or $checkpointTableCount -ne 4 -or $schemaEvidenceRows -lt 1) {
+        if ($requiredTableCount -ne 15 -or $checkpointTableCount -ne 4 -or $schemaEvidenceRows -lt 1) {
             throw "Restore drill lacks required control-plane/checkpoint tables or schema evidence."
         }
     }
@@ -341,3 +344,7 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:02 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:34 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

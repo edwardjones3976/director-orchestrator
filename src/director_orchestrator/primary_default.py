@@ -1,3 +1,10 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:05 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
@@ -20,7 +27,7 @@ import secrets
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -29,6 +36,7 @@ from .langgraph_postgres import EffectReservation, PrimaryTaskProjection
 from .langgraph_postgres import PostgresCheckpointHandle, open_postgres_control_plane
 from .langgraph_runtime import (
     PacketBoundaryAdapter,
+    ProviderAdapterContext,
     RuntimeExecutionOutcome,
     RuntimeExecutionStatus,
 )
@@ -51,12 +59,32 @@ from .langgraph_primary import (
     ProviderSubgraphResult,
     ScheduleResult,
 )
-from .models import IntakeAuthentication, ProviderName, SlackIntake, TaskRecord, TaskStatus
+from .models import (
+    AssignmentOutcome,
+    IntakeAuthentication,
+    ProviderName,
+    SlackIntake,
+    TaskRecord,
+    TaskStatus,
+)
 from .packet_contracts import document_digest, validate_packet
 from .packet_routing import DirectorPacketTaskRouter
 from .packet_transports import LocalGitAuthoritySnapshotResolver
 from .policy import preview_plan
 from .primary_coordinator import PrimaryTaskCoordinator
+from .primary_effects import (
+    DeterministicExternalEffectExecutor,
+    EffectMutation,
+    EffectReadback,
+)
+from .primary_effect_gateways import (
+    ExactEffectGatewayRegistry,
+    GITHUB_MARK_READY,
+    PostgresTypedEffectIntentStore,
+    SLACK_POST_MESSAGE,
+    TypedEffectIntent,
+    build_configured_effect_gateway_registry,
+)
 from .primary_completion import (
     CompletionEvidence,
     CompletionEvidenceResolver,
@@ -71,8 +99,16 @@ from .host_provider_bridge import (
     challenge_host_provider_bridge,
 )
 from .primary_providers import CandidateShaResolver, PrimaryProviderBinding
+from .primary_parallel import (
+    ParallelAggregate,
+    ParallelAssignment,
+    ParallelAssignmentStatus,
+    ParallelDispatchOutcome,
+    ParallelDispatchPolicy,
+    ParallelReservation,
+    ProviderAttemptReservation,
+)
 from .primary_transports import (
-    Microsoft365CopilotCapabilityEvidence,
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
     provider_lane_external_blockers,
@@ -88,6 +124,76 @@ def _digest(value: object) -> str:
         default=str,
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _execute_three_attempt_roster(
+    *,
+    format_roster: tuple[tuple[str, str], ...],
+    reserve_attempt: Callable[[int], ProviderAttemptReservation],
+    record_attempt: Callable[
+        [ProviderAttemptReservation, ParallelAssignmentStatus, str | None, str],
+        None,
+    ],
+    dispatch_attempt: Callable[[ProviderAttemptReservation], Mapping[str, Any]],
+) -> tuple[ParallelAssignmentStatus, Mapping[str, Any] | None, str | None, str]:
+    """Run the exact three-slot policy and exhaust configured formats before reuse."""
+
+    if not 1 <= len(format_roster) <= 3:
+        raise RuntimeError("provider format roster must contain one to three entries")
+    successful_result: Mapping[str, Any] | None = None
+    successful_digest: str | None = None
+    last_digest: str | None = None
+    for attempt_ordinal in range(1, 4):
+        attempt = reserve_attempt(attempt_ordinal)
+        expected = format_roster[(attempt_ordinal - 1) % len(format_roster)]
+        if (attempt.format_id, attempt.transport_id) != expected:
+            raise RuntimeError("reserved provider format order changed")
+        try:
+            result = dispatch_attempt(attempt)
+        except BaseException:
+            record_attempt(
+                attempt,
+                ParallelAssignmentStatus.AMBIGUOUS,
+                None,
+                "provider_outcome_unknown",
+            )
+            return (
+                ParallelAssignmentStatus.AMBIGUOUS,
+                None,
+                None,
+                "provider_outcome_unknown",
+            )
+        last_digest = document_digest(result)
+        if result["status"] == "SUCCEEDED":
+            record_attempt(
+                attempt,
+                ParallelAssignmentStatus.SUCCEEDED,
+                last_digest,
+                "provider_result_authenticated",
+            )
+            if successful_result is None:
+                successful_result = result
+                successful_digest = last_digest
+        else:
+            record_attempt(
+                attempt,
+                ParallelAssignmentStatus.FAILED,
+                last_digest,
+                "provider_reported_non_success",
+            )
+        if successful_result is not None and attempt_ordinal >= len(format_roster):
+            return (
+                ParallelAssignmentStatus.SUCCEEDED,
+                successful_result,
+                successful_digest,
+                "provider_result_authenticated",
+            )
+    return (
+        ParallelAssignmentStatus.FAILED,
+        None,
+        last_digest,
+        "provider_attempt_budget_exhausted",
+    )
 
 
 def _primary_provider_lane(provider: ProviderName) -> str:
@@ -127,6 +233,31 @@ class DefaultPrimaryLiveDependencies:
     external_effect_resolver: ExternalEffectResolver
     evidence_debate_handler: Callable[[HandlerContext], EvidenceDebateResult]
     acceptance_handler: Callable[[HandlerContext], AcceptanceResult]
+    attempt_formats: Mapping[str, tuple[tuple[str, str], ...]] = field(
+        default_factory=dict
+    )
+    attempt_adapters: Mapping[
+        str, Mapping[tuple[str, str], PacketBoundaryAdapter]
+    ] = field(default_factory=dict)
+
+    def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
+        return self.attempt_formats.get(
+            provider,
+            (("model-work-packet-v1", "packet-boundary-adapter"),),
+        )
+
+    def adapter_for_format(
+        self, provider: str, format_transport: tuple[str, str]
+    ) -> PacketBoundaryAdapter:
+        configured = self.attempt_adapters.get(provider, {})
+        if configured:
+            try:
+                return configured[format_transport]
+            except KeyError as exc:
+                raise ValueError(
+                    f"live primary format transport is unbound for {provider}"
+                ) from exc
+        return self.adapters[provider]
 
     def validate(self, required_providers: tuple[str, ...]) -> None:
         expected = set(required_providers)
@@ -152,6 +283,17 @@ class DefaultPrimaryLiveDependencies:
                 raise ValueError(
                     f"live primary adapter identity does not match {provider}"
                 )
+            roster = self.format_roster(provider)
+            if not 1 <= len(roster) <= 3:
+                raise ValueError(
+                    f"live primary attempt formats for {provider} must contain one to three entries"
+                )
+            for format_transport in roster:
+                selected = self.adapter_for_format(provider, format_transport)
+                if selected.provider != provider:
+                    raise ValueError(
+                        f"live primary format adapter identity does not match {provider}"
+                    )
         required_callables = {
             "candidate SHA resolver": self.candidate_sha_resolver,
             "durable packet-result resolver": self.packet_result_resolver,
@@ -233,25 +375,7 @@ def build_automatic_primary_live_dependencies(
         microsoft_365_copilot_access_token=_bounded_secret_file(
             settings.microsoft_365_copilot_delegated_token_file
         ),
-        microsoft_365_copilot_evidence=(
-            Microsoft365CopilotCapabilityEvidence(
-                conversation_id=settings.microsoft_365_copilot_conversation_id,
-                endpoint="https://workiq.svc.cloud.microsoft/rest",
-                tenant_id=settings.microsoft_365_copilot_tenant_id,
-                issuer=settings.microsoft_365_copilot_issuer,
-                delegated_scope="api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask",
-                admin_consent_observed=settings.microsoft_365_copilot_admin_consent_observed,
-                tenant_enabled_observed=settings.microsoft_365_copilot_tenant_enabled_observed,
-                billing_entitlement_observed=(
-                    settings.microsoft_365_copilot_billing_entitlement_observed
-                ),
-                challenge_id=settings.microsoft_365_copilot_challenge_id,
-                expires_at=settings.microsoft_365_copilot_capability_expires_at,
-                receipt_digest=settings.microsoft_365_copilot_capability_receipt_digest,
-            )
-            if settings.microsoft_365_copilot_capability_receipt_digest
-            else None
-        ),
+        microsoft_365_copilot_tenant_id=settings.microsoft_365_copilot_tenant_id,
     )
     adapters = build_graph_native_packet_adapters(
         transports=transports,
@@ -453,6 +577,17 @@ def build_automatic_primary_live_dependencies(
 
     return DefaultPrimaryLiveDependencies(
         adapters=adapters,
+        attempt_formats={
+            provider_id: (("model-work-packet-v1", capability.transport_kind),)
+            for provider_id, capability in capabilities.items()
+            if provider_id in adapters
+        },
+        attempt_adapters={
+            provider_id: {
+                ("model-work-packet-v1", capabilities[provider_id].transport_kind): adapter
+            }
+            for provider_id, adapter in adapters.items()
+        },
         candidate_sha_resolver=candidate_sha,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=completion_evidence,
@@ -889,11 +1024,98 @@ class DefaultPrimaryApplication:
         coordinator: PrimaryTaskCoordinator,
         services: DefaultDryRunServices,
         authority: DefaultPrimaryAuthority,
+        parallel_dispatcher: (
+            Callable[[ParallelReservation], ParallelDispatchOutcome] | None
+        ) = None,
     ) -> None:
         self.settings = settings
         self.coordinator = coordinator
         self.services = services
         self.authority = authority
+        self._parallel_dispatcher = parallel_dispatcher
+
+    def _parallel_policy(self) -> ParallelDispatchPolicy:
+        """Return the bounded Default policy used for every durable wave."""
+
+        provider_caps = self.settings.parallel_provider_caps()
+        provider_caps["antigravity"] = provider_caps.pop("gemini")
+        return ParallelDispatchPolicy(
+            max_concurrency=self.settings.langgraph_parallel_initial_max_concurrency,
+            provider_caps=provider_caps,
+        )
+
+    def _parallel_assignments(
+        self, record: TaskRecord
+    ) -> tuple[ParallelAssignment, ...]:
+        """Bind every plan member to its exact packet and DAG identity."""
+
+        if record.plan is None or not record.plan.assignments:
+            raise RuntimeError("primary parallel lifecycle requires a non-empty plan")
+        identifiers = {
+            item.sequence: self.services._packet_router._assignment_id(record, item)
+            for item in record.plan.assignments
+        }
+        return tuple(
+            ParallelAssignment(
+                assignment_id=identifiers[item.sequence],
+                sequence=item.sequence,
+                provider_id=_primary_provider_lane(item.agent),
+                deployment_id=item.model_label or _primary_provider_lane(item.agent),
+                dependencies=tuple(identifiers[sequence] for sequence in item.depends_on),
+                write_surfaces=("repository-write",) if item.allow_draft_pr else (),
+                retry_limit=3,
+            )
+            for item in sorted(record.plan.assignments, key=lambda value: value.sequence)
+        )
+
+    def _register_parallel_lifecycle(self, record: TaskRecord) -> str:
+        if record.plan is None:
+            raise RuntimeError("primary parallel lifecycle requires a plan")
+        return self.coordinator.register_parallel_plan(
+            task_id=record.task_id,
+            plan_digest=_digest(record.plan.model_dump(mode="json")),
+            assignments=self._parallel_assignments(record),
+            policy=self._parallel_policy(),
+        )
+
+    def _ensure_parallel_lifecycle(self, record: TaskRecord) -> str:
+        """Idempotently repair a crash after graph intake but before registration."""
+
+        return self._register_parallel_lifecycle(record)
+
+    def _drive_parallel_lifecycle(self, record: TaskRecord) -> ParallelAggregate:
+        """Consume every ready wave, stopping on terminal or no durable progress."""
+
+        if self._parallel_dispatcher is None:
+            return self.coordinator.parallel_aggregate(record.task_id)
+        aggregate = self.coordinator.parallel_aggregate(record.task_id)
+        plan_digest = self.coordinator.get_projection(record.task_id)
+        if plan_digest is None:
+            raise RuntimeError("primary parallel projection disappeared")
+        bound_plan = plan_digest.projection.get("parallel_plan_digest")
+        if not isinstance(bound_plan, str):
+            raise RuntimeError("primary parallel plan is not durably bound")
+        seen_aggregates: set[str] = set()
+        while aggregate.aggregate_digest not in seen_aggregates:
+            seen_aggregates.add(aggregate.aggregate_digest)
+            if aggregate.terminal or aggregate.ambiguous_slot_count:
+                break
+            aggregate = self.coordinator.execute_parallel_ready(
+                task_id=record.task_id,
+                plan_digest=bound_plan,
+                policy=self._parallel_policy(),
+                dispatcher=self._parallel_dispatcher,
+            )
+        if aggregate.terminal and not aggregate.ambiguous_slot_count:
+            # The ledger never classifies the task.  It supplies one immutable
+            # all-assignment result to the graph, which then owns evidence,
+            # review, CI/security, effects and final classification.
+            self.coordinator.resume_parallel_aggregate(
+                task_id=record.task_id,
+                aggregate=aggregate,
+                candidate_sha=self.authority.starting_sha,
+            )
+        return aggregate
 
     def _request(self, record: TaskRecord) -> PrimaryRequest:
         task_id = record.task_id
@@ -1026,13 +1248,23 @@ class DefaultPrimaryApplication:
             if not created:
                 existing = self.coordinator.get_projection(task_id)
                 if existing is not None:
-                    return self._record_from_projection(existing)
+                    replayed = self._record_from_projection(existing)
+                    self._ensure_parallel_lifecycle(replayed)
+                    repaired = self.coordinator.get_projection(task_id)
+                    if repaired is None:
+                        raise RuntimeError("replayed primary intake disappeared")
+                    return self._record_from_projection(repaired)
             record.task_id = task_id
             request = self._request(record)
         self.services.register(record)
         try:
             projection = self.coordinator.create_intake(request)
-            return self._record_from_projection(projection)
+            planned = self._record_from_projection(projection)
+            self._ensure_parallel_lifecycle(planned)
+            refreshed = self.coordinator.get_projection(planned.task_id)
+            if refreshed is None:
+                raise RuntimeError("primary parallel registration lost its projection")
+            return self._record_from_projection(refreshed)
         finally:
             self.services.discard(task_id)
 
@@ -1052,6 +1284,7 @@ class DefaultPrimaryApplication:
             command.decision == ApprovalDecision.APPROVE
             and not self.settings.langgraph_primary_offline_simulation_enabled
             and not self.settings.langgraph_primary_live_provider_dispatch_enabled
+            and self._parallel_dispatcher is None
         ):
             raise RuntimeError(
                 "paid-off Default primary activation cannot approve provider execution"
@@ -1059,6 +1292,13 @@ class DefaultPrimaryApplication:
         self.services.hydrate(projection)
         try:
             updated = self.coordinator.resume_approval(command)
+            record = self._record_from_projection(updated)
+            if command.decision == ApprovalDecision.APPROVE:
+                self._drive_parallel_lifecycle(record)
+                refreshed = self.coordinator.get_projection(command.task_id)
+                if refreshed is None:
+                    raise RuntimeError("primary parallel approval lost its projection")
+                updated = refreshed
         finally:
             self.services.discard(command.task_id)
         return self._record_from_projection(updated)
@@ -1100,6 +1340,57 @@ class DefaultPrimaryApplication:
             self.services.discard(task_id)
         return self._record_from_projection(updated)
 
+    def record_provider_callback(
+        self,
+        *,
+        task_id: str,
+        assignment_id: str,
+        provider_id: str,
+        provider_run_id: str,
+        command: ProviderSubgraphResult,
+    ) -> TaskRecord:
+        """Settle a provider callback in the parallel ledger, never the old edge."""
+
+        if not provider_run_id.strip():
+            raise ValueError("provider callback run identity is required")
+        projection = self.coordinator.get_projection(task_id)
+        if projection is None:
+            raise KeyError(task_id)
+        status = {
+            ProviderDisposition.COMPLETED: ParallelAssignmentStatus.SUCCEEDED,
+            ProviderDisposition.FAILED: ParallelAssignmentStatus.FAILED,
+            ProviderDisposition.AMBIGUOUS: ParallelAssignmentStatus.AMBIGUOUS,
+        }[command.disposition]
+        self.services.hydrate(projection)
+        try:
+            aggregate = self.coordinator.record_parallel_callback(
+                task_id=task_id,
+                assignment_id=assignment_id,
+                provider_id=provider_id,
+                attempt_digest=command.provider_attempt_digest,
+                provider_run_id_digest=_digest(
+                    {"provider_run_id": provider_run_id}
+                ),
+                status=status,
+                result_digest=command.result_digest,
+                reason_code=command.reason_code,
+            )
+            record = self._record_from_projection(
+                self.coordinator.get_projection(task_id) or projection
+            )
+            if aggregate.terminal and not aggregate.ambiguous_slot_count:
+                self.coordinator.resume_parallel_aggregate(
+                    task_id=task_id,
+                    aggregate=aggregate,
+                    candidate_sha=(command.candidate_sha or self.authority.starting_sha),
+                )
+            refreshed = self.coordinator.get_projection(task_id)
+            if refreshed is None:
+                raise RuntimeError("provider callback lost its projection")
+            return self._record_from_projection(refreshed)
+        finally:
+            self.services.discard(task_id)
+
     def prepare_external_effect(self, task_id: str) -> EffectReservation:
         projection = self.coordinator.get_projection(task_id)
         if projection is None:
@@ -1134,7 +1425,15 @@ class DefaultPrimaryApplication:
             raise KeyError(task_id)
         self.services.hydrate(projection)
         try:
+            self._ensure_parallel_lifecycle(self._record_from_projection(projection))
             updated = self.coordinator.recover(task_id)
+            record = self._record_from_projection(updated)
+            if updated.projection.get("provider_dispatch_status") != "NOT_STARTED":
+                self._drive_parallel_lifecycle(record)
+                refreshed = self.coordinator.get_projection(task_id)
+                if refreshed is None:
+                    raise RuntimeError("primary parallel recovery lost its projection")
+                updated = refreshed
         finally:
             self.services.discard(task_id)
         return self._record_from_projection(updated)
@@ -1148,6 +1447,9 @@ class DefaultPrimaryActivation:
         settings: Settings,
         *,
         live_dependencies: DefaultPrimaryLiveDependencies | None = None,
+        effect_mutation: EffectMutation | None = None,
+        effect_readback: EffectReadback | None = None,
+        effect_gateways: ExactEffectGatewayRegistry | None = None,
     ) -> None:
         self.settings = settings
         self.handle: PostgresCheckpointHandle | None = None
@@ -1157,6 +1459,10 @@ class DefaultPrimaryActivation:
         self.provider_activation: PrimaryProviderActivationService | None = None
         self._reconciliation_worker_ready = False
         self._live_dependencies_ready = False
+        if (effect_mutation is None) != (effect_readback is None):
+            raise ValueError(
+                "external effect mutation and readback must be configured together"
+            )
         if not settings.langgraph_primary_enabled:
             return
         live_requested = settings.langgraph_primary_live_provider_dispatch_enabled
@@ -1175,6 +1481,19 @@ class DefaultPrimaryActivation:
         )
         try:
             bindings = settings.primary_provider_activation_bindings()
+            effect_executor = (
+                DeterministicExternalEffectExecutor(
+                    store=handle.claim_store,
+                    owner_token=settings.langgraph_primary_owner_token,
+                    mutation=effect_mutation,
+                    readback=effect_readback,
+                    timeout_seconds=min(
+                        60.0, float(settings.provider_timeout_seconds)
+                    ),
+                )
+                if effect_mutation is not None and effect_readback is not None
+                else None
+            )
             provider_activation = (
                 PrimaryProviderActivationService(
                     store=handle.claim_store,
@@ -1196,6 +1515,112 @@ class DefaultPrimaryActivation:
                         settings, handle, services
                     )
                 live_dependencies.validate(settings.langgraph_primary_required_providers)
+                if effect_executor is None:
+                    registry = (
+                        effect_gateways
+                        if effect_gateways is not None
+                        else build_configured_effect_gateway_registry(settings)
+                    )
+                    intent_store = PostgresTypedEffectIntentStore(
+                        pool=handle.pool,
+                        schema=settings.langgraph_primary_postgres_schema,
+                    )
+
+                    def typed_effect_intent(
+                        context: HandlerContext, reservation: EffectReservation
+                    ) -> TypedEffectIntent:
+                        binding = live_dependencies.packet_result_resolver(context)
+                        packet = None if binding is None else binding.outcome.result_packet
+                        effects = [] if packet is None else packet.get("side_effects", [])
+                        proposed = [
+                            item for item in effects
+                            if isinstance(item, Mapping)
+                            and item.get("status") == "NOT_ATTEMPTED"
+                        ]
+                        if len(proposed) != 1:
+                            raise RuntimeError(
+                                "external effect requires exactly one authenticated "
+                                "NOT_ATTEMPTED side-effect proposal"
+                            )
+                        item = proposed[0]
+                        kind = str(item.get("kind", ""))
+                        target_text = str(item.get("target", ""))
+                        if kind == "slack_post":
+                            record = services._record(context.task_id)
+                            if target_text != record.intake.channel_id:
+                                raise RuntimeError("Slack effect target changed")
+                            system, action = "slack", SLACK_POST_MESSAGE
+                            target: Mapping[str, Any] = {
+                                "channel": record.intake.channel_id,
+                                "thread_ts": record.intake.thread_ts,
+                            }
+                            payload: Mapping[str, Any] = {
+                                "text": (
+                                    f"Director task {context.task_id} completed at "
+                                    f"{context.candidate_sha}."
+                                )
+                            }
+                        elif kind == "github_mark_ready":
+                            match = re.fullmatch(
+                                r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)",
+                                target_text,
+                            )
+                            if match is None:
+                                raise RuntimeError("GitHub effect target is malformed")
+                            system, action = "github", GITHUB_MARK_READY
+                            target = {
+                                "repository": match.group(1),
+                                "pull_number": int(match.group(2)),
+                                "head_sha": context.candidate_sha,
+                                "base_sha": context.starting_sha,
+                            }
+                            payload = {}
+                        else:
+                            raise RuntimeError("external effect action is unsupported")
+                        approval = intent_store.approval_binding(
+                            task_id=context.task_id,
+                            effect_key_digest=reservation.effect_key_digest,
+                        )
+                        stable_key = _digest(
+                            {
+                                "provider_idempotency_key": item.get("idempotency_key"),
+                                "effect_key_digest": reservation.effect_key_digest,
+                                "system": system,
+                                "action": action,
+                            }
+                        )
+                        return TypedEffectIntent(
+                            system=system,
+                            action=action,
+                            target=target,
+                            payload=payload,
+                            idempotency_key="director:" + stable_key.removeprefix("sha256:"),
+                            authority_binding_digest=str(
+                                approval["authorization_nonce_digest"]
+                            ),
+                            approval_binding_digest=str(
+                                approval["approval_receipt_digest"]
+                            ),
+                            writer_owner_id=reservation.writer_owner_id,
+                            writer_fencing_generation=reservation.fencing_generation,
+                            budget_units=reservation.reserved_units,
+                        )
+
+                    effect_executor = DeterministicExternalEffectExecutor(
+                        store=handle.claim_store,
+                        owner_token=settings.langgraph_primary_owner_token,
+                        timeout_seconds=min(
+                            60.0, float(settings.provider_timeout_seconds)
+                        ),
+                        intent_factory=typed_effect_intent,
+                        intent_store=intent_store,
+                        gateways=registry,
+                    )
+                if not effect_executor.ready:
+                    raise ValueError(
+                        "live LangGraph primary requires exact typed Slack/GitHub "
+                        "effect transports"
+                    )
                 if not provider_activation.health()["combined_live_ready"]:
                     raise ValueError(
                         "live LangGraph primary startup requires current LIVE_OK "
@@ -1319,6 +1744,183 @@ class DefaultPrimaryActivation:
                     acceptance_handler=live_dependencies.acceptance_handler,
                 )
                 handlers = live_services.handlers()
+                def dispatch_parallel_assignment(
+                    reservation: ParallelReservation,
+                ) -> ParallelDispatchOutcome:
+                    record = services._record(reservation.task_id)
+                    if record.plan is None:
+                        raise RuntimeError("parallel dispatch has no durable plan")
+                    assignment = next(
+                        (
+                            item
+                            for item in record.plan.assignments
+                            if item.sequence == reservation.sequence
+                        ),
+                        None,
+                    )
+                    if assignment is None:
+                        raise RuntimeError("parallel reservation identity is unknown")
+                    assignment_id = services._packet_router._assignment_id(
+                        record, assignment
+                    )
+                    provider = _primary_provider_lane(assignment.agent)
+                    if (
+                        assignment_id != reservation.assignment_id
+                        or provider != reservation.provider_id
+                    ):
+                        raise RuntimeError("parallel reservation binding changed")
+                    if not provider_activation.provider_ready(provider, live=True):
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED,
+                            None,
+                            "provider_activation_not_ready",
+                        )
+                    packet = validate_packet(
+                        "work",
+                        services._packet_router.planned_work_packet(record, assignment),
+                    )
+                    packet_digest = document_digest(packet)
+                    writer = handle.claim_store.current_task_writer(record.task_id)
+                    if (
+                        writer is None
+                        or writer.engine_owner != "langgraph"
+                        or writer.owner_token != settings.langgraph_primary_owner_token
+                        or not writer.lease_live
+                    ):
+                        raise RuntimeError("parallel provider I/O lacks writer authority")
+                    artifact = handle.claim_store.record_work_packet_artifact(
+                        task_id=record.task_id,
+                        assignment_id=assignment_id,
+                        packet=packet,
+                        owner_token=writer.owner_token,
+                        fencing_generation=writer.fencing_generation,
+                    )
+                    if artifact.document_digest != packet_digest:
+                        raise RuntimeError("parallel work-packet persistence changed")
+                    limits = packet["limits"]
+                    format_roster = live_dependencies.format_roster(provider)
+                    attempt_budget_usd = float(limits["budget_usd"]) / 3.0
+                    attempt_timeout_seconds = max(
+                        1, int(limits["timeout_seconds"]) // 3
+                    )
+                    budget_evidence_digest = _digest(
+                        {
+                            "assignment_budget_usd": float(limits["budget_usd"]),
+                            "assignment_timeout_seconds": int(limits["timeout_seconds"]),
+                            "attempt_budget_usd": attempt_budget_usd,
+                            "attempt_timeout_seconds": attempt_timeout_seconds,
+                            "attempt_limit": 3,
+                        }
+                    )
+                    def reserve_attempt(
+                        attempt_ordinal: int,
+                    ) -> ProviderAttemptReservation:
+                        idempotency_key_digest = _digest(
+                            {
+                                "assignment_idempotency_key": str(
+                                    packet["idempotency_key"]
+                                ),
+                                "attempt_ordinal": attempt_ordinal,
+                                "format_roster": format_roster,
+                            }
+                        )
+                        return self.coordinator.reserve_provider_attempt(
+                            reservation=reservation,
+                            attempt_ordinal=attempt_ordinal,
+                            format_roster=format_roster,
+                            idempotency_key_digest=idempotency_key_digest,
+                            budget_evidence_digest=budget_evidence_digest,
+                        )
+                    def record_attempt(
+                        attempt: ProviderAttemptReservation,
+                        status: ParallelAssignmentStatus,
+                        result_digest: str | None,
+                        reason_code: str,
+                    ) -> None:
+                        self.coordinator.record_provider_attempt(
+                            attempt=attempt,
+                            status=status,
+                            result_digest=result_digest,
+                            reason_code=reason_code,
+                        )
+
+                    def dispatch_attempt(
+                        attempt: ProviderAttemptReservation,
+                    ) -> Mapping[str, Any]:
+                        adapter = live_dependencies.adapter_for_format(
+                            provider, (attempt.format_id, attempt.transport_id)
+                        )
+                        return adapter.dispatch(
+                            packet,
+                            context=ProviderAdapterContext(
+                                task_id=record.task_id,
+                                assignment_id=assignment_id,
+                                idempotency_key=attempt.attempt_digest,
+                                work_packet_digest=packet_digest,
+                                writer_token_digest=(
+                                    services._packet_router.writer_token(record).digest
+                                ),
+                                timeout_seconds=attempt_timeout_seconds,
+                                budget_usd=attempt_budget_usd,
+                                max_hops=int(limits["max_hops"]),
+                                max_revisions=int(limits["max_revisions"]),
+                                allowed_tools=tuple(packet["allowed_tools"]),
+                                allowed_external_effects=tuple(
+                                    packet["allowed_external_effects"]
+                                ),
+                                fencing_generation=writer.fencing_generation,
+                            ),
+                        )
+
+                    attempt_status, result, result_digest, attempt_reason = (
+                        _execute_three_attempt_roster(
+                            format_roster=format_roster,
+                            reserve_attempt=reserve_attempt,
+                            record_attempt=record_attempt,
+                            dispatch_attempt=dispatch_attempt,
+                        )
+                    )
+                    if attempt_status is not ParallelAssignmentStatus.SUCCEEDED:
+                        return ParallelDispatchOutcome(
+                            attempt_status,
+                            result_digest,
+                            attempt_reason,
+                        )
+                    if result is None or result_digest is None:
+                        raise RuntimeError("successful attempt lacks result evidence")
+                    persisted = handle.claim_store.record_result_packet_artifact(
+                        task_id=record.task_id,
+                        assignment_id=assignment_id,
+                        packet=result,
+                        owner_token=writer.owner_token,
+                        fencing_generation=writer.fencing_generation,
+                    )
+                    if persisted.document_digest != result_digest:
+                        raise RuntimeError("parallel result-packet persistence changed")
+                    with services._lock:
+                        if not any(
+                            item.assignment_sequence == assignment.sequence
+                            for item in record.assignment_outcomes
+                        ):
+                            record.assignment_outcomes.append(
+                                AssignmentOutcome(
+                                    assignment_sequence=assignment.sequence,
+                                    provider=assignment.agent,
+                                    run_id=str(result["run_reference"]),
+                                    result=str(result["outcome"]),
+                                    review_summary=str(result["outcome"]),
+                                    provider_result_digest=(
+                                        result_digest.removeprefix("sha256:")
+                                    ),
+                                )
+                            )
+                    return ParallelDispatchOutcome(
+                        ParallelAssignmentStatus.SUCCEEDED,
+                        result_digest,
+                        "provider_result_authenticated",
+                    )
+
+                parallel_dispatcher = dispatch_parallel_assignment
                 self._live_dependencies_ready = True
             else:
                 services = (
@@ -1327,6 +1929,7 @@ class DefaultPrimaryActivation:
                     else DefaultDryRunServices(settings)
                 )
                 handlers = services.handlers()
+                parallel_dispatcher = None
             coordinator = PrimaryTaskCoordinator(
                 handle,
                 handlers,
@@ -1334,10 +1937,12 @@ class DefaultPrimaryActivation:
                 checkpoint_namespace=(
                     settings.langgraph_primary_checkpoint_namespace
                 ),
-                auto_execute_provider=(
-                    settings.langgraph_primary_offline_simulation_enabled
-                    or live_requested
-                ),
+                # The Default lifecycle dispatches exclusively through the
+                # Postgres parallel ledger. The graph's historical single-item
+                # provider edge remains an approval interrupt, never a second
+                # transport owner.
+                auto_execute_provider=False,
+                effect_executor=effect_executor,
                 application_projection_provider=(
                     services.application_projection
                 ),
@@ -1350,7 +1955,11 @@ class DefaultPrimaryActivation:
         self.services = services
         self.provider_activation = provider_activation
         self.application = DefaultPrimaryApplication(
-            settings, coordinator, services, authority
+            settings,
+            coordinator,
+            services,
+            authority,
+            parallel_dispatcher=parallel_dispatcher,
         )
 
     @property
@@ -1366,23 +1975,41 @@ class DefaultPrimaryActivation:
         self.coordinator.adopt_or_activate_new_intake()
 
     def renew(self) -> None:
-        if not self.enabled or not self.settings.langgraph_primary_new_intake_enabled:
+        if not self.enabled:
             return
         assert self.coordinator is not None
-        self.coordinator.renew_new_intake()
+        self.coordinator.heartbeat_active_task_writers()
+        if self.settings.langgraph_primary_new_intake_enabled:
+            self.coordinator.renew_new_intake()
 
     def reconcile_once(self) -> int:
         if not self.enabled:
             return 0
         assert self.coordinator is not None
         assert self.services is not None
+        assert self.application is not None
+        # Readiness describes this bounded pass, never a sticky historical win.
+        self._reconciliation_worker_ready = False
         recovered = []
         for projection in self.coordinator.list_projections():
-            self.services.hydrate(projection)
-            try:
-                recovered.append(self.coordinator.recover(projection.task_id))
-            finally:
-                self.services.discard(projection.task_id)
+            payload = projection.projection
+            if payload.get("terminal_classification") is not None:
+                continue
+            writer = self.coordinator.get_task_writer(projection.task_id)
+            # A live durable writer lease is a positive heartbeat: its
+            # DISPATCHING/EXECUTING work is normal in-flight work and must not
+            # be converted to ambiguous reconciliation by a periodic sweep.
+            if writer is not None and writer.lease_live:
+                try:
+                    aggregate = self.coordinator.parallel_aggregate(projection.task_id)
+                except Exception:
+                    aggregate = None
+                if aggregate is not None and any(
+                    value in {"ACTIVE", "AMBIGUOUS"}
+                    for value in aggregate.statuses.values()
+                ):
+                    continue
+            recovered.append(self.application.recover(projection.task_id))
         self._reconciliation_worker_ready = True
         return len(recovered)
 
@@ -1410,6 +2037,7 @@ class DefaultPrimaryActivation:
                 "checkpoint_schema_current": False,
                 "claim_store_ready": False,
                 "effect_ledger_ready": False,
+                "effect_executor_ready": False,
                 "writer_lease_ready": False,
                 "reconciliation_worker_ready": False,
                 "primary_runtime_active": False,
@@ -1440,6 +2068,7 @@ class DefaultPrimaryActivation:
             and observed["checkpoint_backend_postgres"]
             and observed["claim_store_ready"]
             and observed["effect_ledger_ready"]
+            and observed["effect_executor_ready"]
             and observed["writer_lease_ready"]
             and observed["legacy_new_intake_disabled"]
             and self._reconciliation_worker_ready
@@ -1472,3 +2101,11 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
