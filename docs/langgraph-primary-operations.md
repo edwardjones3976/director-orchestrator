@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer | 2026-08-31 | 09:55 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer | 2026-08-31 | 09:50 UTC | BEGIN]] -->
 # LangGraph-primary operations authority
@@ -297,3 +298,54 @@ contract-only or default-off features as active production behavior.
 No model approves its own migration PR or accepts its own exact candidate.
 <!-- [[Cursor Agent | Composer | 2026-08-31 | 09:50 UTC | END]] -->
 <!-- [[Cursor Agent | Composer | 2026-08-31 | 09:55 UTC | END]] -->
+
+## Windows Docker activation tooling
+
+The following tools are operational mechanisms, not activation evidence by
+their mere presence:
+
+- `scripts/windows-primary-snapshot.ps1` creates a new snapshot only when its
+  target does not exist, or verifies an existing clean snapshot against an exact
+  repository, starting ref, commit, and tree. It never resets or replaces an
+  existing checkout.
+- `scripts/windows-host-provider-bridge.ps1 -Action Preflight` verifies the
+  allowlisted Windows command map without invoking a provider. `-Action Run`
+  starts the authenticated host bridge in the foreground for supervision.
+- `scripts/windows-langgraph-primary-control.ps1` provides separate `Preflight`,
+  `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`, and `Rollback`
+  operations. Every invocation requires the exact environment-file path,
+  Compose project, and host port; profile identity is never inferred.
+
+The Windows host bridge is an optional narrow transport for supported native
+CLIs. It uses a secret distinct from API, Slack, callback, reconciliation, and
+writer secrets. Requests bind provider, task, assignment, canonical packet
+digest, hashed idempotency key, and current writer generation. The bridge
+commits a durable claim before one `shell=False` subprocess attempt. Successful
+outcomes replay from the durable result; timeouts, process loss, nonzero exits,
+or malformed output become ambiguous and are never resent.
+
+The bridge currently permits only explicitly configured Claude, Grok,
+Antigravity, and GitHub Copilot packet-wrapper commands. Cursor and Windows
+Copilot fail closed: neither Windows app presence nor an unsupported CLI contract
+is callable evidence. OpenAI, Cursor, Perplexity, and Firecrawl use their reviewed
+direct graph-native transports rather than being silently aliased through this
+bridge.
+
+For every profile, execute the control actions in this order while Slack intake
+is closed: `Preflight`, `Migrate`, `Backup`, `RestoreDrill`, provider activation
+evidence, then `Activate`. Activation reopens Slack only after the observed health
+projection proves Postgres, writer fencing, reconciliation, current provider
+activation, graph ownership, and zero ambiguous effects. Rollback stops Slack and
+the orchestrator, waits for the writer lease to expire, refuses when ambiguous
+effects exist, performs the fenced generation change back to legacy, and preserves
+the primary database.
+
+The checked-in local Docker Compose topology uses `sslmode=disable` only for the
+exact service hostname `langgraph-primary-db` and only under the explicit
+`LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=true` exception injected by
+Compose. Loopback remains allowed for local tests. Lookalike names, arbitrary
+container names, private-network IPs, mixed remote `hostaddr` values, and every
+other non-loopback target fail closed. Managed or remote production PostgreSQL
+must use `verify-ca` or `verify-full` with an explicit CA root; the local Compose
+exception is not production TLS evidence.
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | END]] -->

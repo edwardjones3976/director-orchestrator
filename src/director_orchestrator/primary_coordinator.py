@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:50 UTC | BEGIN]]
@@ -16,6 +17,7 @@ from .langgraph_postgres import (
     PostgresCheckpointHandle,
     PostgresConditionalClaimStore,
     PostgresControlPlaneError,
+    EffectReservation,
     PrimaryCommandReceipt,
     PrimaryTaskProjection,
     TaskWriterLease,
@@ -28,6 +30,16 @@ from .langgraph_primary import (
     PrimaryRequest,
     PrimaryWorkflowRuntime,
     ProviderSubgraphResult,
+)
+from .packet_contracts import document_digest
+from .primary_parallel import (
+    ParallelAggregate,
+    ParallelAssignment,
+    ParallelAssignmentStatus,
+    ParallelDispatchPolicy,
+    ParallelDispatchOutcome,
+    ParallelReservation,
+    PostgresParallelDispatch,
 )
 
 
@@ -83,6 +95,11 @@ def _outcome_projection(outcome: PrimaryOutcome) -> dict[str, Any]:
         "visited_nodes": list(outcome.visited_nodes),
         "revision_count": outcome.revision_count,
         "budget_used_units": outcome.budget_used_units,
+        "parallel_plan_digest": outcome.parallel_plan_digest,
+        "parallel_aggregate_digest": outcome.parallel_aggregate_digest,
+        "parallel_terminal": outcome.parallel_terminal,
+        "parallel_succeeded": outcome.parallel_succeeded,
+        "parallel_ambiguous_slot_count": outcome.parallel_ambiguous_slot_count,
     }
 
 
@@ -116,6 +133,7 @@ class PrimaryTaskCoordinator:
         self._owner_token = owner_token
         self._intake_generation: int | None = None
         self._application_projection_provider = application_projection_provider
+        self.parallel = PostgresParallelDispatch(binding.claim_store)
         self._runtime = PrimaryWorkflowRuntime(
             binding.checkpointer,
             handlers,
@@ -282,6 +300,24 @@ class PrimaryTaskCoordinator:
             raise PrimaryCoordinatorError("primary graph intake failed") from exc
         return self._persist_outcome(outcome, writer)
 
+    def claim_authenticated_intake(
+        self,
+        *,
+        nonce_digest: str,
+        idempotency_key_digest: str,
+        payload_digest: str,
+        task_id: str,
+    ) -> tuple[str, bool]:
+        """Reserve the authenticated replay identity before any graph exists."""
+
+        self._require_active_generation()
+        return self._store.claim_authenticated_primary_intake(
+            nonce_digest=nonce_digest,
+            idempotency_key_digest=idempotency_key_digest,
+            payload_digest=payload_digest,
+            task_id=task_id,
+        )
+
     def resume_approval(self, command: ApprovalResume) -> PrimaryTaskProjection:
         writer = self._task_writer(command.task_id)
         return self._persist_outcome(
@@ -300,8 +336,177 @@ class PrimaryTaskCoordinator:
         self, task_id: str, command: EffectExecutionResult
     ) -> PrimaryTaskProjection:
         writer = self._task_writer(task_id)
+        reservation = self._store.read_effect_reservation(
+            task_id=task_id,
+            effect_attempt_digest=command.effect_attempt_digest,
+            owner_token=self._owner_token,
+        )
+        if reservation is None:
+            raise PrimaryCoordinatorError(
+                "effect result has no current-writer Postgres reservation"
+            )
+        evidence_digest = document_digest(command.as_resume_payload())
+        if command.disposition.value == "AMBIGUOUS":
+            self._store.record_reconciliation_event(
+                claim_key=reservation.claim_key,
+                owner_token=self._owner_token,
+                state="AMBIGUOUS",
+                evidence_digest=evidence_digest,
+            )
+        else:
+            self._store.record_terminal_evidence(
+                claim_key=reservation.claim_key,
+                owner_token=self._owner_token,
+                disposition=command.disposition.value,
+                evidence_digest=evidence_digest,
+            )
         return self._persist_outcome(
             self._runtime.record_effect_result(task_id, command), writer
+        )
+
+    def prepare_external_effect(self, task_id: str) -> EffectReservation:
+        """Reserve one effect in Postgres before an executor performs any I/O."""
+
+        self._task_writer(task_id)
+        attempt_digest = self._runtime.prepare_effect_execution(task_id)
+        reservation = self._store.read_effect_reservation(
+            task_id=task_id,
+            effect_attempt_digest=attempt_digest,
+            owner_token=self._owner_token,
+        )
+        if reservation is None:
+            raise PrimaryCoordinatorError("effect reservation disappeared after claim")
+        return reservation
+
+    def bind_external_effect_remote(
+        self,
+        *,
+        reservation: EffectReservation,
+        remote_system: str,
+        remote_identifier: str,
+    ) -> None:
+        """Bind a remote identifier after I/O; collisions fail closed."""
+
+        self._task_writer(reservation.task_id)
+        self._store.bind_remote_effect(
+            reservation_key=reservation.reservation_key,
+            owner_token=self._owner_token,
+            remote_system=remote_system,
+            remote_identifier=remote_identifier,
+        )
+
+    def read_external_effect_remote(
+        self, reservation: EffectReservation
+    ) -> Mapping[str, str] | None:
+        """Authenticated current-writer readback, including during ambiguity."""
+
+        self._task_writer(reservation.task_id)
+        return self._store.read_remote_binding(
+            reservation_key=reservation.reservation_key,
+            owner_token=self._owner_token,
+        )
+
+    def register_parallel_plan(
+        self,
+        *,
+        task_id: str,
+        plan_digest: str,
+        assignments: tuple[ParallelAssignment, ...],
+        policy: ParallelDispatchPolicy,
+    ) -> str:
+        writer = self._task_writer(task_id)
+        digest = self.parallel.register_plan(
+            task_id=task_id,
+            plan_digest=plan_digest,
+            assignments=assignments,
+            policy=policy,
+            writer=writer,
+        )
+        aggregate = self.parallel.aggregate(task_id)
+        self._persist_outcome(
+            self._runtime.record_parallel_aggregate(
+                task_id,
+                plan_digest=digest,
+                aggregate_digest=aggregate.aggregate_digest,
+                terminal=aggregate.terminal,
+                succeeded=aggregate.succeeded,
+                ambiguous_slot_count=aggregate.ambiguous_slot_count,
+            ),
+            writer,
+        )
+        return digest
+
+    def reserve_parallel_ready(
+        self, *, task_id: str, policy: ParallelDispatchPolicy
+    ) -> tuple[ParallelReservation, ...]:
+        writer = self._task_writer(task_id)
+        return self.parallel.reserve_ready(task_id=task_id, writer=writer, policy=policy)
+
+    def record_parallel_result(
+        self,
+        *,
+        plan_digest: str,
+        reservation: ParallelReservation,
+        status: ParallelAssignmentStatus,
+        result_digest: str | None,
+        reason_code: str,
+    ) -> ParallelAggregate:
+        writer = self._task_writer(reservation.task_id)
+        self.parallel.record_result(
+            reservation=reservation,
+            writer=writer,
+            status=status,
+            result_digest=result_digest,
+            reason_code=reason_code,
+        )
+        aggregate = self.parallel.aggregate(reservation.task_id)
+        self._persist_outcome(
+            self._runtime.record_parallel_aggregate(
+                reservation.task_id,
+                plan_digest=plan_digest,
+                aggregate_digest=aggregate.aggregate_digest,
+                terminal=aggregate.terminal,
+                succeeded=aggregate.succeeded,
+                ambiguous_slot_count=aggregate.ambiguous_slot_count,
+            ),
+            writer,
+        )
+        return aggregate
+
+    def execute_parallel_ready(
+        self,
+        *,
+        task_id: str,
+        plan_digest: str,
+        policy: ParallelDispatchPolicy,
+        dispatcher: Callable[[ParallelReservation], ParallelDispatchOutcome],
+    ) -> ParallelAggregate:
+        """Run one dependency-ready wave concurrently, then checkpoint once."""
+
+        writer = self._task_writer(task_id)
+        self.parallel.execute_ready(
+            task_id=task_id,
+            writer=writer,
+            policy=policy,
+            dispatcher=dispatcher,
+        )
+        aggregate = self.parallel.aggregate(task_id)
+        self._persist_outcome(
+            self._runtime.record_parallel_aggregate(
+                task_id,
+                plan_digest=plan_digest,
+                aggregate_digest=aggregate.aggregate_digest,
+                terminal=aggregate.terminal,
+                succeeded=aggregate.succeeded,
+                ambiguous_slot_count=aggregate.ambiguous_slot_count,
+            ),
+            writer,
+        )
+        return aggregate
+
+    def engage_parallel_kill_switch(self, task_id: str) -> None:
+        self.parallel.engage_kill_switch(
+            task_id=task_id, writer=self._task_writer(task_id)
         )
 
     def cancel(self, task_id: str) -> PrimaryTaskProjection:
@@ -427,3 +632,4 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:50 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | END]]

@@ -55,6 +55,7 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
             producer_id=str(self.result["provider"]),
             provider_attempt_digest=self.attempt,
             writer_token_digest="sha256:" + "3" * 64,
+            fencing_generation=7,
             work_packet=self.work,
         )
         self.context = HandlerContext(
@@ -94,6 +95,8 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
             binding_resolver=lambda _context: self.binding,
             candidate_sha_resolver=lambda _work, _result: SHA,
             provider_readiness_resolver=lambda _provider: True,
+            writer_fence_resolver=lambda _context, binding: binding.fencing_generation,
+            result_artifact_writer=lambda _context, _binding, _result, digest: digest,
         )
 
     def test_success_is_translated_for_primary_handlers(self) -> None:
@@ -123,6 +126,7 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
             producer_id=self.binding.producer_id,
             provider_attempt_digest=self.binding.provider_attempt_digest,
             writer_token_digest=self.binding.writer_token_digest,
+            fencing_generation=self.binding.fencing_generation,
             work_packet=changed,
         )
 
@@ -138,6 +142,7 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
             producer_id=self.binding.producer_id,
             provider_attempt_digest=self.binding.provider_attempt_digest,
             writer_token_digest=self.binding.writer_token_digest,
+            fencing_generation=self.binding.fencing_generation,
             work_packet=self.work,
         )
 
@@ -183,6 +188,8 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
             binding_resolver=lambda _context: self.binding,
             candidate_sha_resolver=unavailable_candidate,
             provider_readiness_resolver=lambda _provider: True,
+            writer_fence_resolver=lambda _context, binding: binding.fencing_generation,
+            result_artifact_writer=lambda _context, _binding, _result, digest: digest,
         )
 
         first = service.provider_subgraph(self.context)
@@ -214,6 +221,8 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
             binding_resolver=lambda _context: self.binding,
             candidate_sha_resolver=lambda _work, _result: SHA,
             provider_readiness_resolver=lambda _provider: False,
+            writer_fence_resolver=lambda _context, binding: binding.fencing_generation,
+            result_artifact_writer=lambda _context, _binding, _result, digest: digest,
         )
 
         outcome = service.provider_subgraph(self.context)
@@ -251,7 +260,77 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
         self.assertEqual(ProviderDisposition.COMPLETED, first[0].disposition)
         self.assertEqual(1, transport.calls)
 
+    def test_stale_generation_is_rejected_immediately_before_io(self) -> None:
+        service = PrimaryProviderBoundary(
+            adapters={
+                str(self.result["provider"]): PacketBoundaryAdapter(
+                    str(self.result["provider"]), self.transport
+                )
+            },
+            binding_resolver=lambda _context: self.binding,
+            candidate_sha_resolver=lambda _work, _result: SHA,
+            provider_readiness_resolver=lambda _provider: True,
+            writer_fence_resolver=lambda _context, binding: (
+                binding.fencing_generation + 1
+            ),
+            result_artifact_writer=lambda _context, _binding, _result, digest: digest,
+        )
 
+        outcome = service.provider_subgraph(self.context)
+
+        self.assertEqual(ProviderDisposition.AMBIGUOUS, outcome.disposition)
+        self.assertEqual(0, self.transport.calls)
+
+    def test_primary_context_carries_positive_generation(self) -> None:
+        outcome = self.service().provider_subgraph(self.context)
+
+        self.assertEqual(ProviderDisposition.COMPLETED, outcome.disposition)
+        self.assertEqual(7, self.transport.contexts[0].fencing_generation)
+
+    def test_result_persistence_ambiguity_is_cached_without_retry(self) -> None:
+        service = PrimaryProviderBoundary(
+            adapters={
+                str(self.result["provider"]): PacketBoundaryAdapter(
+                    str(self.result["provider"]), self.transport
+                )
+            },
+            binding_resolver=lambda _context: self.binding,
+            candidate_sha_resolver=lambda _work, _result: SHA,
+            provider_readiness_resolver=lambda _provider: True,
+            writer_fence_resolver=lambda _context, binding: binding.fencing_generation,
+            result_artifact_writer=lambda *_args: (_ for _ in ()).throw(
+                TimeoutError("result commit outcome unknown")
+            ),
+        )
+
+        first = service.provider_subgraph(self.context)
+        replay = service.provider_subgraph(self.context)
+
+        self.assertEqual(ProviderDisposition.AMBIGUOUS, first.disposition)
+        self.assertEqual(first, replay)
+        self.assertEqual(1, self.transport.calls)
+
+    def test_legacy_context_default_is_not_a_primary_writer_generation(self) -> None:
+        context = ProviderAdapterContext(
+            task_id="legacy-task",
+            assignment_id="legacy-assignment",
+            idempotency_key="legacy-attempt",
+            work_packet_digest="sha256:" + "1" * 64,
+            writer_token_digest="sha256:" + "2" * 64,
+            timeout_seconds=1,
+            budget_usd=0.0,
+            max_hops=1,
+            max_revisions=0,
+            allowed_tools=(),
+            allowed_external_effects=(),
+        )
+
+        self.assertEqual(0, context.fencing_generation)
+
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:46 UTC | BEGIN]]
+# Zero-skip coverage proves current-generation fencing immediately precedes I/O.
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:46 UTC | END]]
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | END]]

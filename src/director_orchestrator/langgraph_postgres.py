@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | BEGIN]]
@@ -124,6 +126,7 @@ _KNOWN_SSLMODES = frozenset(
     {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
 )
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_LOCAL_COMPOSE_POSTGRES_HOST = "langgraph-primary-db"
 
 # Terminal evidence records only outcomes that are actually final.  Ambiguity is
 # not an outcome, it is the absence of one, so it lives in the reconciliation
@@ -354,9 +357,11 @@ def _require_transport_security(
     host = parsed.get("host", "").strip().lower()
     hostaddr = parsed.get("hostaddr", "").strip().lower()
     reachable = {value for value in (host, hostaddr) if value}
-    if not reachable or not reachable.issubset(_LOOPBACK_HOSTS):
+    allowed_local_hosts = _LOOPBACK_HOSTS | {_LOCAL_COMPOSE_POSTGRES_HOST}
+    if not reachable or not reachable.issubset(allowed_local_hosts):
         raise PostgresCheckpointConfigurationError(
-            "allow_insecure_local_transport applies only to a loopback host"
+            "allow_insecure_local_transport applies only to loopback or the exact "
+            "LangGraph-primary Compose database service"
         )
 
 
@@ -418,10 +423,12 @@ def _search_path_option(schema: str) -> str:
 
 
 _APPEND_ONLY_TABLES = (
+    "director_primary_intake_auth_claim",
     "director_primary_intake_dedup",
     "director_primary_command_receipt",
     "director_provider_activation_evidence",
     "director_primary_work_packet_artifact",
+    "director_primary_result_packet_artifact",
     "director_primary_claim",
     "director_primary_effect_reservation",
     "director_primary_remote_binding",
@@ -612,6 +619,37 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_intake_auth_claim (
+            nonce_digest text PRIMARY KEY,
+            idempotency_key_digest text NOT NULL UNIQUE,
+            payload_digest text NOT NULL,
+            task_id text NOT NULL UNIQUE,
+            authentication_class text NOT NULL CHECK (
+                authentication_class = 'slack_gateway_attested'
+            ),
+            created_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_result_packet_artifact (
+            task_id text NOT NULL
+                REFERENCES {schema}.director_primary_task_writer (task_id),
+            assignment_id text NOT NULL,
+            authority_snapshot_digest text NOT NULL CHECK (
+                authority_snapshot_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            document_digest text NOT NULL CHECK (
+                document_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            canonical_document text NOT NULL,
+            writer_fencing_generation bigint NOT NULL CHECK (
+                writer_fencing_generation >= 1
+            ),
+            recorded_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (task_id, assignment_id)
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_claim (
             claim_key text PRIMARY KEY,
             task_id text NOT NULL,
@@ -695,6 +733,58 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             evidence_digest text NOT NULL,
             recorded_at timestamptz NOT NULL DEFAULT now()
         )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_parallel_batch (
+            task_id text PRIMARY KEY
+                REFERENCES {schema}.director_primary_task_writer (task_id),
+            plan_digest text NOT NULL CHECK (
+                plan_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            owner_token text NOT NULL,
+            fencing_generation bigint NOT NULL CHECK (fencing_generation >= 1),
+            max_concurrency integer NOT NULL CHECK (max_concurrency IN (1, 2, 3)),
+            scale_policy_evidence_digest text CHECK (
+                scale_policy_evidence_digest IS NULL OR
+                scale_policy_evidence_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            kill_switch boolean NOT NULL DEFAULT false,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_parallel_assignment (
+            task_id text NOT NULL
+                REFERENCES {schema}.director_primary_parallel_batch (task_id),
+            assignment_id text NOT NULL,
+            sequence integer NOT NULL CHECK (sequence >= 1),
+            provider_id text NOT NULL,
+            deployment_id text NOT NULL,
+            dependencies jsonb NOT NULL,
+            write_surfaces jsonb NOT NULL,
+            retry_limit integer NOT NULL CHECK (retry_limit BETWEEN 1 AND 3),
+            status text NOT NULL CHECK (status IN (
+                'PENDING', 'ACTIVE', 'AMBIGUOUS', 'SUCCEEDED', 'FAILED'
+            )),
+            reservation_digest text CHECK (
+                reservation_digest IS NULL OR
+                reservation_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            result_digest text CHECK (
+                result_digest IS NULL OR
+                result_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            reason_code text,
+            reserved_at timestamptz,
+            completed_at timestamptz,
+            PRIMARY KEY (task_id, assignment_id),
+            UNIQUE (task_id, sequence)
+        )
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS director_primary_parallel_status
+        ON {schema}.director_primary_parallel_assignment (task_id, status, sequence)
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_audit_event (
@@ -911,6 +1001,18 @@ class PrimaryWorkPacketArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class PrimaryResultPacketArtifact:
+    """One immutable authenticated model-result-packet-v1 artifact."""
+
+    task_id: str
+    assignment_id: str
+    authority_snapshot_digest: str
+    document_digest: str
+    packet: Mapping[str, Any]
+    writer_fencing_generation: int
+
+
+@dataclass(frozen=True, slots=True)
 class PrimaryControlPlaneMetrics:
     """Non-sensitive observed counts for operator health and cutover evidence."""
 
@@ -1042,6 +1144,59 @@ def _work_packet_artifact_from_row(
             "stored work packet authority binding does not match content"
         )
     return PrimaryWorkPacketArtifact(
+        task_id=task_id,
+        assignment_id=assignment_id,
+        authority_snapshot_digest=authority_digest,
+        document_digest=digest,
+        packet=validated,
+        writer_fencing_generation=int(row["writer_fencing_generation"]),
+    )
+
+
+def _validated_result_packet(
+    packet: Mapping[str, Any],
+    *,
+    task_id: str,
+    assignment_id: str,
+) -> tuple[dict[str, Any], str, str]:
+    try:
+        validated = validate_packet("result", packet)
+    except PacketContractError as exc:
+        raise PostgresControlPlaneError("result packet failed contract validation") from exc
+    if validated["task_id"] != task_id:
+        raise PostgresControlPlaneError("result packet task binding does not match task_id")
+    if validated["assignment_id"] != assignment_id:
+        raise PostgresControlPlaneError(
+            "result packet assignment binding does not match assignment_id"
+        )
+    authority_digest = str(validated["authority_snapshot_digest"])
+    return validated, document_digest(validated), authority_digest
+
+
+def _result_packet_artifact_from_row(
+    row: Mapping[str, Any],
+) -> PrimaryResultPacketArtifact:
+    task_id = str(row["task_id"])
+    assignment_id = str(row["assignment_id"])
+    raw = row["canonical_document"]
+    if not isinstance(raw, str):
+        raise PostgresControlPlaneError("stored result packet is not canonical JSON text")
+    try:
+        decoded = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise PostgresControlPlaneError("stored result packet is not valid JSON") from exc
+    validated, digest, authority_digest = _validated_result_packet(
+        decoded, task_id=task_id, assignment_id=assignment_id
+    )
+    if canonical_json_bytes(validated).decode("utf-8") != raw:
+        raise PostgresControlPlaneError("stored result packet is not canonical JSON")
+    if digest != str(row["document_digest"]):
+        raise PostgresControlPlaneError("stored result packet digest does not match content")
+    if authority_digest != str(row["authority_snapshot_digest"]):
+        raise PostgresControlPlaneError(
+            "stored result packet authority binding does not match content"
+        )
+    return PrimaryResultPacketArtifact(
         task_id=task_id,
         assignment_id=assignment_id,
         authority_snapshot_digest=authority_digest,
@@ -1286,6 +1441,73 @@ class PostgresConditionalClaimStore:
                         "intake authority renewal refused; authority is stale or expired"
                     )
         return _intake_lease_from_row(row)
+
+    def claim_authenticated_primary_intake(
+        self,
+        *,
+        nonce_digest: str,
+        idempotency_key_digest: str,
+        payload_digest: str,
+        task_id: str,
+    ) -> tuple[str, bool]:
+        """Atomically claim Slack nonce and source identity before graph creation."""
+
+        _require_digest(nonce_digest, "nonce_digest")
+        _require_digest(idempotency_key_digest, "idempotency_key_digest")
+        _require_digest(payload_digest, "payload_digest")
+        _require_id(task_id, "task_id")
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {"key": _advisory_key("authenticated-intake", schema, nonce_digest)},
+                )
+                existing = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT nonce_digest, idempotency_key_digest, payload_digest, task_id
+                    FROM {schema}.director_primary_intake_auth_claim
+                    WHERE nonce_digest = %(nonce_digest)s
+                       OR idempotency_key_digest = %(idempotency_key_digest)s
+                    """,
+                    {
+                        "nonce_digest": nonce_digest,
+                        "idempotency_key_digest": idempotency_key_digest,
+                    },
+                )
+                if existing is not None:
+                    if (
+                        str(existing["nonce_digest"]) != nonce_digest
+                        or str(existing["idempotency_key_digest"])
+                        != idempotency_key_digest
+                        or str(existing["payload_digest"]) != payload_digest
+                    ):
+                        raise PostgresControlPlaneError(
+                            "authenticated intake replay identity conflicts with durable authority"
+                        )
+                    return str(existing["task_id"]), False
+                row = self._one_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_intake_auth_claim (
+                        nonce_digest, idempotency_key_digest, payload_digest,
+                        task_id, authentication_class
+                    ) VALUES (
+                        %(nonce_digest)s, %(idempotency_key_digest)s,
+                        %(payload_digest)s, %(task_id)s, 'slack_gateway_attested'
+                    ) RETURNING task_id
+                    """,
+                    {
+                        "nonce_digest": nonce_digest,
+                        "idempotency_key_digest": idempotency_key_digest,
+                        "payload_digest": payload_digest,
+                        "task_id": task_id,
+                    },
+                    missing="authenticated intake claim was not recorded",
+                )
+                return str(row["task_id"]), True
 
     def create_primary_task_projection(
         self,
@@ -2221,6 +2443,133 @@ class PostgresConditionalClaimStore:
             )
         return None if row is None else _work_packet_artifact_from_row(row)
 
+    def record_result_packet_artifact(
+        self,
+        *,
+        task_id: str,
+        assignment_id: str,
+        packet: Mapping[str, Any],
+        owner_token: str,
+        fencing_generation: int,
+    ) -> PrimaryResultPacketArtifact:
+        """Append one validated result packet under the current writer fence."""
+
+        _require_id(task_id, "task_id")
+        _require_id(assignment_id, "assignment_id")
+        _require_id(owner_token, "owner_token")
+        generation = _require_generation(
+            fencing_generation, "fencing_generation", minimum=1
+        )
+        validated, digest, authority_digest = _validated_result_packet(
+            packet, task_id=task_id, assignment_id=assignment_id
+        )
+        canonical = canonical_json_bytes(validated).decode("utf-8")
+        schema = self._schema
+        parameters = {
+            "task_id": task_id,
+            "assignment_id": assignment_id,
+            "authority_snapshot_digest": authority_digest,
+            "document_digest": digest,
+            "canonical_document": canonical,
+            "owner_token": owner_token,
+            "generation": generation,
+        }
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {"key": _advisory_key("result-packet", schema, task_id, assignment_id)},
+                )
+                writer = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT task_id
+                    FROM {schema}.director_primary_task_writer
+                    WHERE task_id = %(task_id)s
+                      AND engine_owner = 'langgraph'
+                      AND owner_token = %(owner_token)s
+                      AND fencing_generation = %(generation)s
+                      AND lease_expires_at > now()
+                    FOR UPDATE
+                    """,
+                    parameters,
+                )
+                if writer is None:
+                    raise PostgresControlPlaneError(
+                        "result packet refused; writer authority is stale or expired"
+                    )
+                existing = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT task_id, assignment_id, authority_snapshot_digest,
+                           document_digest, canonical_document,
+                           writer_fencing_generation
+                    FROM {schema}.director_primary_result_packet_artifact
+                    WHERE task_id = %(task_id)s
+                      AND assignment_id = %(assignment_id)s
+                    """,
+                    parameters,
+                )
+                if existing is not None:
+                    artifact = _result_packet_artifact_from_row(existing)
+                    if artifact.document_digest != digest:
+                        raise PostgresControlPlaneError(
+                            "result packet identity was replayed with different content"
+                        )
+                    return artifact
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_result_packet_artifact (
+                        task_id, assignment_id, authority_snapshot_digest,
+                        document_digest, canonical_document,
+                        writer_fencing_generation
+                    )
+                    SELECT writer.task_id, %(assignment_id)s,
+                           %(authority_snapshot_digest)s, %(document_digest)s,
+                           %(canonical_document)s, writer.fencing_generation
+                    FROM {schema}.director_primary_task_writer writer
+                    WHERE writer.task_id = %(task_id)s
+                      AND writer.engine_owner = 'langgraph'
+                      AND writer.owner_token = %(owner_token)s
+                      AND writer.fencing_generation = %(generation)s
+                      AND writer.lease_expires_at > now()
+                    ON CONFLICT (task_id, assignment_id) DO NOTHING
+                    RETURNING task_id, assignment_id, authority_snapshot_digest,
+                              document_digest, canonical_document,
+                              writer_fencing_generation
+                    """,
+                    parameters,
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "result packet insert lost its immutable identity race"
+                    )
+        return _result_packet_artifact_from_row(row)
+
+    def read_result_packet_artifact(
+        self, *, task_id: str, assignment_id: str
+    ) -> PrimaryResultPacketArtifact | None:
+        """Load and revalidate one immutable result packet after restart."""
+
+        _require_id(task_id, "task_id")
+        _require_id(assignment_id, "assignment_id")
+        with self._pool.connection() as connection:
+            row = self._optional_row(
+                connection,
+                f"""
+                SELECT task_id, assignment_id, authority_snapshot_digest,
+                       document_digest, canonical_document,
+                       writer_fencing_generation
+                FROM {self._schema}.director_primary_result_packet_artifact
+                WHERE task_id = %(task_id)s
+                  AND assignment_id = %(assignment_id)s
+                """,
+                {"task_id": task_id, "assignment_id": assignment_id},
+            )
+        return None if row is None else _result_packet_artifact_from_row(row)
+
     # -- protocol ---------------------------------------------------------
 
     def claim(self, request: ClaimRequest) -> ClaimOutcome:
@@ -2499,6 +2848,48 @@ class PostgresConditionalClaimStore:
                 return _reservation_from_row(inserted)
 
     # -- remote binding ---------------------------------------------------
+
+    def read_effect_reservation(
+        self,
+        *,
+        task_id: str,
+        effect_attempt_digest: str,
+        owner_token: str,
+    ) -> EffectReservation | None:
+        """Read one current-writer reservation by its graph attempt binding."""
+
+        _require_id(task_id, "task_id")
+        _require_digest(effect_attempt_digest, "effect_attempt_digest")
+        _require_id(owner_token, "owner_token")
+        schema = self._schema
+        with self._pool.connection() as connection:
+            row = self._optional_row(
+                connection,
+                f"""
+                SELECT reserved.reservation_key, reserved.claim_key,
+                       reserved.task_id, reserved.owner_token,
+                       reserved.fencing_generation, reserved.effect_key_digest,
+                       reserved.effect_attempt_digest, reserved.writer_owner_id,
+                       reserved.reserved_units
+                FROM {schema}.director_primary_effect_reservation reserved
+                JOIN {schema}.director_primary_claim held
+                  ON held.claim_key = reserved.claim_key
+                JOIN {schema}.director_primary_task_writer writer
+                  ON writer.task_id = held.task_id
+                 AND writer.owner_token = held.owner_token
+                 AND writer.fencing_generation = held.fencing_generation
+                 AND writer.lease_expires_at > now()
+                WHERE reserved.task_id = %(task_id)s
+                  AND reserved.effect_attempt_digest = %(attempt)s
+                  AND reserved.owner_token = %(owner_token)s
+                """,
+                {
+                    "task_id": task_id,
+                    "attempt": effect_attempt_digest,
+                    "owner_token": owner_token,
+                },
+            )
+        return None if row is None else _reservation_from_row(row)
 
     def bind_remote_effect(
         self,
@@ -3407,3 +3798,5 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | END]]

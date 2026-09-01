@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
@@ -50,6 +52,7 @@ from director_orchestrator.langgraph_primary import (
     ProviderDispatchStatus,
     ProviderDisposition,
     ProviderSubgraphResult,
+    REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED,
     ScheduleResult,
     TerminalClassification,
     WorkflowRunStatus,
@@ -105,6 +108,11 @@ CHECKPOINT_KEY_ALLOWLIST = frozenset(
         "max_visits",
         "pending_approval_kind",
         "pending_approval_request_digest",
+        "parallel_aggregate_digest",
+        "parallel_ambiguous_slot_count",
+        "parallel_plan_digest",
+        "parallel_succeeded",
+        "parallel_terminal",
         "plan_digest",
         "plan_work_packet_binding_digest",
         "policy_digest",
@@ -654,6 +662,41 @@ class ConditionalClaimStoreTests(unittest.TestCase):
 
 
 class PrimaryWorkflowTests(unittest.TestCase):
+    def test_parallel_aggregate_is_checkpointed_with_immutable_plan_binding(self):
+        runtime = _runtime()
+        request = _request("DIR-PRIMARY-PARALLEL-AGGREGATE")
+        runtime.start(request)
+        plan_digest = _digest("parallel-plan")
+        first = runtime.record_parallel_aggregate(
+            request.task_id,
+            plan_digest=plan_digest,
+            aggregate_digest=_digest("parallel-partial"),
+            terminal=False,
+            succeeded=False,
+            ambiguous_slot_count=1,
+        )
+        self.assertEqual(first.parallel_plan_digest, plan_digest)
+        self.assertEqual(first.parallel_ambiguous_slot_count, 1)
+        final = runtime.record_parallel_aggregate(
+            request.task_id,
+            plan_digest=plan_digest,
+            aggregate_digest=_digest("parallel-final"),
+            terminal=True,
+            succeeded=True,
+            ambiguous_slot_count=0,
+        )
+        self.assertTrue(final.parallel_terminal)
+        self.assertTrue(final.parallel_succeeded)
+        with self.assertRaisesRegex(ValueError, "plan binding changed"):
+            runtime.record_parallel_aggregate(
+                request.task_id,
+                plan_digest=_digest("different-parallel-plan"),
+                aggregate_digest=_digest("parallel-final"),
+                terminal=True,
+                succeeded=True,
+                ambiguous_slot_count=0,
+            )
+
     def test_happy_path_visits_every_non_effect_control_plane_phase(self):
         counters: dict[str, int] = {}
         handlers = _handlers(counters)
@@ -728,6 +771,64 @@ class PrimaryWorkflowTests(unittest.TestCase):
         state = runtime.compact_state(request.task_id)
         self.assertEqual(actual, state["work_packet_digest"])
         self.assertIsNotNone(state["plan_work_packet_binding_digest"])
+
+    def test_failed_plan_blocks_without_packet_and_replays_exactly(self):
+        counters: dict[str, int] = {}
+
+        def failed_plan(_context):
+            counters["plan"] = counters.get("plan", 0) + 1
+            return PlanResult(
+                _digest("repository-free-plan"),
+                None,
+                passed=False,
+                reason_code=REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED,
+            )
+
+        handlers = _handlers(counters, plan=failed_plan)
+        saver = InMemorySaver()
+        runtime = _runtime(handlers, saver=saver)
+        request = _request("DIR-PRIMARY-REPOSITORY-FREE-PLAN")
+
+        outcome = runtime.start(request)
+        replay = runtime.start(request)
+        recovered = _runtime(handlers, saver=saver).recover(request.task_id)
+
+        for result in (outcome, replay, recovered):
+            self.assertEqual(
+                TerminalClassification.POLICY_BLOCKED,
+                result.terminal_classification,
+            )
+            self.assertEqual(
+                REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED,
+                result.reason_code,
+            )
+            self.assertEqual(outcome.state_digest, result.state_digest)
+        state = runtime.compact_state(request.task_id)
+        self.assertIsNone(state["work_packet_digest"])
+        self.assertIsNone(state["plan_work_packet_binding_digest"])
+        self.assertEqual(1, counters.get("plan", 0))
+        self.assertEqual(0, counters.get("schedule", 0))
+        self.assertEqual(0, counters.get("provider_subgraph", 0))
+        self.assertEqual(0, counters.get("effect_execution_readback", 0))
+
+    def test_other_failed_plan_result_retains_failed_classification(self):
+        outcome = _runtime(
+            _handlers(
+                plan=lambda _: PlanResult(
+                    _digest("other-failed-plan"),
+                    None,
+                    passed=False,
+                    reason_code="other_plan_failure",
+                )
+            )
+        ).start(_request("DIR-PRIMARY-OTHER-FAILED-PLAN"))
+
+        self.assertEqual(TerminalClassification.FAILED, outcome.terminal_classification)
+        self.assertEqual("other_plan_failure", outcome.reason_code)
+
+    def test_successful_plan_cannot_omit_packet_authority(self):
+        with self.assertRaisesRegex(ValueError, "passed plan requires"):
+            PlanResult(_digest("invalid-success"), None)
 
     def test_non_plan_result_never_becomes_work_packet_authority(self):
         counters: dict[str, int] = {}
@@ -2178,3 +2279,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]

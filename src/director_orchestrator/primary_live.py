@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:38 UTC | BEGIN]]
 """Production composition for the Default LangGraph-primary service.
 
@@ -31,6 +32,8 @@ from .primary_providers import (
     CandidateShaResolver,
     PrimaryProviderBindingResolver,
     PrimaryProviderBoundary,
+    ProviderResultArtifactWriter,
+    ProviderWriterFenceResolver,
 )
 
 
@@ -66,6 +69,8 @@ class DefaultLiveServices:
         work_packet_binding_resolver: PrimaryProviderBindingResolver,
         candidate_sha_resolver: CandidateShaResolver,
         live_provider_activation: LiveProviderActivation,
+        writer_fence_resolver: ProviderWriterFenceResolver,
+        result_artifact_writer: ProviderResultArtifactWriter,
         packet_result_resolver: PacketResultResolver,
         completion_evidence_resolver: CompletionEvidenceResolver,
         external_effect_resolver: ExternalEffectResolver,
@@ -77,6 +82,8 @@ class DefaultLiveServices:
             "work_packet_binding_resolver": work_packet_binding_resolver,
             "candidate_sha_resolver": candidate_sha_resolver,
             "live_provider_activation": live_provider_activation,
+            "writer_fence_resolver": writer_fence_resolver,
+            "result_artifact_writer": result_artifact_writer,
             "packet_result_resolver": packet_result_resolver,
             "completion_evidence_resolver": completion_evidence_resolver,
             "external_effect_resolver": external_effect_resolver,
@@ -98,6 +105,8 @@ class DefaultLiveServices:
             binding_resolver=work_packet_binding_resolver,
             candidate_sha_resolver=candidate_sha_resolver,
             provider_readiness_resolver=live_provider_activation,
+            writer_fence_resolver=writer_fence_resolver,
+            result_artifact_writer=result_artifact_writer,
         )
         self._completion = PrimaryCompletionServices(
             packet_result_resolver=packet_result_resolver,
@@ -109,6 +118,8 @@ class DefaultLiveServices:
         """Plan once, then persist and verify the exact post-plan packet."""
 
         result = self._planning.plan(context)
+        if not result.passed:
+            return result
         record = self._planning._record(context.task_id)
         if record.plan is None or not record.plan.assignments:
             raise RuntimeError("Default live plan has no packet assignment")
@@ -155,4 +166,8 @@ class DefaultLiveServices:
         )
 
 
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | BEGIN]]
+# Live composition requires writer-fence revalidation and durable result artifacts.
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
@@ -102,6 +104,11 @@ class TerminalClassification(StrEnum):
     EXACT_SHA_INVALID = "EXACT_SHA_INVALID"
     OWNER_DECISION_REQUIRED = "OWNER_DECISION_REQUIRED"
     RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
+
+
+REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED = (
+    "repository_free_primary_packet_unsupported"
+)
 
 
 class WorkflowRunStatus(StrEnum):
@@ -464,15 +471,19 @@ class PlanResult:
     """The validated plan and the exact work packet derived from that plan."""
 
     plan_digest: str
-    work_packet_digest: str
+    work_packet_digest: str | None
     passed: bool = True
     reason_code: str = "ok"
 
     def __post_init__(self) -> None:
         _require_digest(self.plan_digest, "plan_digest")
-        _require_digest(self.work_packet_digest, "work_packet_digest")
         if type(self.passed) is not bool:
             raise ValueError("passed must be a boolean")
+        if self.work_packet_digest is None:
+            if self.passed:
+                raise ValueError("a passed plan requires an exact work_packet_digest")
+        else:
+            _require_digest(self.work_packet_digest, "work_packet_digest")
         _require_code(self.reason_code)
 
 
@@ -814,6 +825,11 @@ class PrimaryRequest:
                 "candidate_sha": self.starting_sha,
                 "plan_work_packet_binding_digest": None,
                 "scheduled_producer_id": None,
+                "parallel_plan_digest": None,
+                "parallel_aggregate_digest": None,
+                "parallel_terminal": False,
+                "parallel_succeeded": False,
+                "parallel_ambiguous_slot_count": 0,
                 "provider_dispatch_status": ProviderDispatchStatus.NOT_STARTED.value,
                 "provider_attempt_digest": None,
                 "provider_result_digest": None,
@@ -919,6 +935,11 @@ class PrimaryOutcome:
     visited_nodes: tuple[str, ...]
     revision_count: int
     budget_used_units: int
+    parallel_plan_digest: str | None = None
+    parallel_aggregate_digest: str | None = None
+    parallel_terminal: bool = False
+    parallel_succeeded: bool = False
+    parallel_ambiguous_slot_count: int = 0
 
 
 class PrimaryGraphState(TypedDict, total=False):
@@ -931,7 +952,7 @@ class PrimaryGraphState(TypedDict, total=False):
     intake_digest: str
     scope_digest: str
     authority_snapshot_digest: str
-    work_packet_digest: str
+    work_packet_digest: str | None
     idempotency_key_digest: str
     input_digest: str
     starting_sha: str
@@ -958,6 +979,11 @@ class PrimaryGraphState(TypedDict, total=False):
     plan_work_packet_binding_digest: str | None
     policy_digest: str | None
     schedule_digest: str | None
+    parallel_plan_digest: str | None
+    parallel_aggregate_digest: str | None
+    parallel_terminal: bool
+    parallel_succeeded: bool
+    parallel_ambiguous_slot_count: int
     scheduled_producer_id: str | None
     provider_dispatch_status: str
     provider_attempt_digest: str | None
@@ -1024,6 +1050,31 @@ def _post_plan_work_packet_digest(state: Mapping[str, Any]) -> str | None:
         return None
     expected = _plan_work_packet_binding(plan_digest, work_packet_digest)
     return work_packet_digest if _secure_equal(binding_digest, expected) else None
+
+
+def _is_intentional_packet_free_terminal_plan(state: Mapping[str, Any]) -> bool:
+    """Recognize only the bounded terminal shape emitted by the v1 refusal."""
+
+    try:
+        _require_digest(str(state.get("plan_digest") or ""), "plan_digest")
+    except ValueError:
+        return False
+    return (
+        state.get("current_phase") == PrimaryPhase.TERMINAL_CLASSIFICATION.value
+        and state.get("previous_phase") == PrimaryPhase.PLAN.value
+        and state.get("terminal_classification")
+        == TerminalClassification.POLICY_BLOCKED.value
+        and state.get("transition_reason_code")
+        == REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED
+        and state.get("work_packet_digest") is None
+        and state.get("plan_work_packet_binding_digest") is None
+        and state.get("schedule_digest") is None
+        and state.get("scheduled_producer_id") is None
+        and state.get("provider_attempt_digest") is None
+        and state.get("provider_dispatch_status")
+        == ProviderDispatchStatus.NOT_STARTED.value
+        and state.get("effect_status") == EffectStatus.NOT_REQUIRED.value
+    )
 
 
 def _context(state: Mapping[str, Any]) -> HandlerContext:
@@ -1269,14 +1320,32 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             return _handler_failure(update, reason_code="plan_handler_error")
         update.update(
             plan_digest=result.plan_digest,
-            work_packet_digest=result.work_packet_digest,
-            plan_work_packet_binding_digest=_plan_work_packet_binding(
-                result.plan_digest, result.work_packet_digest
-            ),
             transition_reason_code=result.reason_code,
         )
+        if result.work_packet_digest is not None:
+            update.update(
+                work_packet_digest=result.work_packet_digest,
+                plan_work_packet_binding_digest=_plan_work_packet_binding(
+                    result.plan_digest, result.work_packet_digest
+                ),
+            )
+        else:
+            update.update(
+                work_packet_digest=None,
+                plan_work_packet_binding_digest=None,
+            )
         if not result.passed:
-            return _handler_failure(update, reason_code=result.reason_code)
+            classification = (
+                TerminalClassification.POLICY_BLOCKED
+                if result.reason_code
+                == REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED
+                else TerminalClassification.FAILED
+            )
+            return _handler_failure(
+                update,
+                classification=classification,
+                reason_code=result.reason_code,
+            )
         return update
 
     def policy_budget(state: PrimaryGraphState) -> PrimaryGraphState:
@@ -2219,6 +2288,8 @@ class PrimaryWorkflowRuntime:
             return False
         if _post_plan_work_packet_digest(state) is not None:
             return False
+        if _is_intentional_packet_free_terminal_plan(state):
+            return False
         if (
             state.get("terminal_classification")
             != TerminalClassification.POLICY_BLOCKED.value
@@ -2300,7 +2371,52 @@ class PrimaryWorkflowRuntime:
             visited_nodes=tuple(state.get("visited_nodes", [])),
             revision_count=int(state["revision_count"]),
             budget_used_units=int(state["budget_used_units"]),
+            parallel_plan_digest=state.get("parallel_plan_digest"),
+            parallel_aggregate_digest=state.get("parallel_aggregate_digest"),
+            parallel_terminal=bool(state.get("parallel_terminal", False)),
+            parallel_succeeded=bool(state.get("parallel_succeeded", False)),
+            parallel_ambiguous_slot_count=int(
+                state.get("parallel_ambiguous_slot_count", 0)
+            ),
         )
+
+    def record_parallel_aggregate(
+        self,
+        task_id: str,
+        *,
+        plan_digest: str,
+        aggregate_digest: str,
+        terminal: bool,
+        succeeded: bool,
+        ambiguous_slot_count: int,
+    ) -> PrimaryOutcome:
+        """Checkpoint deterministic Postgres aggregation without performing I/O."""
+
+        _require_digest(plan_digest, "parallel_plan_digest")
+        _require_digest(aggregate_digest, "parallel_aggregate_digest")
+        if type(terminal) is not bool or type(succeeded) is not bool:
+            raise ValueError("parallel terminal flags must be booleans")
+        if succeeded and not terminal:
+            raise ValueError("a successful parallel aggregate must be terminal")
+        if type(ambiguous_slot_count) is not int or ambiguous_slot_count < 0:
+            raise ValueError("ambiguous_slot_count must be non-negative")
+        snapshot = self._snapshot(task_id)
+        if not snapshot.values:
+            raise ValueError("primary graph checkpoint does not exist")
+        held = snapshot.values.get("parallel_plan_digest")
+        if held is not None and not _secure_equal(str(held), plan_digest):
+            raise ValueError("parallel plan binding changed")
+        self._graph.update_state(
+            self._config(task_id),
+            {
+                "parallel_plan_digest": plan_digest,
+                "parallel_aggregate_digest": aggregate_digest,
+                "parallel_terminal": terminal,
+                "parallel_succeeded": succeeded,
+                "parallel_ambiguous_slot_count": ambiguous_slot_count,
+            },
+        )
+        return self._outcome(task_id)
 
     @staticmethod
     def _provider_intent(state: Mapping[str, Any]) -> ProviderDispatchIntent:
@@ -2951,3 +3067,5 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]

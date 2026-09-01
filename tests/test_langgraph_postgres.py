@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
@@ -54,6 +56,7 @@ from director_orchestrator.langgraph_postgres import (
     PostgresControlPlaneError,
     PostgresPoolBounds,
     PrimaryCommandReceipt,
+    PrimaryResultPacketArtifact,
     PrimaryWorkPacketArtifact,
     TaskWriterLease,
     _build_strict_serializer,
@@ -66,6 +69,12 @@ from director_orchestrator.langgraph_postgres import (
 )
 from director_orchestrator.langgraph_primary import ClaimOutcome, ClaimRequest
 from director_orchestrator.langgraph_runtime import LangGraphPacketRuntime
+from director_orchestrator.primary_parallel import (
+    ParallelAssignment,
+    ParallelAssignmentStatus,
+    ParallelDispatchPolicy,
+    PostgresParallelDispatch,
+)
 from director_orchestrator.packet_contracts import (
     canonical_json_bytes,
     document_digest,
@@ -109,6 +118,21 @@ def _work_packet(
     packet["assignment_id"] = assignment_id
     packet["idempotency_key"] = f"{task_id}:{assignment_id}:review"
     packet["correlation"]["correlation_id"] = f"corr-{assignment_id}"
+    return packet
+
+
+def _result_packet(
+    *, task_id: str = "task-1", assignment_id: str = "assignment-1"
+) -> dict[str, object]:
+    packet = load_json_document(
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "schemas"
+        / "model-result-packet-v1.example.json"
+    )
+    packet["task_id"] = task_id
+    packet["assignment_id"] = assignment_id
+    packet["idempotency_key"] = f"{task_id}:{assignment_id}:review"
     return packet
 
 
@@ -1676,11 +1700,17 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
 
     def test_local_exception_is_narrow_and_still_fails_closed(self):
         self.assertEqual("disable", self.parse(LOCAL_DSN, insecure=True)["sslmode"])
+        compose = (
+            "user=d host=langgraph-primary-db port=5432 dbname=g sslmode=disable"
+        )
+        self.assertEqual(
+            "langgraph-primary-db", self.parse(compose, insecure=True)["host"]
+        )
         for label, dsn, expected in (
             (
                 "non-loopback host",
                 "user=d host=postgres port=5432 dbname=g sslmode=disable",
-                "loopback",
+                "loopback or the exact",
             ),
             (
                 "sslmode still omitted",
@@ -1691,7 +1721,19 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
                 "loopback host with remote hostaddr",
                 "user=d host=localhost hostaddr=10.0.0.2 port=5432 dbname=g "
                 "sslmode=disable",
-                "loopback",
+                "loopback or the exact",
+            ),
+            (
+                "lookalike compose host",
+                "user=d host=langgraph-primary-db.evil port=5432 dbname=g "
+                "sslmode=disable",
+                "loopback or the exact",
+            ),
+            (
+                "compose host with remote hostaddr",
+                "user=d host=langgraph-primary-db hostaddr=10.0.0.2 port=5432 "
+                "dbname=g sslmode=disable",
+                "loopback or the exact",
             ),
         ):
             with self.subTest(refused=label):
@@ -2162,6 +2204,100 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
             task_id=self.task_id, assignment_id=assignment_id
         )
         self.assertEqual(artifacts[0], persisted)
+
+    def test_result_packet_artifact_survives_restart_and_rejects_mutation(self):
+        lease = self.store.acquire_task_writer(
+            self.task_id,
+            engine_owner="langgraph",
+            owner_token="result-writer",
+            expected_generation=INITIAL_FENCING_GENERATION,
+        )
+        assignment_id = f"assignment-{uuid.uuid4().hex[:8]}"
+        packet = _result_packet(task_id=self.task_id, assignment_id=assignment_id)
+        artifact = self.store.record_result_packet_artifact(
+            task_id=self.task_id,
+            assignment_id=assignment_id,
+            packet=packet,
+            owner_token=lease.owner_token,
+            fencing_generation=lease.fencing_generation,
+        )
+        self.assertIsInstance(artifact, PrimaryResultPacketArtifact)
+        restarted = self.second_store().read_result_packet_artifact(
+            task_id=self.task_id, assignment_id=assignment_id
+        )
+        self.assertEqual(artifact, restarted)
+        mutated = dict(packet)
+        mutated["outcome"] = "different authenticated result"
+        with self.assertRaisesRegex(PostgresControlPlaneError, "different content"):
+            self.store.record_result_packet_artifact(
+                task_id=self.task_id,
+                assignment_id=assignment_id,
+                packet=mutated,
+                owner_token=lease.owner_token,
+                fencing_generation=lease.fencing_generation,
+            )
+
+    def test_parallel_reservation_race_and_crash_ambiguity_hold_slot(self):
+        writer = self.store.acquire_task_writer(
+            self.task_id,
+            engine_owner="langgraph",
+            owner_token="parallel-writer",
+            expected_generation=INITIAL_FENCING_GENERATION,
+        )
+        policy = ParallelDispatchPolicy(max_concurrency=1)
+        assignments = (
+            ParallelAssignment("a", 1, "openai", "codex-app"),
+            ParallelAssignment("b", 2, "claude", "claude-app"),
+        )
+        first = PostgresParallelDispatch(self.store)
+        plan_digest = self.digest("a")
+        first.register_plan(
+            task_id=self.task_id,
+            plan_digest=plan_digest,
+            assignments=assignments,
+            policy=policy,
+            writer=writer,
+        )
+        second = PostgresParallelDispatch(self.second_store())
+        barrier = threading.Barrier(2)
+        outcomes: list[object] = []
+
+        def reserve(ledger: PostgresParallelDispatch) -> None:
+            barrier.wait()
+            try:
+                outcomes.extend(
+                    ledger.reserve_ready(task_id=self.task_id, writer=writer, policy=policy)
+                )
+            except BaseException as error:  # pragma: no cover - asserted below
+                outcomes.append(error)
+
+        threads = [
+            threading.Thread(target=reserve, args=(first,)),
+            threading.Thread(target=reserve, args=(second,)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        failures = [item for item in outcomes if isinstance(item, BaseException)]
+        reservations = [item for item in outcomes if not isinstance(item, BaseException)]
+        self.assertEqual([], failures)
+        self.assertEqual(1, len(reservations), outcomes)
+        first.record_result(
+            reservation=reservations[0],
+            writer=writer,
+            status=ParallelAssignmentStatus.AMBIGUOUS,
+            result_digest=None,
+            reason_code="provider_outcome_unknown",
+        )
+        restarted = PostgresParallelDispatch(self.second_store())
+        self.assertEqual(
+            (), restarted.reserve_ready(task_id=self.task_id, writer=writer, policy=policy)
+        )
+        aggregate = restarted.aggregate(self.task_id)
+        self.assertEqual(1, aggregate.ambiguous_slot_count)
+        self.assertFalse(aggregate.terminal)
 
     def test_provider_activation_chain_is_durable_atomic_and_append_only(self):
         import psycopg
@@ -2877,3 +3013,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | END]]

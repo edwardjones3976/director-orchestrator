@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
@@ -277,7 +278,7 @@ class Settings:
     langgraph_primary_required_providers: tuple[str, ...] = field(
         default_factory=lambda: _csv(
             "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS",
-            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github,windows-copilot",
+            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot,windows-copilot",
         )
     )
     langgraph_primary_provider_activation_bindings_json: str = field(
@@ -316,6 +317,26 @@ class Settings:
     )
     langgraph_primary_owner_token: str = field(
         default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_OWNER_TOKEN", "")
+    )
+    langgraph_primary_adapter_callback_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET", ""
+        )
+    )
+    langgraph_primary_effect_reconciliation_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET", ""
+        )
+    )
+    langgraph_primary_host_bridge_endpoint: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", ""
+        ).strip()
+    )
+    langgraph_primary_host_bridge_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", ""
+        )
     )
     langgraph_primary_allow_insecure_local_postgres: bool = field(
         default_factory=lambda: _bool(
@@ -1163,6 +1184,12 @@ class Settings:
             )
         )
         owner_token_configured = len(self.langgraph_primary_owner_token) >= 32
+        adapter_callback_secret_configured = (
+            len(self.langgraph_primary_adapter_callback_secret) >= 32
+        )
+        effect_reconciliation_secret_configured = (
+            len(self.langgraph_primary_effect_reconciliation_secret) >= 32
+        )
         authority_root_configured = bool(self.repository_snapshot_root.strip())
         single_repository_configured = len(self.repository_allowlist) == 1
         single_starting_ref_configured = len(self.allowed_starting_refs) == 1
@@ -1208,6 +1235,12 @@ class Settings:
             "checkpoint_namespace_configured": namespace_configured,
             "checkpoint_namespace_isolated": namespace_isolated,
             "owner_token_configured": owner_token_configured,
+            "adapter_callback_secret_configured": (
+                adapter_callback_secret_configured
+            ),
+            "effect_reconciliation_secret_configured": (
+                effect_reconciliation_secret_configured
+            ),
             "authority_root_configured": authority_root_configured,
             "single_repository_configured": single_repository_configured,
             "single_starting_ref_configured": single_starting_ref_configured,
@@ -1273,6 +1306,39 @@ class Settings:
                 problems.append(
                     "live provider dispatch requires exact provider activation bindings"
                 )
+            if len(self.langgraph_primary_adapter_callback_secret) < 32:
+                problems.append(
+                    "live provider dispatch requires a 32-character "
+                    "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET"
+                )
+            if len(self.langgraph_primary_effect_reconciliation_secret) < 32:
+                problems.append(
+                    "live provider dispatch requires a 32-character "
+                    "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET"
+                )
+            bridge_endpoint = self.langgraph_primary_host_bridge_endpoint
+            bridge_secret = self.langgraph_primary_host_bridge_secret
+            if bool(bridge_endpoint) != bool(bridge_secret):
+                problems.append(
+                    "host provider bridge endpoint and secret must be configured together"
+                )
+            if bridge_secret and len(bridge_secret) < 32:
+                problems.append(
+                    "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET must contain at least 32 characters"
+                )
+            ingress_secrets = tuple(
+                value
+                for value in (
+                    self.shared_secret,
+                    self.slack_gateway_secret,
+                    self.langgraph_primary_adapter_callback_secret,
+                    self.langgraph_primary_effect_reconciliation_secret,
+                    bridge_secret,
+                )
+                if value
+            )
+            if len(set(ingress_secrets)) != len(ingress_secrets):
+                problems.append("primary ingress secrets must be pairwise distinct")
         if not readiness["postgres_dsn_configured"]:
             problems.append("LANGGRAPH_PRIMARY_POSTGRES_DSN must be configured")
         if not readiness["postgres_schema_configured"]:
@@ -1752,3 +1818,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]

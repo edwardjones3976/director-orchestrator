@@ -47,6 +47,7 @@ class PrimaryProviderBinding:
     producer_id: str
     provider_attempt_digest: str
     writer_token_digest: str
+    fencing_generation: int
     work_packet: Mapping[str, Any]
 
 
@@ -70,6 +71,24 @@ class ProviderReadinessResolver(Protocol):
     def __call__(self, provider: str) -> bool: ...
 
 
+class ProviderWriterFenceResolver(Protocol):
+    """Revalidate the current graph writer immediately before provider I/O."""
+
+    def __call__(self, context: HandlerContext, binding: PrimaryProviderBinding) -> int: ...
+
+
+class ProviderResultArtifactWriter(Protocol):
+    """Persist one validated result packet under the current writer fence."""
+
+    def __call__(
+        self,
+        context: HandlerContext,
+        binding: PrimaryProviderBinding,
+        result_packet: Mapping[str, Any],
+        result_digest: str,
+    ) -> str: ...
+
+
 _IN_FLIGHT = object()
 
 
@@ -89,6 +108,8 @@ class PrimaryProviderBoundary:
         binding_resolver: PrimaryProviderBindingResolver,
         candidate_sha_resolver: CandidateShaResolver,
         provider_readiness_resolver: ProviderReadinessResolver,
+        writer_fence_resolver: ProviderWriterFenceResolver,
+        result_artifact_writer: ProviderResultArtifactWriter,
     ) -> None:
         if not callable(binding_resolver):
             raise ValueError("binding_resolver must be callable")
@@ -96,6 +117,10 @@ class PrimaryProviderBoundary:
             raise ValueError("candidate_sha_resolver must be callable")
         if not callable(provider_readiness_resolver):
             raise ValueError("provider_readiness_resolver must be callable")
+        if not callable(writer_fence_resolver):
+            raise ValueError("writer_fence_resolver must be callable")
+        if not callable(result_artifact_writer):
+            raise ValueError("result_artifact_writer must be callable")
         normalized: dict[str, PacketBoundaryAdapter] = {}
         for provider, adapter in adapters.items():
             if not isinstance(provider, str) or not provider:
@@ -109,6 +134,8 @@ class PrimaryProviderBoundary:
         self._binding_resolver = binding_resolver
         self._candidate_sha_resolver = candidate_sha_resolver
         self._provider_readiness_resolver = provider_readiness_resolver
+        self._writer_fence_resolver = writer_fence_resolver
+        self._result_artifact_writer = result_artifact_writer
         self._attempt_lock = threading.Lock()
         self._attempts: dict[str, object | ProviderSubgraphResult] = {}
 
@@ -157,6 +184,8 @@ class PrimaryProviderBoundary:
             raise PacketContractError("provider attempt binding changed")
         if not isinstance(binding.writer_token_digest, str) or not binding.writer_token_digest:
             raise PacketContractError("writer token digest is required")
+        if type(binding.fencing_generation) is not int or binding.fencing_generation < 1:
+            raise PacketContractError("positive writer fencing generation is required")
 
         work = validate_packet("work", binding.work_packet)
         if work["task_id"] != context.task_id:
@@ -194,6 +223,7 @@ class PrimaryProviderBoundary:
             allowed_external_effects=tuple(
                 str(item) for item in work["allowed_external_effects"]
             ),
+            fencing_generation=binding.fencing_generation,
         )
 
     def provider_subgraph(self, context: HandlerContext) -> ProviderSubgraphResult:
@@ -227,11 +257,24 @@ class PrimaryProviderBoundary:
 
         try:
             adapter = self._adapters[binding.provider]
+            current_generation = self._writer_fence_resolver(context, binding)
+            if (
+                type(current_generation) is not int
+                or current_generation != binding.fencing_generation
+            ):
+                raise PacketContractError("provider writer fencing generation changed")
             result = adapter.dispatch(
                 work,
                 context=self._adapter_context(work, binding),
             )
             result_digest = document_digest(result)
+            persisted_digest = self._result_artifact_writer(
+                context, binding, result, result_digest
+            )
+            if not isinstance(persisted_digest, str) or not self._same(
+                persisted_digest, result_digest
+            ):
+                raise RuntimeError("durable result-packet persistence was not acknowledged")
             if result["status"] == "SUCCEEDED":
                 candidate_sha = self._candidate_sha_resolver(work, result)
                 translated = ProviderSubgraphResult(
@@ -262,4 +305,8 @@ class PrimaryProviderBoundary:
         return translated
 
 
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | BEGIN]]
+# Primary provider I/O now carries and immediately revalidates the immutable
+# Postgres writer generation, and validated results must be durably acknowledged.
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | END]]

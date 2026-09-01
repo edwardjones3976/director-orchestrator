@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import importlib
 import secrets
 from contextlib import asynccontextmanager
 
@@ -109,6 +111,7 @@ from .primary_commands import (
     PrimaryCommandResponse,
     ProviderResultRequest,
     RecoveryRequest,
+    verify_primary_ingress_proof,
 )
 from .primary_activation_commands import ProviderActivationAdvanceRequest
 from .workload_policy import EnforcementMode
@@ -596,23 +599,6 @@ def intake(
         default=None, alias=SLACK_INTAKE_SIGNATURE_HEADER
     ),
 ) -> TaskRecord:
-    if primary_default_activation is not None:
-        if not settings.langgraph_primary_new_intake_enabled:
-            raise HTTPException(
-                status_code=503,
-                detail="LangGraph primary intake is not activated",
-            )
-        assert primary_default_activation.application is not None
-        try:
-            return primary_default_activation.application.create_intake(
-                payload,
-                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="LangGraph primary intake is unavailable",
-            ) from exc
     intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
     replay_identity: tuple[str, str] | None = None
     if settings.allow_paid_runs:
@@ -630,6 +616,44 @@ def intake(
         except StaleApproval as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+    if primary_default_activation is not None:
+        if not settings.langgraph_primary_new_intake_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="LangGraph primary intake is not activated",
+            )
+        assert primary_default_activation.application is not None
+        try:
+            return primary_default_activation.application.create_intake(
+                payload,
+                intake_authentication=intake_authentication,
+                authenticated_replay_identity=replay_identity,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="LangGraph primary intake is unavailable",
+            ) from exc
+    if settings.langgraph_primary_postgres_dsn:
+        postgres_module = importlib.import_module(
+            ".langgraph_postgres", package=__package__
+        )
+        fence = postgres_module.open_postgres_control_plane(
+            settings.langgraph_primary_postgres_dsn,
+            schema=settings.langgraph_primary_postgres_schema,
+            allow_insecure_local_transport=(
+                settings.langgraph_primary_allow_insecure_local_postgres
+            ),
+        )
+        try:
+            authority = fence.claim_store.current_intake_authority()
+            if authority.legacy_new_intake_disabled:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Legacy intake is fenced by the shared cutover epoch",
+                )
+        finally:
+            fence.close()
     task_id = f"DIR-{secrets.token_hex(5).upper()}"
     record = TaskRecord(
         task_id=task_id,
@@ -678,6 +702,12 @@ def get_task(task_id: str, response: Response) -> TaskRecord:
             response.headers["X-Primary-Writer-Generation"] = str(
                 writer.fencing_generation
             )
+            pending = projection.projection.get("pending_approval")
+            if isinstance(pending, dict):
+                response.headers["X-Primary-Approval-Kind"] = str(pending["kind"])
+                response.headers["X-Primary-Approval-Digest"] = str(
+                    pending["request_digest"]
+                )
             return primary_record
     versioned = store.get_versioned(task_id)
     if versioned is None:
@@ -816,6 +846,25 @@ def primary_resume_approval(
     task_id: str, request: ApprovalResumeRequest
 ) -> PrimaryCommandResponse:
     _require_primary_owner_actor(request.actor_id)
+    if (
+        request.slack_gateway_proof is None
+        or not settings.slack_channel_id
+        or request.slack_gateway_proof.channel_id is None
+        or not hmac.compare_digest(
+            request.slack_gateway_proof.channel_id, settings.slack_channel_id
+        )
+    ):
+        raise HTTPException(status_code=403, detail="Slack approval channel mismatch")
+    try:
+        verify_primary_ingress_proof(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            request,
+            path=f"/v1/primary/tasks/{task_id}/approvals/resume",
+            proof_field="slack_gateway_proof",
+        )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     _, _, _, replay = _primary_command_projection(
         task_id, request, PrimaryCommandOperation.APPROVAL_RESUME
     )
@@ -835,13 +884,38 @@ def primary_resume_approval(
 @app.post(
     "/v1/primary/tasks/{task_id}/provider-results",
     response_model=PrimaryCommandResponse,
-    dependencies=[Depends(require_auth)],
 )
 def primary_provider_result(
-    task_id: str, request: ProviderResultRequest
+    task_id: str,
+    request: ProviderResultRequest,
+    authorization: str | None = Header(default=None),
 ) -> PrimaryCommandResponse:
-    if request.actor_id != request.producer_id:
-        raise HTTPException(status_code=403, detail="Provider actor binding mismatch")
+    # FastAPI resolves Header(...) to str/None. Direct internal calls retain the
+    # descriptor object and are already inside the application trust boundary.
+    external_ingress = authorization is None or isinstance(authorization, str)
+    if external_ingress:
+        if (
+            request.assignment_id is None
+            or request.provider_run_id is None
+            or request.provider_id is None
+            or request.actor_id != request.producer_id
+            or request.provider_id != request.producer_id
+        ):
+            raise HTTPException(status_code=403, detail="Provider actor binding mismatch")
+        if request.provider_id == "claude":
+            if not bearer_matches(settings.claude_callback_secret, authorization):
+                raise HTTPException(status_code=401, detail="Unauthorized")
+        else:
+            try:
+                verify_primary_ingress_proof(
+                    settings.langgraph_primary_adapter_callback_secret,
+                    settings.shared_secret,
+                    request,
+                    path=f"/v1/primary/tasks/{task_id}/provider-results",
+                    proof_field="callback_proof",
+                )
+            except PrimaryCommandBindingError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
     _, _, _, replay = _primary_command_projection(
         task_id, request, PrimaryCommandOperation.PROVIDER_RESULT
     )
@@ -870,6 +944,21 @@ def primary_reconcile_effect(
 ) -> PrimaryCommandResponse:
     if request.actor_id != request.writer_owner_id:
         raise HTTPException(status_code=403, detail="Effect actor binding mismatch")
+    if request.result_digest is None or request.readback_digest is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Effect reconciliation requires result and readback evidence",
+        )
+    try:
+        verify_primary_ingress_proof(
+            settings.langgraph_primary_effect_reconciliation_secret,
+            settings.shared_secret,
+            request,
+            path=f"/v1/primary/tasks/{task_id}/effects/reconcile",
+            proof_field="writer_proof",
+        )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     _, _, _, replay = _primary_command_projection(
         task_id, request, PrimaryCommandOperation.EFFECT_RECONCILIATION
     )
@@ -1249,3 +1338,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:48 UTC | END]]

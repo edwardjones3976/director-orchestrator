@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
@@ -26,12 +27,14 @@ from director_orchestrator.langgraph_primary import (
 )
 from director_orchestrator.models import (
     IntakeAuthentication,
+    ProviderName,
     SlackIntake,
     TaskRecord,
     TaskStatus,
 )
 from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.packet_routing import DirectorPacketTaskRouter
+from director_orchestrator.policy import preview_plan
 from director_orchestrator.primary_coordinator import PrimaryTaskCoordinator
 from director_orchestrator.primary_default import (
     DefaultDryRunServices,
@@ -39,6 +42,8 @@ from director_orchestrator.primary_default import (
     DefaultPrimaryActivation,
     DefaultPrimaryApplication,
     DefaultPrimaryAuthority,
+    _primary_provider_lane,
+    build_automatic_primary_live_dependencies,
     resolve_default_primary_authority,
 )
 
@@ -67,6 +72,46 @@ def packet_router(settings: Settings) -> DirectorPacketTaskRouter:
 
 
 class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
+    def test_antigravity_lane_is_an_explicit_gemini_backend_mapping(self):
+        self.assertEqual("antigravity", _primary_provider_lane(ProviderName.GEMINI))
+        self.assertEqual("claude", _primary_provider_lane(ProviderName.CLAUDE))
+
+    def test_request_budget_units_are_frozen_from_validated_plan(self):
+        settings = replace(
+            Settings(),
+            repository_allowlist=("owner/repository",),
+        )
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator=None,  # type: ignore[arg-type]
+            services=None,  # type: ignore[arg-type]
+            authority=DefaultPrimaryAuthority(SHA, digest("authority")),
+        )
+        intake = SlackIntake(
+            source_event_id="budget-event",
+            channel_id="C123",
+            user_id="U123",
+            text="Implement the bounded change",
+            thread_ts="1.0",
+        )
+        record = TaskRecord(
+            task_id="DIR-LG-BUDGET",
+            status=TaskStatus.QUEUED,
+            intake=intake,
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        record.plan = preview_plan(intake.text, settings)
+
+        request = application._request(record)
+
+        expected_provider_units = sum(
+            assignment.effort_points for assignment in record.plan.assignments
+        )
+        self.assertGreater(expected_provider_units, 0)
+        self.assertEqual(expected_provider_units, request.provider_cost_units)
+        self.assertEqual(0, request.effect_cost_units)
+        self.assertEqual(expected_provider_units, request.budget_limit_units)
+
     def test_paid_execution_requires_the_explicit_live_switch(self):
         settings = replace(
             Settings(),
@@ -81,19 +126,21 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         ):
             DefaultPrimaryActivation(settings)
 
-    def test_live_switch_names_every_missing_production_boundary(self):
+    def test_automatic_live_discovery_fails_closed_for_missing_lanes(self):
         settings = replace(
             Settings(),
-            langgraph_primary_enabled=True,
-            allow_paid_runs=True,
-            langgraph_primary_live_provider_dispatch_enabled=True,
+            repository_snapshot_root=str(Path.cwd()),
         )
 
         with self.assertRaisesRegex(
             ValueError,
-            "explicit provider adapters, durable result/completion/effect resolvers",
+            "automatic graph-native live dependencies are unavailable: missing=",
         ):
-            DefaultPrimaryActivation(settings)
+            build_automatic_primary_live_dependencies(
+                settings,
+                handle=None,  # type: ignore[arg-type]
+                services=None,  # type: ignore[arg-type]
+            )
 
 
 class DefaultPrimaryPinnedAuthorityTests(unittest.TestCase):
@@ -309,7 +356,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             document_digest(expected_packet), graph_state["work_packet_digest"]
         )
         self.assertNotEqual(
-            self.application._request(record.task_id, record.intake).work_packet_digest,
+            self.application._request(record).work_packet_digest,
             graph_state["work_packet_digest"],
         )
         restored = self.application.get_task(record.task_id)
@@ -318,6 +365,76 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(1, readiness.graph_task_count)
         self.assertTrue(readiness.writer_lease_ready)
         self.assertTrue(readiness.legacy_new_intake_disabled)
+
+    def test_repository_free_research_is_disabled_and_restart_stable(self):
+        intake = self.intake().model_copy(
+            update={
+                "source_event_id": "event-default-research",
+                "text": "Project: default\nResearch current public sources.",
+            }
+        )
+
+        record = self.application.create_intake(
+            intake,
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        duplicate = self.application.create_intake(
+            intake,
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        recovered = self.application.recover(record.task_id)
+        projection = self.coordinator.get_projection(record.task_id)
+
+        for result in (record, duplicate, recovered):
+            self.assertEqual(record.task_id, result.task_id)
+            self.assertEqual(TaskStatus.BLOCKED, result.status)
+            self.assertIn("disabled", result.message or "")
+        assert record.plan is not None
+        research = min(record.plan.assignments, key=lambda item: item.sequence)
+        self.assertEqual("perplexity", research.agent.value)
+        self.assertIsNone(research.repository)
+        self.assertTrue(research.requires_approval)
+        assert projection is not None
+        self.assertEqual("POLICY_BLOCKED", projection.projection["terminal_classification"])
+        self.assertEqual(
+            "repository_free_primary_packet_unsupported",
+            projection.projection["reason_code"],
+        )
+        self.assertEqual("NOT_STARTED", projection.projection["provider_dispatch_status"])
+        self.assertEqual("NOT_REQUIRED", projection.projection["effect_status"])
+        state = self.coordinator._runtime.compact_state(record.task_id)
+        self.assertIsNone(state["work_packet_digest"])
+        self.assertIsNone(state["plan_work_packet_binding_digest"])
+
+        restarted_services = DefaultDryRunServices(
+            self.settings, packet_router=packet_router(self.settings)
+        )
+        restarted_coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            restarted_services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-test-v1",
+            application_projection_provider=restarted_services.application_projection,
+        )
+        restarted_coordinator.adopt_or_activate_new_intake()
+        restarted_application = DefaultPrimaryApplication(
+            self.settings,
+            restarted_coordinator,
+            restarted_services,
+            DefaultPrimaryAuthority(
+                starting_sha=SHA,
+                authority_snapshot_digest=digest("authority"),
+            ),
+        )
+
+        restarted = restarted_application.recover(record.task_id)
+        restarted_projection = restarted_coordinator.get_projection(record.task_id)
+        self.assertEqual(TaskStatus.BLOCKED, restarted.status)
+        assert restarted_projection is not None
+        self.assertEqual(
+            "repository_free_primary_packet_unsupported",
+            restarted_projection.projection["reason_code"],
+        )
 
     def test_duplicate_event_returns_original_graph_task(self):
         first = self.application.create_intake(
@@ -690,6 +807,9 @@ with TestClient(app) as client:
                     cleanup.close()
 
 
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:57 UTC | BEGIN]]
+# Request budgets are immutable, non-zero units derived from the validated plan.
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:57 UTC | END]]
 if __name__ == "__main__":
     unittest.main()
 
@@ -697,3 +817,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]

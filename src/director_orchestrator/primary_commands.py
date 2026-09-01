@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | BEGIN]]
 """Closed API command envelopes for the LangGraph-primary coordinator.
@@ -14,6 +15,8 @@ import hashlib
 import hmac
 import json
 import re
+import secrets
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal, Mapping
 
@@ -36,6 +39,21 @@ _DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
 _SHA_PATTERN = r"^[0-9a-f]{40}$"
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}$")
 _ACTOR_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+_PROOF_TTL_SECONDS = 300
+_PROOF_FUTURE_SKEW_SECONDS = 30
+_MIN_SECRET_LENGTH = 32
+
+
+class PrimaryIngressProof(BaseModel):
+    """Short-lived HMAC proof for one exact primary command envelope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal["v1"] = "v1"
+    channel_id: str | None = Field(default=None, min_length=1, max_length=64)
+    issued_at: int = Field(ge=0)
+    nonce: str = Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    signature: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class PrimaryCommandBindingError(ValueError):
@@ -138,6 +156,7 @@ class ApprovalResumeRequest(_BoundCommandRequest):
     request_digest: str = Field(pattern=_DIGEST_PATTERN)
     approval_event_id: str = Field(min_length=1, max_length=255)
     decision: ApprovalDecision = ApprovalDecision.APPROVE
+    slack_gateway_proof: PrimaryIngressProof | None = None
 
     def to_command(self) -> ApprovalResume:
         return ApprovalResume(
@@ -168,6 +187,10 @@ class ProviderResultRequest(_BoundCommandRequest):
     idempotency_key_digest: str = Field(pattern=_DIGEST_PATTERN)
     authority_snapshot_digest: str = Field(pattern=_DIGEST_PATTERN)
     producer_id: str = Field(pattern=_ACTOR_ID_PATTERN)
+    assignment_id: str | None = Field(default=None, min_length=1, max_length=255)
+    provider_id: str | None = Field(default=None, pattern=_ACTOR_ID_PATTERN)
+    provider_run_id: str | None = Field(default=None, min_length=1, max_length=255)
+    callback_proof: PrimaryIngressProof | None = None
     disposition: ProviderDisposition
     result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     candidate_sha: str | None = Field(default=None, pattern=_SHA_PATTERN)
@@ -202,6 +225,7 @@ class EffectReconciliationRequest(_BoundCommandRequest):
     disposition: EffectDisposition
     result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     readback_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    writer_proof: PrimaryIngressProof | None = None
     reason_code: str = Field(default="ok", pattern=r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 
     def to_command(self) -> EffectExecutionResult:
@@ -390,5 +414,92 @@ def _canonical_payload_digest(payload: Mapping[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+def _proof_payload(request: _BoundCommandRequest, *, path: str, proof_field: str) -> bytes:
+    body = request.model_dump(mode="json")
+    proof = body.pop(proof_field, None)
+    if not isinstance(proof, Mapping):
+        raise PrimaryCommandBindingError("authenticated ingress proof is required")
+    return json.dumps(
+        {
+            "version": proof.get("version"),
+            "method": "POST",
+            "path": path,
+            "issued_at": proof.get("issued_at"),
+            "nonce": proof.get("nonce"),
+            "channel_id": proof.get("channel_id"),
+            "body": body,
+        },
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def build_primary_ingress_proof(
+    secret: str,
+    shared_secret: str,
+    request: _BoundCommandRequest,
+    *,
+    path: str,
+    proof_field: str,
+    issued_at: int | None = None,
+    nonce: str | None = None,
+    channel_id: str | None = None,
+) -> PrimaryIngressProof:
+    if len(secret) < _MIN_SECRET_LENGTH:
+        raise PrimaryCommandBindingError("primary ingress signing secret is not configured")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise PrimaryCommandBindingError("primary ingress secret must be distinct")
+    proof = PrimaryIngressProof(
+        channel_id=channel_id,
+        issued_at=(
+            issued_at
+            if issued_at is not None
+            else int(datetime.now(timezone.utc).timestamp())
+        ),
+        nonce=nonce or secrets.token_urlsafe(32),
+        signature="0" * 64,
+    )
+    unsigned = request.model_copy(update={proof_field: proof})
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        _proof_payload(unsigned, path=path, proof_field=proof_field),
+        hashlib.sha256,
+    ).hexdigest()
+    return proof.model_copy(update={"signature": signature})
+
+
+def verify_primary_ingress_proof(
+    secret: str,
+    shared_secret: str,
+    request: _BoundCommandRequest,
+    *,
+    path: str,
+    proof_field: str,
+    now: int | None = None,
+) -> str:
+    proof = getattr(request, proof_field, None)
+    if not isinstance(proof, PrimaryIngressProof) or len(secret) < _MIN_SECRET_LENGTH:
+        raise PrimaryCommandBindingError("authenticated primary ingress proof is required")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise PrimaryCommandBindingError("primary ingress secret must be distinct")
+    observed = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    age = observed - proof.issued_at
+    if age < -_PROOF_FUTURE_SKEW_SECONDS or age > _PROOF_TTL_SECONDS:
+        raise PrimaryCommandBindingError("primary ingress proof is expired or not yet valid")
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        _proof_payload(request, path=path, proof_field=proof_field),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(proof.signature, expected):
+        raise PrimaryCommandBindingError("primary ingress proof signature is invalid")
+    return _canonical_payload_digest(
+        {"task_id": request.task_id, "nonce": proof.nonce, "operation": path}
+    )
+
+
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | END]]

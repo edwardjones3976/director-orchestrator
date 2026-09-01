@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:38 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -138,6 +139,7 @@ class DefaultLiveServicesTests(unittest.TestCase):
             producer_id=self.provider,
             provider_attempt_digest=self.attempt,
             writer_token_digest=_digest("e"),
+            fencing_generation=3,
             work_packet=self.work,
         )
 
@@ -158,6 +160,8 @@ class DefaultLiveServicesTests(unittest.TestCase):
             work_packet_binding_resolver=lambda _context: binding,
             candidate_sha_resolver=lambda _work, _result: "b" * 40,
             live_provider_activation=activation,
+            writer_fence_resolver=lambda _context, selected: selected.fencing_generation,
+            result_artifact_writer=lambda _context, _binding, _result, digest: digest,
             packet_result_resolver=lambda _context: None,
             completion_evidence_resolver=lambda _context: None,
             external_effect_resolver=lambda _context: None,
@@ -174,6 +178,8 @@ class DefaultLiveServicesTests(unittest.TestCase):
                 work_packet_binding_resolver=lambda _context: None,  # type: ignore[arg-type]
                 candidate_sha_resolver=lambda _work, _result: "b" * 40,
                 live_provider_activation=None,  # type: ignore[arg-type]
+                writer_fence_resolver=lambda _context, binding: binding.fencing_generation,
+                result_artifact_writer=lambda _context, _binding, _result, digest: digest,
                 packet_result_resolver=lambda _context: None,
                 completion_evidence_resolver=lambda _context: None,
                 external_effect_resolver=lambda _context: None,
@@ -190,6 +196,24 @@ class DefaultLiveServicesTests(unittest.TestCase):
             service.plan(self.context)
 
         self.assertEqual(1, self.planning.plan_calls)
+
+    def test_failed_plan_never_builds_or_persists_a_live_packet(self) -> None:
+        failed = PlanResult(
+            _digest("5"),
+            None,
+            passed=False,
+            reason_code="repository_free_primary_packet_unsupported",
+        )
+        self.planning.plan = Mock(return_value=failed)  # type: ignore[method-assign]
+        self.planning._packet_router.work_packet = Mock(
+            side_effect=AssertionError("packet routing must remain disabled")
+        )
+
+        result = self._services().plan(self.context)
+
+        self.assertEqual(failed, result)
+        self.assertEqual([], self.persisted)
+        self.planning._packet_router.work_packet.assert_not_called()
 
     def test_unready_live_provider_never_enters_transport(self) -> None:
         result = self._services(ready=False).handlers().provider_subgraph(self.context)
@@ -232,6 +256,10 @@ class DefaultLiveServicesTests(unittest.TestCase):
         effect.assert_called_once_with(self.context)
 
 
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:46 UTC | BEGIN]]
+# Live services require current writer fencing and durable result persistence.
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:46 UTC | END]]
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]

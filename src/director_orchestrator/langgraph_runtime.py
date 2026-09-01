@@ -92,6 +92,7 @@ class WriterOwnershipToken:
         return "sha256:" + hashlib.sha256(self.value.encode("utf-8")).hexdigest()
 
 
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | BEGIN]]
 @dataclass(frozen=True, slots=True)
 class ProviderAdapterContext:
     task_id: str
@@ -105,6 +106,11 @@ class ProviderAdapterContext:
     max_revisions: int
     allowed_tools: tuple[str, ...]
     allowed_external_effects: tuple[str, ...]
+    # Primary live dispatch supplies the durable writer generation observed
+    # immediately before provider I/O. Historical packet-runtime callers retain
+    # zero as an explicit "not fenced by the primary writer lease" sentinel.
+    fencing_generation: int = 0
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
 class ProviderPacketAdapter(Protocol):

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -1334,7 +1335,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         public_research_query=public_research_query,
         repository=assignment_repository,
         starting_ref=plan_starting_ref,
-        requires_approval=False,
+        requires_approval=provider == ProviderName.PERPLEXITY,
         estimated_cost_usd=0,
     )
     assignments = [assignment]
@@ -1448,3 +1449,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]

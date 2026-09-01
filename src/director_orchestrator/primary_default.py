@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
@@ -9,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import subprocess
@@ -21,7 +24,11 @@ from typing import Any, Callable, Mapping
 from .config import Settings
 from .langgraph_postgres import PrimaryTaskProjection
 from .langgraph_postgres import PostgresCheckpointHandle, open_postgres_control_plane
-from .langgraph_runtime import PacketBoundaryAdapter
+from .langgraph_runtime import (
+    PacketBoundaryAdapter,
+    RuntimeExecutionOutcome,
+    RuntimeExecutionStatus,
+)
 from .langgraph_primary import (
     AcceptanceDecision,
     AcceptanceResult,
@@ -38,9 +45,10 @@ from .langgraph_primary import (
     PrimaryRequest,
     ProviderDisposition,
     ProviderSubgraphResult,
+    REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED,
     ScheduleResult,
 )
-from .models import IntakeAuthentication, SlackIntake, TaskRecord, TaskStatus
+from .models import IntakeAuthentication, ProviderName, SlackIntake, TaskRecord, TaskStatus
 from .packet_contracts import document_digest, validate_packet
 from .packet_routing import DirectorPacketTaskRouter
 from .packet_transports import LocalGitAuthoritySnapshotResolver
@@ -49,10 +57,15 @@ from .primary_coordinator import PrimaryTaskCoordinator
 from .primary_completion import (
     CompletionEvidenceResolver,
     ExternalEffectResolver,
+    PacketResultBinding,
     PacketResultResolver,
 )
 from .primary_provider_activation import PrimaryProviderActivationService
 from .primary_providers import CandidateShaResolver, PrimaryProviderBinding
+from .primary_transports import (
+    build_graph_native_packet_adapters,
+    discover_local_primary_command_transports,
+)
 
 
 def _digest(value: object) -> str:
@@ -64,6 +77,12 @@ def _digest(value: object) -> str:
         default=str,
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _primary_provider_lane(provider: ProviderName) -> str:
+    """Map only the typed Gemini assignment backend to its Antigravity lane."""
+
+    return "antigravity" if provider == ProviderName.GEMINI else provider.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +140,150 @@ class DefaultPrimaryLiveDependencies:
         for name, dependency in required_callables.items():
             if not callable(dependency):
                 raise ValueError(f"live primary {name} is unavailable")
+
+
+def build_automatic_primary_live_dependencies(
+    settings: Settings,
+    handle: PostgresCheckpointHandle,
+    services: "DefaultDryRunServices",
+) -> DefaultPrimaryLiveDependencies:
+    """Discover installed exact lanes and compose graph-owned durable resolvers.
+
+    Authentication comes from configured secret presence or a documented,
+    non-secret local status/receipt probe. Native keychain state without such a
+    contract is never inferred. Windows Copilot remains unavailable by
+    construction.
+    """
+
+    bridge_secret = settings.langgraph_primary_host_bridge_secret
+    if bridge_secret and bridge_secret in {
+        settings.shared_secret,
+        settings.slack_gateway_secret,
+        settings.langgraph_primary_adapter_callback_secret,
+        settings.langgraph_primary_effect_reconciliation_secret,
+    }:
+        raise ValueError("host provider bridge secret must be distinct")
+
+    authenticated = {
+        "openai": bool(settings.openai_api_key),
+        "claude": bool(settings.claude_routine_token),
+        "cursor": bool(settings.cursor_api_key),
+        "grok": bool(settings.grok_api_key),
+        "antigravity": bool(settings.gemini_api_key),
+        "perplexity": bool(settings.perplexity_api_key),
+        "firecrawl": bool(os.environ.get("FIRECRAWL_API_KEY", "").strip()),
+        "github-copilot": bool(
+            os.environ.get("COPILOT_GITHUB_TOKEN", "").strip()
+            or os.environ.get("GH_TOKEN", "").strip()
+            or os.environ.get("GITHUB_TOKEN", "").strip()
+        ),
+        "windows-copilot": False,
+    }
+    transports, capabilities = discover_local_primary_command_transports(
+        cwd=settings.repository_snapshot_root,
+        authenticated=authenticated,
+        openai_api_key=settings.openai_api_key,
+        openai_model=settings.openai_model,
+        openai_reasoning_effort=settings.openai_reasoning_effort,
+        perplexity_max_results=settings.perplexity_max_results,
+        host_bridge_endpoint=settings.langgraph_primary_host_bridge_endpoint,
+        host_bridge_secret=bridge_secret,
+    )
+    adapters = build_graph_native_packet_adapters(
+        transports=transports,
+        capabilities=capabilities,
+        required_providers=settings.langgraph_primary_required_providers,
+    )
+    missing = sorted(set(settings.langgraph_primary_required_providers) - set(adapters))
+    if missing:
+        raise ValueError(
+            "automatic graph-native live dependencies are unavailable: missing="
+            + ",".join(missing)
+        )
+
+    def candidate_sha(
+        _work_packet: Mapping[str, Any], result_packet: Mapping[str, Any]
+    ) -> str:
+        candidates: set[str] = set()
+        for artifact in result_packet.get("artifacts", []):
+            if not isinstance(artifact, Mapping) or artifact.get("kind") != "git_commit":
+                continue
+            location = str(artifact.get("location", ""))
+            value = location.rsplit("@", 1)[-1]
+            if re.fullmatch(r"[0-9a-f]{40}", value):
+                candidates.add(value)
+        if len(candidates) != 1:
+            raise RuntimeError("authenticated result does not bind one exact candidate SHA")
+        return next(iter(candidates))
+
+    def packet_result(context: HandlerContext) -> PacketResultBinding | None:
+        record = services._record(context.task_id)
+        if record.plan is None or context.scheduled_producer_id is None:
+            return None
+        assignment = next(
+            (
+                item for item in record.plan.assignments
+                if _primary_provider_lane(item.agent) == context.scheduled_producer_id
+            ),
+            None,
+        )
+        if assignment is None:
+            return None
+        assignment_id = services._packet_router._assignment_id(record, assignment)
+        work = handle.claim_store.read_work_packet_artifact(
+            task_id=context.task_id, assignment_id=assignment_id
+        )
+        result = handle.claim_store.read_result_packet_artifact(
+            task_id=context.task_id, assignment_id=assignment_id
+        )
+        if work is None or result is None:
+            return None
+        packet = dict(result.packet)
+        status = (
+            RuntimeExecutionStatus.COMPLETED
+            if packet.get("status") == "SUCCEEDED"
+            else RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+            if packet.get("status") == "OWNER_DECISION_REQUIRED"
+            else RuntimeExecutionStatus.REJECTED
+        )
+        return PacketResultBinding(
+            record=record,
+            assignment=assignment,
+            work_packet=dict(work.packet),
+            outcome=RuntimeExecutionOutcome(
+                status=status,
+                reason="authenticated_primary_result_artifact",
+                result_packet=packet,
+                result_packet_digest=result.document_digest,
+            ),
+        )
+
+    def unavailable_evidence(context: HandlerContext) -> EvidenceDebateResult:
+        return EvidenceDebateResult(
+            _digest({"task": context.task_id, "phase": "evidence_unavailable"}),
+            _digest({"task": context.task_id, "phase": "debate_unavailable"}),
+            context.candidate_sha,
+            passed=False,
+            reason_code="durable_completion_evidence_unavailable",
+        )
+
+    def reject_without_evidence(context: HandlerContext) -> AcceptanceResult:
+        return AcceptanceResult(
+            _digest({"task": context.task_id, "phase": "acceptance_unavailable"}),
+            context.candidate_sha,
+            AcceptanceDecision.REJECT,
+            reason_code="durable_acceptance_evidence_unavailable",
+        )
+
+    return DefaultPrimaryLiveDependencies(
+        adapters=adapters,
+        candidate_sha_resolver=candidate_sha,
+        packet_result_resolver=packet_result,
+        completion_evidence_resolver=lambda _context: None,
+        external_effect_resolver=lambda _context: None,
+        evidence_debate_handler=unavailable_evidence,
+        acceptance_handler=reject_without_evidence,
+    )
 
 
 def resolve_default_primary_authority(settings: Settings) -> DefaultPrimaryAuthority:
@@ -299,11 +462,28 @@ class DefaultDryRunServices:
 
     def plan(self, context: HandlerContext) -> PlanResult:
         record = self._record(context.task_id)
-        record.plan = preview_plan(record.intake.text, self.settings)
+        # Intake pre-validates and freezes this deterministic plan so graph budget
+        # units and the dispatched packet are derived from the same immutable input.
+        if record.plan is None:
+            record.plan = preview_plan(record.intake.text, self.settings)
         record.plan_generation += 1
         if not record.plan.assignments:
             raise RuntimeError("Default primary plan has no packet assignment")
         assignment = min(record.plan.assignments, key=lambda item: item.sequence)
+        plan_digest = _digest(record.plan.model_dump(mode="json"))
+        if assignment.repository is None:
+            record.status = TaskStatus.BLOCKED
+            record.message = (
+                "LangGraph disabled this repository-free primary assignment: "
+                "the v1 work-packet contract requires repository authority. No "
+                "provider or external effect was called."
+            )
+            return PlanResult(
+                plan_digest=plan_digest,
+                work_packet_digest=None,
+                passed=False,
+                reason_code=REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED,
+            )
         work_packet = validate_packet(
             "work", self._packet_router.work_packet(record, assignment)
         )
@@ -316,7 +496,7 @@ class DefaultDryRunServices:
             "approval interrupt; no provider or external effect was called."
         )
         return PlanResult(
-            plan_digest=_digest(record.plan.model_dump(mode="json")),
+            plan_digest=plan_digest,
             work_packet_digest=document_digest(work_packet),
         )
 
@@ -352,15 +532,20 @@ class DefaultDryRunServices:
                 reason_code="schedule_empty",
             )
         assignment = min(record.plan.assignments, key=lambda item: item.sequence)
+        provider_lane = (
+            _primary_provider_lane(assignment.agent)
+            if self._live_composition
+            else assignment.agent.value
+        )
         return ScheduleResult(
             _digest(
                 {
                     "task_id": context.task_id,
                     "sequence": assignment.sequence,
-                    "provider": assignment.agent.value,
+                    "provider": provider_lane,
                 }
             ),
-            assignment.agent.value,
+            provider_lane,
         )
 
     @staticmethod
@@ -547,7 +732,18 @@ class DefaultPrimaryApplication:
         self.services = services
         self.authority = authority
 
-    def _request(self, task_id: str, intake: SlackIntake) -> PrimaryRequest:
+    def _request(self, record: TaskRecord) -> PrimaryRequest:
+        task_id = record.task_id
+        intake = record.intake
+        if record.plan is None or not record.plan.assignments:
+            raise RuntimeError("primary intake requires a validated non-empty plan")
+        provider_units = sum(
+            max(1, assignment.effort_points) for assignment in record.plan.assignments
+        )
+        effect_units = sum(
+            1 for assignment in record.plan.assignments if assignment.allow_draft_pr
+        )
+        task_units = provider_units + effect_units
         intake_payload = intake.model_dump(mode="json")
         intake_digest = _digest(intake_payload)
         scope_digest = _digest(
@@ -598,9 +794,9 @@ class DefaultPrimaryApplication:
             starting_sha=self.authority.starting_sha,
             dedup_payload_digest=dedup_payload_digest,
             writer_owner_id="langgraph",
-            budget_limit_units=0,
-            provider_cost_units=0,
-            effect_cost_units=0,
+            budget_limit_units=task_units,
+            provider_cost_units=provider_units,
+            effect_cost_units=effect_units,
             execution_approval_required=True,
             external_effect_required=False,
             graph_writer_active=True,
@@ -634,6 +830,7 @@ class DefaultPrimaryApplication:
         intake: SlackIntake,
         *,
         intake_authentication: IntakeAuthentication,
+        authenticated_replay_identity: tuple[str, str] | None = None,
     ) -> TaskRecord:
         task_id = "DIR-LG-" + secrets.token_hex(5).upper()
         record = TaskRecord(
@@ -642,11 +839,25 @@ class DefaultPrimaryApplication:
             intake=intake,
             intake_authentication=intake_authentication,
         )
+        record.plan = preview_plan(record.intake.text, self.settings)
+        request = self._request(record)
+        if authenticated_replay_identity is not None:
+            claimed_task_id, created = self.coordinator.claim_authenticated_intake(
+                nonce_digest="sha256:" + authenticated_replay_identity[0],
+                idempotency_key_digest=request.idempotency_key_digest,
+                payload_digest="sha256:" + authenticated_replay_identity[1],
+                task_id=task_id,
+            )
+            task_id = claimed_task_id
+            if not created:
+                existing = self.coordinator.get_projection(task_id)
+                if existing is not None:
+                    return self._record_from_projection(existing)
+            record.task_id = task_id
+            request = self._request(record)
         self.services.register(record)
         try:
-            projection = self.coordinator.create_intake(
-                self._request(task_id, intake)
-            )
+            projection = self.coordinator.create_intake(request)
             return self._record_from_projection(projection)
         finally:
             self.services.discard(task_id)
@@ -666,6 +877,7 @@ class DefaultPrimaryApplication:
         if (
             command.decision == ApprovalDecision.APPROVE
             and not self.settings.langgraph_primary_offline_simulation_enabled
+            and not self.settings.langgraph_primary_live_provider_dispatch_enabled
         ):
             raise RuntimeError(
                 "paid-off Default primary activation cannot approve provider execution"
@@ -751,14 +963,6 @@ class DefaultPrimaryActivation:
                 "ALLOW_PAID_RUNS is enabled but "
                 "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED is disabled"
             )
-        if live_requested and live_dependencies is None:
-            raise ValueError(
-                "live LangGraph primary startup requires explicit provider adapters, "
-                "durable result/completion/effect resolvers, exact-SHA readback, "
-                "evidence/debate, and OpenAI acceptance dependencies"
-            )
-        if live_dependencies is not None:
-            live_dependencies.validate(settings.langgraph_primary_required_providers)
         authority = resolve_default_primary_authority(settings)
         handle = open_postgres_control_plane(
             settings.langgraph_primary_postgres_dsn,
@@ -779,19 +983,22 @@ class DefaultPrimaryActivation:
                 else None
             )
             if live_requested:
-                assert live_dependencies is not None
                 if provider_activation is None:
                     raise ValueError(
                         "live LangGraph primary startup requires exact provider "
                         "activation bindings"
                     )
+                services = DefaultDryRunServices(settings, live_composition=True)
+                if live_dependencies is None:
+                    live_dependencies = build_automatic_primary_live_dependencies(
+                        settings, handle, services
+                    )
+                live_dependencies.validate(settings.langgraph_primary_required_providers)
                 if not provider_activation.health()["combined_live_ready"]:
                     raise ValueError(
                         "live LangGraph primary startup requires current LIVE_OK "
                         "evidence for every required provider app and runtime adapter"
                     )
-                services = DefaultDryRunServices(settings, live_composition=True)
-
                 def write_work_packet(
                     context: HandlerContext,
                     packet: Mapping[str, Any],
@@ -839,7 +1046,9 @@ class DefaultPrimaryActivation:
                     if context.provider_attempt_digest is None:
                         raise RuntimeError("provider attempt is not bound")
                     producer = context.scheduled_producer_id
-                    if producer is None or producer != assignment.agent.value:
+                    if producer is None or producer != _primary_provider_lane(
+                        assignment.agent
+                    ):
                         raise RuntimeError("scheduled provider binding changed")
                     return PrimaryProviderBinding(
                         provider=producer,
@@ -848,8 +1057,41 @@ class DefaultPrimaryActivation:
                         writer_token_digest=(
                             services._packet_router.writer_token(record).digest
                         ),
+                        fencing_generation=artifact.writer_fencing_generation,
                         work_packet=artifact.packet,
                     )
+
+                def revalidate_writer_fence(
+                    context: HandlerContext, binding: PrimaryProviderBinding
+                ) -> int:
+                    writer = handle.claim_store.current_task_writer(context.task_id)
+                    if (
+                        writer is None
+                        or writer.engine_owner != "langgraph"
+                        or writer.owner_token != settings.langgraph_primary_owner_token
+                        or writer.fencing_generation != binding.fencing_generation
+                    ):
+                        raise RuntimeError("live provider I/O has a stale writer fence")
+                    return writer.fencing_generation
+
+                def write_result_packet(
+                    context: HandlerContext,
+                    binding: PrimaryProviderBinding,
+                    packet: Mapping[str, Any],
+                    packet_digest: str,
+                ) -> str:
+                    artifact = handle.claim_store.record_result_packet_artifact(
+                        task_id=context.task_id,
+                        assignment_id=str(packet["assignment_id"]),
+                        packet=packet,
+                        owner_token=settings.langgraph_primary_owner_token,
+                        fencing_generation=binding.fencing_generation,
+                    )
+                    if artifact.document_digest != packet_digest:
+                        raise RuntimeError(
+                            "durable result-packet digest does not match provider result"
+                        )
+                    return artifact.document_digest
 
                 from .primary_live import DefaultLiveServices
 
@@ -862,6 +1104,8 @@ class DefaultPrimaryActivation:
                     live_provider_activation=lambda provider: (
                         provider_activation.provider_ready(provider, live=True)
                     ),
+                    writer_fence_resolver=revalidate_writer_fence,
+                    result_artifact_writer=write_result_packet,
                     packet_result_resolver=live_dependencies.packet_result_resolver,
                     completion_evidence_resolver=(
                         live_dependencies.completion_evidence_resolver
@@ -1012,8 +1256,14 @@ class DefaultPrimaryActivation:
 
 
 
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:50 UTC | BEGIN]]
+# Live approvals may cross the authenticated graph interrupt; plan-derived budget
+# units, current writer fencing, and Postgres result artifacts remain mandatory.
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:50 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
