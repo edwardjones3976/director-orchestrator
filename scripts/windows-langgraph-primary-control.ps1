@@ -154,7 +154,7 @@ if ($missing.Count -gt 0) {
 }
 $requiredProviders = @(
     "openai", "claude", "cursor", "grok", "antigravity", "perplexity",
-    "firecrawl", "github-copilot", "windows-copilot"
+    "firecrawl", "github-copilot", "microsoft-365-copilot"
 )
 $configuredProviders = @(([string]$values["LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS"]).Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 if (@(Compare-Object ($requiredProviders | Sort-Object) ($configuredProviders | Sort-Object)).Count -ne 0) {

@@ -1,4 +1,5 @@
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | BEGIN]] -->
@@ -343,18 +344,30 @@ that host-side DSN is a secret-store value and must never be copied into logs or
 checked-in profile files.
 
 The bridge currently permits only explicitly configured Claude, Grok,
-Antigravity, and GitHub Copilot packet-wrapper commands. Cursor remains direct.
-Windows Copilot has the typed blocker
-`windows_copilot_authenticated_noninteractive_result_transport_missing`: the
-installed AppX exposes `mscopilot_proxy.exe` and the `ms-copilot` launch URI, but
-no authenticated noninteractive request/result contract. The `copilot.exe` on
-PATH is GitHub Copilot and cannot satisfy this lane. Windows Copilot remains
-non-callable until a separately reviewed host command accepts one canonical
-packet on stdin, returns one bounded packet-bound JSON result artifact, and
-passes a non-prompt capability challenge. UI automation, AppX presence, or URI
-launch is not callable evidence. OpenAI, Cursor, Perplexity, and Firecrawl use
-their reviewed direct graph-native transports rather than being silently aliased
-through this bridge.
+Antigravity, and GitHub Copilot packet-wrapper commands. Cursor and Microsoft 365
+Copilot remain direct and are never aliased through the Windows bridge.
+
+The exact roster identity is `microsoft-365-copilot`, not Windows Copilot. It uses
+the production Work IQ REST endpoint
+`https://workiq.svc.cloud.microsoft/rest/conversations/{conversationId}/chat`.
+The production contract requires a delegated work or school Entra identity with
+admin-consented `WorkIQAgent.Ask`; personal and application permissions are
+unsupported. The organization administrator must enable Work IQ. The lane is
+limited to one synchronous, text-only research/review turn with web grounding
+disabled and no external-effect authority.
+
+The lane reports
+`microsoft_365_copilot_work_iq_capability_evidence_missing` until preflight proves
+the exact production endpoint, delegated scope and admin consent, tenant
+enablement, current Microsoft 365 Copilot licensing/billing, and a prompt-free
+conversation capability receipt. Configuration or a consumer-app installation
+alone is not evidence. Beta endpoint paths are never accepted.
+
+Official contract references:
+
+- <https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/rest/copilotroot-post-conversations>
+- <https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/permissions>
+- <https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/copilot-apis-security-authentication>
 
 Endpoint and secret configuration alone never makes a host-bridge lane callable.
 Before composing adapters, the container sends a fresh HMAC-authenticated
@@ -433,4 +446,5 @@ exception is not production TLS evidence.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]] -->

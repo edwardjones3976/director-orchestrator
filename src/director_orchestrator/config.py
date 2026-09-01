@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]]
@@ -278,7 +279,7 @@ class Settings:
     langgraph_primary_required_providers: tuple[str, ...] = field(
         default_factory=lambda: _csv(
             "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS",
-            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot,windows-copilot",
+            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot,microsoft-365-copilot",
         )
     )
     langgraph_primary_provider_activation_bindings_json: str = field(
@@ -671,6 +672,36 @@ class Settings:
     perplexity_daily_budget_usd: float = _float("PERPLEXITY_DAILY_BUDGET_USD", 2.0)
     perplexity_daily_request_limit: int = _int(
         "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
+    )
+    microsoft_365_copilot_delegated_token_file: str = os.getenv(
+        "MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE", ""
+    ).strip()
+    microsoft_365_copilot_conversation_id: str = os.getenv(
+        "MICROSOFT_365_COPILOT_CONVERSATION_ID", ""
+    ).strip().lower()
+    microsoft_365_copilot_capability_receipt_digest: str = os.getenv(
+        "MICROSOFT_365_COPILOT_CAPABILITY_RECEIPT_DIGEST", ""
+    ).strip().lower()
+    microsoft_365_copilot_tenant_id: str = os.getenv(
+        "MICROSOFT_365_COPILOT_TENANT_ID", ""
+    ).strip().lower()
+    microsoft_365_copilot_issuer: str = os.getenv(
+        "MICROSOFT_365_COPILOT_ISSUER", ""
+    ).strip()
+    microsoft_365_copilot_challenge_id: str = os.getenv(
+        "MICROSOFT_365_COPILOT_CHALLENGE_ID", ""
+    ).strip()
+    microsoft_365_copilot_capability_expires_at: int = _int(
+        "MICROSOFT_365_COPILOT_CAPABILITY_EXPIRES_AT", 0
+    )
+    microsoft_365_copilot_admin_consent_observed: bool = _bool(
+        "MICROSOFT_365_COPILOT_ADMIN_CONSENT_OBSERVED", False
+    )
+    microsoft_365_copilot_tenant_enabled_observed: bool = _bool(
+        "MICROSOFT_365_COPILOT_TENANT_ENABLED_OBSERVED", False
+    )
+    microsoft_365_copilot_billing_entitlement_observed: bool = _bool(
+        "MICROSOFT_365_COPILOT_BILLING_ENTITLEMENT_OBSERVED", False
     )
     perplexity_allow_repository_write: bool = _bool(
         "PERPLEXITY_ALLOW_REPOSITORY_WRITE", False
@@ -1819,3 +1850,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]

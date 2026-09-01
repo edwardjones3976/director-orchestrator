@@ -1,12 +1,15 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -21,13 +24,15 @@ from director_orchestrator.host_provider_bridge import (
 from director_orchestrator.primary_default import build_automatic_primary_live_dependencies
 from director_orchestrator.primary_transports import (
     BoundedJsonCommandTransport,
+    Microsoft365CopilotCapabilityEvidence,
+    Microsoft365CopilotWorkIQTransport,
     NativeCommandPacketTransport,
     OpenAIResponsesPacketTransport,
     PRIMARY_PROVIDER_LANES,
     PublicSearchCommandTransport,
     ProviderExternalBlocker,
     PrimaryProviderCapability,
-    WINDOWS_COPILOT_EXTERNAL_BLOCKER,
+    MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER,
     build_graph_native_packet_adapters,
     provider_lane_external_blockers,
     provider_lane_readiness,
@@ -38,6 +43,27 @@ from director_orchestrator.primary_transports import (
 class _Transport:
     def send(self, _packet, *, context):
         raise AssertionError("factory tests never invoke providers")
+
+
+def work_iq_evidence(**overrides):
+    values = {
+        "conversation_id": "0d110e7e-2b7e-4270-a899-fd2af6fde333",
+        "endpoint": "https://workiq.svc.cloud.microsoft/rest",
+        "tenant_id": "11111111-1111-4111-8111-111111111111",
+        "issuer": "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111/v2.0",
+        "delegated_scope": "api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask",
+        "admin_consent_observed": True,
+        "tenant_enabled_observed": True,
+        "billing_entitlement_observed": True,
+        "challenge_id": "challenge-1",
+        "expires_at": int(time.time()) + 3600,
+    }
+    values.update(overrides)
+    bound = dict(values)
+    values["receipt_digest"] = "sha256:" + hashlib.sha256(
+        json.dumps(bound, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return Microsoft365CopilotCapabilityEvidence(**values)
 
 
 def capabilities(*, unavailable: str | None = None):
@@ -101,11 +127,11 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         )
 
     def test_unavailable_lane_is_omitted_and_reports_false(self):
-        observed = capabilities(unavailable="windows-copilot")
+        observed = capabilities(unavailable="microsoft-365-copilot")
         transports = {
             provider: _Transport()
             for provider in PRIMARY_PROVIDER_LANES
-            if provider != "windows-copilot"
+            if provider != "microsoft-365-copilot"
         }
 
         adapters = build_graph_native_packet_adapters(
@@ -113,8 +139,8 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             capabilities=observed,
         )
 
-        self.assertNotIn("windows-copilot", adapters)
-        self.assertFalse(provider_lane_readiness(observed)["windows-copilot"])
+        self.assertNotIn("microsoft-365-copilot", adapters)
+        self.assertFalse(provider_lane_readiness(observed)["microsoft-365-copilot"])
 
     def test_unavailable_lane_cannot_smuggle_a_transport(self):
         with self.assertRaisesRegex(ValueError, "unavailable provider lane"):
@@ -438,8 +464,8 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 )
         for provider in ("openai", "cursor", "perplexity", "firecrawl"):
             self.assertNotIn(provider, transports)
-        self.assertNotIn("windows-copilot", transports)
-        self.assertFalse(observed["windows-copilot"].callable)
+        self.assertNotIn("microsoft-365-copilot", transports)
+        self.assertFalse(observed["microsoft-365-copilot"].callable)
 
     def test_bridge_configuration_without_signed_challenge_is_not_callable(self):
         with TemporaryDirectory() as directory, patch(
@@ -483,36 +509,36 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be distinct"):
             build_automatic_primary_live_dependencies(settings, None, None)
 
-    def test_discovery_never_promotes_windows_copilot_appx(self):
+    def test_discovery_never_promotes_microsoft_365_copilot_without_evidence(self):
         with TemporaryDirectory() as directory, patch(
             "director_orchestrator.primary_transports._which",
             side_effect=lambda names: "observed.exe" if "claude.exe" in names else None,
         ):
             transports, observed = discover_local_primary_command_transports(
                 cwd=directory,
-                authenticated={"claude": True, "windows-copilot": True},
+                authenticated={"claude": True, "microsoft-365-copilot": True},
             )
 
         self.assertIn("claude", transports)
-        self.assertNotIn("windows-copilot", transports)
-        self.assertFalse(observed["windows-copilot"].callable)
-        self.assertEqual("external-blocker", observed["windows-copilot"].transport_kind)
+        self.assertNotIn("microsoft-365-copilot", transports)
+        self.assertFalse(observed["microsoft-365-copilot"].callable)
+        self.assertEqual("external-blocker", observed["microsoft-365-copilot"].transport_kind)
         self.assertEqual(
-            {"windows-copilot": WINDOWS_COPILOT_EXTERNAL_BLOCKER},
+            {"microsoft-365-copilot": MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER},
             provider_lane_external_blockers(observed),
         )
 
-    def test_windows_copilot_blocker_cannot_coexist_with_callable_claim(self):
+    def test_microsoft_365_copilot_blocker_cannot_coexist_with_callable_claim(self):
         observed = capabilities()
-        observed["windows-copilot"] = PrimaryProviderCapability(
-            provider_id="windows-copilot",
-            backend_identity="windows-copilot",
+        observed["microsoft-365-copilot"] = PrimaryProviderCapability(
+            provider_id="microsoft-365-copilot",
+            backend_identity="microsoft-365-copilot",
             transport_kind="test-observation",
             executable_observed=True,
             authenticated_observed=True,
             external_blocker=ProviderExternalBlocker(
-                WINDOWS_COPILOT_EXTERNAL_BLOCKER,
-                "reviewed host command and challenge are required",
+                MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER,
+                "production-supported API and delegated capability evidence are required",
             ),
         )
 
@@ -521,6 +547,68 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 transports={provider: _Transport() for provider in PRIMARY_PROVIDER_LANES},
                 capabilities=observed,
             )
+
+    def test_microsoft_365_copilot_requires_exact_work_iq_capability_evidence(self):
+        evidence = work_iq_evidence()
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ):
+            transports, observed = discover_local_primary_command_transports(
+                cwd=directory,
+                authenticated={},
+                microsoft_365_copilot_access_token="delegated-token",
+                microsoft_365_copilot_evidence=evidence,
+            )
+        self.assertIsInstance(
+            transports["microsoft-365-copilot"], Microsoft365CopilotWorkIQTransport
+        )
+        self.assertTrue(observed["microsoft-365-copilot"].callable)
+        self.assertEqual(
+            "work-iq-rest-production",
+            observed["microsoft-365-copilot"].transport_kind,
+        )
+
+        incomplete = work_iq_evidence(admin_consent_observed=False)
+        with TemporaryDirectory() as directory, self.assertRaisesRegex(
+            ValueError, "capability evidence is incomplete"
+        ):
+            discover_local_primary_command_transports(
+                cwd=directory,
+                authenticated={},
+                microsoft_365_copilot_access_token="delegated-token",
+                microsoft_365_copilot_evidence=incomplete,
+            )
+
+    def test_microsoft_365_copilot_uses_one_exact_production_work_iq_turn(self):
+        evidence = work_iq_evidence()
+        response = Mock()
+        response.content = b'{"id":"bound"}'
+        response.json.return_value = {
+            "id": evidence.conversation_id,
+            "turnCount": 1,
+            "messages": [{"text": "review evidence"}],
+        }
+        client = Mock()
+        client.post.return_value = response
+        with patch("director_orchestrator.primary_transports.httpx.Client") as factory:
+            factory.return_value.__enter__.return_value = client
+            result = Microsoft365CopilotWorkIQTransport(
+                "delegated-token", evidence
+            ).send(json.dumps(self._work()).encode(), context=self._context())
+
+        factory.assert_called_once_with(timeout=30, follow_redirects=False)
+        client.post.assert_called_once()
+        self.assertEqual(
+            "https://workiq.svc.cloud.microsoft/rest/conversations/"
+            + evidence.conversation_id
+            + "/chat",
+            client.post.call_args.args[0],
+        )
+        self.assertFalse(
+            client.post.call_args.kwargs["json"]["contextualResources"]
+            ["webContext"]["isWebEnabled"]
+        )
+        self.assertEqual("microsoft-365-copilot", result["provider"])
 
     def test_copilot_lanes_cannot_claim_production_authority(self):
         observed = capabilities()
@@ -545,4 +633,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

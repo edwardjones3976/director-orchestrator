@@ -1,4 +1,5 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | BEGIN]]
@@ -71,6 +72,7 @@ from .host_provider_bridge import (
 )
 from .primary_providers import CandidateShaResolver, PrimaryProviderBinding
 from .primary_transports import (
+    Microsoft365CopilotCapabilityEvidence,
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
     provider_lane_external_blockers,
@@ -92,6 +94,18 @@ def _primary_provider_lane(provider: ProviderName) -> str:
     """Map only the typed Gemini assignment backend to its Antigravity lane."""
 
     return "antigravity" if provider == ProviderName.GEMINI else provider.value
+
+
+def _bounded_secret_file(path_value: str) -> str:
+    if not path_value:
+        return ""
+    path = Path(path_value).resolve(strict=True)
+    if not path.is_file() or path.stat().st_size > 65_536:
+        raise ValueError("delegated token cache reference is not a bounded file")
+    value = path.read_text(encoding="utf-8").strip()
+    if not value or "\n" in value or "\r" in value:
+        raise ValueError("delegated token cache contains an invalid bearer")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,8 +174,8 @@ def build_automatic_primary_live_dependencies(
 
     Authentication comes from configured secret presence or a documented,
     non-secret local status/receipt probe. Native keychain state without such a
-    contract is never inferred. Windows Copilot remains unavailable behind an
-    exact typed external blocker until a reviewed host command is challenged.
+    contract is never inferred. Microsoft 365 Copilot remains unavailable behind
+    an exact typed blocker until production Work IQ evidence is complete.
     """
 
     bridge_secret = settings.langgraph_primary_host_bridge_secret
@@ -186,7 +200,7 @@ def build_automatic_primary_live_dependencies(
             or os.environ.get("GH_TOKEN", "").strip()
             or os.environ.get("GITHUB_TOKEN", "").strip()
         ),
-        "windows-copilot": False,
+        "microsoft-365-copilot": False,
     }
     bridge_challenge = None
     if settings.langgraph_primary_host_bridge_endpoint and bridge_secret:
@@ -216,6 +230,28 @@ def build_automatic_primary_live_dependencies(
             else ""
         ),
         host_bridge_challenge=bridge_challenge,
+        microsoft_365_copilot_access_token=_bounded_secret_file(
+            settings.microsoft_365_copilot_delegated_token_file
+        ),
+        microsoft_365_copilot_evidence=(
+            Microsoft365CopilotCapabilityEvidence(
+                conversation_id=settings.microsoft_365_copilot_conversation_id,
+                endpoint="https://workiq.svc.cloud.microsoft/rest",
+                tenant_id=settings.microsoft_365_copilot_tenant_id,
+                issuer=settings.microsoft_365_copilot_issuer,
+                delegated_scope="api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask",
+                admin_consent_observed=settings.microsoft_365_copilot_admin_consent_observed,
+                tenant_enabled_observed=settings.microsoft_365_copilot_tenant_enabled_observed,
+                billing_entitlement_observed=(
+                    settings.microsoft_365_copilot_billing_entitlement_observed
+                ),
+                challenge_id=settings.microsoft_365_copilot_challenge_id,
+                expires_at=settings.microsoft_365_copilot_capability_expires_at,
+                receipt_digest=settings.microsoft_365_copilot_capability_receipt_digest,
+            )
+            if settings.microsoft_365_copilot_capability_receipt_digest
+            else None
+        ),
     )
     adapters = build_graph_native_packet_adapters(
         transports=transports,
@@ -1434,4 +1470,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

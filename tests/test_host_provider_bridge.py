@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:54 UTC | BEGIN]]
 from __future__ import annotations
@@ -174,7 +175,7 @@ class HostProviderBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(HostProviderBridgeError, "authentication"):
             changed.validate(SECRET, now=1_000)
         unsupported = request(nonce="nonce-4")
-        object.__setattr__(unsupported, "provider", "windows-copilot")
+        object.__setattr__(unsupported, "provider", "microsoft-365-copilot")
         with self.assertRaisesRegex(HostProviderBridgeError, "unsupported"):
             unsupported.validate(SECRET, now=1_000)
 
@@ -331,8 +332,8 @@ class HostProviderBridgeTests(unittest.TestCase):
         ):
             verifier.verify(request())
 
-    def test_executor_refuses_cursor_and_windows_copilot(self) -> None:
-        for provider in ("cursor", "windows-copilot"):
+    def test_executor_refuses_direct_provider_lanes(self) -> None:
+        for provider in ("cursor", "microsoft-365-copilot"):
             with self.subTest(provider=provider), self.assertRaisesRegex(
                 ValueError, "unsupported"
             ):
@@ -347,3 +348,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:54 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]

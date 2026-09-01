@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | BEGIN]]
 [CmdletBinding()]
 param(
@@ -49,7 +50,7 @@ foreach ($otherSecret in @(
 }
 
 $commands = $values["DIRECTOR_HOST_PROVIDER_COMMANDS_JSON"] | ConvertFrom-Json -AsHashtable
-foreach ($unsupported in @("cursor", "windows-copilot")) {
+foreach ($unsupported in @("cursor", "microsoft-365-copilot")) {
     if ($commands.ContainsKey($unsupported)) {
         throw "$unsupported cannot be enabled through the Windows host bridge."
     }
@@ -88,3 +89,4 @@ finally {
     }
 }
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]

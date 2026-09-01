@@ -1,4 +1,5 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | BEGIN]]
 """Exact graph-native transport composition for primary provider lanes.
@@ -18,6 +19,8 @@ import shutil
 import subprocess
 import tempfile
 import hashlib
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -60,7 +63,7 @@ _PROVIDER_AUTH_ENVIRONMENT: dict[str, frozenset[str]] = {
     "github-copilot": frozenset(
         {"GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN"}
     ),
-    "windows-copilot": frozenset(),
+    "microsoft-365-copilot": frozenset({"MICROSOFT_365_COPILOT_ACCESS_TOKEN"}),
 }
 
 
@@ -150,12 +153,105 @@ PRIMARY_PROVIDER_LANES = (
     "perplexity",
     "firecrawl",
     "github-copilot",
-    "windows-copilot",
+    "microsoft-365-copilot",
 )
 
-WINDOWS_COPILOT_EXTERNAL_BLOCKER = (
-    "windows_copilot_authenticated_noninteractive_result_transport_missing"
+MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER = (
+    "microsoft_365_copilot_work_iq_capability_evidence_missing"
 )
+_WORK_IQ_ROOT = "https://workiq.svc.cloud.microsoft/rest"
+_WORK_IQ_SCOPE = "api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask"
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class Microsoft365CopilotCapabilityEvidence:
+    """Non-secret receipt for a prompt-free Work IQ capability challenge."""
+
+    conversation_id: str
+    endpoint: str
+    tenant_id: str
+    issuer: str
+    delegated_scope: str
+    admin_consent_observed: bool
+    tenant_enabled_observed: bool
+    billing_entitlement_observed: bool
+    challenge_id: str
+    expires_at: int
+    receipt_digest: str
+
+    def validate(self, *, now: int | None = None) -> None:
+        if _UUID.fullmatch(self.conversation_id) is None:
+            raise ValueError("Work IQ conversation id is invalid")
+        if self.endpoint != _WORK_IQ_ROOT:
+            raise ValueError("Work IQ endpoint is not exact production")
+        if _UUID.fullmatch(self.tenant_id) is None:
+            raise ValueError("Work IQ tenant id is invalid")
+        if self.issuer != f"https://login.microsoftonline.com/{self.tenant_id}/v2.0":
+            raise ValueError("Work IQ delegated issuer is not bound to tenant")
+        if self.delegated_scope != _WORK_IQ_SCOPE:
+            raise ValueError("Work IQ delegated scope is not exact")
+        if not all((self.admin_consent_observed, self.tenant_enabled_observed, self.billing_entitlement_observed)):
+            raise ValueError("Work IQ capability evidence is incomplete")
+        if not self.challenge_id or self.expires_at <= (int(time.time()) if now is None else now):
+            raise ValueError("Work IQ capability challenge is absent or expired")
+        bound = {
+            "endpoint": self.endpoint, "tenant_id": self.tenant_id,
+            "issuer": self.issuer, "delegated_scope": self.delegated_scope,
+            "conversation_id": self.conversation_id, "challenge_id": self.challenge_id,
+            "admin_consent_observed": self.admin_consent_observed,
+            "tenant_enabled_observed": self.tenant_enabled_observed,
+            "billing_entitlement_observed": self.billing_entitlement_observed,
+            "expires_at": self.expires_at,
+        }
+        expected = "sha256:" + hashlib.sha256(
+            json.dumps(bound, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if _SHA256.fullmatch(self.receipt_digest) is None or self.receipt_digest != expected:
+            raise ValueError("Work IQ capability receipt digest is invalid")
+
+
+class Microsoft365CopilotWorkIQTransport:
+    """One bounded synchronous research/review turn through production Work IQ."""
+
+    def __init__(self, access_token: str, evidence: Microsoft365CopilotCapabilityEvidence) -> None:
+        if not access_token.strip():
+            raise ValueError("Work IQ delegated access token is required")
+        evidence.validate()
+        self._access_token = access_token
+        self._evidence = evidence
+
+    def send(self, work_packet_json: bytes, *, context: ProviderAdapterContext) -> Mapping[str, object]:
+        if context.fencing_generation < 1:
+            raise RuntimeError("Work IQ transport lacks primary writer fencing")
+        work = json.loads(work_packet_json)
+        query = _public_query(work)
+        endpoint = f"{_WORK_IQ_ROOT}/conversations/{self._evidence.conversation_id}/chat"
+        try:
+            with httpx.Client(timeout=min(context.timeout_seconds, 120), follow_redirects=False) as client:
+                response = client.post(
+                    endpoint,
+                    headers={"Authorization": f"Bearer {self._access_token}", "Content-Type": "application/json"},
+                    json={
+                        "message": {"text": query},
+                        "locationHint": {"timeZone": "UTC"},
+                        "contextualResources": {"webContext": {"isWebEnabled": False}},
+                    },
+                )
+                response.raise_for_status()
+                if len(response.content) > _MAX_COMMAND_RESULT_BYTES:
+                    raise RuntimeError("Work IQ result exceeds its safe bound")
+                result = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise RuntimeError("Work IQ request failed after one ambiguous attempt") from exc
+        if not isinstance(result, dict) or result.get("id") != self._evidence.conversation_id:
+            raise RuntimeError("Work IQ result is not bound to the challenged conversation")
+        return _bound_research_result(
+            "microsoft-365-copilot", work,
+            run_reference=f"work-iq:{self._evidence.conversation_id}:{result.get('turnCount', 'unknown')}",
+            outcome=json.dumps(result.get("messages", []), ensure_ascii=True)[:_MAX_ARGUMENT_PROMPT_BYTES],
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +262,7 @@ class ProviderExternalBlocker:
     requirement: str
 
     def validate(self) -> None:
-        if self.code != WINDOWS_COPILOT_EXTERNAL_BLOCKER:
+        if self.code != MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER:
             raise ValueError("unknown provider external blocker")
         if not self.requirement.strip():
             raise ValueError("provider external blocker requirement is empty")
@@ -197,13 +293,13 @@ class PrimaryProviderCapability:
             raise ValueError("Antigravity must explicitly identify its Gemini backend")
         if self.provider_id != "antigravity" and self.backend_identity != self.provider_id:
             raise ValueError("provider lane cannot alias another backend identity")
-        if self.provider_id in {"github-copilot", "windows-copilot"}:
+        if self.provider_id in {"github-copilot", "microsoft-365-copilot"}:
             if self.production_authority:
                 raise ValueError("Copilot capability lanes cannot receive production authority")
         if self.external_blocker is not None:
             self.external_blocker.validate()
-            if self.provider_id != "windows-copilot":
-                raise ValueError("Windows Copilot blocker cannot bind another provider lane")
+            if self.provider_id != "microsoft-365-copilot":
+                raise ValueError("Microsoft 365 Copilot blocker cannot bind another provider lane")
             if self.callable:
                 raise ValueError("callable provider lane cannot retain an external blocker")
 
@@ -449,7 +545,7 @@ class NativeCommandPacketTransport:
         environment: Mapping[str, str] | None = None,
         maximum_timeout_seconds: int = 900,
     ) -> None:
-        if provider_id not in PRIMARY_PROVIDER_LANES or provider_id == "windows-copilot":
+        if provider_id not in PRIMARY_PROVIDER_LANES or provider_id == "microsoft-365-copilot":
             raise ValueError("native command provider lane is unsupported")
         if prompt_mode not in {"stdin", "argument", "grok-prompt-file"}:
             raise ValueError("unsupported native command prompt mode")
@@ -733,6 +829,8 @@ def discover_local_primary_command_transports(
     host_bridge_secret: str = "",
     host_bridge_writer_owner_token_digest: str = "",
     host_bridge_challenge: HostBridgeChallengeEvidence | None = None,
+    microsoft_365_copilot_access_token: str = "",
+    microsoft_365_copilot_evidence: Microsoft365CopilotCapabilityEvidence | None = None,
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
     """Discover documented noninteractive CLIs; never launch or authenticate them."""
 
@@ -834,22 +932,30 @@ def discover_local_primary_command_transports(
                 executable_observed=True,
                 authenticated_observed=True,
             )
-    # The installed AppX exposes a launch URI, not an authenticated request/result
-    # contract. A reviewed host command plus a non-prompt capability challenge is
-    # required before this lane may be composed.
-    capabilities["windows-copilot"] = PrimaryProviderCapability(
-        provider_id="windows-copilot", backend_identity="windows-copilot",
-        transport_kind="external-blocker", executable_observed=False,
-        authenticated_observed=False,
-        external_blocker=ProviderExternalBlocker(
-            code=WINDOWS_COPILOT_EXTERNAL_BLOCKER,
-            requirement=(
-                "Configure and independently challenge a reviewed Windows host "
-                "command that accepts one canonical packet on stdin and returns "
-                "one bounded, packet-bound JSON result artifact without UI automation."
+    if microsoft_365_copilot_access_token and microsoft_365_copilot_evidence is not None:
+        microsoft_365_copilot_evidence.validate()
+        transports["microsoft-365-copilot"] = Microsoft365CopilotWorkIQTransport(
+            microsoft_365_copilot_access_token, microsoft_365_copilot_evidence
+        )
+        capabilities["microsoft-365-copilot"] = PrimaryProviderCapability(
+            provider_id="microsoft-365-copilot", backend_identity="microsoft-365-copilot",
+            transport_kind="work-iq-rest-production", executable_observed=True,
+            authenticated_observed=True,
+        )
+    else:
+        capabilities["microsoft-365-copilot"] = PrimaryProviderCapability(
+            provider_id="microsoft-365-copilot", backend_identity="microsoft-365-copilot",
+            transport_kind="external-blocker", executable_observed=False,
+            authenticated_observed=False,
+            external_blocker=ProviderExternalBlocker(
+                code=MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER,
+                requirement=(
+                    "Prove the production Work IQ endpoint, delegated WorkIQAgent.Ask "
+                    "scope and admin consent, tenant enablement, current license, and "
+                    "a prompt-free conversation capability receipt."
+                ),
             ),
-        ),
-    )
+        )
     return transports, capabilities
 
 
@@ -924,4 +1030,5 @@ def provider_lane_external_blockers(
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

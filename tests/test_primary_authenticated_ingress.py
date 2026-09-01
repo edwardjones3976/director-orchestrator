@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:02 UTC | BEGIN]]
 from __future__ import annotations
@@ -102,7 +103,7 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
                 "perplexity",
                 "firecrawl",
                 "github-copilot",
-                "windows-copilot",
+                "microsoft-365-copilot",
             ),
             Settings().langgraph_primary_required_providers,
         )
@@ -248,3 +249,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:02 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]

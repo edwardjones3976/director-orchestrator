@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:10 UTC | BEGIN]]
 from __future__ import annotations
@@ -57,6 +58,8 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn('Invoke-Compose stop slackbot n8n orchestrator', text)
         self.assertIn("bind-legacy-inventory", text)
         self.assertIn("database_instance_id", text)
+        self.assertIn('"firecrawl", "github-copilot", "microsoft-365-copilot"', text)
+        self.assertNotIn('"firecrawl", "github-copilot", "windows-copilot"', text)
         self.assertLess(
             text.index("Invoke-Compose up -d langgraph-primary-db"),
             text.index("$databaseBinding = Get-DatabaseBinding"),
@@ -71,9 +74,9 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertLess(activation.index("bind-legacy-inventory"), activation.index("require-ready"))
         self.assertIn("finally { Write-Switches", activation)
 
-    def test_host_wrapper_never_accepts_cursor_or_windows_copilot(self) -> None:
+    def test_host_wrapper_never_accepts_direct_provider_lanes(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
-        self.assertIn('@("cursor", "windows-copilot")', text)
+        self.assertIn('@("cursor", "microsoft-365-copilot")', text)
         self.assertIn("Preflight", text)
         self.assertIn("no provider was invoked", text)
 
@@ -84,3 +87,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:42 UTC | BEGIN]]
 """Authenticated one-attempt bridge between Linux containers and Windows CLIs.
@@ -35,7 +36,7 @@ BRIDGE_PROTOCOL = "director-host-provider-bridge/v1"
 SUPPORTED_HOST_LANES = frozenset(
     {"claude", "grok", "antigravity", "github-copilot"}
 )
-UNSUPPORTED_HOST_LANES = frozenset({"cursor", "windows-copilot"})
+UNSUPPORTED_HOST_LANES = frozenset({"cursor", "microsoft-365-copilot"})
 _TOKEN = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_PACKET_BYTES = 1_048_576
@@ -586,3 +587,4 @@ def dispatch_bridge_request(
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
