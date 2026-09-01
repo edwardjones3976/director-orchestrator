@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
@@ -153,7 +154,9 @@ if settings.langgraph_runtime_readiness()["live_provider_dispatch"]:
         )
     packet_task_router = DirectorPacketTaskRouter(
         authority_snapshots=LocalGitAuthoritySnapshotResolver(
-            settings.repository_allowlist[0], settings.repository_snapshot_root
+            settings.repository_allowlist[0],
+            settings.repository_snapshot_root,
+            max_files=settings.langgraph_primary_snapshot_max_files,
         ),
         boundary_adapters=build_primary_packet_adapters(
             providers,
@@ -1245,3 +1248,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]

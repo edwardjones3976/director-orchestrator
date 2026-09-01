@@ -1,7 +1,9 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
@@ -294,6 +296,9 @@ class Settings:
         default_factory=lambda: os.getenv(
             "LANGGRAPH_PRIMARY_PINNED_TREE_SHA", ""
         ).strip().lower()
+    )
+    langgraph_primary_snapshot_max_files: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES", 512)
     )
     langgraph_primary_postgres_dsn: str = field(
         default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_POSTGRES_DSN", "")
@@ -1167,6 +1172,11 @@ class Settings:
             re.fullmatch(r"[0-9a-fA-F]{40}", pinned_commit)
             and re.fullmatch(r"[0-9a-fA-F]{40}", pinned_tree)
         )
+        snapshot_max_files_valid = (
+            isinstance(self.langgraph_primary_snapshot_max_files, int)
+            and not isinstance(self.langgraph_primary_snapshot_max_files, bool)
+            and 1 <= self.langgraph_primary_snapshot_max_files <= 4096
+        )
         required_providers_valid = bool(self.langgraph_primary_required_providers) and (
             len(set(self.langgraph_primary_required_providers))
             == len(self.langgraph_primary_required_providers)
@@ -1188,6 +1198,7 @@ class Settings:
             and single_repository_configured
             and single_starting_ref_configured
             and authority_pins_valid
+            and snapshot_max_files_valid
         )
         return {
             "enabled": self.langgraph_primary_enabled,
@@ -1201,6 +1212,7 @@ class Settings:
             "single_repository_configured": single_repository_configured,
             "single_starting_ref_configured": single_starting_ref_configured,
             "authority_pins_valid": authority_pins_valid,
+            "snapshot_max_files_valid": snapshot_max_files_valid,
             "required_providers_valid": required_providers_valid,
             "provider_activation_bindings_configured": (
                 activation_bindings_configured
@@ -1224,6 +1236,11 @@ class Settings:
     def validate_langgraph_primary_configuration(self) -> None:
         """Reject incomplete primary activation before opening PostgreSQL."""
 
+        readiness = self.langgraph_primary_configuration_readiness()
+        if not readiness["snapshot_max_files_valid"]:
+            raise ValueError(
+                "LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES must be between 1 and 4096"
+            )
         if not self.langgraph_primary_enabled:
             if (
                 self.langgraph_primary_new_intake_enabled
@@ -1235,7 +1252,6 @@ class Settings:
                     "LANGGRAPH_PRIMARY_ENABLED"
                 )
             return
-        readiness = self.langgraph_primary_configuration_readiness()
         problems: list[str] = []
         if (
             self.langgraph_primary_offline_simulation_enabled
@@ -1734,3 +1750,5 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | END]]

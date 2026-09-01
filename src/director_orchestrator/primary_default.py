@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
@@ -228,6 +229,7 @@ class DefaultDryRunServices:
                     settings.repository_snapshot_root,
                     pinned_commit_sha=settings.langgraph_primary_pinned_commit_sha,
                     pinned_tree_sha=settings.langgraph_primary_pinned_tree_sha,
+                    max_files=settings.langgraph_primary_snapshot_max_files,
                 ),
                 boundary_adapters={},
                 writer_owner_id="langgraph-primary-default",
@@ -1014,3 +1016,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]

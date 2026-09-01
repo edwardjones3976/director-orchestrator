@@ -1,6 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
@@ -302,6 +304,16 @@ class LangGraphConfigurationTests(unittest.TestCase):
         self.assertIn('"langgraph_primary": (', source)
         self.assertIn("primary_default_activation.health()", source)
         self.assertIn('"primary_router_wired": False', source)
+        self.assertIn(
+            "max_files=settings.langgraph_primary_snapshot_max_files", source
+        )
+        primary_source = (
+            ROOT / "src" / "director_orchestrator" / "primary_default.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "max_files=settings.langgraph_primary_snapshot_max_files",
+            primary_source,
+        )
         self.assertFalse(any(name.startswith("langgraph") for name in imported_modules))
 
     def test_primary_runtime_defaults_off_and_never_claims_observed_authority(self):
@@ -314,6 +326,36 @@ class LangGraphConfigurationTests(unittest.TestCase):
         self.assertFalse(readiness["new_intake_requested"])
         self.assertFalse(readiness["primary_runtime_active"])
         self.assertFalse(readiness["legacy_new_intake_disabled"])
+
+    def test_primary_snapshot_inventory_limit_defaults_to_512_and_reads_env(self):
+        profile = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES=512", profile.splitlines())
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(512, Settings().langgraph_primary_snapshot_max_files)
+        with patch.dict(
+            os.environ, {"LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES": "711"}, clear=True
+        ):
+            configured = Settings()
+
+        self.assertEqual(711, configured.langgraph_primary_snapshot_max_files)
+        self.assertTrue(
+            configured.langgraph_primary_configuration_readiness()[
+                "snapshot_max_files_valid"
+            ]
+        )
+
+    def test_primary_snapshot_inventory_limit_rejects_outside_hard_bounds(self):
+        for invalid in (0, 4097, True):
+            with self.subTest(invalid=invalid):
+                settings = replace(
+                    self.base_settings(),
+                    langgraph_primary_snapshot_max_files=invalid,
+                )
+                readiness = settings.langgraph_primary_configuration_readiness()
+                self.assertFalse(readiness["snapshot_max_files_valid"])
+                self.assertFalse(readiness["configuration_valid"])
+                with self.assertRaisesRegex(ValueError, "between 1 and 4096"):
+                    settings.validate_langgraph_primary_configuration()
 
     def test_primary_new_intake_cannot_be_requested_while_runtime_is_disabled(self):
         settings = replace(
@@ -454,3 +496,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | END]]

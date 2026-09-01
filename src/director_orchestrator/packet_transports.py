@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:37 UTC | BEGIN]]
@@ -358,6 +359,7 @@ class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
         *,
         pinned_commit_sha: str = "",
         pinned_tree_sha: str = "",
+        max_files: int = 512,
     ) -> None:
         if not repository.strip() or not root.strip():
             raise ValueError("repository and snapshot root are required")
@@ -369,10 +371,17 @@ class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
             raise ValueError(
                 "pinned commit and tree must be supplied together as exact Git SHAs"
             )
+        if (
+            not isinstance(max_files, int)
+            or isinstance(max_files, bool)
+            or not 1 <= max_files <= 4096
+        ):
+            raise ValueError("snapshot max files must be between 1 and 4096")
         self.repository = repository.strip().removesuffix(".git").lower()
         self.root = Path(root).resolve(strict=True)
         self.pinned_commit_sha = commit
         self.pinned_tree_sha = tree
+        self.max_files = max_files
 
     def _git(self, *arguments: str) -> str:
         completed = subprocess.run(
@@ -473,7 +482,7 @@ class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
             if not _GIT_SHA.fullmatch(blob_sha):
                 raise PacketRoutingError("repository tree contains a malformed blob identity")
             snapshot.append({"path": path, "commit_sha": head, "blob_sha": blob_sha})
-            if len(snapshot) > 512:
+            if len(snapshot) > self.max_files:
                 raise PacketRoutingError("repository snapshot exceeds the bounded packet inventory")
         if not snapshot:
             raise PacketRoutingError("repository snapshot contains no tracked files")
@@ -1186,3 +1195,4 @@ def build_primary_packet_adapters(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:37 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
