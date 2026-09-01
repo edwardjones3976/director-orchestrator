@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
 """Default Director application boundary for the paid-off primary rollout."""
@@ -6,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import subprocess
 import threading
@@ -154,14 +156,34 @@ def resolve_default_primary_authority(settings: Settings) -> DefaultPrimaryAutho
         raise RuntimeError("Default primary repository remote does not match its allowlist")
     starting_ref = settings.allowed_starting_refs[0]
     starting_sha = git("rev-parse", "--verify", f"{starting_ref}^{{commit}}")
-    remote_sha = git(
-        "rev-parse",
-        "--verify",
-        f"refs/remotes/origin/{starting_ref.removeprefix('refs/heads/')}^{{commit}}",
-    )
-    if starting_sha != remote_sha:
-        raise RuntimeError("Default primary starting ref does not match origin")
+    pinned_commit = settings.langgraph_primary_pinned_commit_sha.strip().lower()
+    pinned_tree = settings.langgraph_primary_pinned_tree_sha.strip().lower()
+    if bool(pinned_commit) != bool(pinned_tree) or any(
+        re.fullmatch(r"[0-9a-f]{40}", item) is None
+        for item in (pinned_commit, pinned_tree)
+        if item
+    ):
+        raise ValueError(
+            "Default primary immutable commit and tree pins must be supplied "
+            "together as 40-character hexadecimal values"
+        )
+    if pinned_commit:
+        head_sha = git("rev-parse", "--verify", "HEAD^{commit}")
+        if head_sha != pinned_commit or starting_sha != pinned_commit:
+            raise RuntimeError(
+                "Default primary HEAD and starting ref must match the pinned commit"
+            )
+    else:
+        remote_sha = git(
+            "rev-parse",
+            "--verify",
+            f"refs/remotes/origin/{starting_ref.removeprefix('refs/heads/')}^{{commit}}",
+        )
+        if starting_sha != remote_sha:
+            raise RuntimeError("Default primary starting ref does not match origin")
     tree_sha = git("rev-parse", "--verify", f"{starting_sha}^{{tree}}")
+    if pinned_tree and tree_sha != pinned_tree:
+        raise RuntimeError("Default primary computed tree does not match its pin")
     return DefaultPrimaryAuthority(
         starting_sha=starting_sha,
         authority_snapshot_digest=_digest(
@@ -987,3 +1009,4 @@ class DefaultPrimaryActivation:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]

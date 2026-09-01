@@ -1,5 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
@@ -394,6 +396,34 @@ class LangGraphConfigurationTests(unittest.TestCase):
         self.assertTrue(readiness["startup_allowed"])
         self.assertFalse(readiness["primary_runtime_active"])
 
+    def test_primary_immutable_authority_pins_are_paired_exact_git_ids(self):
+        enabled = replace(
+            self.base_settings(),
+            langgraph_primary_enabled=True,
+            langgraph_primary_postgres_dsn="postgresql://director@example.test/director",
+            langgraph_primary_checkpoint_namespace="director-primary-v1",
+            langgraph_primary_owner_token="x" * 32,
+            repository_snapshot_root="C:/verified/default",
+            repository_allowlist=("owner/director",),
+            allowed_starting_refs=("main",),
+            langgraph_primary_pinned_commit_sha="a" * 40,
+            langgraph_primary_pinned_tree_sha="b" * 40,
+        )
+
+        enabled.validate_langgraph_primary_configuration()
+        self.assertTrue(
+            enabled.langgraph_primary_configuration_readiness()[
+                "authority_pins_valid"
+            ]
+        )
+
+        for malformed in (
+            replace(enabled, langgraph_primary_pinned_tree_sha=""),
+            replace(enabled, langgraph_primary_pinned_commit_sha="not-a-git-id"),
+        ):
+            with self.assertRaisesRegex(ValueError, "supplied together.*40-character"):
+                malformed.validate_langgraph_primary_configuration()
+
     def test_enabled_primary_runtime_rejects_shared_namespace_and_short_token(self):
         settings = replace(
             self.base_settings(),
@@ -422,3 +452,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]]

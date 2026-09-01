@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
 from __future__ import annotations
@@ -31,6 +32,7 @@ from director_orchestrator.primary_default import (
     DefaultPrimaryActivation,
     DefaultPrimaryApplication,
     DefaultPrimaryAuthority,
+    resolve_default_primary_authority,
 )
 
 
@@ -85,6 +87,84 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
             "explicit provider adapters, durable result/completion/effect resolvers",
         ):
             DefaultPrimaryActivation(settings)
+
+
+class DefaultPrimaryPinnedAuthorityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name) / "pinned-authority"
+        self.root.mkdir()
+
+        self.git("init", "-b", "main")
+        self.git("config", "user.email", "pinned-authority@example.test")
+        self.git("config", "user.name", "Pinned Authority Test")
+        (self.root / "README.md").write_text("pinned authority\n", encoding="utf-8")
+        self.git("add", "README.md")
+        self.git("commit", "-m", "pinned authority")
+        self.git("remote", "add", "origin", "https://github.com/owner/pinned.git")
+        self.commit_sha = self.git("rev-parse", "HEAD")
+        self.tree_sha = self.git("rev-parse", "HEAD^{tree}")
+
+    def tearDown(self) -> None:
+        self.temporary_directory.cleanup()
+
+    def git(self, *arguments: str) -> str:
+        completed = subprocess.run(
+            ("git", *arguments),
+            cwd=self.root,
+            shell=False,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            self.fail(completed.stderr)
+        return completed.stdout.strip()
+
+    def settings(self, **updates) -> Settings:
+        values = {
+            "repository_snapshot_root": str(self.root),
+            "repository_allowlist": ("owner/pinned",),
+            "allowed_starting_refs": ("main",),
+            "langgraph_primary_pinned_commit_sha": self.commit_sha,
+            "langgraph_primary_pinned_tree_sha": self.tree_sha,
+        }
+        values.update(updates)
+        return replace(Settings(), **values)
+
+    def test_exact_pins_do_not_require_a_remote_tracking_ref(self) -> None:
+        authority = resolve_default_primary_authority(self.settings())
+
+        self.assertEqual(self.commit_sha, authority.starting_sha)
+
+        with self.assertRaisesRegex(RuntimeError, "could not be verified"):
+            resolve_default_primary_authority(
+                self.settings(
+                    langgraph_primary_pinned_commit_sha="",
+                    langgraph_primary_pinned_tree_sha="",
+                )
+            )
+
+    def test_pins_preserve_origin_clean_head_ref_and_tree_checks(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "remote does not match"):
+            resolve_default_primary_authority(
+                self.settings(repository_allowlist=("other/pinned",))
+            )
+
+        (self.root / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "must be clean"):
+            resolve_default_primary_authority(self.settings())
+        (self.root / "untracked.txt").unlink()
+
+        with self.assertRaisesRegex(RuntimeError, "HEAD and starting ref"):
+            resolve_default_primary_authority(
+                self.settings(langgraph_primary_pinned_commit_sha="f" * 40)
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "computed tree"):
+            resolve_default_primary_authority(
+                self.settings(langgraph_primary_pinned_tree_sha="e" * 40)
+            )
 
 
 class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
@@ -554,3 +634,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:24 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]

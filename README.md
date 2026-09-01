@@ -1,9 +1,11 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
@@ -158,6 +160,15 @@ binding for every required provider. Each binding is only an identity/version
 tuple; authentication secrets remain in the provider's approved credential
 store. Observed app and runtime-adapter evidence must both reach `LIVE_OK`
 before that provider can cross the primary dispatch boundary.
+
+Paid-off project canaries may set both
+`LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` and
+`LANGGRAPH_PRIMARY_PINNED_TREE_SHA` to exact 40-hex Git object IDs. This narrow
+mode still requires the configured origin repository identity, a clean
+worktree, and exact HEAD, starting-ref, and computed-tree matches, but it does
+not require a remote-tracking ref. Leave both values empty for the normal
+origin-tracking branch check; a missing, malformed, or mismatched pin fails
+startup.
 
 Back up the Default primary database with the activation switches still off:
 
@@ -333,3 +344,5 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]] -->

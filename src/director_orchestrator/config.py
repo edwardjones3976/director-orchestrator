@@ -1,6 +1,8 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
@@ -280,6 +282,18 @@ class Settings:
         default_factory=lambda: os.getenv(
             "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "{}"
         ).strip()
+    )
+    # Optional immutable canary authority. Both values are required together;
+    # ordinary deployments retain origin-tracking branch verification.
+    langgraph_primary_pinned_commit_sha: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA", ""
+        ).strip().lower()
+    )
+    langgraph_primary_pinned_tree_sha: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PINNED_TREE_SHA", ""
+        ).strip().lower()
     )
     langgraph_primary_postgres_dsn: str = field(
         default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_POSTGRES_DSN", "")
@@ -1147,6 +1161,12 @@ class Settings:
         authority_root_configured = bool(self.repository_snapshot_root.strip())
         single_repository_configured = len(self.repository_allowlist) == 1
         single_starting_ref_configured = len(self.allowed_starting_refs) == 1
+        pinned_commit = self.langgraph_primary_pinned_commit_sha.strip()
+        pinned_tree = self.langgraph_primary_pinned_tree_sha.strip()
+        authority_pins_valid = (not pinned_commit and not pinned_tree) or bool(
+            re.fullmatch(r"[0-9a-fA-F]{40}", pinned_commit)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", pinned_tree)
+        )
         required_providers_valid = bool(self.langgraph_primary_required_providers) and (
             len(set(self.langgraph_primary_required_providers))
             == len(self.langgraph_primary_required_providers)
@@ -1167,6 +1187,7 @@ class Settings:
             and authority_root_configured
             and single_repository_configured
             and single_starting_ref_configured
+            and authority_pins_valid
         )
         return {
             "enabled": self.langgraph_primary_enabled,
@@ -1179,6 +1200,7 @@ class Settings:
             "authority_root_configured": authority_root_configured,
             "single_repository_configured": single_repository_configured,
             "single_starting_ref_configured": single_starting_ref_configured,
+            "authority_pins_valid": authority_pins_valid,
             "required_providers_valid": required_providers_valid,
             "provider_activation_bindings_configured": (
                 activation_bindings_configured
@@ -1262,6 +1284,12 @@ class Settings:
         if not readiness["single_starting_ref_configured"]:
             problems.append(
                 "ALLOWED_STARTING_REFS must contain exactly one starting ref"
+            )
+        if not readiness["authority_pins_valid"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA and "
+                "LANGGRAPH_PRIMARY_PINNED_TREE_SHA must be supplied together "
+                "as 40-character hexadecimal values"
             )
         if problems:
             raise ValueError(
@@ -1704,3 +1732,5 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]]
