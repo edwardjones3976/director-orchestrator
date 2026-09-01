@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .config import Settings
-from .langgraph_postgres import PrimaryTaskProjection
+from .langgraph_postgres import EffectReservation, PrimaryTaskProjection
 from .langgraph_postgres import PostgresCheckpointHandle, open_postgres_control_plane
 from .langgraph_runtime import (
     PacketBoundaryAdapter,
@@ -35,6 +35,7 @@ from .langgraph_primary import (
     ApprovalDecision,
     ApprovalResume,
     CompletionGateResult,
+    EffectDisposition,
     EffectExecutionResult,
     EvidenceDebateResult,
     ExactShaReviewResult,
@@ -58,6 +59,7 @@ from .primary_completion import (
     ExternalEffectResolver,
     PacketResultBinding,
     PacketResultResolver,
+    ExternalEffectEvidence,
 )
 from .primary_provider_activation import PrimaryProviderActivationService
 from .primary_providers import CandidateShaResolver, PrimaryProviderBinding
@@ -264,21 +266,111 @@ def build_automatic_primary_live_dependencies(
             ),
         )
 
-    def unavailable_evidence(context: HandlerContext) -> EvidenceDebateResult:
+    def authenticated_result(context: HandlerContext) -> Mapping[str, Any] | None:
+        binding = packet_result(context)
+        if binding is None or binding.outcome.result_packet is None:
+            return None
+        if binding.outcome.result_packet_digest != context.provider_result_digest:
+            return None
+        return binding.outcome.result_packet
+
+    def evidence_from_result(context: HandlerContext) -> EvidenceDebateResult:
+        packet = authenticated_result(context)
+        digest = _digest(
+            {
+                "task": context.task_id,
+                "candidate_sha": context.candidate_sha,
+                "provider_result_digest": context.provider_result_digest,
+                "phase": "authenticated_evidence_debate",
+            }
+        )
+        passed = bool(
+            packet is not None
+            and packet.get("status") == "SUCCEEDED"
+            and not packet.get("blockers")
+            and not packet.get("requested_decisions")
+        )
         return EvidenceDebateResult(
-            _digest({"task": context.task_id, "phase": "evidence_unavailable"}),
-            _digest({"task": context.task_id, "phase": "debate_unavailable"}),
+            digest,
+            _digest({"evidence_digest": digest, "provider": context.producer_id}),
             context.candidate_sha,
-            passed=False,
-            reason_code="durable_completion_evidence_unavailable",
+            passed=passed,
+            reason_code=(
+                "authenticated_provider_evidence_recorded"
+                if passed
+                else "owner_decision_required"
+            ),
         )
 
-    def reject_without_evidence(context: HandlerContext) -> AcceptanceResult:
+    def acceptance_from_result(context: HandlerContext) -> AcceptanceResult:
+        packet = authenticated_result(context)
+        acceptance = packet.get("acceptance", []) if packet is not None else []
+        accepted = bool(
+            packet is not None
+            and packet.get("status") == "SUCCEEDED"
+            and acceptance
+            and all(
+                isinstance(item, Mapping) and item.get("status") == "PASS"
+                for item in acceptance
+            )
+            and not packet.get("risks")
+            and not packet.get("blockers")
+            and not packet.get("requested_decisions")
+        )
         return AcceptanceResult(
-            _digest({"task": context.task_id, "phase": "acceptance_unavailable"}),
+            _digest(
+                {
+                    "task": context.task_id,
+                    "candidate_sha": context.candidate_sha,
+                    "provider_result_digest": context.provider_result_digest,
+                    "accepted": accepted,
+                }
+            ),
             context.candidate_sha,
-            AcceptanceDecision.REJECT,
-            reason_code="durable_acceptance_evidence_unavailable",
+            AcceptanceDecision.ACCEPT if accepted else AcceptanceDecision.REJECT,
+            reason_code=(
+                "authenticated_result_acceptance_passed"
+                if accepted
+                else "owner_decision_required"
+            ),
+        )
+
+    def external_effect(context: HandlerContext) -> ExternalEffectEvidence | None:
+        if context.effect_attempt_digest is None or context.effect_key_digest is None:
+            return None
+        reservation = handle.claim_store.read_effect_reservation(
+            task_id=context.task_id,
+            effect_attempt_digest=context.effect_attempt_digest,
+            owner_token=settings.langgraph_primary_owner_token,
+        )
+        if reservation is None:
+            return None
+        binding = handle.claim_store.read_remote_binding(
+            reservation_key=reservation.reservation_key,
+            owner_token=settings.langgraph_primary_owner_token,
+        )
+        if binding is None:
+            return None
+        packet = authenticated_result(context)
+        if packet is None:
+            return None
+        matching = [
+            effect
+            for effect in packet.get("side_effects", [])
+            if isinstance(effect, Mapping)
+            and effect.get("status") == "COMPLETED"
+            and effect.get("external_id") == binding["remote_identifier"]
+        ]
+        if len(matching) != 1:
+            return None
+        return ExternalEffectEvidence(
+            effect_key_digest=context.effect_key_digest,
+            effect_attempt_digest=context.effect_attempt_digest,
+            writer_owner_id=context.writer_owner_id,
+            disposition=EffectDisposition.COMPLETED,
+            result=dict(matching[0]),
+            readback=dict(binding),
+            reason_code="authenticated_effect_readback_completed",
         )
 
     return DefaultPrimaryLiveDependencies(
@@ -286,9 +378,9 @@ def build_automatic_primary_live_dependencies(
         candidate_sha_resolver=candidate_sha,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=lambda _context: None,
-        external_effect_resolver=lambda _context: None,
-        evidence_debate_handler=unavailable_evidence,
-        acceptance_handler=reject_without_evidence,
+        external_effect_resolver=external_effect,
+        evidence_debate_handler=evidence_from_result,
+        acceptance_handler=acceptance_from_result,
     )
 
 
@@ -791,7 +883,18 @@ class DefaultPrimaryApplication:
             provider_cost_units=provider_units,
             effect_cost_units=effect_units,
             execution_approval_required=True,
-            external_effect_required=False,
+            external_effect_required=effect_units > 0,
+            effect_key_digest=(
+                _digest(
+                    {
+                        "task_id": task_id,
+                        "plan": record.plan.model_dump(mode="json"),
+                        "effect": "authorized_assignment_effect",
+                    }
+                )
+                if effect_units > 0
+                else None
+            ),
             graph_writer_active=True,
             legacy_writer_active=False,
         )
@@ -918,6 +1021,34 @@ class DefaultPrimaryApplication:
         finally:
             self.services.discard(task_id)
         return self._record_from_projection(updated)
+
+    def prepare_external_effect(self, task_id: str) -> EffectReservation:
+        projection = self.coordinator.get_projection(task_id)
+        if projection is None:
+            raise KeyError(task_id)
+        self.services.hydrate(projection)
+        try:
+            return self.coordinator.prepare_external_effect(task_id)
+        finally:
+            self.services.discard(task_id)
+
+    def bind_external_effect_remote(
+        self,
+        *,
+        reservation: EffectReservation,
+        remote_system: str,
+        remote_identifier: str,
+    ) -> None:
+        self.coordinator.bind_external_effect_remote(
+            reservation=reservation,
+            remote_system=remote_system,
+            remote_identifier=remote_identifier,
+        )
+
+    def read_external_effect_remote(
+        self, reservation: EffectReservation
+    ) -> Mapping[str, str] | None:
+        return self.coordinator.read_external_effect_remote(reservation)
 
     def recover(self, task_id: str) -> TaskRecord:
         projection = self.coordinator.get_projection(task_id)

@@ -37,6 +37,52 @@ from .langgraph_runtime import (
 _MAX_COMMAND_RESULT_BYTES = 1_048_576
 _MAX_ARGUMENT_PROMPT_BYTES = 24_000
 
+_BASE_CHILD_ENVIRONMENT = frozenset(
+    {
+        "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE", "HOME",
+        "LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "PROGRAMFILES",
+        "PROGRAMFILES(X86)", "PATH", "PATHEXT", "LANG", "LC_ALL",
+    }
+)
+_PROVIDER_AUTH_ENVIRONMENT: dict[str, frozenset[str]] = {
+    "openai": frozenset({"OPENAI_API_KEY"}),
+    "claude": frozenset(
+        {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_ROUTINE_TOKEN"}
+    ),
+    "cursor": frozenset({"CURSOR_API_KEY", "CURSOR_API_ENDPOINT"}),
+    "grok": frozenset({"XAI_API_KEY", "GROK_API_KEY"}),
+    "antigravity": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
+    "perplexity": frozenset({"PERPLEXITY_API_KEY", "PPLX_API_KEY"}),
+    "firecrawl": frozenset({"FIRECRAWL_API_KEY", "FIRECRAWL_API_URL"}),
+    "github-copilot": frozenset(
+        {"GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN"}
+    ),
+    "windows-copilot": frozenset(),
+}
+
+
+def _provider_child_environment(
+    provider_id: str,
+    supplied: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Build a lane-minimal environment; never inherit Director credentials."""
+
+    allowed_auth = _PROVIDER_AUTH_ENVIRONMENT.get(provider_id)
+    if allowed_auth is None:
+        raise ValueError("unknown provider environment lane")
+    extra = {str(key).upper(): str(value) for key, value in (supplied or {}).items()}
+    unauthorized = set(extra) - allowed_auth
+    if unauthorized:
+        raise ValueError("provider environment contains a non-lane credential")
+    allowed = _BASE_CHILD_ENVIRONMENT | allowed_auth
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in allowed and value
+    }
+    environment.update(extra)
+    return environment
+
 
 def _bound_research_result(
     provider_id: str,
@@ -146,12 +192,15 @@ class BoundedJsonCommandTransport:
 
     def __init__(
         self,
+        provider_id: str,
         command: Sequence[str],
         *,
         cwd: str | Path,
         environment: Mapping[str, str] | None = None,
         maximum_timeout_seconds: int = 900,
     ) -> None:
+        if provider_id not in PRIMARY_PROVIDER_LANES:
+            raise ValueError("packet adapter provider lane is unknown")
         argv = tuple(str(item) for item in command)
         if not argv or any(not item or "\x00" in item for item in argv):
             raise ValueError("packet adapter command must be explicit and non-empty")
@@ -159,8 +208,9 @@ class BoundedJsonCommandTransport:
         if maximum_timeout_seconds < 1:
             raise ValueError("packet adapter timeout ceiling must be positive")
         self.command = argv
+        self.provider_id = provider_id
         self.cwd = root
-        self.environment = dict(environment or {})
+        self.environment = _provider_child_environment(provider_id, environment)
         self.maximum_timeout_seconds = int(maximum_timeout_seconds)
 
     def send(
@@ -171,12 +221,10 @@ class BoundedJsonCommandTransport:
         timeout = min(context.timeout_seconds, self.maximum_timeout_seconds)
         if timeout < 1:
             raise RuntimeError("command transport timeout is exhausted")
-        environment = os.environ.copy()
-        environment.update(self.environment)
         completed = subprocess.run(
             self.command,
             cwd=self.cwd,
-            env=environment,
+            env=self.environment,
             input=work_packet_json,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -282,6 +330,7 @@ class PublicSearchCommandTransport:
         command_prefix: Sequence[str],
         *,
         cwd: str | Path,
+        environment: Mapping[str, str] | None = None,
         maximum_results: int = 10,
         maximum_timeout_seconds: int = 180,
     ) -> None:
@@ -295,6 +344,7 @@ class PublicSearchCommandTransport:
         self.provider_id = provider_id
         self.command_prefix = prefix
         self.cwd = Path(cwd).resolve(strict=True)
+        self.environment = _provider_child_environment(provider_id, environment)
         self.maximum_results = maximum_results
         self.maximum_timeout_seconds = maximum_timeout_seconds
 
@@ -321,6 +371,7 @@ class PublicSearchCommandTransport:
             completed = subprocess.run(
                 argv,
                 cwd=self.cwd,
+                env=self.environment,
                 input=None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -367,6 +418,7 @@ class NativeCommandPacketTransport:
         *,
         cwd: str | Path,
         prompt_mode: str = "stdin",
+        environment: Mapping[str, str] | None = None,
         maximum_timeout_seconds: int = 900,
     ) -> None:
         if provider_id not in PRIMARY_PROVIDER_LANES or provider_id == "windows-copilot":
@@ -376,6 +428,7 @@ class NativeCommandPacketTransport:
         self.provider_id = provider_id
         self.command = tuple(str(item) for item in command)
         self.cwd = Path(cwd).resolve(strict=True)
+        self.environment = _provider_child_environment(provider_id, environment)
         self.prompt_mode = prompt_mode
         self.maximum_timeout_seconds = maximum_timeout_seconds
 
@@ -501,6 +554,7 @@ class NativeCommandPacketTransport:
         try:
             completed = subprocess.run(
                 tuple(argv), cwd=self.cwd, input=input_bytes,
+                env=self.environment,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
                 check=False, timeout=timeout,
             )
@@ -517,17 +571,93 @@ def _which(names: Sequence[str]) -> str | None:
     return next((resolved for name in names if (resolved := shutil.which(name))), None)
 
 
-def _cursor_agent_authenticated(executable: str | None) -> bool:
-    """Use Cursor's documented JSON status probe and discard identity details."""
+def _safe_cursor_agent_prefix(executable: str | None) -> tuple[str, ...] | None:
+    """Resolve the Cursor cmd shim to its bundled node executable and entrypoint."""
 
     if executable is None:
-        return False
+        return None
+    path = Path(executable).resolve()
+    if path.suffix.lower() not in {".cmd", ".bat", ".ps1"}:
+        return (str(path),)
+    roots = [path.parent]
+    versions = path.parent / "versions"
+    if versions.is_dir():
+        roots = sorted(
+            (item for item in versions.iterdir() if item.is_dir()),
+            key=lambda item: item.name,
+            reverse=True,
+        )
+    for root in roots:
+        node = root / "node.exe"
+        entrypoint = root / "index.js"
+        if node.is_file() and entrypoint.is_file():
+            return (str(node.resolve()), str(entrypoint.resolve()))
+    return None
+
+
+def _safe_firecrawl_prefix(executable: str | None) -> tuple[str, ...] | None:
+    """Resolve the npm command shim to node plus Firecrawl's fixed entrypoint."""
+
+    if executable is None:
+        return None
+    path = Path(executable).resolve()
+    if path.suffix.lower() not in {".cmd", ".bat", ".ps1"}:
+        return (str(path),)
+    entrypoint = path.parent / "node_modules" / "firecrawl-cli" / "dist" / "index.js"
+    node = _which(("node.exe", "node"))
+    if node is None or not entrypoint.is_file():
+        return None
+    return (str(Path(node).resolve()), str(entrypoint.resolve()))
+
+
+def _safe_pplx_prefix(executable: str | None) -> tuple[str, ...] | None:
+    """Bypass the Windows cmd shim and invoke the authenticated WSL binary."""
+
+    if executable is None:
+        return None
+    path = Path(executable).resolve()
+    if path.suffix.lower() not in {".cmd", ".bat", ".ps1"}:
+        return (str(path),)
+    wsl = _which(("wsl.exe",))
+    if wsl is None:
+        return None
     try:
         completed = subprocess.run(
-            (executable, "status", "--format", "json"),
+            (
+                wsl, "--distribution", "Ubuntu", "--exec", "/bin/sh", "-lc",
+                'printf %s "$HOME/.local/bin/pplx"',
+            ),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            env=_provider_child_environment("perplexity"),
+            shell=False,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    candidate = completed.stdout.decode("utf-8", errors="strict") if completed.returncode == 0 else ""
+    if not candidate.startswith("/") or any(
+        character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/"
+        for character in candidate
+    ):
+        return None
+    return (str(Path(wsl).resolve()), "--distribution", "Ubuntu", "--exec", candidate)
+
+
+def _cursor_agent_authenticated(command: Sequence[str] | None) -> bool:
+    """Use Cursor's documented JSON status probe and discard identity details."""
+
+    if command is None:
+        return False
+    try:
+        completed = subprocess.run(
+            (*command, "status", "--format", "json"),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=_provider_child_environment("cursor"),
             shell=False,
             check=False,
             timeout=15,
@@ -538,10 +668,10 @@ def _cursor_agent_authenticated(executable: str | None) -> bool:
     return bool(isinstance(payload, Mapping) and payload.get("isAuthenticated") is True)
 
 
-def _pplx_cli_authenticated(executable: str | None) -> bool:
+def _pplx_cli_authenticated(command: Sequence[str] | None) -> bool:
     """Observe the public CLI's non-secret authentication receipt on Windows."""
 
-    if executable is None or os.name != "nt" or shutil.which("wsl.exe") is None:
+    if command is None or os.name != "nt" or shutil.which("wsl.exe") is None:
         return False
     try:
         completed = subprocess.run(
@@ -552,6 +682,7 @@ def _pplx_cli_authenticated(executable: str | None) -> bool:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=_provider_child_environment("perplexity"),
             shell=False,
             check=False,
             timeout=15,
@@ -585,9 +716,13 @@ def discover_local_primary_command_transports(
         }
     ) != 1:
         raise ValueError("host provider bridge endpoint, secret, and writer binding must be configured together")
-    cursor_agent = _which(("cursor-agent.cmd", "cursor-agent.exe", "cursor-agent"))
-    pplx = _which(("pplx.cmd", "pplx.exe", "pplx"))
-    firecrawl = _which(("firecrawl.cmd", "firecrawl.exe", "firecrawl"))
+    cursor_agent = _safe_cursor_agent_prefix(
+        _which(("cursor-agent.exe", "cursor-agent.cmd", "cursor-agent"))
+    )
+    pplx = _safe_pplx_prefix(_which(("pplx.exe", "pplx.cmd", "pplx")))
+    firecrawl = _safe_firecrawl_prefix(
+        _which(("firecrawl.exe", "firecrawl.cmd", "firecrawl"))
+    )
     observed_auth = dict(authenticated)
     observed_auth["cursor"] = bool(
         observed_auth.get("cursor", False) or _cursor_agent_authenticated(cursor_agent)
@@ -596,29 +731,29 @@ def discover_local_primary_command_transports(
         observed_auth.get("perplexity", False) or _pplx_cli_authenticated(pplx)
     )
     specs = {
-        "claude": ((_which(("claude.exe", "claude"))), ("--print", "--output-format", "json", "--permission-mode", "plan"), "stdin"),
+        "claude": (((value,) if (value := _which(("claude.exe", "claude"))) else None), ("--print", "--output-format", "json", "--permission-mode", "plan"), "stdin"),
         "cursor": (cursor_agent, ("--print", "--output-format", "json", "--mode", "plan", "--sandbox", "enabled", "--workspace", str(root)), "argument"),
-        "grok": ((_which(("grok.exe", "agent.exe", "grok"))), ("--output-format", "json", "--max-turns", "1", "--permission-mode", "plan"), "grok-prompt-file"),
-        "antigravity": ((_which(("agy.exe", "agy"))), ("--print", "--output-format", "json", "--mode", "plan", "--sandbox"), "stdin"),
-        "github-copilot": ((_which(("copilot.cmd", "copilot"))), ("--prompt", "--output-format", "json", "--no-ask-user", "--available-tools="), "argument"),
+        "grok": (((value,) if (value := _which(("grok.exe", "agent.exe", "grok"))) else None), ("--output-format", "json", "--max-turns", "1", "--permission-mode", "plan"), "grok-prompt-file"),
+        "antigravity": (((value,) if (value := _which(("agy.exe", "agy"))) else None), ("--print", "--output-format", "json", "--mode", "plan", "--sandbox"), "stdin"),
+        "github-copilot": (((value,) if (value := _which(("copilot.exe", "copilot"))) and Path(value).suffix.lower() == ".exe" else None), ("--prompt", "--output-format", "json", "--no-ask-user", "--available-tools="), "argument"),
     }
     transports: dict[str, RawProviderTransport] = {}
     capabilities: dict[str, PrimaryProviderCapability] = {}
     for provider_id in PRIMARY_PROVIDER_LANES:
         spec = specs.get(provider_id)
-        executable = spec[0] if spec is not None else None
+        command_prefix = spec[0] if spec is not None else None
         auth = bool(observed_auth.get(provider_id, False))
         capability = PrimaryProviderCapability(
             provider_id=provider_id,
             backend_identity="gemini" if provider_id == "antigravity" else provider_id,
             transport_kind="native-cli" if spec is not None else "unavailable",
-            executable_observed=executable is not None,
+            executable_observed=command_prefix is not None,
             authenticated_observed=auth,
         )
         capabilities[provider_id] = capability
-        if executable is not None and auth and spec is not None:
+        if command_prefix is not None and auth and spec is not None:
             transports[provider_id] = NativeCommandPacketTransport(
-                provider_id, (executable, *spec[1]), cwd=root, prompt_mode=spec[2]
+                provider_id, (*command_prefix, *spec[1]), cwd=root, prompt_mode=spec[2]
             )
     if openai_api_key and bool(observed_auth.get("openai", False)):
         transports["openai"] = OpenAIResponsesPacketTransport(
@@ -633,7 +768,7 @@ def discover_local_primary_command_transports(
         )
     if pplx is not None and bool(observed_auth.get("perplexity", False)):
         transports["perplexity"] = PublicSearchCommandTransport(
-            "perplexity", (pplx,), cwd=root,
+            "perplexity", pplx, cwd=root,
             maximum_results=perplexity_max_results,
         )
         capabilities["perplexity"] = PrimaryProviderCapability(
@@ -643,7 +778,7 @@ def discover_local_primary_command_transports(
         )
     if firecrawl is not None and bool(observed_auth.get("firecrawl", False)):
         transports["firecrawl"] = PublicSearchCommandTransport(
-            "firecrawl", (firecrawl,), cwd=root,
+            "firecrawl", firecrawl, cwd=root,
             maximum_results=firecrawl_max_results,
         )
         capabilities["firecrawl"] = PrimaryProviderCapability(

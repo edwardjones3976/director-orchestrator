@@ -661,6 +661,59 @@ class ConditionalClaimStoreTests(unittest.TestCase):
 
 
 class PrimaryWorkflowTests(unittest.TestCase):
+    def test_missing_authenticated_evidence_stops_for_owner_not_hard_failure(self):
+        handlers = _handlers(
+            evidence_debate=lambda context: EvidenceDebateResult(
+                _digest("missing-evidence"),
+                _digest("missing-debate"),
+                context.candidate_sha,
+                passed=False,
+                reason_code="owner_decision_required",
+            )
+        )
+        outcome = _runtime(handlers).start(_request("DIR-PRIMARY-EVIDENCE-OWNER"))
+        self.assertEqual(
+            outcome.terminal_classification,
+            TerminalClassification.OWNER_DECISION_REQUIRED,
+        )
+        self.assertEqual(outcome.reason_code, "owner_decision_required")
+
+    def test_missing_review_and_completion_evidence_stop_for_owner(self):
+        review_handlers = _handlers(
+            exact_sha_review=lambda context: ExactShaReviewResult(
+                _digest("missing-review"),
+                context.candidate_sha,
+                context.producer_id,
+                "cursor",
+                accepted=False,
+                reason_code="review_evidence_unavailable",
+            )
+        )
+        review = _runtime(review_handlers).start(
+            _request("DIR-PRIMARY-REVIEW-OWNER")
+        )
+        self.assertEqual(
+            review.terminal_classification,
+            TerminalClassification.OWNER_DECISION_REQUIRED,
+        )
+        completion_handlers = _handlers(
+            ci_security_completion=lambda context: CompletionGateResult(
+                _digest("missing-ci"),
+                _digest("missing-security"),
+                _digest("missing-completion"),
+                context.candidate_sha,
+                passed=False,
+                reason_code="completion_evidence_unavailable",
+            )
+        )
+        completion = _runtime(completion_handlers).start(
+            _request("DIR-PRIMARY-COMPLETION-OWNER")
+        )
+        self.assertEqual(
+            completion.terminal_classification,
+            TerminalClassification.OWNER_DECISION_REQUIRED,
+        )
+
     def test_parallel_aggregate_is_checkpointed_with_immutable_plan_binding(self):
         runtime = _runtime()
         request = _request("DIR-PRIMARY-PARALLEL-AGGREGATE")

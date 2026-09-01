@@ -366,6 +366,14 @@ tables, all four LangGraph checkpoint tables, and a nonzero control-plane schema
 row from the restored disposable database. A successful command exit or a zero
 table count is not restore evidence.
 
+`RestoreDrill` copies the selected dump to its random container staging path,
+hashes those exact staged bytes, and compares the lowercase `sha256:` digest to
+the prior durable `BACKED_UP` record under the same activation identity before
+database creation or `pg_restore`. Missing files, mutated dumps, and substituted
+but otherwise valid dumps fail closed. `RESTORE_PROVED` records the same bound
+backup digest, so a later activation cannot splice restore evidence from another
+artifact.
+
 Before rollback changes the intake generation, the Postgres quiescence query
 must prove zero unresolved effect/provider reservations, zero pending/active/
 ambiguous parallel assignments, zero live task-writer leases, zero unresolved

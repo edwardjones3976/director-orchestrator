@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -133,7 +135,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         context = self._context()
         with TemporaryDirectory() as directory:
             transport = BoundedJsonCommandTransport(
-                ("packet-adapter.exe", "--stdio"), cwd=Path(directory)
+                "claude", ("packet-adapter.exe", "--stdio"), cwd=Path(directory)
             )
             completed = type(
                 "Completed",
@@ -152,7 +154,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         context = self._context(generation=0)
         with TemporaryDirectory() as directory:
             transport = BoundedJsonCommandTransport(
-                ("packet-adapter.exe", "--stdio"), cwd=Path(directory)
+                "claude", ("packet-adapter.exe", "--stdio"), cwd=Path(directory)
             )
             with patch("subprocess.run") as run:
                 with self.assertRaisesRegex(RuntimeError, "writer fencing"):
@@ -231,7 +233,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         )()
         with TemporaryDirectory() as directory:
             transport = PublicSearchCommandTransport(
-                "perplexity", ("pplx.cmd",), cwd=directory, maximum_results=3
+                "perplexity",
+                ("wsl.exe", "--distribution", "Ubuntu", "--exec", "/safe/pplx"),
+                cwd=directory,
+                maximum_results=3,
             )
             with patch("subprocess.run", return_value=completed) as run:
                 result = transport.send(json.dumps(work).encode(), context=self._context())
@@ -265,6 +270,115 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                     transport.send(json.dumps(work).encode(), context=self._context())
             run.assert_not_called()
 
+    def test_provider_children_receive_only_lane_auth_and_minimal_os_environment(self):
+        secrets = {
+            "SYSTEMROOT": r"C:\Windows",
+            "PATH": r"C:\Windows\System32",
+            "FIRECRAWL_API_KEY": "lane-key",
+            "OPENAI_API_KEY": "unrelated-openai",
+            "GROK_API_KEY": "unrelated-grok",
+            "ORCHESTRATOR_SHARED_SECRET": "director-secret",
+            "SLACK_BOT_TOKEN": "slack-secret",
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET": "bridge-secret",
+            "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET": "callback-secret",
+            "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET": "effect-secret",
+        }
+        completed = type(
+            "Completed", (),
+            {"returncode": 0, "stdout": b'{"hits":[],"total":0}', "stderr": b""},
+        )()
+        with TemporaryDirectory() as directory, patch.dict(
+            os.environ, secrets, clear=True
+        ):
+            transport = PublicSearchCommandTransport(
+                "firecrawl", ("firecrawl.exe",), cwd=directory
+            )
+            with patch("subprocess.run", return_value=completed) as run:
+                transport.send(json.dumps(self._work()).encode(), context=self._context())
+
+        child = run.call_args.kwargs["env"]
+        self.assertEqual("lane-key", child["FIRECRAWL_API_KEY"])
+        self.assertEqual(r"C:\Windows", child["SYSTEMROOT"])
+        for secret_name in (
+            "OPENAI_API_KEY", "GROK_API_KEY", "ORCHESTRATOR_SHARED_SECRET",
+            "SLACK_BOT_TOKEN", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET",
+            "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET",
+            "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET",
+        ):
+            self.assertNotIn(secret_name, child)
+
+    def test_provider_environment_rejects_supplied_cross_lane_credentials(self):
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "non-lane credential"):
+                BoundedJsonCommandTransport(
+                    "claude",
+                    ("adapter.exe",),
+                    cwd=directory,
+                    environment={"OPENAI_API_KEY": "wrong-lane"},
+                )
+
+    def test_bounded_and_native_children_do_not_inherit_director_secrets(self):
+        inherited = {
+            "SYSTEMROOT": r"C:\Windows",
+            "ANTHROPIC_API_KEY": "claude-only",
+            "OPENAI_API_KEY": "unrelated",
+            "ORCHESTRATOR_SHARED_SECRET": "director",
+            "SLACK_SIGNING_SECRET": "slack",
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET": "bridge",
+        }
+        bounded_result = type(
+            "Completed", (),
+            {"returncode": 0, "stdout": b'{"provider":"claude"}', "stderr": b""},
+        )()
+        native_result = type(
+            "Completed", (),
+            {
+                "returncode": 0,
+                "stdout": b'{"session_id":"run","result":"done"}',
+                "stderr": b"",
+            },
+        )()
+        with TemporaryDirectory() as directory, patch.dict(
+            os.environ, inherited, clear=True
+        ):
+            bounded = BoundedJsonCommandTransport(
+                "claude", ("adapter.exe",), cwd=directory
+            )
+            native = NativeCommandPacketTransport(
+                "claude", ("claude.exe",), cwd=directory
+            )
+            with patch("subprocess.run", side_effect=[bounded_result, native_result]) as run:
+                bounded.send(b"{}", context=self._context())
+                native.send(json.dumps(self._work()).encode(), context=self._context())
+
+        for call in run.call_args_list:
+            child = call.kwargs["env"]
+            self.assertEqual("claude-only", child["ANTHROPIC_API_KEY"])
+            self.assertNotIn("OPENAI_API_KEY", child)
+            self.assertNotIn("ORCHESTRATOR_SHARED_SECRET", child)
+            self.assertNotIn("SLACK_SIGNING_SECRET", child)
+            self.assertNotIn("LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", child)
+
+    def test_public_query_metacharacters_are_literal_argv_not_commands(self):
+        query = r"evidence & echo bad | whoami < input > output %PATH% ^ caret"
+        script = (
+            "import json,sys; "
+            "print(json.dumps({'hits': [], 'total': 0, 'argv': sys.argv[1:]}))"
+        )
+        work = self._work(objective=query)
+        with TemporaryDirectory() as directory:
+            marker = Path(directory) / "output"
+            transport = PublicSearchCommandTransport(
+                "perplexity", (sys.executable, "-c", script), cwd=directory
+            )
+            result = transport.send(
+                json.dumps(work).encode(), context=self._context()
+            )
+
+        native = json.loads(result["outcome"])
+        self.assertIn(query, native["argv"])
+        self.assertFalse(marker.exists())
+
     def test_cursor_discovery_uses_documented_status_and_read_only_contract(self):
         status = type(
             "Completed", (),
@@ -272,7 +386,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         )()
         with TemporaryDirectory() as directory, patch(
             "director_orchestrator.primary_transports._which",
-            side_effect=lambda names: "cursor-agent.cmd" if "cursor-agent.cmd" in names else None,
+            side_effect=lambda names: "cursor-agent.exe" if "cursor-agent.exe" in names else None,
         ), patch("subprocess.run", return_value=status) as run:
             transports, observed = discover_local_primary_command_transports(
                 cwd=directory, authenticated={}

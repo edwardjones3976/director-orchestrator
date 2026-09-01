@@ -112,6 +112,48 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         self.assertEqual(0, request.effect_cost_units)
         self.assertEqual(expected_provider_units, request.budget_limit_units)
 
+    def test_request_derives_external_effect_identity_from_validated_plan(self):
+        settings = replace(
+            Settings(),
+            repository_allowlist=("owner/repository",),
+        )
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator=None,  # type: ignore[arg-type]
+            services=None,  # type: ignore[arg-type]
+            authority=DefaultPrimaryAuthority(SHA, digest("authority")),
+        )
+        intake = SlackIntake(
+            source_event_id="effect-event",
+            channel_id="C123",
+            user_id="U123",
+            text="Implement the bounded change and prepare a draft PR",
+            thread_ts="1.1",
+        )
+        record = TaskRecord(
+            task_id="DIR-LG-EFFECT",
+            status=TaskStatus.QUEUED,
+            intake=intake,
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        plan = preview_plan(intake.text, settings)
+        assignments = list(plan.assignments)
+        assignments[0] = assignments[0].model_copy(update={"allow_draft_pr": True})
+        record.plan = plan.model_copy(update={"assignments": assignments})
+
+        first = application._request(record)
+        second = application._request(record)
+
+        self.assertTrue(first.external_effect_required)
+        self.assertEqual(1, first.effect_cost_units)
+        self.assertEqual(
+            first.provider_cost_units + first.effect_cost_units,
+            first.budget_limit_units,
+        )
+        self.assertIsNotNone(first.effect_key_digest)
+        self.assertEqual(first.effect_key_digest, second.effect_key_digest)
+        self.assertNotEqual(first.correlation_id, second.correlation_id)
+
     def test_paid_execution_requires_the_explicit_live_switch(self):
         settings = replace(
             Settings(),

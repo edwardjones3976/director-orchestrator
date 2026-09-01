@@ -79,10 +79,11 @@ function Get-DatabaseIdentity {
 
 function Invoke-Evidence {
     param(
-        [ValidateSet("record", "require-ready")][string]$Command,
+        [ValidateSet("record", "require-ready", "verify-backup")][string]$Command,
         [string]$Stage,
         [string]$EvidenceDigest,
-        [string]$FactsJson = "{}"
+        [string]$FactsJson = "{}",
+        [string]$BackupDigest
     )
     $arguments = @(
         "-m", "director_orchestrator.primary_activation_evidence", $Command,
@@ -97,6 +98,9 @@ function Invoke-Evidence {
     )
     if ($Command -eq "record") {
         $arguments += @("--stage", $Stage, "--evidence-digest", $EvidenceDigest, "--facts-json", $FactsJson)
+    }
+    elseif ($Command -eq "verify-backup") {
+        $arguments += @("--backup-digest", $BackupDigest)
     }
     Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator @arguments
 }
@@ -229,6 +233,12 @@ if ($Action -eq "RestoreDrill") {
     try {
         & docker cp $source "${container}:${temporary}"
         if ($LASTEXITCODE -ne 0) { throw "Restore-drill import failed." }
+        $hashProof = [string](@(& docker exec $container sha256sum -- $temporary) | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or $hashProof -notmatch '^([0-9a-f]{64})\s+') {
+            throw "Restore-drill artifact could not be hashed."
+        }
+        $restoreDigest = [string]$matches[1]
+        Invoke-Evidence -Command verify-backup -BackupDigest "sha256:$restoreDigest"
         & docker exec $container createdb -U director_primary $database
         if ($LASTEXITCODE -ne 0) { throw "Restore-drill database creation failed." }
         & docker exec $container pg_restore -U director_primary -d $database --exit-on-error $temporary
@@ -248,7 +258,7 @@ if ($Action -eq "RestoreDrill") {
         & docker exec $container dropdb -U director_primary --if-exists $database | Out-Null
         & docker exec $container rm -f -- $temporary | Out-Null
     }
-    $facts = "{`"required_control_plane_tables`":$requiredTableCount,`"checkpoint_tables`":$checkpointTableCount,`"schema_evidence_rows`":$schemaEvidenceRows}"
+    $facts = "{`"backup_digest`":`"sha256:$restoreDigest`",`"required_control_plane_tables`":$requiredTableCount,`"checkpoint_tables`":$checkpointTableCount,`"schema_evidence_rows`":$schemaEvidenceRows}"
     $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$facts|restore"
     Invoke-Evidence -Command record -Stage RESTORE_PROVED -EvidenceDigest $digest -FactsJson $facts
     Write-Host "Primary Postgres restore drill completed in a disposable database."

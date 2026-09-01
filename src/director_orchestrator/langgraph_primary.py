@@ -1610,7 +1610,18 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             transition_reason_code=result.reason_code,
         )
         if not result.passed:
-            return _handler_failure(update, reason_code=result.reason_code)
+            return _handler_failure(
+                update,
+                classification=(
+                    TerminalClassification.OWNER_DECISION_REQUIRED
+                    if result.reason_code in {
+                        "owner_decision_required",
+                        "durable_completion_evidence_unavailable",
+                    }
+                    else TerminalClassification.FAILED
+                ),
+                reason_code=result.reason_code,
+            )
         return update
 
     def openai_acceptance_revision(state: PrimaryGraphState) -> PrimaryGraphState:
@@ -1637,7 +1648,22 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             transition_reason_code=result.reason_code,
         )
         if result.decision == AcceptanceDecision.REJECT:
-            return _handler_failure(update, reason_code="acceptance_rejected")
+            return _handler_failure(
+                update,
+                classification=(
+                    TerminalClassification.OWNER_DECISION_REQUIRED
+                    if result.reason_code in {
+                        "owner_decision_required",
+                        "durable_acceptance_evidence_unavailable",
+                    }
+                    else TerminalClassification.FAILED
+                ),
+                reason_code=(
+                    result.reason_code
+                    if result.reason_code != "ok"
+                    else "acceptance_rejected"
+                ),
+            )
         if result.decision == AcceptanceDecision.REVISE:
             if state["revision_count"] >= state["max_revisions"]:
                 return _handler_failure(
@@ -1708,7 +1734,19 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             transition_reason_code=result.reason_code,
         )
         if not result.accepted:
-            return _handler_failure(update, reason_code=result.reason_code)
+            return _handler_failure(
+                update,
+                classification=(
+                    TerminalClassification.OWNER_DECISION_REQUIRED
+                    if result.reason_code in {
+                        "review_evidence_unavailable",
+                        "review_binding_invalid",
+                        "owner_decision_required",
+                    }
+                    else TerminalClassification.FAILED
+                ),
+                reason_code=result.reason_code,
+            )
         return update
 
     def ci_security_completion(state: PrimaryGraphState) -> PrimaryGraphState:
@@ -1765,7 +1803,20 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             transition_reason_code=result.reason_code,
         )
         if not result.passed:
-            return _handler_failure(update, reason_code=result.reason_code)
+            return _handler_failure(
+                update,
+                classification=(
+                    TerminalClassification.OWNER_DECISION_REQUIRED
+                    if result.reason_code in {
+                        "completion_evidence_unavailable",
+                        "trusted_ci_evidence_missing",
+                        "security_evidence_missing",
+                        "owner_decision_required",
+                    }
+                    else TerminalClassification.FAILED
+                ),
+                reason_code=result.reason_code,
+            )
         if not state["external_effect_required"]:
             return _handler_failure(
                 update,

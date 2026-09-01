@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -99,14 +100,20 @@ class ActivationEvidenceStore:
         if expected_index >= len(_ORDER) or _ORDER[expected_index] is not stage:
             raise ActivationEvidenceError("activation stages are missing, duplicated, or out of order")
         facts_dict = dict(facts)
+        backup_digest = facts_dict.get("backup_digest")
+        if stage in (ActivationStage.BACKED_UP, ActivationStage.RESTORE_PROVED):
+            self._require_artifact_digest(backup_digest)
         if stage is ActivationStage.RESTORE_PROVED:
+            expected_backup_digest = self._backed_up_digest(stages)
+            if not hmac.compare_digest(str(backup_digest), expected_backup_digest):
+                raise ActivationEvidenceError(
+                    "restore dump does not match the durable backup artifact"
+                )
             required = int(facts_dict.get("required_control_plane_tables", 0))
             checkpoint = int(facts_dict.get("checkpoint_tables", 0))
             schema_rows = int(facts_dict.get("schema_evidence_rows", 0))
             if required < 1 or checkpoint < 1 or schema_rows < 1:
                 raise ActivationEvidenceError("restore proof lacks required nonzero schema evidence")
-        if stage is ActivationStage.BACKED_UP and not facts_dict.get("backup_digest"):
-            raise ActivationEvidenceError("backup evidence lacks its artifact digest")
         stages.append(
             {
                 "stage": stage.value,
@@ -117,6 +124,72 @@ class ActivationEvidenceStore:
         )
         self._atomic_write(current)
         return current
+
+    def require_backup_digest(
+        self, identity: ActivationIdentity, observed_digest: str
+    ) -> str:
+        """Prove an observed dump is the exact artifact durably backed up."""
+
+        self._require_artifact_digest(observed_digest)
+        current = self.load()
+        if (
+            current is None
+            or current.get("identity_digest") != identity.digest
+            or current.get("identity") != asdict(identity)
+        ):
+            raise ActivationEvidenceError(
+                "backup evidence identity is unavailable or stale"
+            )
+        expected = self._backed_up_digest(current.get("stages"))
+        if not hmac.compare_digest(observed_digest, expected):
+            raise ActivationEvidenceError(
+                "restore dump does not match the durable backup artifact"
+            )
+        return expected
+
+    def require_backup_file(
+        self, identity: ActivationIdentity, path: str | Path
+    ) -> str:
+        """Hash the exact supplied file, then apply durable continuity proof."""
+
+        source = Path(path)
+        try:
+            with source.open("rb") as stream:
+                digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+        except OSError as exc:
+            raise ActivationEvidenceError("restore dump is missing or unreadable") from exc
+        return self.require_backup_digest(identity, digest)
+
+    @staticmethod
+    def _require_artifact_digest(value: object) -> None:
+        if (
+            not isinstance(value, str)
+            or len(value) != 71
+            or not value.startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in value[7:])
+        ):
+            raise ActivationEvidenceError(
+                "backup evidence lacks an exact sha256 artifact digest"
+            )
+
+    @classmethod
+    def _backed_up_digest(cls, stages: object) -> str:
+        if not isinstance(stages, list):
+            raise ActivationEvidenceError("activation stage history is malformed")
+        backed_up = next(
+            (
+                item
+                for item in stages
+                if isinstance(item, dict)
+                and item.get("stage") == ActivationStage.BACKED_UP.value
+            ),
+            None,
+        )
+        if not isinstance(backed_up, dict) or not isinstance(backed_up.get("facts"), dict):
+            raise ActivationEvidenceError("durable backup evidence is unavailable")
+        digest = backed_up["facts"].get("backup_digest")
+        cls._require_artifact_digest(digest)
+        return str(digest)
 
     def require_ready(self, identity: ActivationIdentity) -> dict[str, Any]:
         current = self.load()
@@ -157,7 +230,7 @@ def _identity(arguments: argparse.Namespace) -> ActivationIdentity:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("record", "require-ready"))
+    parser.add_argument("command", choices=("record", "require-ready", "verify-backup"))
     parser.add_argument("--artifact", required=True)
     parser.add_argument("--candidate-commit", required=True)
     parser.add_argument("--candidate-tree", required=True)
@@ -169,12 +242,19 @@ def main() -> None:
     parser.add_argument("--stage", choices=tuple(stage.value for stage in ActivationStage))
     parser.add_argument("--evidence-digest")
     parser.add_argument("--facts-json", default="{}")
+    parser.add_argument("--backup-digest")
     arguments = parser.parse_args()
     store = ActivationEvidenceStore(arguments.artifact)
     identity = _identity(arguments)
     if arguments.command == "require-ready":
         store.require_ready(identity)
         print("activation_prerequisites_ready=true")
+        return
+    if arguments.command == "verify-backup":
+        if arguments.backup_digest is None:
+            parser.error("verify-backup requires --backup-digest")
+        store.require_backup_digest(identity, arguments.backup_digest)
+        print("backup_continuity_verified=true")
         return
     if arguments.stage is None or arguments.evidence_digest is None:
         parser.error("record requires --stage and --evidence-digest")

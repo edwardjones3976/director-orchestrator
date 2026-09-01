@@ -1,6 +1,7 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | BEGIN]]
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,19 +55,30 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
             )
 
     def test_activation_requires_migration_backup_and_nonzero_restore_proof(self) -> None:
+        backup_digest = "sha256:" + "a" * 64
         self.record(ActivationStage.PREFLIGHT)
         self.record(ActivationStage.MIGRATED)
-        self.record(ActivationStage.BACKED_UP, {"backup_digest": "sha256:backup"})
+        self.record(ActivationStage.BACKED_UP, {"backup_digest": backup_digest})
         with self.assertRaisesRegex(ActivationEvidenceError, "nonzero schema"):
             self.record(
                 ActivationStage.RESTORE_PROVED,
-                {"required_control_plane_tables": 1, "checkpoint_tables": 0, "schema_evidence_rows": 1},
+                {
+                    "backup_digest": backup_digest,
+                    "required_control_plane_tables": 1,
+                    "checkpoint_tables": 0,
+                    "schema_evidence_rows": 1,
+                },
             )
         with self.assertRaisesRegex(ActivationEvidenceError, "prerequisites"):
             self.store.require_ready(self.identity)
         self.record(
             ActivationStage.RESTORE_PROVED,
-            {"required_control_plane_tables": 20, "checkpoint_tables": 4, "schema_evidence_rows": 1},
+            {
+                "backup_digest": backup_digest,
+                "required_control_plane_tables": 20,
+                "checkpoint_tables": 4,
+                "schema_evidence_rows": 1,
+            },
         )
         self.store.require_ready(self.identity)
         self.record(ActivationStage.ACTIVATED)
@@ -79,6 +91,54 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
         self.store.path.write_text("not-json", encoding="utf-8")
         with self.assertRaisesRegex(ActivationEvidenceError, "unreadable"):
             self.store.load()
+
+    def test_restore_dump_continuity_rejects_substitution_and_mutation_then_accepts_exact_replay(self) -> None:
+        original = Path(self.temporary.name) / "original.dump"
+        substitute = Path(self.temporary.name) / "substitute.dump"
+        original.write_bytes(b"valid-custom-dump-a")
+        substitute.write_bytes(b"valid-custom-dump-b")
+        digest = "sha256:" + hashlib.sha256(
+            original.read_bytes()
+        ).hexdigest()
+        self.record(ActivationStage.PREFLIGHT)
+        self.record(ActivationStage.MIGRATED)
+        self.record(ActivationStage.BACKED_UP, {"backup_digest": digest})
+
+        with self.assertRaisesRegex(ActivationEvidenceError, "does not match"):
+            self.store.require_backup_file(self.identity, substitute)
+
+        original.write_bytes(original.read_bytes() + b"-mutated")
+        with self.assertRaisesRegex(ActivationEvidenceError, "does not match"):
+            self.store.require_backup_file(self.identity, original)
+
+        original.write_bytes(b"valid-custom-dump-a")
+        self.assertEqual(digest, self.store.require_backup_file(self.identity, original))
+        self.record(
+            ActivationStage.RESTORE_PROVED,
+            {
+                "backup_digest": digest,
+                "required_control_plane_tables": 12,
+                "checkpoint_tables": 4,
+                "schema_evidence_rows": 1,
+            },
+        )
+        recorded = self.store.load()
+        self.assertEqual(
+            digest,
+            recorded["stages"][-1]["facts"]["backup_digest"],
+        )
+
+    def test_restore_dump_continuity_rejects_missing_file(self) -> None:
+        self.record(ActivationStage.PREFLIGHT)
+        self.record(ActivationStage.MIGRATED)
+        self.record(
+            ActivationStage.BACKED_UP,
+            {"backup_digest": "sha256:" + "a" * 64},
+        )
+        with self.assertRaisesRegex(ActivationEvidenceError, "missing or unreadable"):
+            self.store.require_backup_file(
+                self.identity, Path(self.temporary.name) / "missing.dump"
+            )
 
 
 if __name__ == "__main__":
