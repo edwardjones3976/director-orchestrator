@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-31 | 10:05 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | BEGIN]]
@@ -33,6 +36,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from .langgraph_postgres import PostgresCheckpointBinding, PostgresCheckpointHandle
 from .packet_contracts import (
     PacketContractError,
     build_replay_run,
@@ -274,15 +278,41 @@ def _opaque_digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _checkpointer_database(checkpointer: BaseCheckpointSaver) -> Path:
+def _sqlite_checkpointer_storage_identity(checkpointer: BaseCheckpointSaver) -> str:
     connection = getattr(checkpointer, "conn", None)
     if not isinstance(connection, sqlite3.Connection):
-        raise ValueError("active LangGraph runtime requires a durable SQLite checkpointer")
+        raise ValueError(
+            "non-SQLite checkpointers require a factory-bound postgres checkpoint"
+        )
     rows = connection.execute("PRAGMA database_list").fetchall()
     database = next((str(row[2]) for row in rows if row[1] == "main"), "")
     if not database or database == ":memory:":
         raise ValueError("active LangGraph runtime requires a file-backed checkpointer")
-    return Path(database).resolve()
+    return "sqlite:" + str(Path(database).resolve()).casefold()
+
+
+def _resolve_postgres_checkpoint_binding(
+    postgres_checkpoint: PostgresCheckpointBinding | PostgresCheckpointHandle,
+) -> PostgresCheckpointBinding:
+    if isinstance(postgres_checkpoint, PostgresCheckpointBinding):
+        return postgres_checkpoint
+    return PostgresCheckpointBinding.from_handle(postgres_checkpoint)
+
+
+def _assert_checkpoint_storage_identity(
+    derived_identity: str,
+    checkpoint_storage_identity: str | None,
+) -> str:
+    normalized = derived_identity.strip().casefold()
+    if not normalized or not normalized.startswith(("sqlite:", "postgres:sha256:")):
+        raise ValueError("checkpoint storage identity is invalid")
+    if checkpoint_storage_identity is not None:
+        asserted = checkpoint_storage_identity.strip().casefold()
+        if asserted != normalized:
+            raise ValueError(
+                "checkpoint storage identity does not match derived storage target"
+            )
+    return normalized
 
 
 class LangGraphPacketRuntime:
@@ -290,7 +320,7 @@ class LangGraphPacketRuntime:
 
     def __init__(
         self,
-        checkpointer: BaseCheckpointSaver,
+        checkpointer: BaseCheckpointSaver | None = None,
         *,
         ledger_database_path: str,
         legacy_database_path: str,
@@ -298,17 +328,50 @@ class LangGraphPacketRuntime:
         runtime_active: bool = False,
         allow_live_provider_dispatch: bool = False,
         require_packet_boundary_adapter: bool = False,
+        checkpoint_storage_identity: str | None = None,
+        postgres_checkpoint: PostgresCheckpointBinding | PostgresCheckpointHandle | None = None,
     ) -> None:
         if not checkpoint_namespace.strip():
             raise ValueError("checkpoint_namespace is required")
+        if postgres_checkpoint is not None and (
+            runtime_active or allow_live_provider_dispatch
+        ):
+            raise ValueError(
+                "postgres checkpoint is supported only for inactive offline replay"
+            )
+        if postgres_checkpoint is not None and checkpointer is not None:
+            binding = _resolve_postgres_checkpoint_binding(postgres_checkpoint)
+            if checkpointer is not binding.checkpointer:
+                raise ValueError(
+                    "postgres checkpoint binding does not match the supplied checkpointer"
+                )
+        if postgres_checkpoint is None and checkpointer is None:
+            raise ValueError("a checkpointer or postgres checkpoint binding is required")
         self.checkpoint_namespace = checkpoint_namespace
         self.runtime_active = bool(runtime_active)
         self.allow_live_provider_dispatch = bool(allow_live_provider_dispatch)
+        self._uses_postgres_checkpoint = postgres_checkpoint is not None
         # An activated deployment requires the enforced v1 seam. In-process test
         # doubles may still implement the protocol directly.
         self.require_packet_boundary_adapter = bool(require_packet_boundary_adapter)
-        self._checkpointer = checkpointer
-        self._checkpoint_database = _checkpointer_database(checkpointer)
+        if postgres_checkpoint is not None:
+            binding = _resolve_postgres_checkpoint_binding(postgres_checkpoint)
+            self._checkpointer = binding.checkpointer
+            derived_identity = binding.storage_identity
+        else:
+            assert checkpointer is not None
+            if checkpoint_storage_identity is not None and checkpoint_storage_identity.strip().casefold().startswith(
+                "postgres:sha256:"
+            ):
+                raise ValueError(
+                    "postgres storage identity requires a factory-bound postgres checkpoint"
+                )
+            self._checkpointer = checkpointer
+            derived_identity = _sqlite_checkpointer_storage_identity(checkpointer)
+        self._checkpoint_storage_identity = _assert_checkpoint_storage_identity(
+            derived_identity,
+            checkpoint_storage_identity,
+        )
         self._ledger_database = Path(ledger_database_path).resolve()
         self._legacy_database = Path(legacy_database_path).resolve()
         self._validate_storage_isolation()
@@ -319,7 +382,7 @@ class LangGraphPacketRuntime:
 
         return RuntimeReadiness(
             runtime_active=self.runtime_active,
-            single_writer=True,
+            single_writer=not self._uses_postgres_checkpoint,
             packet_transport=PACKET_TRANSPORT_VERSION,
             live_provider_dispatch=(
                 self.runtime_active and self.allow_live_provider_dispatch
@@ -328,12 +391,12 @@ class LangGraphPacketRuntime:
         )
 
     def _validate_storage_isolation(self) -> None:
-        paths = (
-            self._checkpoint_database,
-            self._ledger_database,
-            self._legacy_database,
+        identities = (
+            self._checkpoint_storage_identity,
+            "sqlite:" + str(self._ledger_database).casefold(),
+            "sqlite:" + str(self._legacy_database).casefold(),
         )
-        if len({str(path).casefold() for path in paths}) != len(paths):
+        if len(set(identities)) != len(identities):
             raise ValueError(
                 "runtime checkpoint, dispatch ledger, and legacy databases must be isolated"
             )
@@ -1151,3 +1214,6 @@ class LangGraphPacketRuntime:
 # [[Codex | GPT-5.6 | 2026-08-25 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:35 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-08-31 | 10:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | END]]
