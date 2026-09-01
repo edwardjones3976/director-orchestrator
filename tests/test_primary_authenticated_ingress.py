@@ -1,9 +1,11 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:02 UTC | BEGIN]]
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -260,13 +262,32 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
             candidate_sha="1" * 40,
             provider_result_digest=DIGEST,
             ledger={"ledger_digest": DIGEST},
-            results=({"result_digest": DIGEST},),
+            results=(
+                {
+                    "result_digest": DIGEST,
+                    "evidence_role": "INDEPENDENT_REVIEWER",
+                    "evidence_actor": {"authenticated_principal": "reviewer-1"},
+                    "gate_id": "review",
+                },
+                {
+                    "result_digest": "sha256:" + "b" * 64,
+                    "evidence_role": "TRUSTED_EXTERNAL_CI",
+                    "evidence_actor": {"authenticated_principal": "ci-1"},
+                    "gate_id": "ci",
+                },
+                {
+                    "result_digest": "sha256:" + "c" * 64,
+                    "evidence_role": "CODEX_SECURITY",
+                    "evidence_actor": {"authenticated_principal": "security-1"},
+                    "gate_id": "security",
+                },
+            ),
             ci_gate_id="ci",
             security_gate_id="security",
             evidence_proof=placeholder,
         )
         proof = build_primary_ingress_proof(
-            SECRET,
+            "completion-evidence-secret-that-is-distinct-and-long",
             SHARED,
             request,
             path="/v1/primary/tasks/task-1/completion-evidence",
@@ -283,6 +304,25 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
             main.settings,
             shared_secret=SHARED,
             langgraph_primary_adapter_callback_secret=SECRET,
+            langgraph_primary_completion_evidence_secret=(
+                "completion-evidence-secret-that-is-distinct-and-long"
+            ),
+            langgraph_primary_completion_evidence_actor_allowlist_json=json.dumps(
+                {
+                    "independent_review": {
+                        "issuers": ["gate-worker-1"],
+                        "principals": ["reviewer-1"],
+                    },
+                    "ci": {
+                        "issuers": ["gate-worker-1"],
+                        "principals": ["ci-1"],
+                    },
+                    "security": {
+                        "issuers": ["gate-worker-1"],
+                        "principals": ["security-1"],
+                    },
+                }
+            ),
         )
         with patch.object(main, "settings", settings), patch.object(
             main, "_primary_command_projection",
@@ -292,7 +332,87 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
         ) as clock:
             clock.now.return_value = datetime.fromtimestamp(2_000_000_001, timezone.utc)
             main.primary_completion_evidence("task-1", request)
+            adapter_proof = build_primary_ingress_proof(
+                SECRET,
+                SHARED,
+                request,
+                path="/v1/primary/tasks/task-1/completion-evidence",
+                proof_field="evidence_proof",
+                issued_at=placeholder.issued_at,
+                nonce="f" * 32,
+            )
+            with self.assertRaises(HTTPException) as cross_role:
+                main.primary_completion_evidence(
+                    "task-1", request.model_copy(update={"evidence_proof": adapter_proof})
+                )
+            tampered = list(request.results)
+            tampered[2] = {
+                **tampered[2],
+                "evidence_actor": {"authenticated_principal": "provider-adapter-1"},
+            }
+            tampered_request = request.model_copy(
+                update={"results": tuple(tampered), "evidence_proof": placeholder}
+            )
+            tampered_proof = build_primary_ingress_proof(
+                "completion-evidence-secret-that-is-distinct-and-long",
+                SHARED,
+                tampered_request,
+                path="/v1/primary/tasks/task-1/completion-evidence",
+                proof_field="evidence_proof",
+                issued_at=placeholder.issued_at,
+                nonce="a" * 32,
+            )
+            with self.assertRaises(HTTPException) as wrong_principal:
+                main.primary_completion_evidence(
+                    "task-1",
+                    tampered_request.model_copy(update={"evidence_proof": tampered_proof}),
+                )
+            same_gate = request.model_copy(
+                update={"security_gate_id": "ci", "evidence_proof": placeholder}
+            )
+            same_gate_proof = build_primary_ingress_proof(
+                "completion-evidence-secret-that-is-distinct-and-long",
+                SHARED,
+                same_gate,
+                path="/v1/primary/tasks/task-1/completion-evidence",
+                proof_field="evidence_proof",
+                issued_at=placeholder.issued_at,
+                nonce="b" * 32,
+            )
+            with self.assertRaises(HTTPException) as duplicate_gate:
+                main.primary_completion_evidence(
+                    "task-1",
+                    same_gate.model_copy(update={"evidence_proof": same_gate_proof}),
+                )
+            swapped_results = list(request.results)
+            swapped_results[1] = {
+                **swapped_results[1], "evidence_role": "CODEX_SECURITY"
+            }
+            swapped_results[2] = {
+                **swapped_results[2], "evidence_role": "TRUSTED_EXTERNAL_CI"
+            }
+            swapped = request.model_copy(
+                update={"results": tuple(swapped_results), "evidence_proof": placeholder}
+            )
+            swapped_proof = build_primary_ingress_proof(
+                "completion-evidence-secret-that-is-distinct-and-long",
+                SHARED,
+                swapped,
+                path="/v1/primary/tasks/task-1/completion-evidence",
+                proof_field="evidence_proof",
+                issued_at=placeholder.issued_at,
+                nonce="c" * 32,
+            )
+            with self.assertRaises(HTTPException) as swapped_kinds:
+                main.primary_completion_evidence(
+                    "task-1",
+                    swapped.model_copy(update={"evidence_proof": swapped_proof}),
+                )
         coordinator.record_completion_evidence.assert_called_once()
+        self.assertEqual(403, cross_role.exception.status_code)
+        self.assertEqual(403, wrong_principal.exception.status_code)
+        self.assertEqual(403, duplicate_gate.exception.status_code)
+        self.assertEqual(403, swapped_kinds.exception.status_code)
 
     def test_provider_activation_route_requires_exact_signed_owner_gateway_proof(self) -> None:
         settings = replace(
@@ -361,3 +481,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

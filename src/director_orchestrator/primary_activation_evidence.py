@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | BEGIN]]
 """Durable, exact-identity activation evidence state machine."""
@@ -24,6 +25,7 @@ class ActivationEvidenceError(RuntimeError):
 
 class ActivationStage(StrEnum):
     PREFLIGHT = "PREFLIGHT"
+    ACCEPTED = "ACCEPTED"
     MIGRATED = "MIGRATED"
     BACKED_UP = "BACKED_UP"
     RESTORE_PROVED = "RESTORE_PROVED"
@@ -107,6 +109,8 @@ class ActivationEvidenceStore:
         if expected_index >= len(_ORDER) or _ORDER[expected_index] is not stage:
             raise ActivationEvidenceError("activation stages are missing, duplicated, or out of order")
         facts_dict = dict(facts)
+        if stage is ActivationStage.ACCEPTED:
+            self._validate_acceptance(identity, facts_dict)
         backup_digest = facts_dict.get("backup_digest")
         if stage in (ActivationStage.BACKED_UP, ActivationStage.RESTORE_PROVED):
             self._require_artifact_digest(backup_digest)
@@ -131,6 +135,66 @@ class ActivationEvidenceStore:
         )
         self._atomic_write(current)
         return current
+
+    @staticmethod
+    def _validate_acceptance(
+        identity: ActivationIdentity, facts: Mapping[str, Any]
+    ) -> None:
+        exact_fields = {
+            "candidate_commit": identity.candidate_commit,
+            "candidate_tree": identity.candidate_tree,
+            "remote_head_commit": identity.candidate_commit,
+            "security_reviewed_commit": identity.candidate_commit,
+            "independent_reviewed_commit": identity.candidate_commit,
+        }
+        if any(facts.get(name) != expected for name, expected in exact_fields.items()):
+            raise ActivationEvidenceError(
+                "acceptance evidence is not bound to the exact candidate"
+            )
+        if facts.get("ci_conclusion") != "SUCCESS":
+            raise ActivationEvidenceError("exact-head CI has not succeeded")
+        check_count = facts.get("ci_required_check_count")
+        if isinstance(check_count, bool) or not isinstance(check_count, int) or check_count < 1:
+            raise ActivationEvidenceError("exact-head CI lacks required checks")
+        run_ids = facts.get("ci_run_ids")
+        if (
+            not isinstance(run_ids, list)
+            or not run_ids
+            or any(not isinstance(item, int) or item < 1 for item in run_ids)
+        ):
+            raise ActivationEvidenceError("exact-head CI run identity is invalid")
+        if facts.get("security_verdict") != "ACCEPT":
+            raise ActivationEvidenceError("security review has not accepted the exact head")
+        if facts.get("independent_review_verdict") != "ACCEPT":
+            raise ActivationEvidenceError(
+                "independent review has not accepted the exact head"
+            )
+        security_actor = facts.get("security_reviewer")
+        independent_actor = facts.get("independent_reviewer")
+        if (
+            not isinstance(security_actor, str)
+            or not security_actor.strip()
+            or not isinstance(independent_actor, str)
+            or not independent_actor.strip()
+            or hmac.compare_digest(security_actor.casefold(), independent_actor.casefold())
+        ):
+            raise ActivationEvidenceError(
+                "security and independent reviews require distinct attributable reviewers"
+            )
+        for name in (
+            "ci_evidence_digest",
+            "security_evidence_digest",
+            "independent_review_evidence_digest",
+        ):
+            value = facts.get(name)
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ActivationEvidenceError(
+                    "acceptance evidence lacks exact artifact digests"
+                )
 
     def require_backup_digest(
         self, identity: ActivationIdentity, observed_digest: str
@@ -328,3 +392,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]

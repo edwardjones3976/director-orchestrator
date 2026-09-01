@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:46 UTC | BEGIN]]
 """Windows HTTP entry point for the authenticated host-provider bridge."""
@@ -7,6 +8,7 @@ from __future__ import annotations
 import json
 import hmac
 import os
+import ssl
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -188,6 +190,13 @@ def main() -> None:
     if bind not in {"127.0.0.1", "0.0.0.0"}:
         raise RuntimeError("host provider bridge bind address is unsupported")
     server = ThreadingHTTPServer((bind, port), _Handler)
+    if bind == "0.0.0.0":
+        certificate = _required("DIRECTOR_HOST_PROVIDER_TLS_CERT_FILE")
+        private_key = _required("DIRECTOR_HOST_PROVIDER_TLS_KEY_FILE")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certificate, private_key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     server.bridge_secret = secret  # type: ignore[attr-defined]
     server.claim_store = store  # type: ignore[attr-defined]
     server.executor = executor  # type: ignore[attr-defined]
@@ -200,3 +209,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

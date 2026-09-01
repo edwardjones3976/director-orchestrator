@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | BEGIN]]
 from __future__ import annotations
@@ -42,10 +43,35 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
     def record(self, stage: ActivationStage, facts: dict | None = None) -> None:
         self.store.record(self.identity, stage, evidence_digest="d" * 64, facts=facts or {})
 
+    def acceptance_facts(self, **changes: object) -> dict:
+        facts = {
+            "candidate_commit": self.identity.candidate_commit,
+            "candidate_tree": self.identity.candidate_tree,
+            "remote_head_commit": self.identity.candidate_commit,
+            "ci_conclusion": "SUCCESS",
+            "ci_required_check_count": 6,
+            "ci_run_ids": [1234],
+            "ci_evidence_digest": "1" * 64,
+            "security_verdict": "ACCEPT",
+            "security_reviewer": "security-bot",
+            "security_reviewed_commit": self.identity.candidate_commit,
+            "security_evidence_digest": "2" * 64,
+            "independent_review_verdict": "ACCEPT",
+            "independent_reviewer": "cursor-reviewer",
+            "independent_reviewed_commit": self.identity.candidate_commit,
+            "independent_review_evidence_digest": "3" * 64,
+        }
+        facts.update(changes)
+        return facts
+
+    def accept(self) -> None:
+        self.record(ActivationStage.ACCEPTED, self.acceptance_facts())
+
     def test_requires_exact_order_and_same_identity(self) -> None:
         with self.assertRaisesRegex(ActivationEvidenceError, "start at PREFLIGHT"):
             self.record(ActivationStage.MIGRATED)
         self.record(ActivationStage.PREFLIGHT)
+        self.accept()
         with self.assertRaisesRegex(ActivationEvidenceError, "out of order"):
             self.record(ActivationStage.BACKED_UP, {"backup_digest": "x"})
         with self.assertRaisesRegex(ActivationEvidenceError, "another candidate"):
@@ -59,6 +85,7 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
     def test_activation_requires_migration_backup_and_nonzero_restore_proof(self) -> None:
         backup_digest = "sha256:" + "a" * 64
         self.record(ActivationStage.PREFLIGHT)
+        self.accept()
         self.record(ActivationStage.MIGRATED)
         self.record(ActivationStage.BACKED_UP, {"backup_digest": backup_digest})
         with self.assertRaisesRegex(ActivationEvidenceError, "nonzero schema"):
@@ -90,6 +117,7 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
 
     def test_backup_requires_artifact_digest_and_corruption_fails_closed(self) -> None:
         self.record(ActivationStage.PREFLIGHT)
+        self.accept()
         self.record(ActivationStage.MIGRATED)
         with self.assertRaisesRegex(ActivationEvidenceError, "backup evidence"):
             self.record(ActivationStage.BACKED_UP)
@@ -106,6 +134,7 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
             original.read_bytes()
         ).hexdigest()
         self.record(ActivationStage.PREFLIGHT)
+        self.accept()
         self.record(ActivationStage.MIGRATED)
         self.record(ActivationStage.BACKED_UP, {"backup_digest": digest})
 
@@ -139,6 +168,7 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
     def test_legacy_inventory_is_required_and_immutable_before_activation(self) -> None:
         backup_digest = "sha256:" + "a" * 64
         self.record(ActivationStage.PREFLIGHT)
+        self.accept()
         self.record(ActivationStage.MIGRATED)
         self.record(ActivationStage.BACKED_UP, {"backup_digest": backup_digest})
         self.record(
@@ -163,6 +193,7 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
 
     def test_restore_dump_continuity_rejects_missing_file(self) -> None:
         self.record(ActivationStage.PREFLIGHT)
+        self.accept()
         self.record(ActivationStage.MIGRATED)
         self.record(
             ActivationStage.BACKED_UP,
@@ -173,6 +204,29 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
                 self.identity, Path(self.temporary.name) / "missing.dump"
             )
 
+    def test_acceptance_requires_exact_head_ci_and_distinct_reviews(self) -> None:
+        self.record(ActivationStage.PREFLIGHT)
+        with self.assertRaisesRegex(ActivationEvidenceError, "exact candidate"):
+            self.record(
+                ActivationStage.ACCEPTED,
+                self.acceptance_facts(remote_head_commit="f" * 40),
+            )
+        with self.assertRaisesRegex(ActivationEvidenceError, "CI has not succeeded"):
+            self.record(
+                ActivationStage.ACCEPTED,
+                self.acceptance_facts(ci_conclusion="FAILURE"),
+            )
+        with self.assertRaisesRegex(ActivationEvidenceError, "distinct attributable"):
+            self.record(
+                ActivationStage.ACCEPTED,
+                self.acceptance_facts(independent_reviewer="security-bot"),
+            )
+        self.accept()
+        self.assertEqual(
+            ActivationStage.ACCEPTED.value,
+            self.store.load()["stages"][-1]["stage"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -180,3 +234,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]

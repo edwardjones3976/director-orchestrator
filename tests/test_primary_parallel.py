@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
@@ -114,6 +115,31 @@ class ParallelPlanValidationTests(unittest.TestCase):
         )
         self.assertEqual(policy.max_concurrency, 3)
 
+    def test_all_provider_concurrency_requires_exact_one_slot_roster(self) -> None:
+        roster = tuple(f"provider-{index}" for index in range(1, 10))
+        caps = {provider: 1 for provider in roster}
+
+        with self.assertRaisesRegex(
+            ParallelDispatchError, "exact one-slot provider roster"
+        ):
+            ParallelDispatchPolicy(max_concurrency=9, provider_caps=caps)
+        with self.assertRaisesRegex(
+            ParallelDispatchError, "exact one-slot provider roster"
+        ):
+            ParallelDispatchPolicy(
+                max_concurrency=9,
+                provider_caps={**caps, roster[0]: 2},
+                simultaneous_provider_roster=roster,
+            )
+
+        policy = ParallelDispatchPolicy(
+            max_concurrency=9,
+            provider_caps=caps,
+            simultaneous_provider_roster=roster,
+        )
+        self.assertEqual(9, policy.max_concurrency)
+        self.assertEqual(roster, policy.simultaneous_provider_roster)
+
     def test_retry_limit_is_exactly_three(self) -> None:
         for value in (0, 1, 2, 4):
             with self.subTest(value=value):
@@ -156,3 +182,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]

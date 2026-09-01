@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:54 UTC | BEGIN]]
@@ -228,14 +229,22 @@ class HostProviderBridgeTests(unittest.TestCase):
                 executor.execute(request())
             run.assert_not_called()
 
-    def test_client_endpoint_is_exact_local_http_and_redirects_are_disabled(self) -> None:
-        valid = "http://host.docker.internal:18765/v1/provider/dispatch"
+    def test_client_requires_encryption_off_loopback_and_disables_redirects(self) -> None:
+        valid = "https://host.docker.internal:18765/v1/provider/dispatch"
         transport = HostBridgePacketTransport(
             "claude", valid, SECRET, writer_owner_token_digest="sha256:" + "f" * 64
         )
         self.assertEqual(valid, transport.endpoint)
+        loopback = "http://127.0.0.1:18765/v1/provider/dispatch"
+        self.assertEqual(
+            loopback,
+            HostBridgePacketTransport(
+                "claude", loopback, SECRET,
+                writer_owner_token_digest="sha256:" + "f" * 64,
+            ).endpoint,
+        )
         for endpoint in (
-            "https://host.docker.internal:18765/v1/provider/dispatch",
+            "http://host.docker.internal:18765/v1/provider/dispatch",
             "http://user@host.docker.internal:18765/v1/provider/dispatch",
             "http://host.docker.internal/v1/provider/dispatch",
             "http://host.docker.internal:18765/other",
@@ -277,7 +286,7 @@ class HostProviderBridgeTests(unittest.TestCase):
 
         with patch("urllib.request.build_opener", return_value=_Opener()):
             evidence = challenge_host_provider_bridge(
-                "http://host.docker.internal:18765/v1/provider/dispatch",
+                "https://host.docker.internal:18765/v1/provider/dispatch",
                 SECRET,
                 now=1_000,
             )
@@ -349,3 +358,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:54 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

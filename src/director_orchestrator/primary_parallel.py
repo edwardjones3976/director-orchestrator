@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | BEGIN]]
@@ -143,11 +144,31 @@ class ParallelDispatchPolicy:
     deployment_caps: Mapping[str, int] | None = None
     scale_policy_evidence_digest: str | None = None
     scale_policy_accepted: bool = False
+    simultaneous_provider_roster: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 3:
-            raise ParallelDispatchError("max concurrency must be between 1 and 3")
-        if self.max_concurrency == 3:
+        if type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 20:
+            raise ParallelDispatchError("max concurrency must be between 1 and 20")
+        roster = self.simultaneous_provider_roster
+        if self.max_concurrency > 3:
+            if (
+                len(roster) != self.max_concurrency
+                or len(set(roster)) != len(roster)
+                or any(not provider.strip() for provider in roster)
+                or any((self.provider_caps or {}).get(provider) != 1 for provider in roster)
+            ):
+                raise ParallelDispatchError(
+                    "concurrency above three requires an exact one-slot provider roster"
+                )
+            if self.scale_policy_evidence_digest is not None:
+                raise ParallelDispatchError(
+                    "all-provider first-wave concurrency cannot use adaptive scale evidence"
+                )
+        elif roster:
+            raise ParallelDispatchError(
+                "simultaneous provider roster is reserved for concurrency above three"
+            )
+        elif self.max_concurrency == 3:
             if not self.scale_policy_accepted or self.scale_policy_evidence_digest is None:
                 raise ParallelDispatchError(
                     "scaling from two to three requires accepted policy evidence"
@@ -1243,3 +1264,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]

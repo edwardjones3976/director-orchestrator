@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:49 UTC | BEGIN]]
@@ -1116,7 +1117,7 @@ def primary_completion_evidence(
         raise HTTPException(status_code=403, detail="Completion evidence actor mismatch")
     try:
         verify_primary_ingress_proof(
-            settings.langgraph_primary_adapter_callback_secret,
+            settings.langgraph_primary_completion_evidence_secret,
             settings.shared_secret,
             request,
             path=f"/v1/primary/tasks/{task_id}/completion-evidence",
@@ -1124,6 +1125,55 @@ def primary_completion_evidence(
         )
     except PrimaryCommandBindingError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        allowlist = settings.completion_evidence_actor_allowlist()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if request.ci_gate_id == request.security_gate_id:
+        raise HTTPException(
+            status_code=403, detail="Completion CI and security gate ids must differ"
+        )
+    required_results = {
+        "independent_review": [
+            item for item in request.results
+            if item.get("evidence_role") == "INDEPENDENT_REVIEWER"
+        ],
+        "ci": [
+            item for item in request.results
+            if item.get("gate_id") == request.ci_gate_id
+            and item.get("evidence_role") == "TRUSTED_EXTERNAL_CI"
+        ],
+        "security": [
+            item for item in request.results
+            if item.get("gate_id") == request.security_gate_id
+            and item.get("evidence_role") == "CODEX_SECURITY"
+        ],
+    }
+    if any(len(results) != 1 for results in required_results.values()):
+        raise HTTPException(
+            status_code=403, detail="Completion evidence kind binding is incomplete"
+        )
+    selected_digests = {
+        str(results[0].get("result_digest", ""))
+        for results in required_results.values()
+    }
+    if len(selected_digests) != len(required_results):
+        raise HTTPException(
+            status_code=403, detail="Completion evidence kinds must be distinct"
+        )
+    for kind, results in required_results.items():
+        actor = results[0].get("evidence_actor")
+        principal = (
+            actor.get("authenticated_principal") if isinstance(actor, dict) else None
+        )
+        if (
+            request.evidence_actor_id not in allowlist[kind]["issuers"]
+            or principal not in allowlist[kind]["principals"]
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Completion evidence {kind} actor is not allowlisted",
+            )
     coordinator, _, _, replay = _primary_command_projection(
         task_id, request, PrimaryCommandOperation.COMPLETION_EVIDENCE
     )
@@ -1515,3 +1565,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

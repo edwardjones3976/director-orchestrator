@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:10 UTC | BEGIN]]
@@ -28,6 +29,7 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         text = self.text("windows-langgraph-primary-control.ps1")
         for action in (
             '"Preflight"',
+            '"Accept"',
             '"Migrate"',
             '"Backup"',
             '"RestoreDrill"',
@@ -57,6 +59,13 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("Stop-And-Prove-AllIntake", text)
         self.assertIn('Invoke-Compose stop slackbot n8n orchestrator', text)
         self.assertIn("bind-legacy-inventory", text)
+        self.assertIn("Get-GitHubAcceptanceFacts", text)
+        self.assertIn("DIRECTOR_SECURITY_REVIEW=ACCEPT", text)
+        self.assertIn("DIRECTOR_INDEPENDENT_REVIEW=ACCEPT", text)
+        self.assertIn("DIRECTOR_EXACT_HEAD=", text)
+        self.assertIn("Pull request head does not match the exact activation candidate", text)
+        self.assertIn("The pull request author cannot self-accept", text)
+        self.assertIn("Invoke-Evidence -Command record -Stage ACCEPTED", text)
         self.assertIn("database_instance_id", text)
         self.assertIn('"firecrawl", "github-copilot", "microsoft-365-copilot"', text)
         self.assertNotIn('"firecrawl", "github-copilot", "windows-copilot"', text)
@@ -88,3 +97,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]

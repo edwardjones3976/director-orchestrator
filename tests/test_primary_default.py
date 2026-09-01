@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:22 UTC | BEGIN]]
@@ -130,16 +131,76 @@ class ProviderAttemptRosterTests(unittest.TestCase):
             dispatch_attempt=dispatch,
         )
 
-        self.assertEqual(list(roster), invoked)
+        self.assertEqual([roster[0], roster[1], roster[0]], invoked)
         self.assertEqual(
             [(1, ParallelAssignmentStatus.SUCCEEDED),
-             (2, ParallelAssignmentStatus.FAILED)],
+             (2, ParallelAssignmentStatus.FAILED),
+             (3, ParallelAssignmentStatus.SUCCEEDED)],
             settled,
         )
         self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, status)
         assert result is not None
         self.assertEqual(1, result["attempt"])
         self.assertEqual("provider_result_authenticated", reason)
+
+    def test_one_format_success_is_still_invoked_exactly_three_times(self) -> None:
+        invoked: list[int] = []
+        settled: list[int] = []
+
+        def reserve(ordinal: int) -> ProviderAttemptReservation:
+            return ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai", "json", "api",
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            )
+
+        status, result, _result_digest, reason = _execute_three_attempt_roster(
+            format_roster=(("json", "api"),),
+            reserve_attempt=reserve,
+            record_attempt=lambda attempt, *_args: settled.append(
+                attempt.attempt_ordinal
+            ),
+            dispatch_attempt=lambda attempt: (
+                invoked.append(attempt.attempt_ordinal)
+                or {"status": "SUCCEEDED", "attempt": attempt.attempt_ordinal}
+            ),
+        )
+
+        self.assertEqual([1, 2, 3], invoked)
+        self.assertEqual([1, 2, 3], settled)
+        self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, status)
+        assert result is not None
+        self.assertEqual(1, result["attempt"])
+        self.assertEqual("provider_result_authenticated", reason)
+
+    def test_ambiguous_attempt_consumes_one_slot_and_never_redispatches(self) -> None:
+        invoked: list[int] = []
+        settled: list[tuple[int, ParallelAssignmentStatus]] = []
+
+        def reserve(ordinal: int) -> ProviderAttemptReservation:
+            return ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai", "json", "api",
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            )
+
+        def dispatch(attempt: ProviderAttemptReservation) -> dict[str, object]:
+            invoked.append(attempt.attempt_ordinal)
+            raise RuntimeError("outcome unknown")
+
+        status, result, result_digest, reason = _execute_three_attempt_roster(
+            format_roster=(("json", "api"),),
+            reserve_attempt=reserve,
+            record_attempt=lambda attempt, attempt_status, *_args: settled.append(
+                (attempt.attempt_ordinal, attempt_status)
+            ),
+            dispatch_attempt=dispatch,
+        )
+
+        self.assertEqual([1], invoked)
+        self.assertEqual([(1, ParallelAssignmentStatus.AMBIGUOUS)], settled)
+        self.assertEqual(ParallelAssignmentStatus.AMBIGUOUS, status)
+        self.assertIsNone(result)
+        self.assertIsNone(result_digest)
+        self.assertEqual("provider_outcome_unknown", reason)
 
 
 class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
@@ -895,6 +956,93 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             "ci_security_completion", projection.projection["visited_nodes"]
         )
         self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
+
+    def test_live_primary_postgres_dispatches_every_required_lane_in_first_wave(self):
+        settings = replace(
+            self.settings,
+            langgraph_primary_offline_simulation_enabled=True,
+        )
+        first_wave_size = len(settings.langgraph_primary_required_providers)
+        barrier = threading.Barrier(first_wave_size)
+        completed_first_wave: set[int] = set()
+        entered: list[tuple[int, str]] = []
+        worker_threads: set[int] = set()
+        lock = threading.Lock()
+
+        def dispatch(reservation):
+            with lock:
+                entered.append((reservation.sequence, reservation.provider_id))
+                worker_threads.add(threading.get_ident())
+                if reservation.sequence == first_wave_size + 1:
+                    self.assertEqual(
+                        set(range(1, first_wave_size + 1)), completed_first_wave
+                    )
+            if reservation.sequence <= first_wave_size:
+                barrier.wait(timeout=10)
+                with lock:
+                    completed_first_wave.add(reservation.sequence)
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"all-lane:{reservation.assignment_id}"),
+                "provider_result_authenticated",
+            )
+
+        services = DefaultOfflineSimulationServices(
+            settings,
+            packet_router=packet_router(settings),
+            live_composition=True,
+        )
+        coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-all-lanes-v1",
+            application_projection_provider=services.application_projection,
+        )
+        coordinator.adopt_or_activate_new_intake()
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator,
+            services,
+            DefaultPrimaryAuthority(SHA, digest("authority")),
+            parallel_dispatcher=dispatch,
+        )
+
+        pending = application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "all-lane-live-wave"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        assert pending.plan is not None
+        first_wave = pending.plan.assignments[:first_wave_size]
+        review = pending.plan.assignments[first_wave_size]
+        self.assertEqual(
+            set(settings.langgraph_primary_required_providers),
+            {item.primary_provider_lane for item in first_wave},
+        )
+        self.assertTrue(all(not item.depends_on for item in first_wave))
+        self.assertEqual(
+            list(range(1, first_wave_size + 1)), review.depends_on
+        )
+
+        finished = self.approve(application, coordinator, pending.task_id)
+        aggregate = coordinator.parallel_aggregate(pending.task_id)
+        with self.handle.pool.connection() as connection:
+            rows = connection.execute(
+                f"SELECT sequence, provider_id, status FROM "
+                f"{self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id = %s ORDER BY sequence",
+                (pending.task_id,),
+            ).fetchall()
+
+        self.assertEqual(first_wave_size + 1, len(rows))
+        self.assertEqual(
+            set(settings.langgraph_primary_required_providers),
+            {row["provider_id"] for row in rows[:first_wave_size]},
+        )
+        self.assertGreaterEqual(len(worker_threads), first_wave_size)
+        self.assertTrue(all(row["status"] == "SUCCEEDED" for row in rows))
+        self.assertTrue(aggregate.succeeded)
+        self.assertEqual(TaskStatus.DONE, finished.status)
 
     def test_parallel_restart_resumes_pending_rows_without_duplicate_dispatch(self):
         self.use_parallel_graph_completion_services(None)
@@ -1683,3 +1831,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]

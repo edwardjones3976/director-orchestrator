@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | BEGIN]]
 [CmdletBinding()]
@@ -31,6 +32,12 @@ $required = @(
     "DIRECTOR_HOST_PROVIDER_POSTGRES_DSN",
     "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA"
 )
+if ([string]$values["DIRECTOR_HOST_PROVIDER_BIND"] -eq "0.0.0.0") {
+    $required += @(
+        "DIRECTOR_HOST_PROVIDER_TLS_CERT_FILE",
+        "DIRECTOR_HOST_PROVIDER_TLS_KEY_FILE"
+    )
+}
 $missing = @($required | Where-Object {
     -not $values.ContainsKey($_) -or [string]::IsNullOrWhiteSpace([string]$values[$_]) -or
     ([string]$values[$_]).StartsWith("REPLACE_WITH_")
@@ -41,6 +48,7 @@ if ($missing.Count -gt 0) {
 foreach ($otherSecret in @(
     "ORCHESTRATOR_SHARED_SECRET", "SLACK_GATEWAY_SECRET",
     "LANGGRAPH_PRIMARY_OWNER_TOKEN", "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET",
+    "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_SECRET",
     "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET"
 )) {
     if ($values.ContainsKey($otherSecret) -and
@@ -71,7 +79,8 @@ if ($Action -eq "Preflight") { return }
 $original = @{}
 foreach ($name in $required + @(
     "DIRECTOR_HOST_PROVIDER_WORKSPACE", "DIRECTOR_HOST_PROVIDER_BIND",
-    "DIRECTOR_HOST_PROVIDER_PORT", "DIRECTOR_HOST_PROVIDER_TIMEOUT_SECONDS"
+    "DIRECTOR_HOST_PROVIDER_PORT", "DIRECTOR_HOST_PROVIDER_TIMEOUT_SECONDS",
+    "DIRECTOR_HOST_PROVIDER_TLS_CERT_FILE", "DIRECTOR_HOST_PROVIDER_TLS_KEY_FILE"
 )) {
     $original[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
     if ($values.ContainsKey($name)) {
@@ -90,3 +99,4 @@ finally {
 }
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

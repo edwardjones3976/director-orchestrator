@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
@@ -152,7 +153,12 @@ def challenge_host_provider_bridge(
     """Prove bridge liveness and its allowlisted command map without provider I/O."""
 
     parsed = urlsplit(endpoint)
-    if parsed.path != _BRIDGE_PATH:
+    if (
+        parsed.path != _BRIDGE_PATH
+        or parsed.scheme not in {"http", "https"}
+        or parsed.hostname not in {"host.docker.internal", "localhost", "127.0.0.1", "::1"}
+        or (parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"})
+    ):
         raise HostProviderBridgeError("host bridge endpoint is not the dispatch path")
     challenge_url = endpoint[: -len(_BRIDGE_PATH)] + _BRIDGE_CHALLENGE_PATH
     timestamp = int(time.time()) if now is None else int(now)
@@ -477,8 +483,12 @@ class HostBridgePacketTransport:
         except ValueError as exc:
             raise ValueError("host bridge endpoint port is invalid") from exc
         if (
-            parsed.scheme != "http"
+            parsed.scheme not in {"http", "https"}
             or parsed.hostname not in {"host.docker.internal", "localhost", "127.0.0.1", "::1"}
+            or (
+                parsed.scheme == "http"
+                and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+            )
             or port is None
             or parsed.username is not None
             or parsed.password is not None
@@ -590,3 +600,4 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

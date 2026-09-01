@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
@@ -324,6 +325,16 @@ class Settings:
         default_factory=lambda: os.getenv(
             "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET", ""
         )
+    )
+    langgraph_primary_completion_evidence_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_SECRET", ""
+        )
+    )
+    langgraph_primary_completion_evidence_actor_allowlist_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON", "{}"
+        ).strip()
     )
     langgraph_primary_effect_reconciliation_secret: str = field(
         default_factory=lambda: os.getenv(
@@ -680,6 +691,53 @@ class Settings:
     microsoft_365_copilot_tenant_id: str = os.getenv(
         "MICROSOFT_365_COPILOT_TENANT_ID", ""
     ).strip().lower()
+    microsoft_365_copilot_expected_subject: str = os.getenv(
+        "MICROSOFT_365_COPILOT_EXPECTED_SUBJECT", ""
+    ).strip()
+    microsoft_365_copilot_expected_object_id: str = os.getenv(
+        "MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID", ""
+    ).strip().lower()
+
+    def completion_evidence_actor_allowlist(
+        self,
+    ) -> dict[str, dict[str, frozenset[str]]]:
+        """Return the exact trusted bundler actors for each completion gate kind."""
+
+        try:
+            payload = json.loads(
+                self.langgraph_primary_completion_evidence_actor_allowlist_json
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError("completion evidence actor allowlist is invalid JSON") from exc
+        required = {"independent_review", "ci", "security"}
+        if not isinstance(payload, dict) or set(payload) != required:
+            raise ValueError(
+                "completion evidence actor allowlist must contain exactly "
+                "independent_review, ci, and security"
+            )
+        result: dict[str, dict[str, frozenset[str]]] = {}
+        for kind, policy in payload.items():
+            if not isinstance(policy, dict) or set(policy) != {"issuers", "principals"}:
+                raise ValueError(f"completion evidence {kind} policy is invalid")
+            normalized: dict[str, frozenset[str]] = {}
+            for role in ("issuers", "principals"):
+                actors = policy[role]
+                if (
+                    not isinstance(actors, list)
+                    or not actors
+                    or not all(
+                        isinstance(actor, str)
+                        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}", actor)
+                        for actor in actors
+                    )
+                    or len(set(actors)) != len(actors)
+                ):
+                    raise ValueError(
+                        f"completion evidence {kind} {role} are invalid"
+                    )
+                normalized[role] = frozenset(actors)
+            result[kind] = normalized
+        return result
     perplexity_allow_repository_write: bool = _bool(
         "PERPLEXITY_ALLOW_REPOSITORY_WRITE", False
     )
@@ -1195,6 +1253,15 @@ class Settings:
         adapter_callback_secret_configured = (
             len(self.langgraph_primary_adapter_callback_secret) >= 32
         )
+        completion_evidence_secret_configured = (
+            len(self.langgraph_primary_completion_evidence_secret) >= 32
+        )
+        try:
+            completion_evidence_actor_allowlist_configured = bool(
+                self.completion_evidence_actor_allowlist()
+            )
+        except ValueError:
+            completion_evidence_actor_allowlist_configured = False
         effect_reconciliation_secret_configured = (
             len(self.langgraph_primary_effect_reconciliation_secret) >= 32
         )
@@ -1245,6 +1312,12 @@ class Settings:
             "owner_token_configured": owner_token_configured,
             "adapter_callback_secret_configured": (
                 adapter_callback_secret_configured
+            ),
+            "completion_evidence_secret_configured": (
+                completion_evidence_secret_configured
+            ),
+            "completion_evidence_actor_allowlist_configured": (
+                completion_evidence_actor_allowlist_configured
             ),
             "effect_reconciliation_secret_configured": (
                 effect_reconciliation_secret_configured
@@ -1314,10 +1387,37 @@ class Settings:
                 problems.append(
                     "live provider dispatch requires exact provider activation bindings"
                 )
+            if "microsoft-365-copilot" in self.langgraph_primary_required_providers:
+                if not self.microsoft_365_copilot_delegated_token_file:
+                    problems.append(
+                        "Microsoft 365 Copilot requires a protected delegated token file"
+                    )
+                if not re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                    self.microsoft_365_copilot_tenant_id,
+                ):
+                    problems.append("Microsoft 365 Copilot tenant id is invalid")
+                if not self.microsoft_365_copilot_expected_subject:
+                    problems.append("Microsoft 365 Copilot expected subject is required")
+                if not re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                    self.microsoft_365_copilot_expected_object_id,
+                ):
+                    problems.append("Microsoft 365 Copilot expected object id is invalid")
             if len(self.langgraph_primary_adapter_callback_secret) < 32:
                 problems.append(
                     "live provider dispatch requires a 32-character "
                     "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET"
+                )
+            if not readiness["completion_evidence_secret_configured"]:
+                problems.append(
+                    "live provider dispatch requires a 32-character "
+                    "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_SECRET"
+                )
+            if not readiness["completion_evidence_actor_allowlist_configured"]:
+                problems.append(
+                    "live provider dispatch requires an exact completion evidence "
+                    "actor allowlist"
                 )
             if len(self.langgraph_primary_effect_reconciliation_secret) < 32:
                 problems.append(
@@ -1340,6 +1440,7 @@ class Settings:
                     self.shared_secret,
                     self.slack_gateway_secret,
                     self.langgraph_primary_adapter_callback_secret,
+                    self.langgraph_primary_completion_evidence_secret,
                     self.langgraph_primary_effect_reconciliation_secret,
                     bridge_secret,
                 )
@@ -1829,3 +1930,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

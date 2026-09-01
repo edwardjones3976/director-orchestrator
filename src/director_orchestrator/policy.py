@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
@@ -1080,6 +1081,10 @@ def enforce_plan(
     # The enforcement outcome is deterministic trusted metadata, never a value the
     # planning model may preserve or select.
     safe.workload_enforcement = None
+    safe.assignments = [
+        assignment.model_copy(update={"primary_provider_lane": None})
+        for assignment in safe.assignments
+    ]
     safe.max_hops = min(safe.max_hops, settings.max_agent_hops)
     safe.max_revisions = min(safe.max_revisions, settings.max_revisions)
     if safe.debate is not None:
@@ -1450,3 +1455,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]

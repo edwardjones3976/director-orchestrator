@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
@@ -339,6 +340,26 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 
 ## Official references
 
+## Primary security credential boundaries
+
+Completion evidence uses `LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_SECRET`, never
+the provider callback secret. Configure
+`LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON` with exactly
+`independent_review`, `ci`, and `security`; every entry has nonempty `issuers`
+and `principals` arrays. The signed envelope issuer and each result's
+`evidence_actor.authenticated_principal` must both match the corresponding kind.
+
+Microsoft Work IQ requires the tenant, a protected non-symlink token file, and
+exact `MICROSOFT_365_COPILOT_EXPECTED_SUBJECT` plus
+`MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID`. Windows ACLs may grant access only
+to the current user, SYSTEM, or Administrators; POSIX files must be runtime-owned
+and have no group or other permissions.
+
+The Windows bridge permits plaintext HTTP only on an exact loopback host.
+Container-to-host use must use HTTPS. An all-interface bridge bind requires
+explicit TLS certificate and private-key files; the certificate must be trusted
+by the client runtime and cover `host.docker.internal`.
+
 - OpenAI Responses and Structured Outputs: https://developers.openai.com/api/docs/guides/structured-outputs
 - Cursor Cloud Agents API: https://cursor.com/docs/cloud-agent/api/endpoints
 - Claude Code Routines: https://docs.anthropic.com/en/docs/claude-code/routines
@@ -366,3 +387,4 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]] -->

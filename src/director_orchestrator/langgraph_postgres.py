@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:41 UTC | BEGIN]]
@@ -900,7 +901,9 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             ),
             owner_token text NOT NULL,
             fencing_generation bigint NOT NULL CHECK (fencing_generation >= 1),
-            max_concurrency integer NOT NULL CHECK (max_concurrency IN (1, 2, 3)),
+            max_concurrency integer NOT NULL CHECK (
+                max_concurrency BETWEEN 1 AND 20
+            ),
             scale_policy_evidence_digest text CHECK (
                 scale_policy_evidence_digest IS NULL OR
                 scale_policy_evidence_digest ~ '^sha256:[0-9a-f]{{64}}$'
@@ -909,6 +912,16 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
         )
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_parallel_batch
+            DROP CONSTRAINT IF EXISTS
+                director_primary_parallel_batch_max_concurrency_check
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_parallel_batch
+            ADD CONSTRAINT director_primary_parallel_batch_max_concurrency_check
+            CHECK (max_concurrency BETWEEN 1 AND 20)
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_parallel_assignment (
@@ -4727,3 +4740,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]

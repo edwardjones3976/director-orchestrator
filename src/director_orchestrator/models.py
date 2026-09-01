@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -258,6 +259,15 @@ class Assignment(BaseModel):
     workload_size: WorkSize = WorkSize.SIMPLE
     effort_points: int = Field(default=1, ge=1, le=100)
     retry_limit: int = Field(default=3, ge=3, le=3)
+    # Live LangGraph-primary plans may bind a transport lane that is broader than
+    # the historical Director agent enum. Model-authored plans leave this unset;
+    # the deterministic primary planner supplies it after policy normalization.
+    primary_provider_lane: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9-]{0,63}$",
+    )
     model_label: str | None = Field(default=None, min_length=1, max_length=255)
     task: str = Field(min_length=1, max_length=10_000)
     acceptance: list[str] = Field(min_length=1, max_length=20)
@@ -1207,3 +1217,4 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]

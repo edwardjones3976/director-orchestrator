@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
@@ -60,6 +62,10 @@ from .langgraph_primary import (
     ScheduleResult,
 )
 from .models import (
+    AntigravityDirective,
+    AntigravityFixtureLane,
+    Assignment,
+    AssignmentKind,
     AssignmentOutcome,
     IntakeAuthentication,
     ProviderName,
@@ -107,11 +113,13 @@ from .primary_parallel import (
     ParallelDispatchPolicy,
     ParallelReservation,
     ProviderAttemptReservation,
+    deterministic_format_roster,
 )
 from .primary_transports import (
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
     provider_lane_external_blockers,
+    read_protected_delegated_token_file,
 )
 
 
@@ -181,13 +189,13 @@ def _execute_three_attempt_roster(
                 last_digest,
                 "provider_reported_non_success",
             )
-        if successful_result is not None and attempt_ordinal >= len(format_roster):
-            return (
-                ParallelAssignmentStatus.SUCCEEDED,
-                successful_result,
-                successful_digest,
-                "provider_result_authenticated",
-            )
+    if successful_result is not None:
+        return (
+            ParallelAssignmentStatus.SUCCEEDED,
+            successful_result,
+            successful_digest,
+            "provider_result_authenticated",
+        )
     return (
         ParallelAssignmentStatus.FAILED,
         None,
@@ -200,6 +208,121 @@ def _primary_provider_lane(provider: ProviderName) -> str:
     """Map only the typed Gemini assignment backend to its Antigravity lane."""
 
     return "antigravity" if provider == ProviderName.GEMINI else provider.value
+
+
+_PRIMARY_LANE_AGENT: Mapping[str, ProviderName] = {
+    "openai": ProviderName.OPENAI,
+    "claude": ProviderName.CLAUDE,
+    "cursor": ProviderName.CURSOR,
+    "grok": ProviderName.GROK,
+    "antigravity": ProviderName.GEMINI,
+    "perplexity": ProviderName.PERPLEXITY,
+    "firecrawl": ProviderName.PERPLEXITY,
+    "github-copilot": ProviderName.CURSOR,
+    "microsoft-365-copilot": ProviderName.PERPLEXITY,
+}
+_PRIMARY_PUBLIC_RESEARCH_LANES = frozenset(
+    {"perplexity", "firecrawl", "microsoft-365-copilot"}
+)
+
+
+def _assignment_provider_lane(assignment: Assignment) -> str:
+    return assignment.primary_provider_lane or _primary_provider_lane(assignment.agent)
+
+
+def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
+    """Expand one normalized preview into an all-lane wave and one review barrier."""
+
+    if record.plan is None or not record.plan.assignments:
+        raise RuntimeError("live primary parallel expansion requires a normalized plan")
+    required = tuple(settings.langgraph_primary_required_providers)
+    if not required or len(set(required)) != len(required):
+        raise RuntimeError("live primary required-provider roster is invalid")
+    unknown = sorted(set(required) - set(_PRIMARY_LANE_AGENT))
+    if unknown:
+        raise RuntimeError(
+            "live primary required-provider roster contains unknown lanes: "
+            + ",".join(unknown)
+        )
+    if len(required) + 1 > 20:
+        raise RuntimeError("live primary provider roster exceeds the bounded plan size")
+
+    plan = record.plan
+    work_template = min(plan.assignments, key=lambda item: item.sequence)
+    review_template = max(plan.assignments, key=lambda item: item.sequence)
+    repository = plan.prestage.repository if plan.prestage is not None else work_template.repository
+    starting_ref = work_template.starting_ref
+    first_wave: list[Assignment] = []
+    for sequence, lane in enumerate(required, start=1):
+        is_research = lane in _PRIMARY_PUBLIC_RESEARCH_LANES
+        is_antigravity = lane == "antigravity"
+        first_wave.append(
+            work_template.model_copy(
+                update={
+                    "sequence": sequence,
+                    "agent": _PRIMARY_LANE_AGENT[lane],
+                    "primary_provider_lane": lane,
+                    "kind": (
+                        AssignmentKind.SCAFFOLDING
+                        if is_antigravity
+                        else AssignmentKind.RESEARCH
+                        if is_research
+                        else AssignmentKind.GENERAL
+                    ),
+                    "task": (
+                        "Produce a bounded generic module skeleton for independent integration."
+                        if is_antigravity
+                        else record.intake.text.strip()
+                    ),
+                    "acceptance": [
+                        "Return bounded evidence for the assigned lane",
+                        "Report blockers and unresolved risks without external effects",
+                    ],
+                    "public_research_query": (
+                        "public sources for the owner-defined research topic"
+                        if is_research
+                        else None
+                    ),
+                    "antigravity_directive": (
+                        AntigravityDirective(
+                            lane=AntigravityFixtureLane.MODULE_SKELETON
+                        )
+                        if is_antigravity
+                        else None
+                    ),
+                    "repository": None if is_research or is_antigravity else repository,
+                    "starting_ref": starting_ref,
+                    "depends_on": [],
+                    "requires_approval": is_research,
+                    "allow_draft_pr": False,
+                    "retry_limit": 3,
+                }
+            )
+        )
+    review_lane = _primary_provider_lane(review_template.agent)
+    review = review_template.model_copy(
+        update={
+            "sequence": len(first_wave) + 1,
+            "primary_provider_lane": review_lane,
+            "kind": AssignmentKind.INDEPENDENT_REVIEW,
+            "task": (
+                "Review the complete first-wave provider evidence, identify conflicts, "
+                "and produce the bounded synthesis for graph-owned acceptance."
+            ),
+            "acceptance": [
+                "Every first-wave result is accounted for",
+                "Contradictions, missing evidence, and unresolved risks are explicit",
+            ],
+            "repository": repository,
+            "public_research_query": None,
+            "antigravity_directive": None,
+            "depends_on": [item.sequence for item in first_wave],
+            "requires_approval": False,
+            "allow_draft_pr": False,
+            "retry_limit": 3,
+        }
+    )
+    record.plan = plan.model_copy(update={"assignments": [*first_wave, review]})
 
 
 def _bounded_secret_file(path_value: str) -> str:
@@ -241,9 +364,11 @@ class DefaultPrimaryLiveDependencies:
     ] = field(default_factory=dict)
 
     def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
-        return self.attempt_formats.get(
-            provider,
-            (("model-work-packet-v1", "packet-boundary-adapter"),),
+        return deterministic_format_roster(
+            self.attempt_formats.get(
+                provider,
+                (("model-work-packet-v1", "packet-boundary-adapter"),),
+            )
         )
 
     def adapter_for_format(
@@ -372,10 +497,16 @@ def build_automatic_primary_live_dependencies(
             else ""
         ),
         host_bridge_challenge=bridge_challenge,
-        microsoft_365_copilot_access_token=_bounded_secret_file(
+        microsoft_365_copilot_access_token=read_protected_delegated_token_file(
             settings.microsoft_365_copilot_delegated_token_file
         ),
         microsoft_365_copilot_tenant_id=settings.microsoft_365_copilot_tenant_id,
+        microsoft_365_copilot_expected_subject=(
+            settings.microsoft_365_copilot_expected_subject
+        ),
+        microsoft_365_copilot_expected_object_id=(
+            settings.microsoft_365_copilot_expected_object_id
+        ),
     )
     adapters = build_graph_native_packet_adapters(
         transports=transports,
@@ -422,7 +553,7 @@ def build_automatic_primary_live_dependencies(
         assignment = next(
             (
                 item for item in record.plan.assignments
-                if _primary_provider_lane(item.agent) == context.scheduled_producer_id
+                if _assignment_provider_lane(item) == context.scheduled_producer_id
             ),
             None,
         )
@@ -831,7 +962,7 @@ class DefaultDryRunServices:
             )
         assignment = min(record.plan.assignments, key=lambda item: item.sequence)
         provider_lane = (
-            _primary_provider_lane(assignment.agent)
+            _assignment_provider_lane(assignment)
             if self._live_composition
             else assignment.agent.value
         )
@@ -1039,9 +1170,21 @@ class DefaultPrimaryApplication:
 
         provider_caps = self.settings.parallel_provider_caps()
         provider_caps["antigravity"] = provider_caps.pop("gemini")
+        for provider in self.settings.langgraph_primary_required_providers:
+            provider_caps.setdefault(provider, 1)
         return ParallelDispatchPolicy(
-            max_concurrency=self.settings.langgraph_parallel_initial_max_concurrency,
+            # The primary first wave is deliberately one simultaneous slot per
+            # required lane. This remains bounded by the exact configured roster.
+            max_concurrency=max(
+                self.settings.langgraph_parallel_initial_max_concurrency,
+                len(self.settings.langgraph_primary_required_providers),
+            ),
             provider_caps=provider_caps,
+            simultaneous_provider_roster=(
+                tuple(self.settings.langgraph_primary_required_providers)
+                if len(self.settings.langgraph_primary_required_providers) > 3
+                else ()
+            ),
         )
 
     def _parallel_assignments(
@@ -1059,8 +1202,8 @@ class DefaultPrimaryApplication:
             ParallelAssignment(
                 assignment_id=identifiers[item.sequence],
                 sequence=item.sequence,
-                provider_id=_primary_provider_lane(item.agent),
-                deployment_id=item.model_label or _primary_provider_lane(item.agent),
+                provider_id=_assignment_provider_lane(item),
+                deployment_id=item.model_label or _assignment_provider_lane(item),
                 dependencies=tuple(identifiers[sequence] for sequence in item.depends_on),
                 write_surfaces=("repository-write",) if item.allow_draft_pr else (),
                 retry_limit=3,
@@ -1236,6 +1379,8 @@ class DefaultPrimaryApplication:
             intake_authentication=intake_authentication,
         )
         record.plan = preview_plan(record.intake.text, self.settings)
+        if self.services._live_composition:
+            _live_parallel_plan(record, self.settings)
         request = self._request(record)
         if authenticated_replay_identity is not None:
             claimed_task_id, created = self.coordinator.claim_authenticated_intake(
@@ -1673,8 +1818,8 @@ class DefaultPrimaryActivation:
                     if context.provider_attempt_digest is None:
                         raise RuntimeError("provider attempt is not bound")
                     producer = context.scheduled_producer_id
-                    if producer is None or producer != _primary_provider_lane(
-                        assignment.agent
+                    if producer is None or producer != _assignment_provider_lane(
+                        assignment
                     ):
                         raise RuntimeError("scheduled provider binding changed")
                     return PrimaryProviderBinding(
@@ -1763,7 +1908,7 @@ class DefaultPrimaryActivation:
                     assignment_id = services._packet_router._assignment_id(
                         record, assignment
                     )
-                    provider = _primary_provider_lane(assignment.agent)
+                    provider = _assignment_provider_lane(assignment)
                     if (
                         assignment_id != reservation.assignment_id
                         or provider != reservation.provider_id
@@ -2109,3 +2254,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

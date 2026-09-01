@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:31 UTC | BEGIN]] -->
@@ -329,7 +330,7 @@ their mere presence:
   allowlisted Windows command map without invoking a provider. `-Action Run`
   starts the authenticated host bridge in the foreground for supervision.
 - `scripts/windows-langgraph-primary-control.ps1` provides separate `Preflight`,
-  `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`, and `Rollback`
+  `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`, and `Rollback`
   operations. Every invocation requires the exact environment-file path,
   Compose project, and host port; profile identity is never inferred.
 
@@ -404,8 +405,14 @@ missing or conflicting evidence remains `OWNER_DECISION_REQUIRED` and can never
 be replaced with a synthetic pass.
 
 For every profile, execute the control actions in this order while Slack intake
-is closed: `Preflight`, `Migrate`, `Backup`, `RestoreDrill`, provider activation
-evidence, then `Activate`. Activation reopens Slack only after the observed health
+is closed: `Preflight`, `Accept`, `Migrate`, `Backup`, `RestoreDrill`, provider
+activation evidence, then `Activate`. `Accept` reads the canonical GitHub pull
+request, requires its head to equal the frozen candidate, requires every named
+CI check to be completed successfully with no skipped/pending/failed check, and
+requires distinct non-author security and independent-review ACCEPT artifacts
+that both name the exact head. Those facts and their digests are recorded under
+the same activation identity; operator-set booleans are not acceptance evidence.
+Activation reopens Slack only after the observed health
 projection proves Postgres, writer fencing, reconciliation, current provider
 activation, graph ownership, and zero ambiguous effects. Rollback stops Slack and
 the orchestrator, waits for the writer lease to expire, refuses when ambiguous
@@ -416,7 +423,7 @@ The control tool persists `/data/langgraph-primary-activation-evidence.json` as
 an atomic versioned state machine. Its identity binds the exact Director
 candidate commit/tree, profile, Compose project, opaque Postgres storage
 identity, schema, and checkpoint namespace. The only accepted sequence is
-`PREFLIGHT -> MIGRATED -> BACKED_UP -> RESTORE_PROVED -> ACTIVATED`; missing,
+`PREFLIGHT -> ACCEPTED -> MIGRATED -> BACKED_UP -> RESTORE_PROVED -> ACTIVATED`; missing,
 duplicate, out-of-order, corrupt, cross-candidate, cross-profile, or cross-store
 evidence fails closed. Restore proof requires all named primary control-plane
 tables, all four LangGraph checkpoint tables, and a nonzero control-plane schema
@@ -465,18 +472,31 @@ exception is not production TLS evidence.
 
 ## Default parallel assignment lifecycle
 
-The Default primary application registers the complete validated assignment DAG
-in the Postgres parallel ledger before an execution approval can cross the
-provider boundary. After approval, the historical single-assignment graph edge
-is an interrupt only: it never owns provider transport. The parallel ledger is
-the sole dispatch owner and commits each assignment reservation before invoking
-its exact packet adapter.
+For live Default intake, the deterministic primary planner expands the normalized
+plan into exactly one independent first-wave assignment for every configured
+required provider lane. The first wave has no dependency edges. One bounded
+review/synthesis assignment depends on the complete first wave, so it cannot run
+until every provider result has settled durably. The exact provider roster is also
+the concurrency bound: concurrency above three is valid only when it is backed by
+that unique roster and every lane has exactly one active slot.
+
+The Default primary application registers this complete assignment DAG in the
+Postgres parallel ledger before an execution approval can cross the provider
+boundary. After approval, the historical single-assignment graph edge is an
+interrupt only: it never owns provider transport. The parallel ledger is the sole
+dispatch owner and commits each assignment reservation before invoking its exact
+packet adapter.
 
 Each wave concurrently consumes every dependency-ready assignment allowed by
 the configured task, provider, deployment, and write-surface caps. A dependent
 packet is built only after all named upstream result packets are durably accepted.
 Provider exceptions are ambiguous and are never resent. Restart recovery may
 consume still-pending rows but does not redispatch a reserved or settled row.
+For a definitive outcome, each assignment invokes and records exactly three
+attempts. Every configured format/transport pair is used once before deterministic
+reuse. An ambiguous paid dispatch consumes its current attempt and stops the
+assignment immediately for reconciliation; the exact-three rule never authorizes
+a blind resend of an unknown external outcome.
 The graph task is successful only when the deterministic aggregate proves every
 assignment succeeded; a pending, active, ambiguous, failed, or dependency-blocked
 member cannot be reported as successful completion.
@@ -510,3 +530,4 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:31 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]] -->

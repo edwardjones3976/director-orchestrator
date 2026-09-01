@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
@@ -15,12 +16,14 @@ authentication probes are both true.
 from __future__ import annotations
 
 import json
+import hmac
 import os
 import shutil
 import subprocess
 import tempfile
 import hashlib
 import re
+import stat
 import time
 import uuid
 from dataclasses import dataclass
@@ -45,6 +48,84 @@ from .langgraph_runtime import (
 
 _MAX_COMMAND_RESULT_BYTES = 1_048_576
 _MAX_ARGUMENT_PROMPT_BYTES = 24_000
+
+
+def _validate_windows_token_file_acl(resolved: Path) -> None:
+    script = (
+        "$acl=Get-Acl -LiteralPath $args[0];"
+        "$owner=([System.Security.Principal.NTAccount]$acl.Owner).Translate("
+        "[System.Security.Principal.SecurityIdentifier]).Value;"
+        "$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;"
+        "$rules=@($acl.Access|ForEach-Object{@{sid=$_.IdentityReference.Translate("
+        "[System.Security.Principal.SecurityIdentifier]).Value;type=$_.AccessControlType.ToString()}});"
+        "@{owner=$owner;current=$current;rules=$rules}|ConvertTo-Json -Compress -Depth 4"
+    )
+    completed = subprocess.run(
+        ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script, str(resolved)),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        shell=False,
+        check=False,
+        timeout=15,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise ValueError("Microsoft delegated token file ACL could not be verified")
+    try:
+        acl = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Microsoft delegated token file ACL is invalid") from exc
+    allowed = {str(acl.get("current", "")), "S-1-5-18", "S-1-5-32-544"}
+    if str(acl.get("owner", "")) not in allowed:
+        raise ValueError("Microsoft delegated token file owner is not trusted")
+    rules = acl.get("rules")
+    if not isinstance(rules, list) or any(
+        not isinstance(rule, dict)
+        or (rule.get("type") == "Allow" and rule.get("sid") not in allowed)
+        for rule in rules
+    ):
+        raise ValueError("Microsoft delegated token file ACL grants a broad principal")
+
+
+def read_protected_delegated_token_file(path_value: str) -> str:
+    """Read one bounded token from the same protected file handle that was checked."""
+
+    if not path_value.strip():
+        return ""
+    path = Path(path_value)
+    if path.is_symlink():
+        raise ValueError("Microsoft delegated token file must not be a symlink")
+    resolved = path.resolve(strict=True)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(resolved, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        path_metadata = resolved.stat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size > 65_536
+            or (metadata.st_dev, metadata.st_ino)
+            != (path_metadata.st_dev, path_metadata.st_ino)
+        ):
+            raise ValueError("Microsoft delegated token file changed or is not bounded")
+        if os.name == "nt":
+            _validate_windows_token_file_acl(resolved)
+        else:
+            if hasattr(os, "geteuid") and metadata.st_uid != os.geteuid():
+                raise ValueError("Microsoft delegated token file is not owned by this runtime")
+            if stat.S_IMODE(metadata.st_mode) & 0o077:
+                raise ValueError("Microsoft delegated token file permissions are too broad")
+        after = resolved.stat()
+        if (metadata.st_dev, metadata.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError("Microsoft delegated token file changed during validation")
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
+            token = handle.read(65_537).strip()
+    finally:
+        os.close(descriptor)
+    if not token or len(token.encode("utf-8")) > 65_536:
+        raise ValueError("Microsoft delegated token file is empty or oversized")
+    return token
 
 _BASE_CHILD_ENVIRONMENT = frozenset(
     {
@@ -219,11 +300,16 @@ class MicrosoftOIDCDelegatedTokenVerifier:
         self._cache: dict[str, tuple[int, Mapping[str, Any]]] = {}
 
     def verify(
-        self, access_token: str, *, tenant_id: str, now: int | None = None
+        self, access_token: str, *, tenant_id: str, expected_subject: str,
+        expected_object_id: str, now: int | None = None
     ) -> Mapping[str, Any]:
         current = int(time.time()) if now is None else int(now)
         if _UUID.fullmatch(tenant_id) is None:
             raise ValueError("Work IQ tenant id is invalid")
+        if not expected_subject or len(expected_subject) > 255:
+            raise ValueError("Work IQ expected subject is invalid")
+        if _UUID.fullmatch(expected_object_id.lower()) is None:
+            raise ValueError("Work IQ expected object id is invalid")
         issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
         metadata_url = f"{issuer}/.well-known/openid-configuration"
         cached = self._cache.get(tenant_id)
@@ -259,7 +345,7 @@ class MicrosoftOIDCDelegatedTokenVerifier:
             algorithms=["RS256"],
             audience=_WORK_IQ_AUDIENCE,
             issuer=issuer,
-            options={"require": ["iss", "aud", "exp", "nbf", "tid", "sub", "scp"]},
+            options={"require": ["iss", "aud", "exp", "nbf", "tid", "sub", "oid", "scp"]},
         )
         if claims.get("tid") != tenant_id:
             raise ValueError("Work IQ delegated token tenant is not exact")
@@ -267,6 +353,14 @@ class MicrosoftOIDCDelegatedTokenVerifier:
             raise ValueError("Work IQ delegated token audience is not exact")
         if str(claims.get("scp", "")) != _WORK_IQ_SCOPE:
             raise ValueError("Work IQ delegated token lacks exact delegated scope")
+        if not expected_subject or not hmac.compare_digest(
+            str(claims.get("sub", "")), expected_subject
+        ):
+            raise ValueError("Work IQ delegated token subject is not authorized")
+        if not expected_object_id or not hmac.compare_digest(
+            str(claims.get("oid", "")).lower(), expected_object_id.lower()
+        ):
+            raise ValueError("Work IQ delegated token object id is not authorized")
         if int(claims["nbf"]) > current or int(claims["exp"]) <= current:
             raise ValueError("Work IQ delegated token is not currently valid")
         return claims
@@ -287,11 +381,13 @@ class Microsoft365CopilotReadinessVerifier:
         self._challenge_factory = challenge_factory or (lambda: str(uuid.uuid4()))
 
     def verify(
-        self, access_token: str, *, tenant_id: str, now: int | None = None
+        self, access_token: str, *, tenant_id: str, expected_subject: str,
+        expected_object_id: str, now: int | None = None
     ) -> Microsoft365CopilotCapabilityEvidence:
         current = int(time.time()) if now is None else int(now)
         claims = self._token_verifier.verify(
-            access_token, tenant_id=tenant_id, now=current
+            access_token, tenant_id=tenant_id, expected_subject=expected_subject,
+            expected_object_id=expected_object_id, now=current
         )
         endpoint = f"{_WORK_IQ_ROOT}/conversations"
         challenge_id = str(self._challenge_factory())
@@ -324,7 +420,7 @@ class Microsoft365CopilotReadinessVerifier:
             raise ValueError("Work IQ capability response is not prompt-free and active")
         if not request_id or echoed_challenge != challenge_id:
             raise ValueError("Work IQ capability response lacks Microsoft provenance")
-        subject = f"{tenant_id}:{claims['sub']}".encode("utf-8")
+        subject = f"{tenant_id}:{claims['oid']}:{claims['sub']}".encode("utf-8")
         evidence = Microsoft365CopilotCapabilityEvidence(
             conversation_id=conversation_id,
             endpoint=_WORK_IQ_ROOT,
@@ -962,6 +1058,8 @@ def discover_local_primary_command_transports(
     host_bridge_challenge: HostBridgeChallengeEvidence | None = None,
     microsoft_365_copilot_access_token: str = "",
     microsoft_365_copilot_tenant_id: str = "",
+    microsoft_365_copilot_expected_subject: str = "",
+    microsoft_365_copilot_expected_object_id: str = "",
     microsoft_365_copilot_readiness_verifier: Microsoft365CopilotReadinessVerifier | None = None,
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
     """Discover documented noninteractive CLIs; never launch or authenticate them."""
@@ -1065,7 +1163,12 @@ def discover_local_primary_command_transports(
                 authenticated_observed=True,
             )
     work_iq_evidence = None
-    if microsoft_365_copilot_access_token and microsoft_365_copilot_tenant_id:
+    if (
+        microsoft_365_copilot_access_token
+        and microsoft_365_copilot_tenant_id
+        and microsoft_365_copilot_expected_subject
+        and microsoft_365_copilot_expected_object_id
+    ):
         verifier = (
             microsoft_365_copilot_readiness_verifier
             or Microsoft365CopilotReadinessVerifier()
@@ -1074,6 +1177,8 @@ def discover_local_primary_command_transports(
             work_iq_evidence = verifier.verify(
                 microsoft_365_copilot_access_token,
                 tenant_id=microsoft_365_copilot_tenant_id,
+                expected_subject=microsoft_365_copilot_expected_subject,
+                expected_object_id=microsoft_365_copilot_expected_object_id,
             )
             work_iq_evidence.validate()
         except (ValueError, httpx.HTTPError, jwt.PyJWTError):
@@ -1179,3 +1284,4 @@ def provider_lane_external_blockers(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]

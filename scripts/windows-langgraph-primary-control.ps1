@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:34 UTC | BEGIN]]
@@ -7,12 +8,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Preflight", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
+    [ValidateSet("Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$EnvironmentFile,
     [Parameter(Mandatory = $true)][string]$ComposeProject,
     [Parameter(Mandatory = $true)][ValidateRange(1024, 65535)][int]$HostPort,
     [string]$BackupPath,
+    [string]$GitHubRepository,
+    [ValidateRange(1, [int]::MaxValue)][int]$PullRequestNumber,
     [int]$TimeoutSeconds = 180
 )
 
@@ -71,6 +74,99 @@ function Get-Sha256Text {
     return [Convert]::ToHexString(
         [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Text))
     ).ToLowerInvariant()
+}
+
+function Get-GitHubAcceptanceFacts {
+    if ([string]::IsNullOrWhiteSpace($script:GitHubRepository) -or $script:PullRequestNumber -lt 1) {
+        throw "Accept requires -GitHubRepository and -PullRequestNumber."
+    }
+    if ($script:GitHubRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+        throw "GitHub repository identity is invalid."
+    }
+    if ($null -eq (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "GitHub CLI is required to verify exact-head acceptance evidence."
+    }
+    $json = & gh pr view $script:PullRequestNumber --repo $script:GitHubRepository `
+        --json headRefOid,author,comments,reviews,statusCheckRollup
+    if ($LASTEXITCODE -ne 0) { throw "GitHub acceptance evidence could not be read." }
+    $pull = $json | ConvertFrom-Json -Depth 20
+    if ([string]$pull.headRefOid -cne $script:candidateCommit) {
+        throw "Pull request head does not match the exact activation candidate."
+    }
+    $requiredChecks = @(
+        "Contribution attribution", "Python 3.12 (ubuntu-latest)",
+        "Python 3.12 (windows-latest)", "Compose and container build",
+        "Secret hygiene", "Cross-process recovery probe"
+    )
+    $checks = @($pull.statusCheckRollup)
+    foreach ($name in $requiredChecks) {
+        $matching = @($checks | Where-Object { [string]$_.name -ceq $name })
+        if ($matching.Count -lt 1 -or @($matching | Where-Object {
+            [string]$_.status -cne "COMPLETED" -or [string]$_.conclusion -cne "SUCCESS"
+        }).Count -gt 0) {
+            throw "Exact-head required CI is incomplete or unsuccessful at $name."
+        }
+    }
+    if (@($checks | Where-Object {
+        ([string]$_.status -and [string]$_.status -cne "COMPLETED") -or
+        ([string]$_.conclusion -and [string]$_.conclusion -cne "SUCCESS")
+    }).Count -gt 0) {
+        throw "Exact-head check rollup contains a pending, skipped, or unsuccessful result."
+    }
+    $runIds = @($checks | ForEach-Object {
+        if ([string]$_.detailsUrl -match '/actions/runs/(\d+)') { [long]$matches[1] }
+    } | Sort-Object -Unique)
+    if ($runIds.Count -lt 1) { throw "Exact-head CI run identity is unavailable." }
+
+    $records = @()
+    foreach ($item in @($pull.comments) + @($pull.reviews)) {
+        if ($null -ne $item -and -not [string]::IsNullOrWhiteSpace([string]$item.body)) {
+            $records += [pscustomobject]@{
+                actor = [string]$item.author.login
+                body = [string]$item.body
+            }
+        }
+    }
+    $headMarker = "DIRECTOR_EXACT_HEAD=$($script:candidateCommit)"
+    $security = @($records | Where-Object {
+        $_.body.Contains("DIRECTOR_SECURITY_REVIEW=ACCEPT") -and $_.body.Contains($headMarker)
+    } | Select-Object -Last 1)
+    $independent = @($records | Where-Object {
+        $_.body.Contains("DIRECTOR_INDEPENDENT_REVIEW=ACCEPT") -and $_.body.Contains($headMarker)
+    } | Select-Object -Last 1)
+    if ($security.Count -ne 1 -or [string]::IsNullOrWhiteSpace($security[0].actor)) {
+        throw "An attributable exact-head security ACCEPT artifact is required."
+    }
+    if ($independent.Count -ne 1 -or [string]::IsNullOrWhiteSpace($independent[0].actor)) {
+        throw "An attributable exact-head independent-review ACCEPT artifact is required."
+    }
+    if ([string]$security[0].actor -ieq [string]$independent[0].actor) {
+        throw "Security and independent acceptance require distinct reviewers."
+    }
+    if ([string]$security[0].actor -ieq [string]$pull.author.login -or
+        [string]$independent[0].actor -ieq [string]$pull.author.login) {
+        throw "The pull request author cannot self-accept the activation candidate."
+    }
+    $ciDigest = Get-Sha256Text (($checks | ConvertTo-Json -Depth 10 -Compress))
+    $securityDigest = Get-Sha256Text $security[0].body
+    $independentDigest = Get-Sha256Text $independent[0].body
+    return @{
+        candidate_commit = $script:candidateCommit
+        candidate_tree = $script:candidateTree
+        remote_head_commit = [string]$pull.headRefOid
+        ci_conclusion = "SUCCESS"
+        ci_required_check_count = $requiredChecks.Count
+        ci_run_ids = $runIds
+        ci_evidence_digest = $ciDigest
+        security_verdict = "ACCEPT"
+        security_reviewer = [string]$security[0].actor
+        security_reviewed_commit = $script:candidateCommit
+        security_evidence_digest = $securityDigest
+        independent_review_verdict = "ACCEPT"
+        independent_reviewer = [string]$independent[0].actor
+        independent_reviewed_commit = $script:candidateCommit
+        independent_review_evidence_digest = $independentDigest
+    }
 }
 
 function Get-DatabaseBinding {
@@ -215,6 +311,14 @@ if ($Action -eq "Preflight") {
     Write-Host "Primary preflight passed; no service or provider was started."
     return
 }
+if ($Action -eq "Accept") {
+    $facts = Get-GitHubAcceptanceFacts
+    $factsJson = $facts | ConvertTo-Json -Depth 8 -Compress
+    $digest = Get-Sha256Text $factsJson
+    Invoke-Evidence -Command record -Stage ACCEPTED -EvidenceDigest $digest -FactsJson $factsJson
+    Write-Host "Exact-head CI, security, and independent-review acceptance evidence was bound."
+    return
+}
 if ($Action -eq "Health") {
     $health = Wait-Health
     $health.langgraph_primary | ConvertTo-Json -Depth 8
@@ -348,3 +452,4 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]

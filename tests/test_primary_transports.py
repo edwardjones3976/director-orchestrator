@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
@@ -42,6 +43,7 @@ from director_orchestrator.primary_transports import (
     build_graph_native_packet_adapters,
     provider_lane_external_blockers,
     provider_lane_readiness,
+    read_protected_delegated_token_file,
     discover_local_primary_command_transports,
 )
 
@@ -77,8 +79,12 @@ class _FakeReadinessVerifier:
         self.error = error
         self.calls = []
 
-    def verify(self, token, *, tenant_id, now=None):
-        self.calls.append((token, tenant_id, now))
+    def verify(
+        self, token, *, tenant_id, expected_subject, expected_object_id, now=None
+    ):
+        self.calls.append(
+            (token, tenant_id, expected_subject, expected_object_id, now)
+        )
         if self.error is not None:
             raise self.error
         return self.evidence
@@ -113,6 +119,25 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             allowed_external_effects=(),
             fencing_generation=generation,
         )
+
+    def test_delegated_token_file_checks_acl_before_same_handle_read(self):
+        with TemporaryDirectory() as directory:
+            token_file = Path(directory) / "work-iq.token"
+            token_file.write_text("delegated-token\n", encoding="utf-8")
+            with patch(
+                "director_orchestrator.primary_transports._validate_windows_token_file_acl"
+            ) as acl:
+                self.assertEqual(
+                    "delegated-token",
+                    read_protected_delegated_token_file(str(token_file)),
+                )
+            if os.name == "nt":
+                acl.assert_called_once_with(token_file.resolve())
+                with patch(
+                    "director_orchestrator.primary_transports._validate_windows_token_file_acl",
+                    side_effect=ValueError("broad ACL"),
+                ), self.assertRaisesRegex(ValueError, "broad ACL"):
+                    read_protected_delegated_token_file(str(token_file))
 
     def _work(self, *, objective: str = "Find official public evidence"):
         return {
@@ -462,7 +487,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             transports, observed = discover_local_primary_command_transports(
                 cwd=directory,
                 authenticated={},
-                host_bridge_endpoint="http://host.docker.internal:18765/v1/provider/dispatch",
+                host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
                 host_bridge_secret="b" * 32,
                 host_bridge_writer_owner_token_digest="sha256:" + "c" * 64,
                 host_bridge_challenge=HostBridgeChallengeEvidence(
@@ -577,6 +602,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 authenticated={},
                 microsoft_365_copilot_access_token="delegated-token",
                 microsoft_365_copilot_tenant_id=evidence.tenant_id,
+                microsoft_365_copilot_expected_subject="user-1",
+                microsoft_365_copilot_expected_object_id=(
+                    "22222222-2222-4222-8222-222222222222"
+                ),
                 microsoft_365_copilot_readiness_verifier=verifier,
             )
         self.assertIsInstance(
@@ -588,7 +617,12 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             observed["microsoft-365-copilot"].transport_kind,
         )
         self.assertEqual(
-            [("delegated-token", evidence.tenant_id, None)], verifier.calls
+            [
+                (
+                    "delegated-token", evidence.tenant_id, "user-1",
+                    "22222222-2222-4222-8222-222222222222", None,
+                )
+            ], verifier.calls
         )
 
         invalid = _FakeReadinessVerifier(error=ValueError("invalid token"))
@@ -598,6 +632,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 authenticated={},
                 microsoft_365_copilot_access_token="delegated-token",
                 microsoft_365_copilot_tenant_id=evidence.tenant_id,
+                microsoft_365_copilot_expected_subject="user-1",
+                microsoft_365_copilot_expected_object_id=(
+                    "22222222-2222-4222-8222-222222222222"
+                ),
                 microsoft_365_copilot_readiness_verifier=invalid,
             )
         self.assertNotIn("microsoft-365-copilot", failed_transports)
@@ -617,6 +655,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             "nbf": now - 1,
             "tid": tenant,
             "sub": "user-1",
+            "oid": "22222222-2222-4222-8222-222222222222",
             "scp": "api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask",
         }
         token = jwt.encode(claims, key, algorithm="RS256", headers={"kid": "key-1"})
@@ -633,8 +672,13 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         factory.return_value.__enter__.return_value = client
         verifier = MicrosoftOIDCDelegatedTokenVerifier(client_factory=factory)
 
-        self.assertEqual("user-1", verifier.verify(token, tenant_id=tenant)["sub"])
-        self.assertEqual("user-1", verifier.verify(token, tenant_id=tenant)["sub"])
+        verify_args = {
+            "tenant_id": tenant,
+            "expected_subject": "user-1",
+            "expected_object_id": "22222222-2222-4222-8222-222222222222",
+        }
+        self.assertEqual("user-1", verifier.verify(token, **verify_args)["sub"])
+        self.assertEqual("user-1", verifier.verify(token, **verify_args)["sub"])
         self.assertEqual(2, client.get.call_count)
 
         wrong_scope = jwt.encode(
@@ -644,7 +688,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             headers={"kid": "key-1"},
         )
         with self.assertRaisesRegex(ValueError, "lacks exact delegated scope"):
-            verifier.verify(wrong_scope, tenant_id=tenant)
+            verifier.verify(wrong_scope, **verify_args)
 
         wrong_audience = jwt.encode(
             {**claims, "aud": "api://other"},
@@ -653,7 +697,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             headers={"kid": "key-1"},
         )
         with self.assertRaises(jwt.InvalidAudienceError):
-            verifier.verify(wrong_audience, tenant_id=tenant)
+            verifier.verify(wrong_audience, **verify_args)
 
         wrong_tenant = jwt.encode(
             {**claims, "tid": "22222222-2222-4222-8222-222222222222"},
@@ -662,7 +706,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             headers={"kid": "key-1"},
         )
         with self.assertRaisesRegex(ValueError, "tenant is not exact"):
-            verifier.verify(wrong_tenant, tenant_id=tenant)
+            verifier.verify(wrong_tenant, **verify_args)
 
         not_yet_valid = jwt.encode(
             {**claims, "nbf": now + 600},
@@ -671,14 +715,25 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             headers={"kid": "key-1"},
         )
         with self.assertRaises(jwt.ImmatureSignatureError):
-            verifier.verify(not_yet_valid, tenant_id=tenant)
+            verifier.verify(not_yet_valid, **verify_args)
 
         attacker = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         forged = jwt.encode(
             claims, attacker, algorithm="RS256", headers={"kid": "key-1"}
         )
         with self.assertRaises(jwt.InvalidSignatureError):
-            verifier.verify(forged, tenant_id=tenant)
+            verifier.verify(forged, **verify_args)
+
+        with self.assertRaisesRegex(ValueError, "subject is not authorized"):
+            verifier.verify(token, **{**verify_args, "expected_subject": "user-2"})
+        with self.assertRaisesRegex(ValueError, "object id is not authorized"):
+            verifier.verify(
+                token,
+                **{
+                    **verify_args,
+                    "expected_object_id": "33333333-3333-4333-8333-333333333333",
+                },
+            )
 
     def test_work_iq_readiness_is_bound_to_authenticated_prompt_free_response(self):
         evidence = work_iq_evidence()
@@ -690,6 +745,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             "nbf": int(time.time()) - 1,
             "tid": evidence.tenant_id,
             "sub": "user-1",
+            "oid": "22222222-2222-4222-8222-222222222222",
             "scp": evidence.delegated_scope,
         }
         response = Mock()
@@ -717,7 +773,9 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         )
 
         observed = verifier.verify(
-            "signed-token", tenant_id=evidence.tenant_id
+            "signed-token", tenant_id=evidence.tenant_id,
+            expected_subject="user-1",
+            expected_object_id="22222222-2222-4222-8222-222222222222",
         )
 
         client.post.assert_called_once_with(
@@ -744,6 +802,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             "nbf": int(time.time()) - 1,
             "tid": evidence.tenant_id,
             "sub": "user-1",
+            "oid": "22222222-2222-4222-8222-222222222222",
             "scp": evidence.delegated_scope,
         }
         response = Mock()
@@ -764,7 +823,11 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             challenge_factory=lambda: "22222222-2222-4222-8222-222222222222",
         )
         with self.assertRaises(httpx.HTTPStatusError):
-            verifier.verify("signed-token", tenant_id=evidence.tenant_id)
+            verifier.verify(
+                "signed-token", tenant_id=evidence.tenant_id,
+                expected_subject="user-1",
+                expected_object_id="22222222-2222-4222-8222-222222222222",
+            )
 
     def test_microsoft_365_copilot_uses_one_exact_production_work_iq_turn(self):
         evidence = work_iq_evidence()
@@ -823,3 +886,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
