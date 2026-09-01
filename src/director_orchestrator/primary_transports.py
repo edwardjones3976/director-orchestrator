@@ -572,12 +572,19 @@ def discover_local_primary_command_transports(
     firecrawl_max_results: int = 10,
     host_bridge_endpoint: str = "",
     host_bridge_secret: str = "",
+    host_bridge_writer_owner_token_digest: str = "",
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
     """Discover documented noninteractive CLIs; never launch or authenticate them."""
 
     root = Path(cwd).resolve(strict=True)
-    if bool(host_bridge_endpoint) != bool(host_bridge_secret):
-        raise ValueError("host provider bridge endpoint and secret must be configured together")
+    if len(
+        {
+            bool(host_bridge_endpoint),
+            bool(host_bridge_secret),
+            bool(host_bridge_writer_owner_token_digest),
+        }
+    ) != 1:
+        raise ValueError("host provider bridge endpoint, secret, and writer binding must be configured together")
     cursor_agent = _which(("cursor-agent.cmd", "cursor-agent.exe", "cursor-agent"))
     pplx = _which(("pplx.cmd", "pplx.exe", "pplx"))
     firecrawl = _which(("firecrawl.cmd", "firecrawl.exe", "firecrawl"))
@@ -647,7 +654,10 @@ def discover_local_primary_command_transports(
     if host_bridge_endpoint and host_bridge_secret:
         for provider_id in sorted(SUPPORTED_HOST_LANES):
             transports[provider_id] = HostBridgePacketTransport(
-                provider_id, host_bridge_endpoint, host_bridge_secret
+                provider_id,
+                host_bridge_endpoint,
+                host_bridge_secret,
+                writer_owner_token_digest=host_bridge_writer_owner_token_digest,
             )
             capabilities[provider_id] = PrimaryProviderCapability(
                 provider_id=provider_id,

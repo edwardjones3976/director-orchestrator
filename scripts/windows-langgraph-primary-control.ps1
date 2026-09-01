@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:02 UTC | BEGIN]]
 [CmdletBinding()]
 param(
@@ -59,6 +60,45 @@ function Wait-Health {
         catch { Start-Sleep -Seconds 3 }
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
     throw "Director health did not become available before the deadline."
+}
+
+function Get-Sha256Text {
+    param([string]$Text)
+    return [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Text))
+    ).ToLowerInvariant()
+}
+
+function Get-DatabaseIdentity {
+    $output = @(Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
+        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import _load_dependencies,_parse_connection_target,_storage_identity; s=Settings(); d=_load_dependencies(); p=_parse_connection_target(s.langgraph_primary_postgres_dsn, conninfo_to_dict=d.conninfo_to_dict, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); print(_storage_identity(p, schema=s.langgraph_primary_postgres_schema))")
+    $identity = [string](@($output | Where-Object { $_ -match '^postgres:sha256:[0-9a-f]{64}$' }) | Select-Object -Last 1)
+    if ([string]::IsNullOrWhiteSpace($identity)) { throw "Primary database identity could not be derived." }
+    return $identity
+}
+
+function Invoke-Evidence {
+    param(
+        [ValidateSet("record", "require-ready")][string]$Command,
+        [string]$Stage,
+        [string]$EvidenceDigest,
+        [string]$FactsJson = "{}"
+    )
+    $arguments = @(
+        "-m", "director_orchestrator.primary_activation_evidence", $Command,
+        "--artifact", "/data/langgraph-primary-activation-evidence.json",
+        "--candidate-commit", $script:candidateCommit,
+        "--candidate-tree", $script:candidateTree,
+        "--profile-id", ([string]$script:values["APP_ENV"]),
+        "--compose-project", $script:ComposeProject,
+        "--database-identity", $script:databaseIdentity,
+        "--postgres-schema", ([string]$script:values["LANGGRAPH_PRIMARY_POSTGRES_SCHEMA"]),
+        "--checkpoint-namespace", ([string]$script:values["LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE"])
+    )
+    if ($Command -eq "record") {
+        $arguments += @("--stage", $Stage, "--evidence-digest", $EvidenceDigest, "--facts-json", $FactsJson)
+    }
+    Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator @arguments
 }
 
 $environmentPath = (Resolve-Path -LiteralPath $EnvironmentFile).Path
@@ -124,8 +164,17 @@ $snapshot = [string]$values["REPOSITORY_SNAPSHOT_HOST_PATH"]
 $env:DIRECTOR_ENV_FILE = $environmentPath
 $env:DIRECTOR_COMPOSE_PROJECT_NAME = $ComposeProject
 Invoke-Compose config --quiet
+$candidateCommit = [string](@(& git rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
+$candidateTree = [string](@(& git rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)
+if ($candidateCommit -notmatch '^[0-9a-f]{40}$' -or $candidateTree -notmatch '^[0-9a-f]{40}$') {
+    throw "The Director candidate commit/tree cannot be frozen."
+}
+Invoke-Compose build orchestrator
+$databaseIdentity = Get-DatabaseIdentity
 
 if ($Action -eq "Preflight") {
+    $digest = Get-Sha256Text "$candidateCommit|$candidateTree|$ComposeProject|$databaseIdentity|preflight"
+    Invoke-Evidence -Command record -Stage PREFLIGHT -EvidenceDigest $digest -FactsJson '{"compose_config_valid":true,"snapshot_exact":true}'
     Write-Host "Primary preflight passed; no service or provider was started."
     return
 }
@@ -140,6 +189,8 @@ if ($Action -eq "Migrate") {
     Invoke-Compose build orchestrator
     Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
         "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); print('schema_current=true'); h.close()"
+    $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|migrated"
+    Invoke-Evidence -Command record -Stage MIGRATED -EvidenceDigest $digest -FactsJson '{"schema_current":true}'
     Write-Host "Primary Postgres schema migration/verification completed."
     return
 }
@@ -161,6 +212,9 @@ if ($Action -eq "Backup") {
         if ($LASTEXITCODE -ne 0) { throw "Postgres backup export failed." }
     }
     finally { & docker exec $container rm -f -- $temporary | Out-Null }
+    $backupDigest = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+    $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$backupDigest"
+    Invoke-Evidence -Command record -Stage BACKED_UP -EvidenceDigest $digest -FactsJson ("{`"backup_digest`":`"sha256:$backupDigest`"}")
     Write-Host "Primary Postgres backup completed without displaying credentials."
     return
 }
@@ -179,19 +233,30 @@ if ($Action -eq "RestoreDrill") {
         if ($LASTEXITCODE -ne 0) { throw "Restore-drill database creation failed." }
         & docker exec $container pg_restore -U director_primary -d $database --exit-on-error $temporary
         if ($LASTEXITCODE -ne 0) { throw "Restore drill failed." }
-        & docker exec $container psql -U director_primary -d $database -v ON_ERROR_STOP=1 -Atc `
-            "SELECT count(*) FROM information_schema.tables WHERE table_schema = '$($values['LANGGRAPH_PRIMARY_POSTGRES_SCHEMA'])';"
-        if ($LASTEXITCODE -ne 0) { throw "Restored schema verification failed." }
+        $schema = [string]$values['LANGGRAPH_PRIMARY_POSTGRES_SCHEMA']
+        $proof = [string](@(& docker exec $container psql -U director_primary -d $database -v ON_ERROR_STOP=1 -Atc `
+            "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('director_primary_control_plane','director_primary_intake_authority','director_primary_task_projection','director_primary_task_writer','director_primary_claim','director_primary_effect_reservation','director_primary_reconciliation_event','director_primary_terminal_evidence','director_provider_activation_evidence','director_provider_activation_authorization','director_primary_parallel_batch','director_primary_parallel_assignment')) || '|' || (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('checkpoints','checkpoint_blobs','checkpoint_writes','checkpoint_migrations')) || '|' || (SELECT count(*) FROM $schema.director_primary_control_plane);" ) | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or $proof -notmatch '^(\d+)\|(\d+)\|(\d+)$') { throw "Restored schema verification failed." }
+        $requiredTableCount = [int]$matches[1]
+        $checkpointTableCount = [int]$matches[2]
+        $schemaEvidenceRows = [int]$matches[3]
+        if ($requiredTableCount -ne 12 -or $checkpointTableCount -ne 4 -or $schemaEvidenceRows -lt 1) {
+            throw "Restore drill lacks required control-plane/checkpoint tables or schema evidence."
+        }
     }
     finally {
         & docker exec $container dropdb -U director_primary --if-exists $database | Out-Null
         & docker exec $container rm -f -- $temporary | Out-Null
     }
+    $facts = "{`"required_control_plane_tables`":$requiredTableCount,`"checkpoint_tables`":$checkpointTableCount,`"schema_evidence_rows`":$schemaEvidenceRows}"
+    $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$facts|restore"
+    Invoke-Evidence -Command record -Stage RESTORE_PROVED -EvidenceDigest $digest -FactsJson $facts
     Write-Host "Primary Postgres restore drill completed in a disposable database."
     return
 }
 
 if ($Action -eq "Activate") {
+    Invoke-Evidence -Command require-ready
     Invoke-Compose stop slackbot
     Write-Switches @{
         ALLOW_PAID_RUNS = "true"
@@ -216,6 +281,8 @@ if ($Action -eq "Activate") {
         [int]$primary.ambiguous_effect_count -ne 0) {
         throw "Primary activation ownership/provider/reconciliation proof failed; Slack remains stopped."
     }
+    $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$($primary.intake_fencing_generation)|activated"
+    Invoke-Evidence -Command record -Stage ACTIVATED -EvidenceDigest $digest -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
     Invoke-Compose up -d slackbot
     Write-Host "Primary activation health passed and Slack intake was reopened."
     return
@@ -231,7 +298,7 @@ if ($Action -eq "Rollback") {
     }
     Start-Sleep -Seconds 65
     Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
-        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); assert m.ambiguous_effect_count == 0, 'ambiguous effects block rollback'; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); print('legacy_new_intake_disabled='+str(n.legacy_new_intake_disabled).lower()); h.close()"
+        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); q=h.claim_store.primary_quiescence_metrics(); assert m.ambiguous_effect_count == 0, 'ambiguous effects block rollback'; assert q.rollback_safe, 'active provider dispatches, assignments, writer claims, reconciliation, or claims block rollback'; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); print('legacy_new_intake_disabled='+str(n.legacy_new_intake_disabled).lower()); h.close()"
     Write-Switches @{ LANGGRAPH_PRIMARY_ENABLED = "false" }
     Invoke-Compose up -d --build --force-recreate orchestrator
     $null = Wait-Health
@@ -239,3 +306,4 @@ if ($Action -eq "Rollback") {
     Write-Host "Fenced rollback returned new intake to legacy; primary evidence was preserved."
 }
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:02 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]

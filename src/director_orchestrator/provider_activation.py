@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:46 UTC | BEGIN]]
 """Observed, fail-closed provider activation evidence.
 
@@ -99,6 +100,26 @@ class ProviderActivationEvidence:
             raise ValueError("expires_at must be later than observed_at")
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderActivationAuthorization:
+    proof_version: str
+    actor_id: str
+    nonce_digest: str
+    command_digest: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.proof_version, str) or not _IDENTIFIER.fullmatch(
+            self.proof_version
+        ):
+            raise ValueError("proof_version must be a bounded identifier")
+        if not isinstance(self.actor_id, str) or not _IDENTIFIER.fullmatch(self.actor_id):
+            raise ValueError("actor_id must be a bounded identifier")
+        for name in ("nonce_digest", "command_digest"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not _SHA256.fullmatch(value):
+                raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+
+
 class ProviderActivationStore(Protocol):
     """Persistence boundary; implementations must append atomically by revision."""
 
@@ -115,6 +136,15 @@ class ProviderActivationStore(Protocol):
         expected_revision: int,
     ) -> bool:
         """Append only if the stored latest revision equals expected_revision."""
+
+    def append_authorized(
+        self,
+        evidence: ProviderActivationEvidence,
+        *,
+        expected_revision: int,
+        authorization: ProviderActivationAuthorization,
+    ) -> bool:
+        """Atomically claim the signed nonce and append the exact revision."""
 
 
 class ProviderActivationError(RuntimeError):
@@ -236,6 +266,88 @@ class ProviderActivationRegistry:
             raise ProviderActivationError("activation evidence store revision conflict")
         return evidence
 
+    def record_authorized(
+        self,
+        *,
+        surface: ProviderActivationSurface,
+        stage: ProviderActivationStage,
+        expected_revision: int,
+        evidence_id: str,
+        evidence_digest: str,
+        observed_at: datetime,
+        expires_at: datetime,
+        now: datetime,
+        authorization: ProviderActivationAuthorization,
+    ) -> ProviderActivationEvidence:
+        """Advance under a signed command with an atomic durable nonce claim."""
+
+        _require_utc(now, "now")
+        if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
+            raise ValueError("expected_revision must be a non-negative integer")
+        if expected_revision < 0:
+            raise ValueError("expected_revision must be a non-negative integer")
+        if not isinstance(authorization, ProviderActivationAuthorization):
+            raise ValueError("signed provider activation authorization is required")
+        if not isinstance(surface, ProviderActivationSurface):
+            raise ValueError("surface must be a supported activation surface")
+        if not isinstance(stage, ProviderActivationStage):
+            raise ValueError("stage must be a supported activation stage")
+        if expected_revision >= len(ACTIVATION_STAGES):
+            raise ProviderActivationError("LIVE_OK is terminal for this binding version")
+        expected_stage = ACTIVATION_STAGES[expected_revision]
+        if stage != expected_stage:
+            raise ProviderActivationError(
+                f"activation evidence must advance exactly to {expected_stage.value}"
+            )
+        records = self._validated_records(surface)
+        if len(records) not in (expected_revision, expected_revision + 1):
+            raise ProviderActivationError("activation evidence store revision conflict")
+        prior = records[expected_revision - 1] if expected_revision else None
+        if observed_at > now:
+            raise ProviderActivationError("future-dated activation evidence is invalid")
+        if expires_at <= now:
+            raise ProviderActivationError("expired activation evidence cannot be recorded")
+        if prior is not None:
+            if prior.expires_at <= now:
+                raise ProviderActivationError(
+                    "the prior activation stage expired; use a new binding version"
+                )
+            if observed_at < prior.observed_at:
+                raise ProviderActivationError("activation observations must be monotonic")
+        evidence = ProviderActivationEvidence(
+            schema_version=ACTIVATION_EVIDENCE_VERSION,
+            binding=self.binding,
+            surface=surface,
+            stage=stage,
+            revision=expected_revision + 1,
+            evidence_id=evidence_id,
+            evidence_digest=evidence_digest,
+            observed_at=observed_at,
+            expires_at=expires_at,
+        )
+        if records and records[-1] != evidence:
+            raise ProviderActivationError(
+                "a reached stage cannot be replaced within the same binding version"
+            )
+        append_authorized = getattr(self._store, "append_authorized", None)
+        if not callable(append_authorized):
+            raise ProviderActivationError(
+                "activation store lacks durable signed replay protection"
+            )
+        if not append_authorized(
+            evidence,
+            expected_revision=expected_revision,
+            authorization=authorization,
+        ):
+            concurrent = self._validated_records(surface)
+            if (
+                len(concurrent) == expected_revision + 1
+                and concurrent[-1] == evidence
+            ):
+                return concurrent[-1]
+            raise ProviderActivationError("activation evidence store revision conflict")
+        return evidence
+
     def readiness(self, *, now: datetime) -> ProviderActivationReadiness:
         _require_utc(now, "now")
         return ProviderActivationReadiness(
@@ -311,6 +423,7 @@ __all__ = [
     "ACTIVATION_STAGES",
     "ActivationSurfaceReadiness",
     "ProviderActivationBinding",
+    "ProviderActivationAuthorization",
     "ProviderActivationError",
     "ProviderActivationEvidence",
     "ProviderActivationReadiness",
@@ -320,3 +433,4 @@ __all__ = [
     "ProviderActivationSurface",
 ]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]

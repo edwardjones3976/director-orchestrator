@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
@@ -113,7 +114,11 @@ from .primary_commands import (
     RecoveryRequest,
     verify_primary_ingress_proof,
 )
-from .primary_activation_commands import ProviderActivationAdvanceRequest
+from .primary_activation_commands import (
+    ProviderActivationAdvanceProofError,
+    ProviderActivationAdvanceRequest,
+    verify_provider_activation_advance_proof,
+)
 from .workload_policy import EnforcementMode
 
 
@@ -776,7 +781,16 @@ def _require_primary_owner_actor(actor_id: str) -> None:
 def primary_advance_provider_activation(
     provider_id: str, request: ProviderActivationAdvanceRequest
 ) -> dict[str, bool]:
-    _require_primary_owner_actor(request.actor_id)
+    try:
+        authorization = verify_provider_activation_advance_proof(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            provider_id,
+            request,
+        )
+    except ProviderActivationAdvanceProofError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    _require_primary_owner_actor(authorization.actor_id)
     if primary_default_activation is None:
         raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
     activation = primary_default_activation.provider_activation
@@ -785,14 +799,18 @@ def primary_advance_provider_activation(
             status_code=409, detail="Provider activation bindings are unavailable"
         )
     try:
-        activation.record(
+        activation.record_authorized(
             provider_id=provider_id,
+            evidence_schema_version=request.evidence_schema_version,
+            binding_version=request.binding_version,
             surface=request.surface,
             stage=request.stage,
+            expected_revision=request.expected_revision,
             evidence_id=request.evidence_id,
             evidence_digest=request.evidence_digest,
             observed_at=request.observed_at,
             expires_at=request.expires_at,
+            authorization=authorization,
         )
         return activation.health()
     except (TypeError, ValueError, RuntimeError) as exc:
@@ -1339,3 +1357,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]

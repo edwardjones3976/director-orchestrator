@@ -26,7 +26,9 @@ $values = Read-DotEnvNames -Path $environmentPath
 $required = @(
     "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET",
     "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON",
-    "DIRECTOR_HOST_PROVIDER_BRIDGE_STORE"
+    "DIRECTOR_HOST_PROVIDER_BRIDGE_STORE",
+    "DIRECTOR_HOST_PROVIDER_POSTGRES_DSN",
+    "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA"
 )
 $missing = @($required | Where-Object {
     -not $values.ContainsKey($_) -or [string]::IsNullOrWhiteSpace([string]$values[$_]) -or

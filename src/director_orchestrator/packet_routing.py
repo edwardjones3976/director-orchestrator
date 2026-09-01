@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
@@ -147,8 +148,47 @@ class DirectorPacketTaskRouter:
         # the complete packet below so the snapshot cannot bypass the contract.
         return snapshot
 
+    @staticmethod
+    def _packet_authority_assignment(
+        record: TaskRecord, assignment: Assignment
+    ) -> Assignment:
+        """Return Director-internal repository authority for one packet."""
+
+        if assignment.repository:
+            return assignment
+        plan = record.plan
+        prestage = None if plan is None else plan.prestage
+        if (
+            assignment.agent.value != "perplexity"
+            or not assignment.public_research_query
+            or not assignment.requires_approval
+            or prestage is None
+            or not prestage.repository
+            or prestage.branch != assignment.starting_ref
+        ):
+            raise PacketRoutingError(
+                "repository-free packet lacks canonical pre-stage authority"
+            )
+        return assignment.model_copy(update={"repository": prestage.repository})
+
+    def planned_work_packet(
+        self, record: TaskRecord, assignment: Assignment
+    ) -> Mapping[str, Any]:
+        """Bind an exact approval packet before owner approval is recorded."""
+
+        return self._work_packet(record, assignment, approval_pending=True)
+
     def work_packet(
         self, record: TaskRecord, assignment: Assignment
+    ) -> Mapping[str, Any]:
+        return self._work_packet(record, assignment, approval_pending=False)
+
+    def _work_packet(
+        self,
+        record: TaskRecord,
+        assignment: Assignment,
+        *,
+        approval_pending: bool,
     ) -> Mapping[str, Any]:
         plan = record.plan
         if plan is None:
@@ -159,16 +199,19 @@ class DirectorPacketTaskRouter:
         )
         if planned is None or planned != assignment:
             raise PacketRoutingError("assignment is not bound to the current Director plan")
-        if not assignment.repository:
-            raise PacketRoutingError("packet routing requires an assigned repository")
-        if assignment.requires_approval and not assignment_is_approved(
-            record, assignment
+        authority_assignment = self._packet_authority_assignment(record, assignment)
+        if (
+            assignment.requires_approval
+            and not approval_pending
+            and not assignment_is_approved(
+                record, assignment
+            )
         ):
             raise PacketRoutingError(
                 "assignment-specific owner approval is absent or stale"
             )
 
-        snapshot = self._snapshot(record, assignment)
+        snapshot = self._snapshot(record, authority_assignment)
         exact_commits = {item.get("commit_sha") for item in snapshot}
         if len(exact_commits) != 1:
             raise PacketRoutingError(
@@ -190,7 +233,11 @@ class DirectorPacketTaskRouter:
             else []
         )
         owned_paths, prohibited_paths = self._path_scope(record)
-        allowed_tools = ["READ_REPOSITORY", "RUN_TESTS"]
+        allowed_tools = (
+            ["PUBLIC_WEB_SEARCH"]
+            if assignment.agent.value == "perplexity"
+            else ["READ_REPOSITORY", "RUN_TESTS"]
+        )
         allowed_external_effects: list[str] = []
         if assignment.allow_draft_pr:
             allowed_tools.extend(["WRITE_ISOLATED_BRANCH", "OPEN_DRAFT_PULL_REQUEST"])
@@ -229,14 +276,16 @@ class DirectorPacketTaskRouter:
             "task_id": record.task_id,
             "assignment_id": assignment_id,
             "project": plan.project,
-            "repository": assignment.repository,
+            # Repository authority remains Director-internal for public search.
+            # The provider-specific transport emits only objective/max-results.
+            "repository": authority_assignment.repository,
             # Provider work starts from the authenticated immutable snapshot,
             # never from the mutable branch name that was used to resolve it.
             "starting_ref": exact_starting_ref,
             # Optional in the v1 schema so previously recorded v1 documents remain
             # readable. Production routing always emits it, and repository-effect
             # readback fails closed when this independent ref authority is absent.
-            "authority_base_ref": self._authority_base_ref(assignment),
+            "authority_base_ref": self._authority_base_ref(authority_assignment),
             "objective": objective,
             "non_goals": list(self._PROHIBITED_ACTIONS),
             "authority_snapshot": snapshot,
@@ -313,12 +362,13 @@ class DirectorPacketTaskRouter:
             raise PacketRoutingError("assignment is not bound to the current Director plan")
         if assignment.requires_approval and not assignment_is_approved(record, assignment):
             raise PacketRoutingError("assignment-specific owner approval is absent or stale")
+        authority_assignment = self._packet_authority_assignment(record, assignment)
         expected = {
             "task_id": record.task_id,
             "assignment_id": self._assignment_id(record, assignment),
             "idempotency_key": self.idempotency_key(record, assignment),
-            "repository": assignment.repository,
-            "authority_base_ref": self._authority_base_ref(assignment),
+            "repository": authority_assignment.repository,
+            "authority_base_ref": self._authority_base_ref(authority_assignment),
         }
         for field, value in expected.items():
             if validated.get(field) != value:
@@ -370,3 +420,4 @@ class DirectorPacketTaskRouter:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]

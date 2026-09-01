@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | BEGIN]]
 """Fail-closed activation preflight for primary provider dispatch."""
 
@@ -7,6 +8,8 @@ from datetime import datetime, timezone
 from typing import Callable, Mapping
 
 from .provider_activation import (
+    ACTIVATION_EVIDENCE_VERSION,
+    ProviderActivationAuthorization,
     ProviderActivationBinding,
     ProviderActivationEvidence,
     ProviderActivationRegistry,
@@ -80,6 +83,42 @@ class PrimaryProviderActivationService:
             now=self._clock(),
         )
 
+    def record_authorized(
+        self,
+        *,
+        provider_id: str,
+        evidence_schema_version: str,
+        binding_version: str,
+        surface: ProviderActivationSurface,
+        stage: ProviderActivationStage,
+        expected_revision: int,
+        evidence_id: str,
+        evidence_digest: str,
+        observed_at: datetime,
+        expires_at: datetime,
+        authorization: ProviderActivationAuthorization,
+    ) -> ProviderActivationEvidence:
+        """Advance only under exact binding/version and durable signed authority."""
+
+        registry = self._registries.get(provider_id)
+        if registry is None:
+            raise ValueError("provider is not required by this activation profile")
+        if evidence_schema_version != ACTIVATION_EVIDENCE_VERSION:
+            raise ValueError("provider activation evidence schema version mismatch")
+        if binding_version != registry.binding.binding_version:
+            raise ValueError("provider activation binding version mismatch")
+        return registry.record_authorized(
+            surface=surface,
+            stage=stage,
+            expected_revision=expected_revision,
+            evidence_id=evidence_id,
+            evidence_digest=evidence_digest,
+            observed_at=observed_at,
+            expires_at=expires_at,
+            now=self._clock(),
+            authorization=authorization,
+        )
+
     def health(self) -> dict[str, bool]:
         """Return aggregate booleans only; never bindings, versions, or digests."""
 
@@ -109,3 +148,4 @@ class PrimaryProviderActivationService:
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]

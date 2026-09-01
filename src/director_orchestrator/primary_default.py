@@ -45,7 +45,6 @@ from .langgraph_primary import (
     PrimaryRequest,
     ProviderDisposition,
     ProviderSubgraphResult,
-    REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED,
     ScheduleResult,
 )
 from .models import IntakeAuthentication, ProviderName, SlackIntake, TaskRecord, TaskStatus
@@ -188,6 +187,13 @@ def build_automatic_primary_live_dependencies(
         perplexity_max_results=settings.perplexity_max_results,
         host_bridge_endpoint=settings.langgraph_primary_host_bridge_endpoint,
         host_bridge_secret=bridge_secret,
+        host_bridge_writer_owner_token_digest=(
+            "sha256:" + hashlib.sha256(
+                settings.langgraph_primary_owner_token.encode("utf-8")
+            ).hexdigest()
+            if bridge_secret
+            else ""
+        ),
     )
     adapters = build_graph_native_packet_adapters(
         transports=transports,
@@ -471,21 +477,8 @@ class DefaultDryRunServices:
             raise RuntimeError("Default primary plan has no packet assignment")
         assignment = min(record.plan.assignments, key=lambda item: item.sequence)
         plan_digest = _digest(record.plan.model_dump(mode="json"))
-        if assignment.repository is None:
-            record.status = TaskStatus.BLOCKED
-            record.message = (
-                "LangGraph disabled this repository-free primary assignment: "
-                "the v1 work-packet contract requires repository authority. No "
-                "provider or external effect was called."
-            )
-            return PlanResult(
-                plan_digest=plan_digest,
-                work_packet_digest=None,
-                passed=False,
-                reason_code=REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED,
-            )
         work_packet = validate_packet(
-            "work", self._packet_router.work_packet(record, assignment)
+            "work", self._packet_router.planned_work_packet(record, assignment)
         )
         record.status = TaskStatus.OWNER_DECISION_REQUIRED
         record.message = (

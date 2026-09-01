@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -23,6 +24,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
+from urllib.parse import urlsplit
 
 from .langgraph_runtime import ProviderAdapterContext
 
@@ -36,6 +38,16 @@ _TOKEN = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_PACKET_BYTES = 1_048_576
 _MAX_RESULT_BYTES = 1_048_576
+_BRIDGE_PATH = "/v1/provider/dispatch"
+_SAFE_OS_ENV = frozenset(
+    {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC", "LOCALAPPDATA", "APPDATA", "USERPROFILE"}
+)
+_LANE_AUTH_ENV = {
+    "claude": frozenset({"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}),
+    "grok": frozenset({"XAI_API_KEY"}),
+    "antigravity": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
+    "github-copilot": frozenset({"GH_TOKEN", "GITHUB_TOKEN"}),
+}
 
 
 class HostProviderBridgeError(RuntimeError):
@@ -66,6 +78,7 @@ def _signature_payload(
     idempotency_digest: str,
     writer_generation: int,
     packet_digest: str,
+    writer_owner_token_digest: str,
 ) -> bytes:
     return "\n".join(
         (
@@ -78,6 +91,7 @@ def _signature_payload(
             idempotency_digest,
             str(writer_generation),
             packet_digest,
+            writer_owner_token_digest,
         )
     ).encode("utf-8")
 
@@ -111,6 +125,7 @@ class BridgeRequest:
     idempotency_digest: str
     writer_generation: int
     packet_digest: str
+    writer_owner_token_digest: str
     timestamp: int
     nonce: str
     signature: str
@@ -130,6 +145,8 @@ class BridgeRequest:
             raise HostProviderBridgeError("work-packet digest mismatch")
         if self.writer_generation < 1:
             raise HostProviderBridgeError("writer generation is not active")
+        if not self.writer_owner_token_digest.startswith("sha256:") or len(self.writer_owner_token_digest) != 71:
+            raise HostProviderBridgeError("writer owner token digest is invalid")
         observed_now = int(time.time()) if now is None else int(now)
         if abs(observed_now - self.timestamp) > max_age_seconds:
             raise HostProviderBridgeError("stale host bridge request")
@@ -143,6 +160,7 @@ class BridgeRequest:
             idempotency_digest=self.idempotency_digest,
             writer_generation=self.writer_generation,
             packet_digest=self.packet_digest,
+            writer_owner_token_digest=self.writer_owner_token_digest,
         )
         if not hmac.compare_digest(expected, self.signature):
             raise HostProviderBridgeError("host bridge authentication failed")
@@ -181,6 +199,7 @@ class BridgeClaimStore:
                     assignment_id TEXT NOT NULL,
                     writer_generation INTEGER NOT NULL,
                     packet_digest TEXT NOT NULL,
+                    writer_owner_token_digest TEXT NOT NULL,
                     state TEXT NOT NULL CHECK(state IN ('INFLIGHT','SUCCEEDED','AMBIGUOUS')),
                     response_json BLOB,
                     updated_at INTEGER NOT NULL
@@ -202,6 +221,7 @@ class BridgeClaimStore:
             request.assignment_id,
             request.writer_generation,
             request.packet_digest,
+            request.writer_owner_token_digest,
         )
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -214,20 +234,20 @@ class BridgeClaimStore:
                 connection.rollback()
                 raise HostProviderBridgeError("bridge nonce replay") from exc
             row = connection.execute(
-                "SELECT provider, task_id, assignment_id, writer_generation, packet_digest, state, response_json "
+                "SELECT provider, task_id, assignment_id, writer_generation, packet_digest, writer_owner_token_digest, state, response_json "
                 "FROM bridge_attempts WHERE idempotency_digest = ?",
                 (request.idempotency_digest,),
             ).fetchone()
             if row is not None:
-                if tuple(row[:5]) != bindings:
+                if tuple(row[:6]) != bindings:
                     connection.rollback()
                     raise HostProviderBridgeError("idempotency key binding conflict")
                 connection.commit()
-                if row[5] == "SUCCEEDED" and isinstance(row[6], bytes):
-                    return row[6]
+                if row[6] == "SUCCEEDED" and isinstance(row[7], bytes):
+                    return row[7]
                 raise HostProviderBridgeAmbiguous("host provider attempt is not safely replayable")
             connection.execute(
-                "INSERT INTO bridge_attempts VALUES (?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
+                "INSERT INTO bridge_attempts VALUES (?, ?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
                 (request.idempotency_digest, *bindings, int(time.time())),
             )
             connection.commit()
@@ -254,6 +274,7 @@ class WindowsHostProviderExecutor:
         *,
         cwd: str | Path,
         timeout_seconds: int = 900,
+        writer_fence_verifier: object | None = None,
     ) -> None:
         self.cwd = Path(cwd).resolve(strict=True)
         self.timeout_seconds = int(timeout_seconds)
@@ -270,11 +291,21 @@ class WindowsHostProviderExecutor:
                 raise ValueError("bridge commands must be explicit argv arrays")
             normalized[provider] = argv
         self.commands = normalized
+        self.writer_fence_verifier = writer_fence_verifier
 
     def execute(self, request: BridgeRequest) -> bytes:
         command = self.commands.get(request.provider)
         if command is None:
             raise HostProviderBridgeError("host provider command is not configured")
+        verifier = self.writer_fence_verifier
+        if verifier is None or not callable(getattr(verifier, "verify", None)):
+            raise HostProviderBridgeError("current Postgres writer verification is unavailable")
+        verifier.verify(request)
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if name.upper() in _SAFE_OS_ENV or name in _LANE_AUTH_ENV[request.provider]
+        }
         try:
             completed = subprocess.run(
                 command,
@@ -285,6 +316,7 @@ class WindowsHostProviderExecutor:
                 shell=False,
                 check=False,
                 timeout=self.timeout_seconds,
+                env=environment,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise HostProviderBridgeAmbiguous("host provider outcome is ambiguous") from exc
@@ -301,19 +333,82 @@ class WindowsHostProviderExecutor:
         return completed.stdout
 
 
+class PostgresHostWriterFenceVerifier:
+    """Read the authoritative writer row immediately before Windows CLI I/O."""
+
+    def __init__(self, dsn: str, *, schema: str) -> None:
+        if not dsn or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", schema):
+            raise ValueError("host bridge Postgres writer verifier is misconfigured")
+        self.dsn = dsn
+        self.schema = schema
+
+    def verify(self, request: BridgeRequest) -> None:
+        try:
+            import psycopg
+
+            with psycopg.connect(self.dsn, connect_timeout=5) as connection:
+                row = connection.execute(
+                    f"SELECT engine_owner, owner_token, fencing_generation, "
+                    f"lease_expires_at > now() AS lease_live "
+                    f"FROM {self.schema}.director_primary_task_writer WHERE task_id = %s",
+                    (request.task_id,),
+                ).fetchone()
+        except Exception as exc:
+            raise HostProviderBridgeError("current Postgres writer verification failed") from exc
+        if row is None:
+            raise HostProviderBridgeError("current Postgres writer is unavailable")
+        token_digest = "sha256:" + hashlib.sha256(str(row[1]).encode("utf-8")).hexdigest()
+        if (
+            str(row[0]) != "langgraph"
+            or not hmac.compare_digest(token_digest, request.writer_owner_token_digest)
+            or int(row[2]) != request.writer_generation
+            or row[3] is not True
+        ):
+            raise HostProviderBridgeError("current Postgres writer fence does not match")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
+
+
 class HostBridgePacketTransport:
     """Linux-side one-request client with signed packet and writer bindings."""
 
-    def __init__(self, provider: str, endpoint: str, secret: str) -> None:
+    def __init__(
+        self,
+        provider: str,
+        endpoint: str,
+        secret: str,
+        *,
+        writer_owner_token_digest: str,
+    ) -> None:
         if provider in UNSUPPORTED_HOST_LANES or provider not in SUPPORTED_HOST_LANES:
             raise ValueError("provider is not supported by the Windows host bridge")
-        if not endpoint.startswith("http://host.docker.internal:"):
-            raise ValueError("host bridge endpoint must use host.docker.internal")
+        parsed = urlsplit(endpoint)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("host bridge endpoint port is invalid") from exc
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"host.docker.internal", "localhost", "127.0.0.1", "::1"}
+            or port is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path != _BRIDGE_PATH
+        ):
+            raise ValueError("host bridge endpoint is not an exact local dispatch URL")
         if len(secret) < 32:
             raise ValueError("host bridge secret must contain at least 32 characters")
         self.provider = provider
-        self.endpoint = endpoint.rstrip("/") + "/v1/provider/dispatch"
+        if not writer_owner_token_digest.startswith("sha256:") or len(writer_owner_token_digest) != 71:
+            raise ValueError("host bridge writer owner token digest is invalid")
+        self.endpoint = endpoint
         self.secret = secret
+        self.writer_owner_token_digest = writer_owner_token_digest
 
     def send(self, work_packet_json: bytes, *, context: ProviderAdapterContext) -> Mapping[str, object]:
         if not work_packet_json or len(work_packet_json) > _MAX_PACKET_BYTES:
@@ -337,6 +432,7 @@ class HostBridgePacketTransport:
             idempotency_digest=idempotency_digest,
             writer_generation=context.fencing_generation,
             packet_digest=packet_digest,
+            writer_owner_token_digest=self.writer_owner_token_digest,
         )
         headers = {
             "Content-Type": "application/json",
@@ -349,11 +445,14 @@ class HostBridgePacketTransport:
             "X-Director-Idempotency-Digest": idempotency_digest,
             "X-Director-Writer-Generation": str(context.fencing_generation),
             "X-Director-Packet-Digest": packet_digest,
+            "X-Director-Writer-Owner-Token-Digest": self.writer_owner_token_digest,
             "Authorization": "Director-HMAC " + bridge_signature(self.secret, **bindings),
         }
         request = urllib.request.Request(self.endpoint, data=work_packet_json, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=context.timeout_seconds) as response:
+            with urllib.request.build_opener(_NoRedirectHandler()).open(
+                request, timeout=context.timeout_seconds
+            ) as response:
                 payload = response.read(_MAX_RESULT_BYTES + 1)
                 response_digest = response.headers.get("X-Director-Response-Digest", "")
                 response_proof = response.headers.get("X-Director-Response-Proof", "")

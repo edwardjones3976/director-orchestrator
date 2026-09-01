@@ -14,6 +14,7 @@ from .host_provider_bridge import (
     BridgeRequest,
     HostProviderBridgeAmbiguous,
     HostProviderBridgeError,
+    PostgresHostWriterFenceVerifier,
     WindowsHostProviderExecutor,
     bridge_response_signature,
     dispatch_bridge_request,
@@ -94,6 +95,9 @@ class _Handler(BaseHTTPRequestHandler):
                 idempotency_digest=self.headers.get("X-Director-Idempotency-Digest", ""),
                 writer_generation=int(self.headers.get("X-Director-Writer-Generation", "0")),
                 packet_digest=self.headers.get("X-Director-Packet-Digest", ""),
+                writer_owner_token_digest=self.headers.get(
+                    "X-Director-Writer-Owner-Token-Digest", ""
+                ),
                 timestamp=int(self.headers.get("X-Director-Bridge-Timestamp", "0")),
                 nonce=self.headers.get("X-Director-Bridge-Nonce", ""),
                 signature=authorization.removeprefix("Director-HMAC "),
@@ -135,6 +139,10 @@ def main() -> None:
         _commands(),
         cwd=cwd,
         timeout_seconds=int(os.environ.get("DIRECTOR_HOST_PROVIDER_TIMEOUT_SECONDS", "900")),
+        writer_fence_verifier=PostgresHostWriterFenceVerifier(
+            _required("DIRECTOR_HOST_PROVIDER_POSTGRES_DSN"),
+            schema=_required("LANGGRAPH_PRIMARY_POSTGRES_SCHEMA"),
+        ),
     )
     bind = os.environ.get("DIRECTOR_HOST_PROVIDER_BIND", "127.0.0.1")
     port = int(os.environ.get("DIRECTOR_HOST_PROVIDER_PORT", "18765"))

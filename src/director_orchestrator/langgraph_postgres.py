@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
@@ -78,6 +79,7 @@ from .packet_contracts import (
 )
 from .provider_activation import (
     ACTIVATION_EVIDENCE_VERSION,
+    ProviderActivationAuthorization,
     ProviderActivationBinding,
     ProviderActivationEvidence,
     ProviderActivationStage,
@@ -427,6 +429,7 @@ _APPEND_ONLY_TABLES = (
     "director_primary_intake_dedup",
     "director_primary_command_receipt",
     "director_provider_activation_evidence",
+    "director_provider_activation_authorization",
     "director_primary_work_packet_artifact",
     "director_primary_result_packet_artifact",
     "director_primary_claim",
@@ -616,6 +619,29 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             ),
             recorded_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (task_id, assignment_id)
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_provider_activation_authorization (
+            nonce_digest text PRIMARY KEY CHECK (nonce_digest ~ '^[0-9a-f]{{64}}$'),
+            command_digest text NOT NULL CHECK (command_digest ~ '^[0-9a-f]{{64}}$'),
+            proof_version text NOT NULL,
+            actor_id text NOT NULL,
+            provider_id text NOT NULL,
+            workspace_id text NOT NULL,
+            provider_version text NOT NULL,
+            app_version text NOT NULL,
+            runtime_adapter_version text NOT NULL,
+            workspace_version text NOT NULL,
+            binding_version text NOT NULL,
+            surface text NOT NULL CHECK (surface IN ('app', 'runtime_adapter')),
+            revision bigint NOT NULL CHECK (revision >= 1),
+            claimed_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (
+                provider_id, workspace_id, provider_version, app_version,
+                runtime_adapter_version, workspace_version, binding_version,
+                surface, revision
+            )
         )
         """,
         f"""
@@ -1018,6 +1044,30 @@ class PrimaryControlPlaneMetrics:
 
     graph_task_count: int
     ambiguous_effect_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PrimaryQuiescenceMetrics:
+    """Observed blockers that must all be zero before legacy rollback."""
+
+    active_provider_dispatch_count: int
+    active_assignment_count: int
+    live_writer_claim_count: int
+    unresolved_reconciliation_count: int
+    unsettled_claim_count: int
+
+    @property
+    def rollback_safe(self) -> bool:
+        return all(
+            value == 0
+            for value in (
+                self.active_provider_dispatch_count,
+                self.active_assignment_count,
+                self.live_writer_claim_count,
+                self.unresolved_reconciliation_count,
+                self.unsettled_claim_count,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2062,6 +2112,203 @@ class PostgresConditionalClaimStore:
                     )
         return True
 
+    def append_authorized(
+        self,
+        evidence: ProviderActivationEvidence,
+        *,
+        expected_revision: int,
+        authorization: ProviderActivationAuthorization,
+    ) -> bool:
+        """Atomically claim one signed nonce and append its exact revision."""
+
+        if not isinstance(evidence, ProviderActivationEvidence):
+            raise PostgresControlPlaneError(
+                "provider activation evidence must use the validated contract"
+            )
+        if not isinstance(authorization, ProviderActivationAuthorization):
+            raise PostgresControlPlaneError(
+                "signed provider activation authorization is required"
+            )
+        expected = _require_generation(
+            expected_revision, "expected_revision", minimum=0
+        )
+        if evidence.revision != expected + 1:
+            raise PostgresControlPlaneError(
+                "provider activation evidence revision must follow expected_revision"
+            )
+        parameters = self._activation_binding_parameters(
+            evidence.binding, evidence.surface
+        )
+        parameters.update(
+            {
+                "revision": evidence.revision,
+                "schema_version": evidence.schema_version,
+                "stage": evidence.stage.value,
+                "evidence_id": evidence.evidence_id,
+                "evidence_digest": evidence.evidence_digest,
+                "observed_at": evidence.observed_at,
+                "expires_at": evidence.expires_at,
+                "nonce_digest": authorization.nonce_digest,
+                "command_digest": authorization.command_digest,
+                "proof_version": authorization.proof_version,
+                "actor_id": authorization.actor_id,
+            }
+        )
+        lock_parts = (
+            evidence.binding.provider_id,
+            evidence.binding.workspace_id,
+            evidence.binding.provider_version,
+            evidence.binding.app_version,
+            evidence.binding.runtime_adapter_version,
+            evidence.binding.workspace_version,
+            evidence.binding.binding_version,
+            evidence.surface.value,
+        )
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {"key": _advisory_key("provider-activation", schema, *lock_parts)},
+                )
+                claimed = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT command_digest, proof_version, actor_id,
+                           provider_id, workspace_id, provider_version,
+                           app_version, runtime_adapter_version,
+                           workspace_version, binding_version, surface, revision
+                    FROM {schema}.director_provider_activation_authorization
+                    WHERE nonce_digest = %(nonce_digest)s
+                    """,
+                    parameters,
+                )
+                if claimed is not None:
+                    exact_claim = all(
+                        str(claimed[name]) == str(parameters[name])
+                        for name in (
+                            "command_digest",
+                            "proof_version",
+                            "actor_id",
+                            "provider_id",
+                            "workspace_id",
+                            "provider_version",
+                            "app_version",
+                            "runtime_adapter_version",
+                            "workspace_version",
+                            "binding_version",
+                            "surface",
+                            "revision",
+                        )
+                    )
+                    if not exact_claim:
+                        raise PostgresControlPlaneError(
+                            "provider activation proof nonce replay conflict"
+                        )
+                    recorded = self._one_row(
+                        connection,
+                        f"""
+                        SELECT provider_id, workspace_id, provider_version,
+                               app_version, runtime_adapter_version,
+                               workspace_version, binding_version, surface,
+                               revision, schema_version, stage, evidence_id,
+                               evidence_digest, observed_at, expires_at
+                        FROM {schema}.director_provider_activation_evidence
+                        WHERE provider_id = %(provider_id)s
+                          AND workspace_id = %(workspace_id)s
+                          AND provider_version = %(provider_version)s
+                          AND app_version = %(app_version)s
+                          AND runtime_adapter_version = %(runtime_adapter_version)s
+                          AND workspace_version = %(workspace_version)s
+                          AND binding_version = %(binding_version)s
+                          AND surface = %(surface)s
+                          AND revision = %(revision)s
+                        """,
+                        parameters,
+                        missing="authorized provider activation evidence disappeared",
+                    )
+                    return _activation_evidence_from_row(recorded) == evidence
+                summary = self._one_row(
+                    connection,
+                    f"""
+                    SELECT count(*) AS revision_count,
+                           coalesce(max(revision), 0) AS latest_revision
+                    FROM {schema}.director_provider_activation_evidence
+                    WHERE provider_id = %(provider_id)s
+                      AND workspace_id = %(workspace_id)s
+                      AND provider_version = %(provider_version)s
+                      AND app_version = %(app_version)s
+                      AND runtime_adapter_version = %(runtime_adapter_version)s
+                      AND workspace_version = %(workspace_version)s
+                      AND binding_version = %(binding_version)s
+                      AND surface = %(surface)s
+                    """,
+                    parameters,
+                    missing="provider activation revision summary did not resolve",
+                )
+                count = int(summary["revision_count"])
+                latest = int(summary["latest_revision"])
+                if count != latest:
+                    raise PostgresControlPlaneError(
+                        "provider activation evidence contains a revision gap"
+                    )
+                if latest != expected:
+                    return False
+                claimed_row = self._optional_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_provider_activation_authorization (
+                        nonce_digest, command_digest, proof_version, actor_id,
+                        provider_id, workspace_id, provider_version, app_version,
+                        runtime_adapter_version, workspace_version, binding_version,
+                        surface, revision
+                    )
+                    VALUES (
+                        %(nonce_digest)s, %(command_digest)s, %(proof_version)s,
+                        %(actor_id)s, %(provider_id)s, %(workspace_id)s,
+                        %(provider_version)s, %(app_version)s,
+                        %(runtime_adapter_version)s, %(workspace_version)s,
+                        %(binding_version)s, %(surface)s, %(revision)s
+                    )
+                    ON CONFLICT DO NOTHING
+                    RETURNING nonce_digest
+                    """,
+                    parameters,
+                )
+                if claimed_row is None:
+                    raise PostgresControlPlaneError(
+                        "provider activation proof claim lost its serialized authority"
+                    )
+                row = self._optional_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_provider_activation_evidence (
+                        provider_id, workspace_id, provider_version,
+                        app_version, runtime_adapter_version,
+                        workspace_version, binding_version, surface, revision,
+                        schema_version, stage, evidence_id, evidence_digest,
+                        observed_at, expires_at
+                    )
+                    VALUES (
+                        %(provider_id)s, %(workspace_id)s, %(provider_version)s,
+                        %(app_version)s, %(runtime_adapter_version)s,
+                        %(workspace_version)s, %(binding_version)s, %(surface)s,
+                        %(revision)s, %(schema_version)s, %(stage)s,
+                        %(evidence_id)s, %(evidence_digest)s, %(observed_at)s,
+                        %(expires_at)s
+                    )
+                    ON CONFLICT DO NOTHING
+                    RETURNING revision
+                    """,
+                    parameters,
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "provider activation append lost its serialized authority"
+                    )
+        return True
+
     @staticmethod
     def _activation_binding_parameters(
         binding: ProviderActivationBinding,
@@ -2460,6 +2707,7 @@ class PostgresConditionalClaimStore:
         generation = _require_generation(
             fencing_generation, "fencing_generation", minimum=1
         )
+
         validated, digest, authority_digest = _validated_result_packet(
             packet, task_id=task_id, assignment_id=assignment_id
         )
@@ -2547,6 +2795,50 @@ class PostgresConditionalClaimStore:
                         "result packet insert lost its immutable identity race"
                     )
         return _result_packet_artifact_from_row(row)
+
+    def primary_quiescence_metrics(self) -> PrimaryQuiescenceMetrics:
+        """Return exact unresolved-work counts for a fenced rollback decision."""
+
+        schema = self._schema
+        with self._pool.connection() as connection:
+            row = self._one_row(
+                connection,
+                f"""
+                SELECT
+                    (SELECT count(*)
+                     FROM {schema}.director_primary_effect_reservation reservation
+                     LEFT JOIN {schema}.director_primary_terminal_evidence terminal
+                       ON terminal.claim_key = reservation.claim_key
+                     WHERE terminal.claim_key IS NULL) AS active_provider_dispatch_count,
+                    (SELECT count(*)
+                     FROM {schema}.director_primary_parallel_assignment
+                     WHERE status IN ('PENDING', 'ACTIVE', 'AMBIGUOUS'))
+                        AS active_assignment_count,
+                    (SELECT count(*)
+                     FROM {schema}.director_primary_task_writer
+                     WHERE lease_expires_at > now()) AS live_writer_claim_count,
+                    (SELECT count(DISTINCT reconciliation.claim_key)
+                     FROM {schema}.director_primary_reconciliation_event reconciliation
+                     LEFT JOIN {schema}.director_primary_terminal_evidence terminal
+                       ON terminal.claim_key = reconciliation.claim_key
+                     WHERE terminal.claim_key IS NULL)
+                        AS unresolved_reconciliation_count,
+                    (SELECT count(*)
+                     FROM {schema}.director_primary_claim claim
+                     LEFT JOIN {schema}.director_primary_terminal_evidence terminal
+                       ON terminal.claim_key = claim.claim_key
+                     WHERE terminal.claim_key IS NULL) AS unsettled_claim_count
+                """,
+                {},
+                missing="primary quiescence metrics did not resolve",
+            )
+        return PrimaryQuiescenceMetrics(
+            active_provider_dispatch_count=int(row["active_provider_dispatch_count"]),
+            active_assignment_count=int(row["active_assignment_count"]),
+            live_writer_claim_count=int(row["live_writer_claim_count"]),
+            unresolved_reconciliation_count=int(row["unresolved_reconciliation_count"]),
+            unsettled_claim_count=int(row["unsettled_claim_count"]),
+        )
 
     def read_result_packet_artifact(
         self, *, task_id: str, assignment_id: str
@@ -3800,3 +4092,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]

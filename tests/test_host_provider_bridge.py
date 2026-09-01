@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import tempfile
+import urllib.error
+import urllib.request
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from director_orchestrator.host_provider_bridge import (
@@ -13,7 +18,10 @@ from director_orchestrator.host_provider_bridge import (
     BridgeRequest,
     HostProviderBridgeAmbiguous,
     HostProviderBridgeError,
+    HostBridgePacketTransport,
+    PostgresHostWriterFenceVerifier,
     WindowsHostProviderExecutor,
+    _NoRedirectHandler,
     _digest,
     bridge_signature,
     dispatch_bridge_request,
@@ -41,6 +49,7 @@ def request(*, nonce: str = "nonce-1", packet_key: str = "effect-key-1") -> Brid
         "idempotency_digest": _digest(packet_key.encode()),
         "writer_generation": 7,
         "packet_digest": _digest(packet),
+        "writer_owner_token_digest": "sha256:" + "f" * 64,
     }
     return BridgeRequest(
         **bindings,
@@ -59,6 +68,43 @@ class _Executor:
         if self.ambiguous:
             raise HostProviderBridgeAmbiguous("ambiguous")
         return b'{"status":"SUCCEEDED"}'
+
+
+class _Verifier:
+    def __init__(self, *, reject: bool = False) -> None:
+        self.calls = 0
+        self.reject = reject
+
+    def verify(self, request: BridgeRequest) -> None:
+        self.calls += 1
+        if self.reject:
+            raise HostProviderBridgeError("stale writer")
+
+
+class _PostgresResult:
+    def __init__(self, row):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class _PostgresConnection:
+    def __init__(self, row):
+        self.row = row
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def execute(self, statement, parameters):
+        if "director_primary_task_writer" not in statement:
+            raise AssertionError("writer verification queried the wrong authority")
+        if parameters != ("task-1",):
+            raise AssertionError("writer verification queried the wrong task")
+        return _PostgresResult(self.row)
 
 
 class HostProviderBridgeTests(unittest.TestCase):
@@ -116,8 +162,11 @@ class HostProviderBridgeTests(unittest.TestCase):
             unsupported.validate(SECRET, now=1_000)
 
     def test_executor_uses_one_shell_false_attempt(self) -> None:
+        verifier = _Verifier()
         executor = WindowsHostProviderExecutor(
-            {"claude": ("claude.exe", "--print")}, cwd=self.temporary.name
+            {"claude": ("claude.exe", "--print")},
+            cwd=self.temporary.name,
+            writer_fence_verifier=verifier,
         )
         completed = subprocess.CompletedProcess(
             args=("claude.exe", "--print"),
@@ -125,11 +174,116 @@ class HostProviderBridgeTests(unittest.TestCase):
             stdout=b'{"status":"SUCCEEDED"}',
             stderr=b"",
         )
-        with patch("subprocess.run", return_value=completed) as run:
+        environment = {
+            "SystemRoot": "C:\\Windows",
+            "ANTHROPIC_API_KEY": "lane-auth",
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET": "must-not-leak",
+            "ORCHESTRATOR_SHARED_SECRET": "must-not-leak",
+            "CLAUDE_CALLBACK_SECRET": "must-not-leak",
+        }
+        with patch.dict(os.environ, environment, clear=True), patch(
+            "subprocess.run", return_value=completed
+        ) as run:
             self.assertEqual(b'{"status":"SUCCEEDED"}', executor.execute(request()))
+        self.assertEqual(1, verifier.calls)
         self.assertEqual(1, run.call_count)
         self.assertIs(run.call_args.kwargs["shell"], False)
         self.assertIs(run.call_args.kwargs["check"], False)
+        child_environment = {
+            key.upper(): value for key, value in run.call_args.kwargs["env"].items()
+        }
+        self.assertEqual(
+            {"SYSTEMROOT": "C:\\Windows", "ANTHROPIC_API_KEY": "lane-auth"},
+            child_environment,
+        )
+
+    def test_executor_refuses_io_without_current_writer_verification(self) -> None:
+        for verifier in (None, _Verifier(reject=True)):
+            executor = WindowsHostProviderExecutor(
+                {"claude": ("claude.exe",)},
+                cwd=self.temporary.name,
+                writer_fence_verifier=verifier,
+            )
+            with patch("subprocess.run") as run, self.assertRaises(
+                HostProviderBridgeError
+            ):
+                executor.execute(request())
+            run.assert_not_called()
+
+    def test_client_endpoint_is_exact_local_http_and_redirects_are_disabled(self) -> None:
+        valid = "http://host.docker.internal:18765/v1/provider/dispatch"
+        transport = HostBridgePacketTransport(
+            "claude", valid, SECRET, writer_owner_token_digest="sha256:" + "f" * 64
+        )
+        self.assertEqual(valid, transport.endpoint)
+        for endpoint in (
+            "https://host.docker.internal:18765/v1/provider/dispatch",
+            "http://user@host.docker.internal:18765/v1/provider/dispatch",
+            "http://host.docker.internal/v1/provider/dispatch",
+            "http://host.docker.internal:18765/other",
+            "http://host.docker.internal:18765/v1/provider/dispatch?q=1",
+            "http://example.com:18765/v1/provider/dispatch",
+        ):
+            with self.subTest(endpoint=endpoint), self.assertRaises(ValueError):
+                HostBridgePacketTransport(
+                    "claude", endpoint, SECRET,
+                    writer_owner_token_digest="sha256:" + "f" * 64,
+                )
+        redirect = _NoRedirectHandler()
+        redirect_request = urllib.request.Request(valid)
+        with self.assertRaisesRegex(urllib.error.HTTPError, "redirect refused"):
+            redirect.redirect_request(
+                redirect_request, None, 302, "Found", {},
+                "http://host.docker.internal:18766/v1/provider/dispatch",
+            )
+
+    def test_postgres_writer_fence_requires_exact_live_authority(self) -> None:
+        owner_token = "writer-owner-token"
+        token_digest = "sha256:" + __import__("hashlib").sha256(
+            owner_token.encode("utf-8")
+        ).hexdigest()
+        candidate = request()
+        object.__setattr__(candidate, "writer_owner_token_digest", token_digest)
+        verifier = PostgresHostWriterFenceVerifier(
+            "postgresql://local/test", schema="director_control"
+        )
+        cases = {
+            "missing": None,
+            "wrong owner": ("legacy", owner_token, 7, True),
+            "wrong token": ("langgraph", "other-token", 7, True),
+            "wrong generation": ("langgraph", owner_token, 8, True),
+            "expired": ("langgraph", owner_token, 7, False),
+        }
+        for label, row in cases.items():
+            fake = SimpleNamespace(
+                connect=lambda dsn, connect_timeout: _PostgresConnection(row)
+            )
+            with self.subTest(label=label), patch.dict(
+                sys.modules, {"psycopg": fake}
+            ), self.assertRaises(HostProviderBridgeError):
+                verifier.verify(candidate)
+        fake = SimpleNamespace(
+            connect=lambda dsn, connect_timeout: _PostgresConnection(
+                ("langgraph", owner_token, 7, True)
+            )
+        )
+        with patch.dict(sys.modules, {"psycopg": fake}):
+            verifier.verify(candidate)
+
+    def test_postgres_writer_fence_fails_closed_on_database_error(self) -> None:
+        verifier = PostgresHostWriterFenceVerifier(
+            "postgresql://local/test", schema="director_control"
+        )
+
+        def fail_connect(dsn, connect_timeout):
+            raise OSError("database unavailable")
+
+        with patch.dict(
+            sys.modules, {"psycopg": SimpleNamespace(connect=fail_connect)}
+        ), self.assertRaisesRegex(
+            HostProviderBridgeError, "verification failed"
+        ):
+            verifier.verify(request())
 
     def test_executor_refuses_cursor_and_windows_copilot(self) -> None:
         for provider in ("cursor", "windows-copilot"):

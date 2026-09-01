@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
@@ -7,8 +8,11 @@ from __future__ import annotations
 
 import copy
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
+from director_orchestrator.config import Settings
+from director_orchestrator.approvals import assignment_approval_digest
 from director_orchestrator.langgraph_runtime import (
     PacketBoundaryAdapter,
     RuntimeExecutionOutcome,
@@ -33,6 +37,7 @@ from director_orchestrator.packet_routing import (
     DirectorPacketTaskRouter,
     PacketRoutingError,
 )
+from director_orchestrator.policy import preview_plan
 
 
 SCHEMAS = Path(__file__).resolve().parents[1] / "docs" / "schemas"
@@ -43,6 +48,11 @@ BLOB_SHA = "b" * 40
 class StaticAuthoritySnapshots:
     def resolve(self, record, assignment):
         return [{"path": "AGENTS.md", "commit_sha": COMMIT_SHA, "blob_sha": BLOB_SHA}]
+
+
+class MissingAuthoritySnapshots:
+    def resolve(self, record, assignment):
+        return []
 
 
 class NoopTransport:
@@ -161,6 +171,70 @@ class PacketTaskRoutingTests(unittest.TestCase):
         self.record.plan.assignments[0] = gated
         with self.assertRaisesRegex(PacketRoutingError, "approval is absent or stale"):
             self.router.work_packet(self.record, gated)
+
+    def test_repository_free_research_binds_internal_authority_for_approval(self) -> None:
+        settings = replace(
+            Settings(), repository_allowlist=("example/demo",)
+        )
+        plan = preview_plan(
+            "Project: demo\nResearch current public sources.", settings
+        )
+        record = self.record.model_copy(update={"plan": plan, "plan_generation": 3})
+        research = min(plan.assignments, key=lambda item: item.sequence)
+        review = max(plan.assignments, key=lambda item: item.sequence)
+
+        packet = self.router.planned_work_packet(record, research)
+
+        self.assertIsNone(research.repository)
+        self.assertTrue(research.requires_approval)
+        self.assertEqual([research.sequence], review.depends_on)
+        self.assertEqual("example/demo", packet["repository"])
+        self.assertEqual(research.public_research_query, packet["objective"])
+        self.assertEqual(["PUBLIC_WEB_SEARCH"], packet["allowed_tools"])
+        self.assertEqual([], packet["allowed_external_effects"])
+        self.assertEqual(1, len(packet["approval_requirements"]))
+        with self.assertRaisesRegex(PacketRoutingError, "approval is absent or stale"):
+            self.router.work_packet(record, research)
+
+        record.approved_assignments = [research.sequence]
+        record.approved_assignment_digests = {
+            research.sequence: assignment_approval_digest(research)
+        }
+        self.router.validate_bound_packet(record, research, packet)
+        mutated = dict(packet)
+        mutated["repository"] = "other/repository"
+        with self.assertRaisesRegex(PacketRoutingError, "repository changed"):
+            self.router.validate_bound_packet(record, research, mutated)
+
+    def test_repository_free_research_missing_or_mutated_authority_fails_closed(self) -> None:
+        settings = replace(
+            Settings(), repository_allowlist=("example/demo",)
+        )
+        plan = preview_plan(
+            "Project: demo\nResearch current public sources.", settings
+        )
+        record = self.record.model_copy(update={"plan": plan})
+        research = min(plan.assignments, key=lambda item: item.sequence)
+        assert plan.prestage is not None
+        mutated_plan = plan.model_copy(
+            update={
+                "prestage": plan.prestage.model_copy(update={"branch": "release"})
+            }
+        )
+        mutated = record.model_copy(update={"plan": mutated_plan})
+
+        with self.assertRaisesRegex(PacketRoutingError, "pre-stage authority"):
+            self.router.planned_work_packet(mutated, research)
+
+        missing_router = DirectorPacketTaskRouter(
+            authority_snapshots=MissingAuthoritySnapshots(),
+            boundary_adapters={"claude": self.adapter},
+            writer_owner_id="langgraph-packet-runtime",
+            writer_secret="local-test-secret",
+            timeout_seconds=120,
+        )
+        with self.assertRaisesRegex(PacketRoutingError, "authority snapshot"):
+            missing_router.planned_work_packet(record, research)
 
 
 class PacketResultConsumerTests(unittest.TestCase):
@@ -310,3 +384,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]

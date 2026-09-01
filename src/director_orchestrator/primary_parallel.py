@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | BEGIN]]
 """Postgres-native dependency-ready dispatch for the primary coordinator.
 
@@ -27,6 +28,8 @@ from .langgraph_postgres import (
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_SAFE_SURFACE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$")
+_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 
 
 class ParallelDispatchError(RuntimeError):
@@ -60,6 +63,41 @@ def _require_id(value: str, field: str) -> str:
     return value
 
 
+def canonical_write_surface(value: str) -> str:
+    """Return one Windows-stable repository-relative write surface."""
+
+    if not isinstance(value, str) or value != value.strip() or not value:
+        raise ParallelDispatchError("write surfaces must be clean relative paths")
+    normalized = value.replace("\\", "/")
+    if (
+        normalized.startswith("/")
+        or normalized.startswith("//")
+        or _WINDOWS_DRIVE.match(normalized)
+        or not _SAFE_SURFACE.fullmatch(normalized)
+    ):
+        raise ParallelDispatchError("write surfaces must be safe repository-relative paths")
+    components = normalized.split("/")
+    if any(component in {".", ".."} for component in components):
+        raise ParallelDispatchError("write surfaces must not contain dot segments")
+    return normalized.casefold()
+
+
+def write_surfaces_overlap(left: Sequence[str], right: Sequence[str]) -> bool:
+    """Detect exact aliases and parent/child subtree overlap."""
+
+    for raw_left in left:
+        left_surface = canonical_write_surface(raw_left)
+        for raw_right in right:
+            right_surface = canonical_write_surface(raw_right)
+            if (
+                left_surface == right_surface
+                or left_surface.startswith(right_surface + "/")
+                or right_surface.startswith(left_surface + "/")
+            ):
+                return True
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class ParallelAssignment:
     assignment_id: str
@@ -80,8 +118,15 @@ class ParallelAssignment:
             raise ParallelDispatchError("retry_limit must be between 1 and 3")
         if len(set(self.dependencies)) != len(self.dependencies):
             raise ParallelDispatchError("dependencies must be unique")
-        if len(set(self.write_surfaces)) != len(self.write_surfaces):
-            raise ParallelDispatchError("write surfaces must be unique")
+        canonical_surfaces = tuple(
+            canonical_write_surface(value) for value in self.write_surfaces
+        )
+        if len(set(canonical_surfaces)) != len(canonical_surfaces):
+            raise ParallelDispatchError("write surfaces must be unique after normalization")
+        for index, surface in enumerate(canonical_surfaces):
+            if write_surfaces_overlap((surface,), canonical_surfaces[index + 1 :]):
+                raise ParallelDispatchError("write surfaces must not overlap")
+        object.__setattr__(self, "write_surfaces", canonical_surfaces)
         if any(not value.strip() for value in self.dependencies):
             raise ParallelDispatchError("dependencies must be non-empty IDs")
         if any(not value.strip() for value in self.write_surfaces):
@@ -414,13 +459,15 @@ class PostgresParallelDispatch:
                 ]
                 provider_use: dict[str, int] = {}
                 deployment_use: dict[str, int] = {}
-                active_surfaces: set[str] = set()
+                active_surfaces: list[str] = []
                 for row in occupied:
                     provider = str(row["provider_id"])
                     deployment = str(row["deployment_id"])
                     provider_use[provider] = provider_use.get(provider, 0) + 1
                     deployment_use[deployment] = deployment_use.get(deployment, 0) + 1
-                    active_surfaces.update(row["write_surfaces"])
+                    active_surfaces.extend(
+                        canonical_write_surface(item) for item in row["write_surfaces"]
+                    )
                 available = policy.max_concurrency - len(occupied)
                 reserved: list[ParallelReservation] = []
                 for row in rows:
@@ -441,8 +488,10 @@ class PostgresParallelDispatch:
                         policy.deployment_caps or {}
                     ).get(deployment, policy.max_concurrency):
                         continue
-                    surfaces = set(row["write_surfaces"])
-                    if surfaces & active_surfaces:
+                    surfaces = tuple(
+                        canonical_write_surface(item) for item in row["write_surfaces"]
+                    )
+                    if write_surfaces_overlap(surfaces, active_surfaces):
                         continue
                     reservation = _digest(
                         {
@@ -483,7 +532,7 @@ class PostgresParallelDispatch:
                     status[str(row["assignment_id"])] = "ACTIVE"
                     provider_use[provider] = provider_use.get(provider, 0) + 1
                     deployment_use[deployment] = deployment_use.get(deployment, 0) + 1
-                    active_surfaces.update(surfaces)
+                    active_surfaces.extend(surfaces)
                     available -= 1
         return tuple(reserved)
 
@@ -665,3 +714,4 @@ class PostgresParallelDispatch:
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]

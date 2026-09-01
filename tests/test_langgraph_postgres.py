@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | BEGIN]]
@@ -82,6 +84,7 @@ from director_orchestrator.packet_contracts import (
 )
 from director_orchestrator.provider_activation import (
     ACTIVATION_EVIDENCE_VERSION,
+    ProviderActivationAuthorization,
     ProviderActivationBinding,
     ProviderActivationEvidence,
     ProviderActivationStage,
@@ -826,6 +829,17 @@ class PrimaryWorkPacketArtifactTests(unittest.TestCase):
 
 
 class ProviderActivationPostgresStoreTests(unittest.TestCase):
+    @staticmethod
+    def authorization(**overrides: str) -> ProviderActivationAuthorization:
+        fields = {
+            "proof_version": "provider-activation-advance-proof/v1",
+            "actor_id": "UOWNER",
+            "nonce_digest": "c" * 64,
+            "command_digest": "d" * 64,
+        }
+        fields.update(overrides)
+        return ProviderActivationAuthorization(**fields)
+
     def test_compare_and_append_then_loads_the_typed_chain(self):
         evidence = _activation_evidence()
         store, connection = _store(
@@ -902,6 +916,65 @@ class ProviderActivationPostgresStoreTests(unittest.TestCase):
         store, _ = _store([])
         with self.assertRaisesRegex(PostgresControlPlaneError, "must follow"):
             store.append(_activation_evidence(revision=1), expected_revision=1)
+
+    def test_signed_nonce_claim_and_evidence_append_are_one_transaction(self):
+        evidence = _activation_evidence()
+        authorization = self.authorization()
+        store, connection = _store(
+            [
+                _lock_row(),
+                None,
+                {"revision_count": 0, "latest_revision": 0},
+                {"nonce_digest": authorization.nonce_digest},
+                {"revision": 1},
+            ]
+        )
+        self.assertTrue(
+            store.append_authorized(
+                evidence, expected_revision=0, authorization=authorization
+            )
+        )
+        self.assertEqual(1, connection.transactions)
+        self.assertIn(
+            "director_provider_activation_authorization", connection.statements()[1]
+        )
+        self.assertIn(
+            "INSERT INTO director_primary_v2.director_provider_activation_authorization",
+            connection.statements()[3],
+        )
+        self.assertIn(
+            "INSERT INTO director_primary_v2.director_provider_activation_evidence",
+            connection.statements()[4],
+        )
+
+    def test_exact_signed_replay_is_idempotent_and_nonce_rebinding_fails(self):
+        evidence = _activation_evidence()
+        authorization = self.authorization()
+        claim_row = {
+            "command_digest": authorization.command_digest,
+            "proof_version": authorization.proof_version,
+            "actor_id": authorization.actor_id,
+            **dataclasses.asdict(evidence.binding),
+            "surface": evidence.surface.value,
+            "revision": evidence.revision,
+        }
+        store, connection = _store(
+            [_lock_row(), claim_row, _activation_row(evidence)]
+        )
+        self.assertTrue(
+            store.append_authorized(
+                evidence, expected_revision=0, authorization=authorization
+            )
+        )
+        self.assertNotIn("INSERT INTO", connection.sql())
+
+        changed = self.authorization(command_digest="e" * 64)
+        store, connection = _store([_lock_row(), claim_row])
+        with self.assertRaisesRegex(PostgresControlPlaneError, "nonce replay conflict"):
+            store.append_authorized(
+                evidence, expected_revision=0, authorization=changed
+            )
+        self.assertEqual(1, connection.rollbacks)
 
 
 # ---------------------------------------------------------------------------
@@ -2102,6 +2175,129 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
 
     # -- ownership races --------------------------------------------------
 
+    def test_quiescence_metrics_block_every_unresolved_rollback_surface(self):
+        task = self.task_id
+        baseline = self.store.primary_quiescence_metrics()
+        def unique_digest() -> str:
+            return "sha256:" + uuid.uuid4().hex + uuid.uuid4().hex
+
+        claim = unique_digest()
+        reservation = unique_digest()
+        plan_digest = unique_digest()
+        attempt_digest = unique_digest()
+        effect_digest = unique_digest()
+        effect_attempt_digest = unique_digest()
+        reconciliation_digest = unique_digest()
+        terminal_digest = unique_digest()
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"""
+                INSERT INTO {self.schema}.director_primary_task_writer
+                    (task_id, engine_owner, owner_token, fencing_generation, lease_expires_at)
+                VALUES (%s, 'langgraph', 'owner-q', 1, now() + interval '5 minutes')
+                """,
+                (task,),
+            )
+            connection.execute(
+                f"""
+                INSERT INTO {self.schema}.director_primary_parallel_batch
+                    (task_id, plan_digest, owner_token, fencing_generation, max_concurrency)
+                VALUES (%s, %s, 'owner-q', 1, 1)
+                """,
+                (task, plan_digest),
+            )
+            connection.execute(
+                f"""
+                INSERT INTO {self.schema}.director_primary_parallel_assignment
+                    (task_id, assignment_id, sequence, provider_id, deployment_id,
+                     dependencies, write_surfaces, retry_limit, status)
+                VALUES (%s, 'assignment-q', 1, 'claude', 'deployment-q', '[]', '[]', 1, 'ACTIVE')
+                """,
+                (task,),
+            )
+            connection.execute(
+                f"""
+                INSERT INTO {self.schema}.director_primary_claim
+                    (claim_key, task_id, field, expected_state, target_state,
+                     attempt_digest, owner_token, fencing_generation)
+                VALUES (%s, %s, 'provider', 'READY', 'RUNNING', %s, 'owner-q', 1)
+                """,
+                (claim, task, attempt_digest),
+            )
+            connection.execute(
+                f"""
+                INSERT INTO {self.schema}.director_primary_effect_reservation
+                    (reservation_key, claim_key, task_id, owner_token, fencing_generation,
+                     effect_key_digest, effect_attempt_digest, writer_owner_id, reserved_units)
+                VALUES (%s, %s, %s, 'owner-q', 1, %s, %s, 'writer-q', 1)
+                """,
+                (reservation, claim, task, effect_digest, effect_attempt_digest),
+            )
+            connection.execute(
+                f"""
+                INSERT INTO {self.schema}.director_primary_reconciliation_event
+                    (claim_key, task_id, owner_token, fencing_generation, state, evidence_digest)
+                VALUES (%s, %s, 'owner-q', 1, 'AMBIGUOUS', %s)
+                """,
+                (claim, task, reconciliation_digest),
+            )
+        blocked = self.store.primary_quiescence_metrics()
+        self.assertFalse(blocked.rollback_safe)
+        self.assertEqual((
+            baseline.active_provider_dispatch_count + 1,
+            baseline.active_assignment_count + 1,
+            baseline.live_writer_claim_count + 1,
+            baseline.unresolved_reconciliation_count + 1,
+            baseline.unsettled_claim_count + 1,
+        ), (
+            blocked.active_provider_dispatch_count,
+            blocked.active_assignment_count,
+            blocked.live_writer_claim_count,
+            blocked.unresolved_reconciliation_count,
+            blocked.unsettled_claim_count,
+        ))
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"""
+                INSERT INTO {self.schema}.director_primary_terminal_evidence
+                    (claim_key, task_id, owner_token, fencing_generation,
+                     disposition, evidence_digest)
+                VALUES (%s, %s, 'owner-q', 1, 'FAILED', %s)
+                """,
+                (claim, task, terminal_digest),
+            )
+            connection.execute(
+                f"""
+                UPDATE {self.schema}.director_primary_parallel_assignment
+                SET status = 'FAILED', completed_at = now() WHERE task_id = %s
+                """,
+                (task,),
+            )
+            connection.execute(
+                f"""
+                UPDATE {self.schema}.director_primary_task_writer
+                SET lease_expires_at = now() - interval '1 second' WHERE task_id = %s
+                """,
+                (task,),
+            )
+        restored = self.store.primary_quiescence_metrics()
+        self.assertEqual(
+            (
+                baseline.active_provider_dispatch_count,
+                baseline.active_assignment_count,
+                baseline.live_writer_claim_count,
+                baseline.unresolved_reconciliation_count,
+                baseline.unsettled_claim_count,
+            ),
+            (
+                restored.active_provider_dispatch_count,
+                restored.active_assignment_count,
+                restored.live_writer_claim_count,
+                restored.unresolved_reconciliation_count,
+                restored.unsettled_claim_count,
+            ),
+        )
+
     def test_search_path_is_pinned_and_setup_is_idempotent(self):
         with self.handle.pool.connection() as connection:
             row = connection.execute("SHOW search_path").fetchone()
@@ -2298,6 +2494,41 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         aggregate = restarted.aggregate(self.task_id)
         self.assertEqual(1, aggregate.ambiguous_slot_count)
         self.assertFalse(aggregate.terminal)
+
+    def test_parallel_parent_child_surfaces_never_reserve_concurrently(self):
+        writer = self.store.acquire_task_writer(
+            self.task_id,
+            engine_owner="langgraph",
+            owner_token="parallel-surface-writer",
+            expected_generation=INITIAL_FENCING_GENERATION,
+        )
+        policy = ParallelDispatchPolicy(max_concurrency=2)
+        ledger = PostgresParallelDispatch(self.store)
+        ledger.register_plan(
+            task_id=self.task_id,
+            plan_digest=self.digest("a"),
+            assignments=(
+                ParallelAssignment(
+                    "parent", 1, "openai", "codex-app", write_surfaces=("Src",)
+                ),
+                ParallelAssignment(
+                    "child",
+                    2,
+                    "claude",
+                    "claude-app",
+                    write_surfaces=("src\\feature.py",),
+                ),
+            ),
+            policy=policy,
+            writer=writer,
+        )
+
+        reservations = ledger.reserve_ready(
+            task_id=self.task_id, writer=writer, policy=policy
+        )
+
+        self.assertEqual(1, len(reservations))
+        self.assertEqual("parent", reservations[0].assignment_id)
 
     def test_provider_activation_chain_is_durable_atomic_and_append_only(self):
         import psycopg
@@ -3015,3 +3246,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]

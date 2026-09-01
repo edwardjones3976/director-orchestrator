@@ -366,7 +366,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(readiness.writer_lease_ready)
         self.assertTrue(readiness.legacy_new_intake_disabled)
 
-    def test_repository_free_research_is_disabled_and_restart_stable(self):
+    def test_repository_free_research_is_approval_bound_and_restart_stable(self):
         intake = self.intake().model_copy(
             update={
                 "source_event_id": "event-default-research",
@@ -387,24 +387,24 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
 
         for result in (record, duplicate, recovered):
             self.assertEqual(record.task_id, result.task_id)
-            self.assertEqual(TaskStatus.BLOCKED, result.status)
-            self.assertIn("disabled", result.message or "")
+            self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, result.status)
         assert record.plan is not None
         research = min(record.plan.assignments, key=lambda item: item.sequence)
+        review = max(record.plan.assignments, key=lambda item: item.sequence)
         self.assertEqual("perplexity", research.agent.value)
         self.assertIsNone(research.repository)
         self.assertTrue(research.requires_approval)
+        self.assertEqual([research.sequence], review.depends_on)
         assert projection is not None
-        self.assertEqual("POLICY_BLOCKED", projection.projection["terminal_classification"])
-        self.assertEqual(
-            "repository_free_primary_packet_unsupported",
-            projection.projection["reason_code"],
-        )
+        self.assertIsNone(projection.projection["terminal_classification"])
+        self.assertEqual("execution_approval_required", projection.projection["reason_code"])
         self.assertEqual("NOT_STARTED", projection.projection["provider_dispatch_status"])
         self.assertEqual("NOT_REQUIRED", projection.projection["effect_status"])
         state = self.coordinator._runtime.compact_state(record.task_id)
-        self.assertIsNone(state["work_packet_digest"])
-        self.assertIsNone(state["plan_work_packet_binding_digest"])
+        self.assertIsNotNone(state["work_packet_digest"])
+        self.assertIsNotNone(state["plan_work_packet_binding_digest"])
+        pending = projection.projection["pending_approval"]
+        self.assertEqual("execution", pending["kind"])
 
         restarted_services = DefaultDryRunServices(
             self.settings, packet_router=packet_router(self.settings)
@@ -429,12 +429,85 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
 
         restarted = restarted_application.recover(record.task_id)
         restarted_projection = restarted_coordinator.get_projection(record.task_id)
-        self.assertEqual(TaskStatus.BLOCKED, restarted.status)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, restarted.status)
         assert restarted_projection is not None
         self.assertEqual(
-            "repository_free_primary_packet_unsupported",
+            "execution_approval_required",
             restarted_projection.projection["reason_code"],
         )
+
+    def test_repository_free_research_approval_reaches_dispatch_boundary_without_call(self):
+        settings = replace(
+            self.settings,
+            langgraph_primary_offline_simulation_enabled=True,
+        )
+        calls = {provider: 0 for provider in settings.langgraph_primary_required_providers}
+
+        def provider_double(provider: str):
+            def run(_context):
+                calls[provider] += 1
+                return digest(f"unexpected:{provider}")
+
+            return run
+
+        services = DefaultOfflineSimulationServices(
+            settings,
+            packet_router=packet_router(settings),
+            provider_doubles={
+                provider: provider_double(provider)
+                for provider in settings.langgraph_primary_required_providers
+            },
+        )
+        coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-research-approval-v1",
+            auto_execute_provider=False,
+            application_projection_provider=services.application_projection,
+        )
+        coordinator.adopt_or_activate_new_intake()
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator,
+            services,
+            DefaultPrimaryAuthority(
+                starting_sha=SHA,
+                authority_snapshot_digest=digest("authority"),
+            ),
+        )
+        intake = self.intake().model_copy(
+            update={
+                "source_event_id": "event-default-research-approve",
+                "text": "Project: default\nResearch current public sources.",
+            }
+        )
+        pending = application.create_intake(
+            intake,
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        projection = coordinator.get_projection(pending.task_id)
+        assert projection is not None
+        approval = projection.projection["pending_approval"]
+
+        running = application.resume_approval(
+            ApprovalResume(
+                task_id=pending.task_id,
+                kind=ApprovalKind(approval["kind"]),
+                request_digest=approval["request_digest"],
+                approval_event_id="approve-default-research-boundary",
+                decision=ApprovalDecision.APPROVE,
+            )
+        )
+        approved_projection = coordinator.get_projection(pending.task_id)
+        assert approved_projection is not None
+        approved_state = coordinator._runtime.compact_state(pending.task_id)
+
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, running.status)
+        self.assertEqual("perplexity", approved_state["scheduled_producer_id"])
+        self.assertEqual("provider_subgraph", approved_projection.projection["phase"])
+        self.assertEqual("CLAIMED", approved_projection.projection["provider_dispatch_status"])
+        self.assertTrue(all(value == 0 for value in calls.values()))
 
     def test_duplicate_event_returns_original_graph_task(self):
         first = self.application.create_intake(

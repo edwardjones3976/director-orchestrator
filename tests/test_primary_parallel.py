@@ -1,13 +1,16 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:49 UTC | BEGIN]]
 from __future__ import annotations
 
 import unittest
 
 from director_orchestrator.primary_parallel import (
+    canonical_write_surface,
     ParallelAssignment,
     ParallelDispatchError,
     ParallelDispatchPolicy,
     validate_assignment_dag,
+    write_surfaces_overlap,
 )
 
 
@@ -51,6 +54,44 @@ class ParallelPlanValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ParallelDispatchError, "dependencies"):
             ParallelAssignment("a", 1, "openai", "codex", ("b", "b"))
 
+    def test_write_surfaces_are_windows_canonical_and_aliases_fail(self) -> None:
+        assignment = ParallelAssignment(
+            "a",
+            1,
+            "openai",
+            "codex",
+            write_surfaces=("Src\\Feature\\File.PY",),
+        )
+        self.assertEqual(("src/feature/file.py",), assignment.write_surfaces)
+        self.assertEqual("src/a.py", canonical_write_surface("SRC\\A.PY"))
+        for surfaces in (
+            ("src/a.py", "SRC\\A.PY"),
+            ("src", "src/a.py"),
+        ):
+            with self.subTest(surfaces=surfaces):
+                with self.assertRaises(ParallelDispatchError):
+                    ParallelAssignment(
+                        "a", 1, "openai", "codex", write_surfaces=surfaces
+                    )
+
+    def test_write_surfaces_reject_absolute_dot_and_unc_paths(self) -> None:
+        for surface in (
+            "/src/a.py",
+            "C:\\src\\a.py",
+            "..\\src\\a.py",
+            "src/./a.py",
+            "//server/share/a.py",
+            " src/a.py",
+        ):
+            with self.subTest(surface=surface):
+                with self.assertRaises(ParallelDispatchError):
+                    canonical_write_surface(surface)
+
+    def test_parent_child_and_case_aliases_conflict_before_dispatch(self) -> None:
+        self.assertTrue(write_surfaces_overlap(("src",), ("SRC\\a.py",)))
+        self.assertTrue(write_surfaces_overlap(("src/a.py",), ("SRC\\A.PY",)))
+        self.assertFalse(write_surfaces_overlap(("src/a.py",), ("tests/a.py",)))
+
     def test_concurrency_three_requires_accepted_digest_bound_policy_evidence(self) -> None:
         with self.assertRaisesRegex(ParallelDispatchError, "accepted policy evidence"):
             ParallelDispatchPolicy(max_concurrency=3)
@@ -81,3 +122,4 @@ if __name__ == "__main__":
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]

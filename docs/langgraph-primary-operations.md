@@ -324,6 +324,21 @@ commits a durable claim before one `shell=False` subprocess attempt. Successful
 outcomes replay from the durable result; timeouts, process loss, nonzero exits,
 or malformed output become ambiguous and are never resent.
 
+The container client accepts only an exact `http` URL at
+`/v1/provider/dispatch`, with an explicit port and the host
+`host.docker.internal` or an exact loopback address. User information, query
+strings, fragments, alternate paths, remote hosts, TLS-looking aliases, and
+redirects are rejected. Immediately before any child-process I/O, the Windows
+bridge reads the authoritative Postgres task-writer row and requires the
+LangGraph owner, signed owner-token digest, exact fencing generation, and a live
+lease. A missing, stale, inaccessible, or mismatched row fails closed. The child
+receives only a minimal Windows process environment plus the selected lane's
+explicit authentication variables; Director API, bridge, callback,
+reconciliation, and shared secrets are never inherited. Each profile must set
+`DIRECTOR_HOST_PROVIDER_POSTGRES_DSN` to its own reachable primary database;
+that host-side DSN is a secret-store value and must never be copied into logs or
+checked-in profile files.
+
 The bridge currently permits only explicitly configured Claude, Grok,
 Antigravity, and GitHub Copilot packet-wrapper commands. Cursor and Windows
 Copilot fail closed: neither Windows app presence nor an unsupported CLI contract
@@ -339,6 +354,23 @@ activation, graph ownership, and zero ambiguous effects. Rollback stops Slack an
 the orchestrator, waits for the writer lease to expire, refuses when ambiguous
 effects exist, performs the fenced generation change back to legacy, and preserves
 the primary database.
+
+The control tool persists `/data/langgraph-primary-activation-evidence.json` as
+an atomic versioned state machine. Its identity binds the exact Director
+candidate commit/tree, profile, Compose project, opaque Postgres storage
+identity, schema, and checkpoint namespace. The only accepted sequence is
+`PREFLIGHT -> MIGRATED -> BACKED_UP -> RESTORE_PROVED -> ACTIVATED`; missing,
+duplicate, out-of-order, corrupt, cross-candidate, cross-profile, or cross-store
+evidence fails closed. Restore proof requires all named primary control-plane
+tables, all four LangGraph checkpoint tables, and a nonzero control-plane schema
+row from the restored disposable database. A successful command exit or a zero
+table count is not restore evidence.
+
+Before rollback changes the intake generation, the Postgres quiescence query
+must prove zero unresolved effect/provider reservations, zero pending/active/
+ambiguous parallel assignments, zero live task-writer leases, zero unresolved
+reconciliation claims, zero unsettled claims, and zero ambiguous effects. The
+legacy engine never receives tasks merely because the intake lease expired.
 
 The checked-in local Docker Compose topology uses `sslmode=disable` only for the
 exact service hostname `langgraph-primary-db` and only under the explicit

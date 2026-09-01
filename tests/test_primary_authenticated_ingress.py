@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:02 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -20,6 +21,11 @@ from director_orchestrator.primary_commands import (
     PrimaryIngressProof,
     build_primary_ingress_proof,
     verify_primary_ingress_proof,
+)
+from director_orchestrator.primary_activation_commands import (
+    ProviderActivationAdvanceProof,
+    ProviderActivationAdvanceRequest,
+    build_provider_activation_advance_proof,
 )
 
 
@@ -58,6 +64,33 @@ def _approval() -> ApprovalResumeRequest:
 
 
 class PrimaryAuthenticatedIngressTests(unittest.TestCase):
+    def _activation_advance(self, settings: Settings) -> ProviderActivationAdvanceRequest:
+        now = datetime.now(timezone.utc)
+        placeholder = ProviderActivationAdvanceProof(
+            issued_at=int(now.timestamp()), nonce="A" * 32, signature="0" * 64
+        )
+        request = ProviderActivationAdvanceRequest(
+            actor_id="owner-1",
+            binding_version="activation-v1",
+            surface="app",
+            stage="INSTALLED",
+            expected_revision=0,
+            evidence_id="observed-install-1",
+            evidence_digest="a" * 64,
+            observed_at=now,
+            expires_at=now.replace(year=now.year + 1),
+            gateway_proof=placeholder,
+        )
+        proof = build_provider_activation_advance_proof(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            "openai",
+            request,
+            issued_at=placeholder.issued_at,
+            nonce=placeholder.nonce,
+        )
+        return request.model_copy(update={"gateway_proof": proof})
+
     def test_default_live_roster_uses_all_nine_exact_lane_ids(self) -> None:
         self.assertEqual(
             (
@@ -150,6 +183,35 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
             main.primary_reconcile_effect("task-1", request)
         self.assertEqual(caught.exception.status_code, 409)
 
+    def test_provider_activation_route_requires_exact_signed_owner_gateway_proof(self) -> None:
+        settings = replace(
+            main.settings,
+            shared_secret=SHARED,
+            slack_gateway_secret=SECRET,
+            slack_owner_user_id="owner-1",
+        )
+        request = self._activation_advance(settings)
+        provider_activation = MagicMock()
+        provider_activation.health.return_value = {"combined_live_ready": False}
+        activation = SimpleNamespace(provider_activation=provider_activation)
+        with patch.object(main, "settings", settings), patch.object(
+            main, "primary_default_activation", activation
+        ):
+            response = main.primary_advance_provider_activation("openai", request)
+            with self.assertRaises(HTTPException) as caught:
+                main.primary_advance_provider_activation(
+                    "openai", request.model_copy(update={"actor_id": "owner-2"})
+                )
+        self.assertFalse(response["combined_live_ready"])
+        provider_activation.record_authorized.assert_called_once()
+        self.assertEqual(
+            "owner-1",
+            provider_activation.record_authorized.call_args.kwargs[
+                "authorization"
+            ].actor_id,
+        )
+        self.assertEqual(403, caught.exception.status_code)
+
     def test_legacy_replica_consults_shared_cutover_fence_before_sqlite(self) -> None:
         settings = replace(
             main.settings,
@@ -185,3 +247,4 @@ if __name__ == "__main__":
     unittest.main()
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:02 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]

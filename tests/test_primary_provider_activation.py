@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -9,6 +10,8 @@ from director_orchestrator.primary_provider_activation import (
     PrimaryProviderActivationService,
 )
 from director_orchestrator.provider_activation import (
+    ACTIVATION_EVIDENCE_VERSION,
+    ProviderActivationAuthorization,
     ProviderActivationBinding,
     ProviderActivationRegistry,
     ProviderActivationStage,
@@ -19,6 +22,7 @@ from director_orchestrator.provider_activation import (
 class MemoryStore:
     def __init__(self) -> None:
         self.rows = {}
+        self.claims = {}
 
     def load(self, binding, surface):
         return tuple(self.rows.get((binding, surface), ()))
@@ -28,6 +32,24 @@ class MemoryStore:
         rows = self.rows.setdefault(key, [])
         if len(rows) != expected_revision:
             return False
+        rows.append(evidence)
+        return True
+
+    def append_authorized(self, evidence, *, expected_revision, authorization):
+        claim = (
+            authorization.command_digest,
+            authorization.proof_version,
+            authorization.actor_id,
+            evidence,
+        )
+        existing = self.claims.get(authorization.nonce_digest)
+        if existing is not None:
+            return existing == claim
+        key = (evidence.binding, evidence.surface)
+        rows = self.rows.setdefault(key, [])
+        if len(rows) != expected_revision:
+            return False
+        self.claims[authorization.nonce_digest] = claim
         rows.append(evidence)
         return True
 
@@ -143,7 +165,40 @@ class PrimaryProviderActivationServiceTests(unittest.TestCase):
                 expires_at=self.now + timedelta(hours=1),
             )
 
+    def test_authorized_record_binds_version_revision_and_replays_one_nonce(self):
+        authorization = ProviderActivationAuthorization(
+            proof_version="provider-activation-advance-proof/v1",
+            actor_id="UOWNER",
+            nonce_digest="a" * 64,
+            command_digest="b" * 64,
+        )
+        arguments = {
+            "provider_id": "openai",
+            "evidence_schema_version": ACTIVATION_EVIDENCE_VERSION,
+            "binding_version": "v1",
+            "surface": ProviderActivationSurface.APP,
+            "stage": ProviderActivationStage.INSTALLED,
+            "expected_revision": 0,
+            "evidence_id": "openai-app-installed-signed",
+            "evidence_digest": hashlib.sha256(b"signed-installed").hexdigest(),
+            "observed_at": self.now,
+            "expires_at": self.now + timedelta(hours=1),
+            "authorization": authorization,
+        }
+        first = self.service.record_authorized(**arguments)
+        replay = self.service.record_authorized(**arguments)
+        self.assertEqual(first, replay)
+        self.assertEqual(1, len(self.store.claims))
+        self.assertEqual(1, len(self.store.rows[(first.binding, first.surface)]))
+        with self.assertRaisesRegex(ValueError, "binding version mismatch"):
+            self.service.record_authorized(**{**arguments, "binding_version": "v2"})
+        with self.assertRaisesRegex(ValueError, "schema version mismatch"):
+            self.service.record_authorized(
+                **{**arguments, "evidence_schema_version": "invalid/v1"}
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -222,6 +223,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 
     def test_public_search_sends_only_approved_query_once_without_shell(self):
         work = self._work(objective="current public documentation")
+        work["repository"] = "owner/private-repo"
         native = {"hits": [{"url": "https://example.test", "title": "Evidence"}], "total": 1}
         completed = type(
             "Completed", (),
@@ -239,8 +241,11 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         self.assertFalse(run.call_args.kwargs["shell"])
         argv = run.call_args.args[0]
         self.assertIn("current public documentation", argv)
+        self.assertIn("--limit", argv)
+        self.assertEqual("3", argv[argv.index("--limit") + 1])
         self.assertNotIn(work["task_id"], argv)
         self.assertNotIn(work["authority_snapshot_digest"], argv)
+        self.assertNotIn(work["repository"], argv)
 
     def test_public_search_requires_approval_and_forbids_effect_authority(self):
         with TemporaryDirectory() as directory:
@@ -291,8 +296,9 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             transports, observed = discover_local_primary_command_transports(
                 cwd=directory,
                 authenticated={},
-                host_bridge_endpoint="http://host.docker.internal:18765",
+                host_bridge_endpoint="http://host.docker.internal:18765/v1/provider/dispatch",
                 host_bridge_secret="b" * 32,
+                host_bridge_writer_owner_token_digest="sha256:" + "c" * 64,
             )
 
         for provider in ("claude", "grok", "antigravity", "github-copilot"):
@@ -314,7 +320,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 discover_local_primary_command_transports(
                     cwd=directory,
                     authenticated={},
-                    host_bridge_endpoint="http://host.docker.internal:18765",
+                    host_bridge_endpoint="http://host.docker.internal:18765/v1/provider/dispatch",
                 )
             with self.assertRaisesRegex(ValueError, "configured together"):
                 discover_local_primary_command_transports(
@@ -371,3 +377,4 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]

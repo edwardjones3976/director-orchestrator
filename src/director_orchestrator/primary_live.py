@@ -118,14 +118,13 @@ class DefaultLiveServices:
         """Plan once, then persist and verify the exact post-plan packet."""
 
         result = self._planning.plan(context)
-        if not result.passed:
-            return result
         record = self._planning._record(context.task_id)
         if record.plan is None or not record.plan.assignments:
             raise RuntimeError("Default live plan has no packet assignment")
         assignment = min(record.plan.assignments, key=lambda item: item.sequence)
         packet = validate_packet(
-            "work", self._planning._packet_router.work_packet(record, assignment)
+            "work",
+            self._planning._packet_router.planned_work_packet(record, assignment),
         )
         packet_digest = document_digest(packet)
         if not hmac.compare_digest(packet_digest, result.work_packet_digest):

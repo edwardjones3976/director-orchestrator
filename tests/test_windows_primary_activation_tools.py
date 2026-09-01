@@ -37,7 +37,12 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("open_postgres_control_plane", text)
         self.assertIn("pg_dump", text)
         self.assertIn("pg_restore", text)
+        self.assertIn("primary_activation_evidence", text)
+        self.assertIn("required_control_plane_tables", text)
+        self.assertIn("checkpoint_tables", text)
+        self.assertIn("Invoke-Evidence -Command require-ready", text)
         self.assertIn("ambiguous effects block rollback", text)
+        self.assertIn("q.rollback_safe", text)
         self.assertIn("acquire_intake_authority(intake_owner='legacy'", text)
         self.assertLess(
             text.index("Invoke-Compose stop slackbot", text.index('if ($Action -eq "Activate")')),

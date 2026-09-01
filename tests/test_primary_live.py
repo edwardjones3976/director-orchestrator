@@ -60,7 +60,10 @@ class _Planning:
             plan=SimpleNamespace(assignments=[self.assignment])
         )
         self._packet_router = SimpleNamespace(
-            work_packet=lambda _record, _assignment: copy.deepcopy(self.work)
+            work_packet=lambda _record, _assignment: copy.deepcopy(self.work),
+            planned_work_packet=(
+                lambda _record, _assignment: copy.deepcopy(self.work)
+            ),
         )
         self.authenticate_scope = Mock(return_value=PhaseResult(_digest("1")))
         self.canonicalize = Mock(return_value=PhaseResult(_digest("2")))
@@ -196,24 +199,6 @@ class DefaultLiveServicesTests(unittest.TestCase):
             service.plan(self.context)
 
         self.assertEqual(1, self.planning.plan_calls)
-
-    def test_failed_plan_never_builds_or_persists_a_live_packet(self) -> None:
-        failed = PlanResult(
-            _digest("5"),
-            None,
-            passed=False,
-            reason_code="repository_free_primary_packet_unsupported",
-        )
-        self.planning.plan = Mock(return_value=failed)  # type: ignore[method-assign]
-        self.planning._packet_router.work_packet = Mock(
-            side_effect=AssertionError("packet routing must remain disabled")
-        )
-
-        result = self._services().plan(self.context)
-
-        self.assertEqual(failed, result)
-        self.assertEqual([], self.persisted)
-        self.planning._packet_router.work_packet.assert_not_called()
 
     def test_unready_live_provider_never_enters_transport(self) -> None:
         result = self._services(ready=False).handlers().provider_subgraph(self.context)

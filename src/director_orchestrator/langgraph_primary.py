@@ -106,11 +106,6 @@ class TerminalClassification(StrEnum):
     RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
 
 
-REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED = (
-    "repository_free_primary_packet_unsupported"
-)
-
-
 class WorkflowRunStatus(StrEnum):
     RUNNING = "RUNNING"
     PAUSED = "PAUSED"
@@ -471,7 +466,7 @@ class PlanResult:
     """The validated plan and the exact work packet derived from that plan."""
 
     plan_digest: str
-    work_packet_digest: str | None
+    work_packet_digest: str
     passed: bool = True
     reason_code: str = "ok"
 
@@ -479,11 +474,7 @@ class PlanResult:
         _require_digest(self.plan_digest, "plan_digest")
         if type(self.passed) is not bool:
             raise ValueError("passed must be a boolean")
-        if self.work_packet_digest is None:
-            if self.passed:
-                raise ValueError("a passed plan requires an exact work_packet_digest")
-        else:
-            _require_digest(self.work_packet_digest, "work_packet_digest")
+        _require_digest(self.work_packet_digest, "work_packet_digest")
         _require_code(self.reason_code)
 
 
@@ -1052,31 +1043,6 @@ def _post_plan_work_packet_digest(state: Mapping[str, Any]) -> str | None:
     return work_packet_digest if _secure_equal(binding_digest, expected) else None
 
 
-def _is_intentional_packet_free_terminal_plan(state: Mapping[str, Any]) -> bool:
-    """Recognize only the bounded terminal shape emitted by the v1 refusal."""
-
-    try:
-        _require_digest(str(state.get("plan_digest") or ""), "plan_digest")
-    except ValueError:
-        return False
-    return (
-        state.get("current_phase") == PrimaryPhase.TERMINAL_CLASSIFICATION.value
-        and state.get("previous_phase") == PrimaryPhase.PLAN.value
-        and state.get("terminal_classification")
-        == TerminalClassification.POLICY_BLOCKED.value
-        and state.get("transition_reason_code")
-        == REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED
-        and state.get("work_packet_digest") is None
-        and state.get("plan_work_packet_binding_digest") is None
-        and state.get("schedule_digest") is None
-        and state.get("scheduled_producer_id") is None
-        and state.get("provider_attempt_digest") is None
-        and state.get("provider_dispatch_status")
-        == ProviderDispatchStatus.NOT_STARTED.value
-        and state.get("effect_status") == EffectStatus.NOT_REQUIRED.value
-    )
-
-
 def _context(state: Mapping[str, Any]) -> HandlerContext:
     return HandlerContext(
         task_id=state["task_id"],
@@ -1320,32 +1286,14 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             return _handler_failure(update, reason_code="plan_handler_error")
         update.update(
             plan_digest=result.plan_digest,
+            work_packet_digest=result.work_packet_digest,
+            plan_work_packet_binding_digest=_plan_work_packet_binding(
+                result.plan_digest, result.work_packet_digest
+            ),
             transition_reason_code=result.reason_code,
         )
-        if result.work_packet_digest is not None:
-            update.update(
-                work_packet_digest=result.work_packet_digest,
-                plan_work_packet_binding_digest=_plan_work_packet_binding(
-                    result.plan_digest, result.work_packet_digest
-                ),
-            )
-        else:
-            update.update(
-                work_packet_digest=None,
-                plan_work_packet_binding_digest=None,
-            )
         if not result.passed:
-            classification = (
-                TerminalClassification.POLICY_BLOCKED
-                if result.reason_code
-                == REPOSITORY_FREE_PRIMARY_PACKET_UNSUPPORTED
-                else TerminalClassification.FAILED
-            )
-            return _handler_failure(
-                update,
-                classification=classification,
-                reason_code=result.reason_code,
-            )
+            return _handler_failure(update, reason_code=result.reason_code)
         return update
 
     def policy_budget(state: PrimaryGraphState) -> PrimaryGraphState:
@@ -2287,8 +2235,6 @@ class PrimaryWorkflowRuntime:
         if not state or state.get("plan_digest") is None:
             return False
         if _post_plan_work_packet_digest(state) is not None:
-            return False
-        if _is_intentional_packet_free_terminal_plan(state):
             return False
         if (
             state.get("terminal_classification")
