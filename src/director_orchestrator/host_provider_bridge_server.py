@@ -1,10 +1,13 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:46 UTC | BEGIN]]
 """Windows HTTP entry point for the authenticated host-provider bridge."""
 
 from __future__ import annotations
 
 import json
+import hmac
 import os
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -17,6 +20,7 @@ from .host_provider_bridge import (
     PostgresHostWriterFenceVerifier,
     WindowsHostProviderExecutor,
     bridge_response_signature,
+    bridge_challenge_signature,
     dispatch_bridge_request,
     _digest,
 )
@@ -62,6 +66,41 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler contract
+        if self.path == "/v1/provider/challenge":
+            try:
+                timestamp = int(self.headers.get("X-Director-Bridge-Timestamp", "0"))
+                nonce = self.headers.get("X-Director-Bridge-Nonce", "")
+                authorization = self.headers.get("Authorization", "")
+                if (
+                    self.headers.get("X-Director-Bridge-Protocol") != BRIDGE_PROTOCOL
+                    or not authorization.startswith("Director-HMAC ")
+                    or abs(int(time.time()) - timestamp) > 60
+                    or len(nonce) != 64
+                ):
+                    raise HostProviderBridgeError("invalid bridge challenge")
+                expected = bridge_challenge_signature(
+                    self.server.bridge_secret, timestamp=timestamp, nonce=nonce  # type: ignore[attr-defined]
+                )
+                if not hmac.compare_digest(
+                    expected, authorization.removeprefix("Director-HMAC ")
+                ):
+                    raise HostProviderBridgeError("bridge challenge authentication failed")
+                configured = sorted(self.server.executor.commands)  # type: ignore[attr-defined]
+                command_map_digest = "sha256:" + _digest(
+                    json.dumps(configured, separators=(",", ":")).encode("utf-8")
+                )
+                self._json(200, {
+                    "ok": True, "protocol": BRIDGE_PROTOCOL,
+                    "configured_providers": configured,
+                    "command_map_digest": command_map_digest,
+                    "proof": bridge_challenge_signature(
+                        self.server.bridge_secret, timestamp=timestamp, nonce=nonce,  # type: ignore[attr-defined]
+                        command_map_digest=command_map_digest,
+                    ),
+                })
+            except (HostProviderBridgeError, ValueError):
+                self._json(403, {"ok": False})
+            return
         if self.path != "/health":
             self._json(404, {"ok": False})
             return
@@ -160,3 +199,4 @@ if __name__ == "__main__":
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

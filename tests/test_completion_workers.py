@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | BEGIN]]
@@ -560,7 +561,7 @@ class CompletionWorkerTests(unittest.TestCase):
         backend._execute_argv = Mock(return_value=execution)
         short_spec = replace(
             self.container,
-            limits=replace(self.container.limits, timeout_seconds=1),
+            limits=replace(self.container.limits, timeout_seconds=5),
         )
         request = self.request(
             worker_spec_id=self.container.spec_id,
@@ -825,3 +826,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]

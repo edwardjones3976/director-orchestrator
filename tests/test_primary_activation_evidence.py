@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ def identity(**changes: str) -> ActivationIdentity:
         "profile_id": "long-table",
         "compose_project": "long-table-director",
         "database_identity": "postgres:sha256:" + "c" * 64,
+        "database_instance_id": "11111111-1111-4111-8111-111111111111",
         "postgres_schema": "director_primary_v1",
         "checkpoint_namespace": "long-table-primary-v1",
     }
@@ -80,6 +82,9 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
                 "schema_evidence_rows": 1,
             },
         )
+        self.store.bind_legacy_inventory(
+            self.identity, inventory_digest="e" * 64, task_count=3
+        )
         self.store.require_ready(self.identity)
         self.record(ActivationStage.ACTIVATED)
 
@@ -122,11 +127,39 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
                 "schema_evidence_rows": 1,
             },
         )
+        self.store.bind_legacy_inventory(
+            self.identity, inventory_digest="e" * 64, task_count=2
+        )
         recorded = self.store.load()
         self.assertEqual(
             digest,
             recorded["stages"][-1]["facts"]["backup_digest"],
         )
+
+    def test_legacy_inventory_is_required_and_immutable_before_activation(self) -> None:
+        backup_digest = "sha256:" + "a" * 64
+        self.record(ActivationStage.PREFLIGHT)
+        self.record(ActivationStage.MIGRATED)
+        self.record(ActivationStage.BACKED_UP, {"backup_digest": backup_digest})
+        self.record(
+            ActivationStage.RESTORE_PROVED,
+            {
+                "backup_digest": backup_digest,
+                "required_control_plane_tables": 12,
+                "checkpoint_tables": 4,
+                "schema_evidence_rows": 1,
+            },
+        )
+        with self.assertRaisesRegex(ActivationEvidenceError, "inventory"):
+            self.store.require_ready(self.identity)
+        self.store.bind_legacy_inventory(
+            self.identity, inventory_digest="f" * 64, task_count=4
+        )
+        self.store.require_ready(self.identity)
+        with self.assertRaisesRegex(ActivationEvidenceError, "immutable"):
+            self.store.bind_legacy_inventory(
+                self.identity, inventory_digest="e" * 64, task_count=5
+            )
 
     def test_restore_dump_continuity_rejects_missing_file(self) -> None:
         self.record(ActivationStage.PREFLIGHT)
@@ -146,3 +179,4 @@ if __name__ == "__main__":
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]

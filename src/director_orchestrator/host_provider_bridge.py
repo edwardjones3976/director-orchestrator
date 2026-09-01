@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:42 UTC | BEGIN]]
 """Authenticated one-attempt bridge between Linux containers and Windows CLIs.
 
@@ -27,6 +28,7 @@ from typing import Mapping, Sequence
 from urllib.parse import urlsplit
 
 from .langgraph_runtime import ProviderAdapterContext
+from .packet_contracts import canonical_json_bytes
 
 
 BRIDGE_PROTOCOL = "director-host-provider-bridge/v1"
@@ -39,6 +41,7 @@ _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_PACKET_BYTES = 1_048_576
 _MAX_RESULT_BYTES = 1_048_576
 _BRIDGE_PATH = "/v1/provider/dispatch"
+_BRIDGE_CHALLENGE_PATH = "/v1/provider/challenge"
 _SAFE_OS_ENV = frozenset(
     {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC", "LOCALAPPDATA", "APPDATA", "USERPROFILE"}
 )
@@ -115,6 +118,87 @@ def bridge_response_signature(
         (BRIDGE_PROTOCOL, "response", nonce, idempotency_digest, response_digest)
     ).encode("utf-8")
     return hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
+
+
+def bridge_challenge_signature(
+    secret: str, *, timestamp: int, nonce: str, command_map_digest: str = ""
+) -> str:
+    if len(secret) < 32:
+        raise HostProviderBridgeError("bridge secret must contain at least 32 characters")
+    material = "\n".join(
+        (BRIDGE_PROTOCOL, "challenge", str(timestamp), nonce, command_map_digest)
+    ).encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class HostBridgeChallengeEvidence:
+    """One fresh authenticated observation of the bridge command map."""
+
+    configured_providers: frozenset[str]
+    command_map_digest: str
+    observed_at: int
+
+
+def challenge_host_provider_bridge(
+    endpoint: str,
+    secret: str,
+    *,
+    timeout_seconds: int = 5,
+    now: int | None = None,
+) -> HostBridgeChallengeEvidence:
+    """Prove bridge liveness and its allowlisted command map without provider I/O."""
+
+    parsed = urlsplit(endpoint)
+    if parsed.path != _BRIDGE_PATH:
+        raise HostProviderBridgeError("host bridge endpoint is not the dispatch path")
+    challenge_url = endpoint[: -len(_BRIDGE_PATH)] + _BRIDGE_CHALLENGE_PATH
+    timestamp = int(time.time()) if now is None else int(now)
+    nonce = hashlib.sha256(f"challenge:{time.time_ns()}:{endpoint}".encode()).hexdigest()
+    request = urllib.request.Request(
+        challenge_url,
+        headers={
+            "X-Director-Bridge-Protocol": BRIDGE_PROTOCOL,
+            "X-Director-Bridge-Timestamp": str(timestamp),
+            "X-Director-Bridge-Nonce": nonce,
+            "Authorization": "Director-HMAC "
+            + bridge_challenge_signature(secret, timestamp=timestamp, nonce=nonce),
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.build_opener(_NoRedirectHandler()).open(
+            request, timeout=timeout_seconds
+        ) as response:
+            payload = response.read(65_537)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise HostProviderBridgeError("host bridge challenge is unavailable") from exc
+    if not payload or len(payload) > 65_536:
+        raise HostProviderBridgeError("host bridge challenge response is not bounded")
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HostProviderBridgeError("host bridge challenge response is malformed") from exc
+    providers = decoded.get("configured_providers") if isinstance(decoded, dict) else None
+    digest = decoded.get("command_map_digest") if isinstance(decoded, dict) else None
+    proof = decoded.get("proof") if isinstance(decoded, dict) else None
+    if (
+        decoded.get("ok") is not True
+        or decoded.get("protocol") != BRIDGE_PROTOCOL
+        or not isinstance(providers, list)
+        or providers != sorted(set(providers))
+        or any(provider not in SUPPORTED_HOST_LANES for provider in providers)
+        or not isinstance(digest, str)
+        or digest != "sha256:" + _digest(canonical_json_bytes(providers))
+        or not isinstance(proof, str)
+    ):
+        raise HostProviderBridgeError("host bridge challenge bindings are invalid")
+    expected = bridge_challenge_signature(
+        secret, timestamp=timestamp, nonce=nonce, command_map_digest=digest
+    )
+    if not hmac.compare_digest(proof, expected):
+        raise HostProviderBridgeError("host bridge challenge authentication failed")
+    return HostBridgeChallengeEvidence(frozenset(providers), digest, timestamp)
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,3 +585,4 @@ def dispatch_bridge_request(
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

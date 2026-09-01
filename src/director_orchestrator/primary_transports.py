@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | BEGIN]]
 """Exact graph-native transport composition for primary provider lanes.
 
@@ -23,6 +25,7 @@ from typing import Any, Mapping, Sequence
 import httpx
 
 from .host_provider_bridge import (
+    HostBridgeChallengeEvidence,
     HostBridgePacketTransport,
     SUPPORTED_HOST_LANES,
 )
@@ -150,6 +153,24 @@ PRIMARY_PROVIDER_LANES = (
     "windows-copilot",
 )
 
+WINDOWS_COPILOT_EXTERNAL_BLOCKER = (
+    "windows_copilot_authenticated_noninteractive_result_transport_missing"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderExternalBlocker:
+    """Typed, non-secret evidence that an unavailable lane needs external work."""
+
+    code: str
+    requirement: str
+
+    def validate(self) -> None:
+        if self.code != WINDOWS_COPILOT_EXTERNAL_BLOCKER:
+            raise ValueError("unknown provider external blocker")
+        if not self.requirement.strip():
+            raise ValueError("provider external blocker requirement is empty")
+
 
 @dataclass(frozen=True, slots=True)
 class PrimaryProviderCapability:
@@ -161,6 +182,7 @@ class PrimaryProviderCapability:
     executable_observed: bool
     authenticated_observed: bool
     production_authority: bool = False
+    external_blocker: ProviderExternalBlocker | None = None
 
     @property
     def callable(self) -> bool:
@@ -178,6 +200,12 @@ class PrimaryProviderCapability:
         if self.provider_id in {"github-copilot", "windows-copilot"}:
             if self.production_authority:
                 raise ValueError("Copilot capability lanes cannot receive production authority")
+        if self.external_blocker is not None:
+            self.external_blocker.validate()
+            if self.provider_id != "windows-copilot":
+                raise ValueError("Windows Copilot blocker cannot bind another provider lane")
+            if self.callable:
+                raise ValueError("callable provider lane cannot retain an external blocker")
 
 
 class BoundedJsonCommandTransport:
@@ -704,6 +732,7 @@ def discover_local_primary_command_transports(
     host_bridge_endpoint: str = "",
     host_bridge_secret: str = "",
     host_bridge_writer_owner_token_digest: str = "",
+    host_bridge_challenge: HostBridgeChallengeEvidence | None = None,
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
     """Discover documented noninteractive CLIs; never launch or authenticate them."""
 
@@ -786,8 +815,10 @@ def discover_local_primary_command_transports(
             transport_kind="public-search-cli", executable_observed=True,
             authenticated_observed=True,
         )
-    if host_bridge_endpoint and host_bridge_secret:
+    if host_bridge_endpoint and host_bridge_secret and host_bridge_challenge is not None:
         for provider_id in sorted(SUPPORTED_HOST_LANES):
+            if provider_id not in host_bridge_challenge.configured_providers:
+                continue
             transports[provider_id] = HostBridgePacketTransport(
                 provider_id,
                 host_bridge_endpoint,
@@ -803,11 +834,21 @@ def discover_local_primary_command_transports(
                 executable_observed=True,
                 authenticated_observed=True,
             )
-    # Microsoft Copilot AppX/ms-copilot URI is intentionally not a callable lane.
+    # The installed AppX exposes a launch URI, not an authenticated request/result
+    # contract. A reviewed host command plus a non-prompt capability challenge is
+    # required before this lane may be composed.
     capabilities["windows-copilot"] = PrimaryProviderCapability(
         provider_id="windows-copilot", backend_identity="windows-copilot",
-        transport_kind="unsupported-appx-uri", executable_observed=False,
+        transport_kind="external-blocker", executable_observed=False,
         authenticated_observed=False,
+        external_blocker=ProviderExternalBlocker(
+            code=WINDOWS_COPILOT_EXTERNAL_BLOCKER,
+            requirement=(
+                "Configure and independently challenge a reviewed Windows host "
+                "command that accepts one canonical packet on stdin and returns "
+                "one bounded, packet-bound JSON result artifact without UI automation."
+            ),
+        ),
     )
     return transports, capabilities
 
@@ -868,4 +909,19 @@ def provider_lane_readiness(
     }
 
 
+def provider_lane_external_blockers(
+    capabilities: Mapping[str, PrimaryProviderCapability],
+) -> dict[str, str]:
+    """Return stable blocker codes only; never expose commands or credentials."""
+
+    blockers: dict[str, str] = {}
+    for provider_id, capability in capabilities.items():
+        capability.validate()
+        if capability.external_blocker is not None:
+            blockers[provider_id] = capability.external_blocker.code
+    return blockers
+
+
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

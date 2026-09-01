@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -177,6 +179,25 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ValueError,
             "automatic graph-native live dependencies are unavailable: missing=",
+        ):
+            build_automatic_primary_live_dependencies(
+                settings,
+                handle=None,  # type: ignore[arg-type]
+                services=None,  # type: ignore[arg-type]
+            )
+
+    def test_automatic_live_discovery_reports_typed_windows_copilot_blocker(self):
+        settings = replace(
+            Settings(),
+            repository_snapshot_root=str(Path.cwd()),
+        )
+
+        with patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ), self.assertRaisesRegex(
+            ValueError,
+            r"external_blockers=windows-copilot:"
+            r"windows_copilot_authenticated_noninteractive_result_transport_missing",
         ):
             build_automatic_primary_live_dependencies(
                 settings,
@@ -933,3 +954,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]

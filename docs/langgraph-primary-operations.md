@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer | 2026-08-31 | 09:55 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer | 2026-08-31 | 09:50 UTC | BEGIN]] -->
@@ -340,11 +343,33 @@ that host-side DSN is a secret-store value and must never be copied into logs or
 checked-in profile files.
 
 The bridge currently permits only explicitly configured Claude, Grok,
-Antigravity, and GitHub Copilot packet-wrapper commands. Cursor and Windows
-Copilot fail closed: neither Windows app presence nor an unsupported CLI contract
-is callable evidence. OpenAI, Cursor, Perplexity, and Firecrawl use their reviewed
-direct graph-native transports rather than being silently aliased through this
-bridge.
+Antigravity, and GitHub Copilot packet-wrapper commands. Cursor remains direct.
+Windows Copilot has the typed blocker
+`windows_copilot_authenticated_noninteractive_result_transport_missing`: the
+installed AppX exposes `mscopilot_proxy.exe` and the `ms-copilot` launch URI, but
+no authenticated noninteractive request/result contract. The `copilot.exe` on
+PATH is GitHub Copilot and cannot satisfy this lane. Windows Copilot remains
+non-callable until a separately reviewed host command accepts one canonical
+packet on stdin, returns one bounded packet-bound JSON result artifact, and
+passes a non-prompt capability challenge. UI automation, AppX presence, or URI
+launch is not callable evidence. OpenAI, Cursor, Perplexity, and Firecrawl use
+their reviewed direct graph-native transports rather than being silently aliased
+through this bridge.
+
+Endpoint and secret configuration alone never makes a host-bridge lane callable.
+Before composing adapters, the container sends a fresh HMAC-authenticated
+challenge and verifies the signed, digest-bound configured-provider command map.
+Missing, stale, redirected, malformed, unsigned, or mismatched challenge evidence
+leaves every affected bridge lane unavailable. This liveness challenge performs
+no provider subprocess or paid action.
+
+Independent exact-head review, trusted CI, and security results are stored as one
+immutable completion-evidence bundle in the primary Postgres control plane. The
+bundle is accepted only under the current unexpired LangGraph writer fence and is
+bound to the task, candidate SHA, provider-result digest, gate-ledger digest, and
+individual result digests. Restart readback revalidates canonical content;
+missing or conflicting evidence remains `OWNER_DECISION_REQUIRED` and can never
+be replaced with a synthetic pass.
 
 For every profile, execute the control actions in this order while Slack intake
 is closed: `Preflight`, `Migrate`, `Backup`, `RestoreDrill`, provider activation
@@ -380,6 +405,23 @@ ambiguous parallel assignments, zero live task-writer leases, zero unresolved
 reconciliation claims, zero unsettled claims, and zero ambiguous effects. The
 legacy engine never receives tasks merely because the intake lease expired.
 
+Preflight first bootstraps only the profile's PostgreSQL service and persists a
+database-instance UUID inside the control-plane singleton. Activation evidence
+binds both the canonical connection target and that instance UUID, so replacing
+a volume or server behind the same DSN invalidates the earlier evidence chain.
+
+Immediately before cutover, the control tool stops and verifies all authenticated
+intake surfaces: Slack, n8n, and the API orchestrator. It then hashes the complete
+legacy SQLite task ID/status inventory and durably binds that immutable snapshot
+to legacy ownership before `require-ready` may pass. Pre-cutover tasks remain
+legacy-owned; only the fenced new-intake generation transfers to LangGraph.
+
+If any post-start activation health check fails, the tool stops the orchestrator,
+restores paid/live/new-intake switches to their closed values, and leaves Slack,
+n8n, and API intake stopped. Rollback uses unconditional runtime exceptions for
+ambiguous-effect and quiescence failures; Python optimization cannot remove the
+safety checks.
+
 The checked-in local Docker Compose topology uses `sslmode=disable` only for the
 exact service hostname `langgraph-primary-db` and only under the explicit
 `LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=true` exception injected by
@@ -389,3 +431,6 @@ other non-loopback target fail closed. Managed or remote production PostgreSQL
 must use `verify-ca` or `verify-full` with an explicit CA root; the local Compose
 exception is not production TLS evidence.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | BEGIN]]
 """Durable, exact-identity activation evidence state machine."""
 
@@ -9,6 +10,7 @@ import hmac
 import json
 import os
 import tempfile
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -38,6 +40,7 @@ class ActivationIdentity:
     profile_id: str
     compose_project: str
     database_identity: str
+    database_instance_id: str
     postgres_schema: str
     checkpoint_namespace: str
 
@@ -48,6 +51,10 @@ class ActivationIdentity:
             raise ActivationEvidenceError("candidate identity must use exact Git object IDs")
         if not self.database_identity.startswith("postgres:sha256:"):
             raise ActivationEvidenceError("database identity is not canonical")
+        try:
+            uuid.UUID(self.database_instance_id)
+        except ValueError as exc:
+            raise ActivationEvidenceError("database instance identity is invalid") from exc
 
     @property
     def digest(self) -> str:
@@ -200,6 +207,37 @@ class ActivationEvidenceStore:
         observed = [item.get("stage") for item in stages]
         if observed != expected:
             raise ActivationEvidenceError("activation prerequisites are incomplete")
+        inventory = current.get("legacy_inventory")
+        if not isinstance(inventory, dict):
+            raise ActivationEvidenceError("pre-cutover legacy ownership inventory is unavailable")
+        return current
+
+    def bind_legacy_inventory(
+        self, identity: ActivationIdentity, *, inventory_digest: str, task_count: int
+    ) -> dict[str, Any]:
+        if (
+            len(inventory_digest) != 64
+            or any(character not in "0123456789abcdef" for character in inventory_digest)
+            or isinstance(task_count, bool)
+            or task_count < 0
+        ):
+            raise ActivationEvidenceError("legacy ownership inventory is invalid")
+        current = self.load()
+        if (
+            current is None
+            or current.get("identity_digest") != identity.digest
+            or current.get("identity") != asdict(identity)
+        ):
+            raise ActivationEvidenceError("legacy ownership inventory identity is stale")
+        expected_stages = [stage.value for stage in _ORDER[:-1]]
+        if [item.get("stage") for item in current.get("stages", [])] != expected_stages:
+            raise ActivationEvidenceError("legacy ownership inventory requires restore proof")
+        inventory = {"digest": inventory_digest, "task_count": task_count, "owner": "legacy"}
+        held = current.get("legacy_inventory")
+        if held is not None and held != inventory:
+            raise ActivationEvidenceError("legacy ownership inventory is immutable")
+        current["legacy_inventory"] = inventory
+        self._atomic_write(current)
         return current
 
     def _atomic_write(self, value: Mapping[str, Any]) -> None:
@@ -223,6 +261,7 @@ def _identity(arguments: argparse.Namespace) -> ActivationIdentity:
         profile_id=arguments.profile_id,
         compose_project=arguments.compose_project,
         database_identity=arguments.database_identity,
+        database_instance_id=arguments.database_instance_id,
         postgres_schema=arguments.postgres_schema,
         checkpoint_namespace=arguments.checkpoint_namespace,
     )
@@ -230,19 +269,22 @@ def _identity(arguments: argparse.Namespace) -> ActivationIdentity:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("record", "require-ready", "verify-backup"))
+    parser.add_argument("command", choices=("record", "require-ready", "verify-backup", "bind-legacy-inventory"))
     parser.add_argument("--artifact", required=True)
     parser.add_argument("--candidate-commit", required=True)
     parser.add_argument("--candidate-tree", required=True)
     parser.add_argument("--profile-id", required=True)
     parser.add_argument("--compose-project", required=True)
     parser.add_argument("--database-identity", required=True)
+    parser.add_argument("--database-instance-id", required=True)
     parser.add_argument("--postgres-schema", required=True)
     parser.add_argument("--checkpoint-namespace", required=True)
     parser.add_argument("--stage", choices=tuple(stage.value for stage in ActivationStage))
     parser.add_argument("--evidence-digest")
     parser.add_argument("--facts-json", default="{}")
     parser.add_argument("--backup-digest")
+    parser.add_argument("--legacy-inventory-digest")
+    parser.add_argument("--legacy-task-count", type=int)
     arguments = parser.parse_args()
     store = ActivationEvidenceStore(arguments.artifact)
     identity = _identity(arguments)
@@ -255,6 +297,16 @@ def main() -> None:
             parser.error("verify-backup requires --backup-digest")
         store.require_backup_digest(identity, arguments.backup_digest)
         print("backup_continuity_verified=true")
+        return
+    if arguments.command == "bind-legacy-inventory":
+        if arguments.legacy_inventory_digest is None or arguments.legacy_task_count is None:
+            parser.error("bind-legacy-inventory requires digest and task count")
+        store.bind_legacy_inventory(
+            identity,
+            inventory_digest=arguments.legacy_inventory_digest,
+            task_count=arguments.legacy_task_count,
+        )
+        print("legacy_ownership_inventory_bound=true")
         return
     if arguments.stage is None or arguments.evidence_digest is None:
         parser.error("record requires --stage and --evidence-digest")
@@ -275,3 +327,4 @@ if __name__ == "__main__":
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]

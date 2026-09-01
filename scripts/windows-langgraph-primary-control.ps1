@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:02 UTC | BEGIN]]
 [CmdletBinding()]
@@ -69,21 +70,41 @@ function Get-Sha256Text {
     ).ToLowerInvariant()
 }
 
-function Get-DatabaseIdentity {
+function Get-DatabaseBinding {
     $output = @(Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
-        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import _load_dependencies,_parse_connection_target,_storage_identity; s=Settings(); d=_load_dependencies(); p=_parse_connection_target(s.langgraph_primary_postgres_dsn, conninfo_to_dict=d.conninfo_to_dict, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); print(_storage_identity(p, schema=s.langgraph_primary_postgres_schema))")
-    $identity = [string](@($output | Where-Object { $_ -match '^postgres:sha256:[0-9a-f]{64}$' }) | Select-Object -Last 1)
-    if ([string]::IsNullOrWhiteSpace($identity)) { throw "Primary database identity could not be derived." }
-    return $identity
+        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); print(h.storage_identity+'|'+h.database_instance_id); h.close()")
+    $binding = [string](@($output | Where-Object { $_ -match '^postgres:sha256:[0-9a-f]{64}\|[0-9a-f-]{36}$' }) | Select-Object -Last 1)
+    if ([string]::IsNullOrWhiteSpace($binding)) { throw "Primary database instance binding could not be established." }
+    return $binding.Split('|')
+}
+
+function Get-LegacyInventory {
+    $output = @(Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
+        "import hashlib,json,sqlite3; from director_orchestrator.config import Settings; s=Settings(); c=sqlite3.connect(s.sqlite_path); rows=c.execute('SELECT task_id,status FROM tasks ORDER BY task_id').fetchall(); c.close(); payload=json.dumps(rows,separators=(',',':')); print(str(len(rows))+'|'+hashlib.sha256(payload.encode()).hexdigest())")
+    $inventory = [string](@($output | Where-Object { $_ -match '^\d+\|[0-9a-f]{64}$' }) | Select-Object -Last 1)
+    if ([string]::IsNullOrWhiteSpace($inventory)) { throw "Legacy task ownership inventory could not be frozen." }
+    return $inventory.Split('|')
+}
+
+function Stop-And-Prove-AllIntake {
+    Invoke-Compose stop slackbot n8n orchestrator
+    foreach ($service in @("slackbot", "n8n", "orchestrator")) {
+        $running = [string](@(Invoke-Compose ps -q $service) | Select-Object -Last 1)
+        if (-not [string]::IsNullOrWhiteSpace($running)) {
+            throw "Authenticated intake surface remains active: $service"
+        }
+    }
 }
 
 function Invoke-Evidence {
     param(
-        [ValidateSet("record", "require-ready", "verify-backup")][string]$Command,
+        [ValidateSet("record", "require-ready", "verify-backup", "bind-legacy-inventory")][string]$Command,
         [string]$Stage,
         [string]$EvidenceDigest,
         [string]$FactsJson = "{}",
-        [string]$BackupDigest
+        [string]$BackupDigest,
+        [string]$LegacyInventoryDigest,
+        [int]$LegacyTaskCount
     )
     $arguments = @(
         "-m", "director_orchestrator.primary_activation_evidence", $Command,
@@ -93,6 +114,7 @@ function Invoke-Evidence {
         "--profile-id", ([string]$script:values["APP_ENV"]),
         "--compose-project", $script:ComposeProject,
         "--database-identity", $script:databaseIdentity,
+        "--database-instance-id", $script:databaseInstanceId,
         "--postgres-schema", ([string]$script:values["LANGGRAPH_PRIMARY_POSTGRES_SCHEMA"]),
         "--checkpoint-namespace", ([string]$script:values["LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE"])
     )
@@ -101,6 +123,9 @@ function Invoke-Evidence {
     }
     elseif ($Command -eq "verify-backup") {
         $arguments += @("--backup-digest", $BackupDigest)
+    }
+    elseif ($Command -eq "bind-legacy-inventory") {
+        $arguments += @("--legacy-inventory-digest", $LegacyInventoryDigest, "--legacy-task-count", [string]$LegacyTaskCount)
     }
     Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator @arguments
 }
@@ -174,7 +199,12 @@ if ($candidateCommit -notmatch '^[0-9a-f]{40}$' -or $candidateTree -notmatch '^[
     throw "The Director candidate commit/tree cannot be frozen."
 }
 Invoke-Compose build orchestrator
-$databaseIdentity = Get-DatabaseIdentity
+# Establish the durable database-instance UUID before any activation evidence is
+# recorded. This is the only service Preflight may start.
+Invoke-Compose up -d langgraph-primary-db
+$databaseBinding = Get-DatabaseBinding
+$databaseIdentity = [string]$databaseBinding[0]
+$databaseInstanceId = [string]$databaseBinding[1]
 
 if ($Action -eq "Preflight") {
     $digest = Get-Sha256Text "$candidateCommit|$candidateTree|$ComposeProject|$databaseIdentity|preflight"
@@ -245,7 +275,7 @@ if ($Action -eq "RestoreDrill") {
         if ($LASTEXITCODE -ne 0) { throw "Restore drill failed." }
         $schema = [string]$values['LANGGRAPH_PRIMARY_POSTGRES_SCHEMA']
         $proof = [string](@(& docker exec $container psql -U director_primary -d $database -v ON_ERROR_STOP=1 -Atc `
-            "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('director_primary_control_plane','director_primary_intake_authority','director_primary_task_projection','director_primary_task_writer','director_primary_claim','director_primary_effect_reservation','director_primary_reconciliation_event','director_primary_terminal_evidence','director_provider_activation_evidence','director_provider_activation_authorization','director_primary_parallel_batch','director_primary_parallel_assignment')) || '|' || (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('checkpoints','checkpoint_blobs','checkpoint_writes','checkpoint_migrations')) || '|' || (SELECT count(*) FROM $schema.director_primary_control_plane);" ) | Select-Object -Last 1)
+            "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('director_primary_control_plane','director_primary_intake_authority','director_primary_task_projection','director_primary_task_writer','director_primary_claim','director_primary_effect_reservation','director_primary_reconciliation_event','director_primary_terminal_evidence','director_provider_activation_evidence','director_provider_activation_authorization','director_primary_parallel_batch','director_primary_parallel_assignment')) || '|' || (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('checkpoints','checkpoint_blobs','checkpoint_writes','checkpoint_migrations')) || '|' || (SELECT count(*) FROM $schema.director_primary_control_plane WHERE database_instance_id = '$databaseInstanceId');" ) | Select-Object -Last 1)
         if ($LASTEXITCODE -ne 0 -or $proof -notmatch '^(\d+)\|(\d+)\|(\d+)$') { throw "Restored schema verification failed." }
         $requiredTableCount = [int]$matches[1]
         $checkpointTableCount = [int]$matches[2]
@@ -266,40 +296,33 @@ if ($Action -eq "RestoreDrill") {
 }
 
 if ($Action -eq "Activate") {
+    Stop-And-Prove-AllIntake
+    $legacyInventory = Get-LegacyInventory
+    Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
     Invoke-Evidence -Command require-ready
-    Invoke-Compose stop slackbot
-    Write-Switches @{
-        ALLOW_PAID_RUNS = "true"
-        LANGGRAPH_PRIMARY_ENABLED = "true"
-        LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"
-        LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false"
-        LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "true"
-        LANGGRAPH_PARALLEL_KILL_SWITCH = "false"
+    try {
+        Write-Switches @{ ALLOW_PAID_RUNS = "true"; LANGGRAPH_PRIMARY_ENABLED = "true"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "true"; LANGGRAPH_PARALLEL_KILL_SWITCH = "false" }
+        Invoke-Compose up -d --build --force-recreate orchestrator
+        $primary = (Wait-Health).langgraph_primary
+        foreach ($field in @("primary_graph_constructed", "primary_router_wired", "checkpoint_backend_postgres", "checkpoint_schema_current", "claim_store_ready", "effect_ledger_ready", "writer_lease_ready", "reconciliation_worker_ready", "primary_runtime_active", "legacy_new_intake_disabled")) {
+            if (-not [bool]$primary.$field) { throw "Primary activation health failed at $field." }
+        }
+        if ([string]$primary.new_intake_owner -cne "langgraph" -or -not [bool]$primary.provider_activation.combined_live_ready -or [int]$primary.ambiguous_effect_count -ne 0) { throw "Primary activation ownership/provider/reconciliation proof failed." }
+        $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$databaseInstanceId|$($primary.intake_fencing_generation)|activated"
+        Invoke-Evidence -Command record -Stage ACTIVATED -EvidenceDigest $digest -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
+        Invoke-Compose up -d n8n slackbot
+        Write-Host "Primary activation health passed and authenticated intake was reopened."
+        return
     }
-    Invoke-Compose up -d --build --force-recreate orchestrator
-    $primary = (Wait-Health).langgraph_primary
-    foreach ($field in @(
-        "primary_graph_constructed", "primary_router_wired", "checkpoint_backend_postgres",
-        "checkpoint_schema_current", "claim_store_ready", "effect_ledger_ready",
-        "writer_lease_ready", "reconciliation_worker_ready", "primary_runtime_active",
-        "legacy_new_intake_disabled"
-    )) {
-        if (-not [bool]$primary.$field) { throw "Primary activation health failed at $field; Slack remains stopped." }
+    catch {
+        try { Invoke-Compose stop orchestrator }
+        finally { Write-Switches @{ ALLOW_PAID_RUNS = "false"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "false"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "false"; LANGGRAPH_PARALLEL_KILL_SWITCH = "true" } }
+        throw "Primary activation failed and was unwound; Slack, API, and n8n intake remain stopped. $($_.Exception.Message)"
     }
-    if ([string]$primary.new_intake_owner -cne "langgraph" -or
-        -not [bool]$primary.provider_activation.combined_live_ready -or
-        [int]$primary.ambiguous_effect_count -ne 0) {
-        throw "Primary activation ownership/provider/reconciliation proof failed; Slack remains stopped."
-    }
-    $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$($primary.intake_fencing_generation)|activated"
-    Invoke-Evidence -Command record -Stage ACTIVATED -EvidenceDigest $digest -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
-    Invoke-Compose up -d slackbot
-    Write-Host "Primary activation health passed and Slack intake was reopened."
-    return
 }
 
 if ($Action -eq "Rollback") {
-    Invoke-Compose stop slackbot orchestrator
+    Stop-And-Prove-AllIntake
     Write-Switches @{
         ALLOW_PAID_RUNS = "false"
         LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "false"
@@ -308,12 +331,13 @@ if ($Action -eq "Rollback") {
     }
     Start-Sleep -Seconds 65
     Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
-        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); q=h.claim_store.primary_quiescence_metrics(); assert m.ambiguous_effect_count == 0, 'ambiguous effects block rollback'; assert q.rollback_safe, 'active provider dispatches, assignments, writer claims, reconciliation, or claims block rollback'; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); print('legacy_new_intake_disabled='+str(n.legacy_new_intake_disabled).lower()); h.close()"
+        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); q=h.claim_store.primary_quiescence_metrics(); (_ for _ in ()).throw(RuntimeError('ambiguous effects block rollback')) if m.ambiguous_effect_count != 0 else None; (_ for _ in ()).throw(RuntimeError('active provider dispatches, assignments, writer claims, reconciliation, or claims block rollback')) if not q.rollback_safe else None; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); (_ for _ in ()).throw(RuntimeError('legacy intake CAS did not complete')) if n.legacy_new_intake_disabled else None; h.close()"
     Write-Switches @{ LANGGRAPH_PRIMARY_ENABLED = "false" }
     Invoke-Compose up -d --build --force-recreate orchestrator
     $null = Wait-Health
-    Invoke-Compose up -d slackbot
+    Invoke-Compose up -d n8n slackbot
     Write-Host "Fenced rollback returned new intake to legacy; primary evidence was preserved."
 }
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:02 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]

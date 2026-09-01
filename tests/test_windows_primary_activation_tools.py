@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:10 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -50,11 +51,25 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("Invoke-Evidence -Command require-ready", text)
         self.assertIn("ambiguous effects block rollback", text)
         self.assertIn("q.rollback_safe", text)
+        self.assertNotIn("assert m.ambiguous_effect_count", text)
+        self.assertNotIn("assert q.rollback_safe", text)
+        self.assertIn("Stop-And-Prove-AllIntake", text)
+        self.assertIn('Invoke-Compose stop slackbot n8n orchestrator', text)
+        self.assertIn("bind-legacy-inventory", text)
+        self.assertIn("database_instance_id", text)
+        self.assertLess(
+            text.index("Invoke-Compose up -d langgraph-primary-db"),
+            text.index("$databaseBinding = Get-DatabaseBinding"),
+        )
+        self.assertIn("Primary activation failed and was unwound", text)
         self.assertIn("acquire_intake_authority(intake_owner='legacy'", text)
         self.assertLess(
-            text.index("Invoke-Compose stop slackbot", text.index('if ($Action -eq "Activate")')),
+            text.index("Stop-And-Prove-AllIntake", text.index('if ($Action -eq "Activate")')),
             text.index('LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"'),
         )
+        activation = text[text.index('if ($Action -eq "Activate")'):text.index('if ($Action -eq "Rollback")')]
+        self.assertLess(activation.index("bind-legacy-inventory"), activation.index("require-ready"))
+        self.assertIn("finally { Write-Switches", activation)
 
     def test_host_wrapper_never_accepts_cursor_or_windows_copilot(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
@@ -68,3 +83,4 @@ if __name__ == "__main__":
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]

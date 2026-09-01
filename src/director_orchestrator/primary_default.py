@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
@@ -55,6 +57,7 @@ from .packet_transports import LocalGitAuthoritySnapshotResolver
 from .policy import preview_plan
 from .primary_coordinator import PrimaryTaskCoordinator
 from .primary_completion import (
+    CompletionEvidence,
     CompletionEvidenceResolver,
     ExternalEffectResolver,
     PacketResultBinding,
@@ -62,10 +65,15 @@ from .primary_completion import (
     ExternalEffectEvidence,
 )
 from .primary_provider_activation import PrimaryProviderActivationService
+from .host_provider_bridge import (
+    HostProviderBridgeError,
+    challenge_host_provider_bridge,
+)
 from .primary_providers import CandidateShaResolver, PrimaryProviderBinding
 from .primary_transports import (
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
+    provider_lane_external_blockers,
 )
 
 
@@ -152,8 +160,8 @@ def build_automatic_primary_live_dependencies(
 
     Authentication comes from configured secret presence or a documented,
     non-secret local status/receipt probe. Native keychain state without such a
-    contract is never inferred. Windows Copilot remains unavailable by
-    construction.
+    contract is never inferred. Windows Copilot remains unavailable behind an
+    exact typed external blocker until a reviewed host command is challenged.
     """
 
     bridge_secret = settings.langgraph_primary_host_bridge_secret
@@ -180,6 +188,17 @@ def build_automatic_primary_live_dependencies(
         ),
         "windows-copilot": False,
     }
+    bridge_challenge = None
+    if settings.langgraph_primary_host_bridge_endpoint and bridge_secret:
+        try:
+            bridge_challenge = challenge_host_provider_bridge(
+                settings.langgraph_primary_host_bridge_endpoint,
+                bridge_secret,
+            )
+        except HostProviderBridgeError:
+            # Configuration is not liveness or command-map evidence. Discovery
+            # remains fail-closed and reports the affected lanes unavailable.
+            bridge_challenge = None
     transports, capabilities = discover_local_primary_command_transports(
         cwd=settings.repository_snapshot_root,
         authenticated=authenticated,
@@ -196,6 +215,7 @@ def build_automatic_primary_live_dependencies(
             if bridge_secret
             else ""
         ),
+        host_bridge_challenge=bridge_challenge,
     )
     adapters = build_graph_native_packet_adapters(
         transports=transports,
@@ -204,9 +224,20 @@ def build_automatic_primary_live_dependencies(
     )
     missing = sorted(set(settings.langgraph_primary_required_providers) - set(adapters))
     if missing:
+        blockers = provider_lane_external_blockers(capabilities)
+        blocked_missing = [
+            f"{provider_id}:{blockers[provider_id]}"
+            for provider_id in missing
+            if provider_id in blockers
+        ]
         raise ValueError(
             "automatic graph-native live dependencies are unavailable: missing="
             + ",".join(missing)
+            + (
+                "; external_blockers=" + ",".join(blocked_missing)
+                if blocked_missing
+                else ""
+            )
         )
 
     def candidate_sha(
@@ -373,11 +404,22 @@ def build_automatic_primary_live_dependencies(
             reason_code="authenticated_effect_readback_completed",
         )
 
+    def completion_evidence(context: HandlerContext) -> CompletionEvidence | None:
+        artifact = handle.claim_store.read_completion_evidence(task_id=context.task_id)
+        if artifact is None:
+            return None
+        if (
+            artifact.candidate_sha != context.candidate_sha
+            or artifact.provider_result_digest != context.provider_result_digest
+        ):
+            return None
+        return artifact.evidence
+
     return DefaultPrimaryLiveDependencies(
         adapters=adapters,
         candidate_sha_resolver=candidate_sha,
         packet_result_resolver=packet_result,
-        completion_evidence_resolver=lambda _context: None,
+        completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
         evidence_debate_handler=evidence_from_result,
         acceptance_handler=acceptance_from_result,
@@ -1391,3 +1433,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

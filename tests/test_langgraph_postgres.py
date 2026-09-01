@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | BEGIN]]
@@ -90,6 +92,12 @@ from director_orchestrator.provider_activation import (
     ProviderActivationStage,
     ProviderActivationSurface,
 )
+from director_orchestrator.completion_gates import (
+    VerifiedGateLedger,
+    VerifiedGateResult,
+    domain_digest,
+)
+from director_orchestrator.primary_completion import CompletionEvidence
 
 TEST_DSN_VARIABLE = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 
@@ -106,6 +114,38 @@ DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
 DIGEST_C = "sha256:" + "c" * 64
 DIGEST_D = "sha256:" + "d" * 64
+
+
+def _durable_completion_evidence(task_id: str, candidate_sha: str, result_digest: str):
+    ledger = {
+        "task_id": task_id,
+        "expected_head_sha": candidate_sha,
+        "candidate_result_digest": result_digest,
+        "ledger_state": "HEAD_BOUND",
+        "logical_producer": {"provider_id": "claude"},
+        "work_packet_digest": DIGEST_A,
+    }
+    ledger["ledger_digest"] = domain_digest("director-gate-ledger/v1", ledger)
+    results = []
+    for gate_id, role, provider in (
+        ("review", "INDEPENDENT_REVIEWER", "cursor"),
+        ("ci", "GATE_RUNNER", "openai"),
+        ("security", "GATE_RUNNER", "grok"),
+    ):
+        document = {
+            "gate_id": gate_id,
+            "ledger_digest": ledger["ledger_digest"],
+            "executed_sha": candidate_sha,
+            "status": "PASS",
+            "evidence_role": role,
+            "evidence_actor": {"logical_provider": provider},
+        }
+        document["result_digest"] = domain_digest("director-gate-result/v1", document)
+        results.append(VerifiedGateResult(document, document["result_digest"]))
+    return CompletionEvidence(
+        VerifiedGateLedger(ledger, ledger["ledger_digest"]),
+        tuple(results), "ci", "security",
+    )
 
 
 def _work_packet(
@@ -2302,7 +2342,15 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         with self.handle.pool.connection() as connection:
             row = connection.execute("SHOW search_path").fetchone()
         self.assertEqual(self.schema, str(row["search_path"]).strip('"'))
-        self.assertEqual(self.handle.storage_identity, self.second_store().storage_identity)
+        restarted = self.second_store()
+        self.assertEqual(self.handle.storage_identity, restarted.storage_identity)
+        self.assertRegex(
+            self.handle.database_instance_id,
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        )
+        self.assertEqual(
+            self.handle.database_instance_id, restarted.database_instance_id
+        )
 
     def test_work_packet_artifact_survives_restart_and_rejects_mutation(self):
         import psycopg
@@ -2494,6 +2542,43 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         aggregate = restarted.aggregate(self.task_id)
         self.assertEqual(1, aggregate.ambiguous_slot_count)
         self.assertFalse(aggregate.terminal)
+
+    def test_completion_evidence_is_fenced_immutable_and_survives_restart(self):
+        writer = self.store.acquire_task_writer(
+            self.task_id,
+            engine_owner="langgraph",
+            owner_token="completion-writer",
+            expected_generation=INITIAL_FENCING_GENERATION,
+        )
+        candidate_sha = "c" * 40
+        evidence = _durable_completion_evidence(
+            self.task_id, candidate_sha, DIGEST_B
+        )
+        recorded = self.store.record_completion_evidence(
+            task_id=self.task_id,
+            candidate_sha=candidate_sha,
+            provider_result_digest=DIGEST_B,
+            evidence=evidence,
+            owner_token=writer.owner_token,
+            fencing_generation=writer.fencing_generation,
+        )
+        restarted = self.second_store().read_completion_evidence(task_id=self.task_id)
+        self.assertEqual(recorded, restarted)
+        changed = _durable_completion_evidence(
+            self.task_id, candidate_sha, DIGEST_B
+        )
+        changed = CompletionEvidence(
+            changed.ledger, changed.results, "security", "ci"
+        )
+        with self.assertRaisesRegex(PostgresControlPlaneError, "different content"):
+            self.store.record_completion_evidence(
+                task_id=self.task_id,
+                candidate_sha=candidate_sha,
+                provider_result_digest=DIGEST_B,
+                evidence=changed,
+                owner_token=writer.owner_token,
+                fencing_generation=writer.fencing_generation,
+            )
 
     def test_parallel_parent_child_surfaces_never_reserve_concurrently(self):
         writer = self.store.acquire_task_writer(
@@ -3248,3 +3333,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

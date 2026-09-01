@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | BEGIN]]
@@ -57,9 +59,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from .langgraph_primary import (
     ClaimOutcome,
@@ -77,6 +80,10 @@ from .packet_contracts import (
     document_digest,
     validate_packet,
 )
+from .completion_gates import VerifiedGateLedger, VerifiedGateResult, domain_digest
+
+if TYPE_CHECKING:
+    from .primary_completion import CompletionEvidence
 from .provider_activation import (
     ACTIVATION_EVIDENCE_VERSION,
     ProviderActivationAuthorization,
@@ -432,6 +439,7 @@ _APPEND_ONLY_TABLES = (
     "director_provider_activation_authorization",
     "director_primary_work_packet_artifact",
     "director_primary_result_packet_artifact",
+    "director_primary_completion_evidence",
     "director_primary_claim",
     "director_primary_effect_reservation",
     "director_primary_remote_binding",
@@ -487,6 +495,7 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
             control_plane_version text NOT NULL,
             storage_identity text NOT NULL,
+            database_instance_id text,
             created_at timestamptz NOT NULL DEFAULT now()
         )
         """,
@@ -673,6 +682,30 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             ),
             recorded_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (task_id, assignment_id)
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_completion_evidence (
+            task_id text PRIMARY KEY
+                REFERENCES {schema}.director_primary_task_writer (task_id),
+            candidate_sha text NOT NULL CHECK (candidate_sha ~ '^[0-9a-f]{{40}}$'),
+            provider_result_digest text NOT NULL CHECK (
+                provider_result_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            ledger_digest text NOT NULL CHECK (
+                ledger_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            evidence_digest text NOT NULL CHECK (
+                evidence_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            canonical_ledger text NOT NULL,
+            canonical_results text NOT NULL,
+            ci_gate_id text NOT NULL,
+            security_gate_id text NOT NULL,
+            writer_fencing_generation bigint NOT NULL CHECK (
+                writer_fencing_generation >= 1
+            ),
+            recorded_at timestamptz NOT NULL DEFAULT now()
         )
         """,
         f"""
@@ -1039,6 +1072,18 @@ class PrimaryResultPacketArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class PrimaryCompletionEvidenceArtifact:
+    """Immutable independently validated completion evidence under one fence."""
+
+    task_id: str
+    candidate_sha: str
+    provider_result_digest: str
+    evidence: "CompletionEvidence"
+    evidence_digest: str
+    writer_fencing_generation: int
+
+
+@dataclass(frozen=True, slots=True)
 class PrimaryControlPlaneMetrics:
     """Non-sensitive observed counts for operator health and cutover evidence."""
 
@@ -1256,6 +1301,103 @@ def _result_packet_artifact_from_row(
     )
 
 
+def _completion_evidence_payload(
+    evidence: "CompletionEvidence", *, task_id: str, candidate_sha: str,
+    provider_result_digest: str,
+) -> tuple[str, str, str, str]:
+    ledger = dict(evidence.ledger.document)
+    if (
+        ledger.get("task_id") != task_id
+        or ledger.get("expected_head_sha") != candidate_sha
+        or ledger.get("candidate_result_digest") != provider_result_digest
+        or ledger.get("ledger_state") != "HEAD_BOUND"
+    ):
+        raise PostgresControlPlaneError("completion evidence binding is invalid")
+    calculated_ledger = domain_digest(
+        "director-gate-ledger/v1",
+        {key: value for key, value in ledger.items() if key != "ledger_digest"},
+    )
+    if calculated_ledger != evidence.ledger.digest or ledger.get("ledger_digest") != calculated_ledger:
+        raise PostgresControlPlaneError("completion ledger digest is invalid")
+    results = [dict(item.document) for item in evidence.results]
+    if not results or len({item.digest for item in evidence.results}) != len(results):
+        raise PostgresControlPlaneError("completion results must be non-empty and unique")
+    for verified, document in zip(evidence.results, results, strict=True):
+        calculated = domain_digest(
+            "director-gate-result/v1",
+            {key: value for key, value in document.items() if key != "result_digest"},
+        )
+        if (
+            calculated != verified.digest
+            or document.get("result_digest") != calculated
+            or document.get("ledger_digest") != calculated_ledger
+            or document.get("executed_sha") != candidate_sha
+        ):
+            raise PostgresControlPlaneError("completion result digest or binding is invalid")
+    gate_ids = {str(item.get("gate_id")) for item in results}
+    if evidence.ci_gate_id not in gate_ids or evidence.security_gate_id not in gate_ids:
+        raise PostgresControlPlaneError("completion CI/security gate evidence is missing")
+    payload = {
+        "task_id": task_id,
+        "candidate_sha": candidate_sha,
+        "provider_result_digest": provider_result_digest,
+        "ledger_digest": calculated_ledger,
+        "result_digests": sorted(item.digest for item in evidence.results),
+        "ci_gate_id": evidence.ci_gate_id,
+        "security_gate_id": evidence.security_gate_id,
+    }
+    return (
+        canonical_json_bytes(ledger).decode("utf-8"),
+        canonical_json_bytes(results).decode("utf-8"),
+        calculated_ledger,
+        domain_digest("director-primary-completion-artifact/v1", payload),
+    )
+
+
+def _completion_evidence_artifact_from_row(
+    row: Mapping[str, Any],
+) -> PrimaryCompletionEvidenceArtifact:
+    task_id = str(row["task_id"])
+    candidate_sha = str(row["candidate_sha"])
+    provider_result_digest = str(row["provider_result_digest"])
+    try:
+        ledger_document = json.loads(str(row["canonical_ledger"]))
+        result_documents = json.loads(str(row["canonical_results"]))
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise PostgresControlPlaneError("stored completion evidence is invalid JSON") from exc
+    if not isinstance(ledger_document, dict) or not isinstance(result_documents, list):
+        raise PostgresControlPlaneError("stored completion evidence has invalid shape")
+    ledger = VerifiedGateLedger(ledger_document, str(row["ledger_digest"]))
+    results = tuple(
+        VerifiedGateResult(item, str(item.get("result_digest", "")))
+        for item in result_documents if isinstance(item, dict)
+    )
+    if len(results) != len(result_documents):
+        raise PostgresControlPlaneError("stored completion result is not an object")
+    from .primary_completion import CompletionEvidence
+
+    evidence = CompletionEvidence(
+        ledger, results, str(row["ci_gate_id"]), str(row["security_gate_id"])
+    )
+    canonical_ledger, canonical_results, ledger_digest, evidence_digest = (
+        _completion_evidence_payload(
+            evidence, task_id=task_id, candidate_sha=candidate_sha,
+            provider_result_digest=provider_result_digest,
+        )
+    )
+    if (
+        canonical_ledger != str(row["canonical_ledger"])
+        or canonical_results != str(row["canonical_results"])
+        or ledger_digest != str(row["ledger_digest"])
+        or evidence_digest != str(row["evidence_digest"])
+    ):
+        raise PostgresControlPlaneError("stored completion evidence failed readback")
+    return PrimaryCompletionEvidenceArtifact(
+        task_id, candidate_sha, provider_result_digest, evidence,
+        evidence_digest, int(row["writer_fencing_generation"]),
+    )
+
+
 def _activation_evidence_from_row(
     row: Mapping[str, Any],
 ) -> ProviderActivationEvidence:
@@ -1319,6 +1461,7 @@ class PostgresConditionalClaimStore:
     _pool: Any = field(repr=False)
     _schema: str = field(repr=False)
     storage_identity: str = ""
+    database_instance_id: str = ""
     _store_provenance: object = field(repr=False, default=None)
 
     def __post_init__(self) -> None:
@@ -2840,6 +2983,114 @@ class PostgresConditionalClaimStore:
             unsettled_claim_count=int(row["unsettled_claim_count"]),
         )
 
+    def record_completion_evidence(
+        self,
+        *,
+        task_id: str,
+        candidate_sha: str,
+        provider_result_digest: str,
+        evidence: "CompletionEvidence",
+        owner_token: str,
+        fencing_generation: int,
+    ) -> PrimaryCompletionEvidenceArtifact:
+        """Persist one immutable independently validated completion bundle."""
+
+        _require_id(task_id, "task_id")
+        _require_id(owner_token, "owner_token")
+        _require_digest(provider_result_digest, "provider_result_digest")
+        if re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None:
+            raise PostgresControlPlaneError("candidate_sha must be an exact lowercase SHA")
+        generation = _require_generation(fencing_generation, "fencing_generation", minimum=1)
+        ledger_json, results_json, ledger_digest, evidence_digest = (
+            _completion_evidence_payload(
+                evidence, task_id=task_id, candidate_sha=candidate_sha,
+                provider_result_digest=provider_result_digest,
+            )
+        )
+        parameters = {
+            "task_id": task_id, "candidate_sha": candidate_sha,
+            "provider_result_digest": provider_result_digest,
+            "ledger_digest": ledger_digest, "evidence_digest": evidence_digest,
+            "canonical_ledger": ledger_json, "canonical_results": results_json,
+            "ci_gate_id": evidence.ci_gate_id,
+            "security_gate_id": evidence.security_gate_id,
+            "owner_token": owner_token, "generation": generation,
+        }
+        columns = (
+            "task_id, candidate_sha, provider_result_digest, ledger_digest, "
+            "evidence_digest, canonical_ledger, canonical_results, ci_gate_id, "
+            "security_gate_id, writer_fencing_generation"
+        )
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection, "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {"key": _advisory_key("completion-evidence", self._schema, task_id)},
+                )
+                writer = self._optional_row(
+                    connection,
+                    f"""SELECT task_id FROM {self._schema}.director_primary_task_writer
+                        WHERE task_id=%(task_id)s AND engine_owner='langgraph'
+                          AND owner_token=%(owner_token)s
+                          AND fencing_generation=%(generation)s
+                          AND lease_expires_at > now() FOR UPDATE""",
+                    parameters,
+                )
+                if writer is None:
+                    raise PostgresControlPlaneError(
+                        "completion evidence refused; writer authority is stale or expired"
+                    )
+                existing = self._optional_row(
+                    connection,
+                    f"SELECT {columns} FROM {self._schema}.director_primary_completion_evidence WHERE task_id=%(task_id)s",
+                    parameters,
+                )
+                if existing is not None:
+                    artifact = _completion_evidence_artifact_from_row(existing)
+                    if artifact.evidence_digest != evidence_digest:
+                        raise PostgresControlPlaneError(
+                            "completion evidence identity was replayed with different content"
+                        )
+                    return artifact
+                row = self._optional_row(
+                    connection,
+                    f"""INSERT INTO {self._schema}.director_primary_completion_evidence
+                        ({columns})
+                        SELECT writer.task_id, %(candidate_sha)s, %(provider_result_digest)s,
+                               %(ledger_digest)s, %(evidence_digest)s, %(canonical_ledger)s,
+                               %(canonical_results)s, %(ci_gate_id)s, %(security_gate_id)s,
+                               writer.fencing_generation
+                        FROM {self._schema}.director_primary_task_writer writer
+                        WHERE writer.task_id=%(task_id)s AND writer.engine_owner='langgraph'
+                          AND writer.owner_token=%(owner_token)s
+                          AND writer.fencing_generation=%(generation)s
+                          AND writer.lease_expires_at > now()
+                        ON CONFLICT (task_id) DO NOTHING RETURNING {columns}""",
+                    parameters,
+                )
+                if row is None:
+                    raise PostgresControlPlaneError(
+                        "completion evidence insert lost its immutable identity race"
+                    )
+        return _completion_evidence_artifact_from_row(row)
+
+    def read_completion_evidence(
+        self, *, task_id: str
+    ) -> PrimaryCompletionEvidenceArtifact | None:
+        _require_id(task_id, "task_id")
+        columns = (
+            "task_id, candidate_sha, provider_result_digest, ledger_digest, "
+            "evidence_digest, canonical_ledger, canonical_results, ci_gate_id, "
+            "security_gate_id, writer_fencing_generation"
+        )
+        with self._pool.connection() as connection:
+            row = self._optional_row(
+                connection,
+                f"SELECT {columns} FROM {self._schema}.director_primary_completion_evidence WHERE task_id=%(task_id)s",
+                {"task_id": task_id},
+            )
+        return None if row is None else _completion_evidence_artifact_from_row(row)
+
     def read_result_packet_artifact(
         self, *, task_id: str, assignment_id: str
     ) -> PrimaryResultPacketArtifact | None:
@@ -3857,6 +4108,7 @@ class PostgresCheckpointHandle:
     pool: Any = field(repr=False)
     claim_store: PostgresConditionalClaimStore = field(repr=False)
     storage_identity: str = ""
+    database_instance_id: str = ""
     schema: str = ""
     _state: _HandleState = field(
         repr=False, compare=False, default_factory=_HandleState
@@ -3959,7 +4211,7 @@ def _first_value(row: Any) -> Any:
     return row[0]
 
 
-def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str) -> None:
+def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str) -> str:
     """Create or verify the versioned control plane under one advisory lock."""
 
     lock_key = _advisory_key("ddl", schema)
@@ -3970,17 +4222,40 @@ def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str) -> No
                 for statement in _control_plane_ddl(schema):
                     cursor.execute(statement)
                 cursor.execute(
+                    f"ALTER TABLE {schema}.director_primary_control_plane "
+                    "ADD COLUMN IF NOT EXISTS database_instance_id text"
+                )
+                bootstrap_instance_id = str(uuid.uuid4())
+                cursor.execute(
                     f"""
                     INSERT INTO {schema}.director_primary_control_plane
-                        (singleton, control_plane_version, storage_identity)
-                    VALUES (true, %(version)s, %(identity)s)
+                        (singleton, control_plane_version, storage_identity,
+                         database_instance_id)
+                    VALUES (true, %(version)s, %(identity)s, %(instance_id)s)
                     ON CONFLICT (singleton) DO NOTHING
                     """,
-                    {"version": CONTROL_PLANE_VERSION, "identity": storage_identity},
+                    {
+                        "version": CONTROL_PLANE_VERSION,
+                        "identity": storage_identity,
+                        "instance_id": bootstrap_instance_id,
+                    },
                 )
                 cursor.execute(
                     f"""
-                    SELECT control_plane_version, storage_identity
+                    UPDATE {schema}.director_primary_control_plane
+                    SET database_instance_id = %(instance_id)s
+                    WHERE singleton AND database_instance_id IS NULL
+                    """,
+                    {"instance_id": bootstrap_instance_id},
+                )
+                cursor.execute(
+                    f"ALTER TABLE {schema}.director_primary_control_plane "
+                    "ALTER COLUMN database_instance_id SET NOT NULL"
+                )
+                cursor.execute(
+                    f"""
+                    SELECT control_plane_version, storage_identity,
+                           database_instance_id
                     FROM {schema}.director_primary_control_plane
                     WHERE singleton
                     """
@@ -3998,6 +4273,14 @@ def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str) -> No
         raise PostgresCheckpointConfigurationError(
             "control-plane schema belongs to a different storage target"
         )
+    instance_id = str(row.get("database_instance_id", bootstrap_instance_id))
+    try:
+        uuid.UUID(instance_id)
+    except ValueError as exc:
+        raise PostgresCheckpointConfigurationError(
+            "control-plane database instance identity is invalid"
+        ) from exc
+    return instance_id
 
 
 def open_postgres_control_plane(
@@ -4050,13 +4333,16 @@ def open_postgres_control_plane(
     )
     try:
         pool.open(wait=True, timeout=limits.connect_timeout_seconds)
-        _setup_control_plane(pool, schema=schema, storage_identity=identity)
+        database_instance_id = _setup_control_plane(
+            pool, schema=schema, storage_identity=identity
+        )
         saver = dependencies.saver_type(pool, serde=serializer)
         saver.setup()
         claim_store = PostgresConditionalClaimStore(
             _pool=pool,
             _schema=schema,
             storage_identity=identity,
+            database_instance_id=database_instance_id,
             _store_provenance=_FACTORY_PROVENANCE,
         )
     except Exception:
@@ -4067,6 +4353,7 @@ def open_postgres_control_plane(
         pool=pool,
         claim_store=claim_store,
         storage_identity=identity,
+        database_instance_id=database_instance_id,
         schema=schema,
         _factory_provenance=_FACTORY_PROVENANCE,
     )
@@ -4093,3 +4380,5 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

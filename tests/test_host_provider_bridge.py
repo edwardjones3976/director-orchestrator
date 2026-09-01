@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:54 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -24,6 +25,8 @@ from director_orchestrator.host_provider_bridge import (
     _NoRedirectHandler,
     _digest,
     bridge_signature,
+    bridge_challenge_signature,
+    challenge_host_provider_bridge,
     dispatch_bridge_request,
 )
 
@@ -105,6 +108,20 @@ class _PostgresConnection:
         if parameters != ("task-1",):
             raise AssertionError("writer verification queried the wrong task")
         return _PostgresResult(self.row)
+
+
+class _ChallengeResponse:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self, _limit: int) -> bytes:
+        return self.payload
 
 
 class HostProviderBridgeTests(unittest.TestCase):
@@ -237,6 +254,35 @@ class HostProviderBridgeTests(unittest.TestCase):
                 "http://host.docker.internal:18766/v1/provider/dispatch",
             )
 
+    def test_signed_challenge_authenticates_observed_command_map(self) -> None:
+        providers = ["claude", "grok"]
+        command_map_digest = "sha256:" + _digest(
+            json.dumps(providers, separators=(",", ":")).encode()
+        )
+        class _Opener:
+            def open(inner_self, candidate, timeout):
+                nonce = candidate.headers["X-director-bridge-nonce"]
+                body = {
+                    "ok": True,
+                    "protocol": "director-host-provider-bridge/v1",
+                    "configured_providers": providers,
+                    "command_map_digest": command_map_digest,
+                    "proof": bridge_challenge_signature(
+                        SECRET, timestamp=1_000, nonce=nonce,
+                        command_map_digest=command_map_digest,
+                    ),
+                }
+                return _ChallengeResponse(json.dumps(body).encode())
+
+        with patch("urllib.request.build_opener", return_value=_Opener()):
+            evidence = challenge_host_provider_bridge(
+                "http://host.docker.internal:18765/v1/provider/dispatch",
+                SECRET,
+                now=1_000,
+            )
+        self.assertEqual(frozenset(providers), evidence.configured_providers)
+        self.assertEqual(command_map_digest, evidence.command_map_digest)
+
     def test_postgres_writer_fence_requires_exact_live_authority(self) -> None:
         owner_token = "writer-owner-token"
         token_digest = "sha256:" + __import__("hashlib").sha256(
@@ -300,3 +346,4 @@ if __name__ == "__main__":
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:54 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | BEGIN]]
 from __future__ import annotations
@@ -12,7 +14,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
-from director_orchestrator.host_provider_bridge import HostBridgePacketTransport
+from director_orchestrator.host_provider_bridge import (
+    HostBridgeChallengeEvidence,
+    HostBridgePacketTransport,
+)
 from director_orchestrator.primary_default import build_automatic_primary_live_dependencies
 from director_orchestrator.primary_transports import (
     BoundedJsonCommandTransport,
@@ -20,8 +25,11 @@ from director_orchestrator.primary_transports import (
     OpenAIResponsesPacketTransport,
     PRIMARY_PROVIDER_LANES,
     PublicSearchCommandTransport,
+    ProviderExternalBlocker,
     PrimaryProviderCapability,
+    WINDOWS_COPILOT_EXTERNAL_BLOCKER,
     build_graph_native_packet_adapters,
+    provider_lane_external_blockers,
     provider_lane_readiness,
     discover_local_primary_command_transports,
 )
@@ -413,6 +421,11 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 host_bridge_endpoint="http://host.docker.internal:18765/v1/provider/dispatch",
                 host_bridge_secret="b" * 32,
                 host_bridge_writer_owner_token_digest="sha256:" + "c" * 64,
+                host_bridge_challenge=HostBridgeChallengeEvidence(
+                    frozenset({"claude", "grok", "antigravity", "github-copilot"}),
+                    "sha256:" + "d" * 64,
+                    1,
+                ),
             )
 
         for provider in ("claude", "grok", "antigravity", "github-copilot"):
@@ -427,6 +440,21 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             self.assertNotIn(provider, transports)
         self.assertNotIn("windows-copilot", transports)
         self.assertFalse(observed["windows-copilot"].callable)
+
+    def test_bridge_configuration_without_signed_challenge_is_not_callable(self):
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ):
+            transports, observed = discover_local_primary_command_transports(
+                cwd=directory,
+                authenticated={},
+                host_bridge_endpoint="http://host.docker.internal:18765/v1/provider/dispatch",
+                host_bridge_secret="b" * 32,
+                host_bridge_writer_owner_token_digest="sha256:" + "c" * 64,
+            )
+        for provider in ("claude", "grok", "antigravity", "github-copilot"):
+            self.assertNotIn(provider, transports)
+            self.assertFalse(observed[provider].callable)
 
     def test_host_bridge_configuration_is_atomic(self):
         with TemporaryDirectory() as directory:
@@ -468,7 +496,31 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         self.assertIn("claude", transports)
         self.assertNotIn("windows-copilot", transports)
         self.assertFalse(observed["windows-copilot"].callable)
-        self.assertEqual("unsupported-appx-uri", observed["windows-copilot"].transport_kind)
+        self.assertEqual("external-blocker", observed["windows-copilot"].transport_kind)
+        self.assertEqual(
+            {"windows-copilot": WINDOWS_COPILOT_EXTERNAL_BLOCKER},
+            provider_lane_external_blockers(observed),
+        )
+
+    def test_windows_copilot_blocker_cannot_coexist_with_callable_claim(self):
+        observed = capabilities()
+        observed["windows-copilot"] = PrimaryProviderCapability(
+            provider_id="windows-copilot",
+            backend_identity="windows-copilot",
+            transport_kind="test-observation",
+            executable_observed=True,
+            authenticated_observed=True,
+            external_blocker=ProviderExternalBlocker(
+                WINDOWS_COPILOT_EXTERNAL_BLOCKER,
+                "reviewed host command and challenge are required",
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "cannot retain an external blocker"):
+            build_graph_native_packet_adapters(
+                transports={provider: _Transport() for provider in PRIMARY_PROVIDER_LANES},
+                capabilities=observed,
+            )
 
     def test_copilot_lanes_cannot_claim_production_authority(self):
         observed = capabilities()
@@ -492,3 +544,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
