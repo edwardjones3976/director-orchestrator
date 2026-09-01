@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
@@ -480,7 +481,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         )
         self.assertEqual(self.store.list_recent_workload_attempts(), [])
 
-    def test_rolling_twenty_overage_is_reporting_only_and_candidate_is_accounted(self) -> None:
+    def test_cursor_30_percent_remains_below_33_ceiling_and_is_accounted(self) -> None:
         providers = [Provider.CURSOR] * 5 + [Provider.CLAUDE] * 7 + [Provider.GROK] * 7
         for index, provider in enumerate(providers):
             reservation = self.reserve(f"seed-{index}", provider)
@@ -496,14 +497,14 @@ class WorkloadLedgerTests(unittest.TestCase):
             candidate.decision.violations,
         )
         self.assertIn(
-            "overall_effort_history_report_only", candidate.decision.advisories
+            "total_effort_prospective_usage_guard", candidate.decision.advisories
         )
         self.store.finalize_workload_reservation(
             candidate.reservation_key, WorkloadAttemptOutcome.INVOKED
         )
         self.assertEqual(len(self.store.list_recent_workload_attempts(limit=20)), 20)
 
-    def test_shadow_overall_history_does_not_block_and_is_accounted_once(self) -> None:
+    def test_shadow_total_effort_under_ceiling_is_accounted_once(self) -> None:
         providers = [Provider.CURSOR] * 5 + [Provider.CLAUDE] * 7 + [Provider.GROK] * 7
         for index, provider in enumerate(providers):
             reservation = self.reserve(f"shadow-seed-{index}", provider)
@@ -518,7 +519,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         self.assertFalse(shadow.decision.would_block)
         self.assertEqual(shadow.decision.outcome.value, "allow")
         self.assertIn(
-            "overall_effort_history_report_only", shadow.decision.advisories
+            "total_effort_prospective_usage_guard", shadow.decision.advisories
         )
         self.store.finalize_workload_reservation(
             shadow.reservation_key, WorkloadAttemptOutcome.INVOKED
@@ -575,14 +576,19 @@ class WorkloadLedgerTests(unittest.TestCase):
         pending = self.reserve(
             "weighted-pending", Provider.GROK, effort_units=1
         )
-        self.assertTrue(pending.decision.allowed)
+        self.assertFalse(pending.decision.allowed)
+        self.assertIn(
+            "total_effort_hard_ceiling_exceeded:grok:16",
+            pending.decision.violations,
+        )
         candidate = self.reserve(
             "weighted-candidate", Provider.CLAUDE, effort_units=8
         )
 
-        self.assertTrue(candidate.decision.allowed)
-        self.assertNotIn(
-            "workload_rollover_pending_unresolved", candidate.decision.violations
+        self.assertFalse(candidate.decision.allowed)
+        self.assertIn(
+            "total_effort_hard_ceiling_exceeded:claude:41",
+            candidate.decision.violations,
         )
 
     def test_same_provider_pending_overall_history_does_not_block(self) -> None:
@@ -1400,3 +1406,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

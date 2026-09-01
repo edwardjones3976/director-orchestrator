@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -267,7 +268,10 @@ class DirectorPacketTaskRouter:
                 "budget_usd": float(assignment.estimated_cost_usd),
                 "timeout_seconds": self._timeout_seconds,
                 "max_hops": int(plan.max_hops),
-                "max_revisions": int(plan.max_revisions),
+                "max_revisions": min(
+                    int(plan.max_revisions), assignment.retry_limit - 1
+                ),
+                "retry_limit": assignment.retry_limit,
             },
             "idempotency_key": self.idempotency_key(record, assignment),
             "correlation": {
@@ -365,3 +369,4 @@ class DirectorPacketTaskRouter:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

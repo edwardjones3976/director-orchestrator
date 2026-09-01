@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | BEGIN]] -->
@@ -178,21 +180,23 @@ project-local fit here and link back for authority boundaries.
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
 | Codex Security | independent security evidence for eligible repository changes | product direction, acceptance, merge, or deployment authority |
-| GitHub Copilot Lite | one requested post-green, exact-candidate-frozen hygiene observation | a provider role, workload share, gate, every-push trigger, independent acceptance, or merge authority |
+| GitHub Copilot Lite | one requested post-green, exact-candidate-frozen unscored reporting-only hygiene observation | a provider role, production credit, gate, every-push trigger, independent acceptance, or merge authority |
 
 Each row summarizes the canonical role definitions in
 [`team-operating-charter.md`](team-operating-charter.md#roles).
 
-The sole enforced allocation is accepted productive work: external OpenAI/Codex
+Accepted productive work remains enforced at external OpenAI/Codex
 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%.
-The earlier Claude/Cursor/Grok/OpenAI/Antigravity/Perplexity overall-effort split
-of 36/20/20/8/11/5 is historical non-enforced reporting only.
+Total effort is prospectively guarded at Claude/Cursor/Gemini-Antigravity/Grok/
+OpenAI/Perplexity targets of 36/20/20/11/8/5, normal bands of
+33–39/17–23/17–23/8–14/5–11/1–7, and hard ceilings of
+41/33/25/16/13/9. Cursor's 33% hard ceiling is deliberate.
 
 Choose the cheapest capable trusted model, never simply the cheapest contact.
 First establish exact scope and allowlists, usable transport, readiness,
-capability, tools/context, risk, and independence; then apply the direct
-allocation, prefer an under-target eligible provider, compare trusted cost
-evidence, and use a deterministic tie-breaker. Unknown cost is not zero. An
+capability, tools/context, risk, and independence; then apply total-effort
+eligibility and corrective under-band preference before direct-production rank,
+compare trusted cost evidence, and use a deterministic tie-breaker. Unknown cost is not zero. An
 exact trusted requirement may select Claude or a named model profile; workload
 length alone does not. Record eligible candidates, exclusions, comparable costs,
 the selected provider/model, and the tie-break reason.
@@ -243,7 +247,7 @@ path. Skill discovery is required before selection; installation or a reported
 structural evaluation does not prove that the active provider session has
 loaded the skill. If a selected skill is unavailable after refresh, continue
 with the provider's baseline contract when that still satisfies acceptance, or
-reshape the plan under the three-attempt availability rule.
+reshape the plan under the assignment-specific retry budget.
 
 A skill is a procedure, not a capability grant. It may narrow how an assignment
 is performed and strengthen its evidence, but cannot widen the project profile,
@@ -252,11 +256,18 @@ external-action authority. Use no skill merely because it exists; select it
 only when its workflow materially improves the active module.
 
 Availability is not a reason to fabricate coverage. Each safe provider contact
-is bounded and recorded. After three nonresponses or safe failed attempts, mark
-the provider unavailable for that assignment cycle, preserve partial output as
-untrusted evidence, and reshape the plan around the available team. Record the
-change in scope, confidence, timing, and coverage. Do not repeat an ambiguous
-paid dispatch merely to reach three attempts; reconcile the run first.
+is bounded and recorded by an immutable assignment-specific `retry_limit` from
+1 through 3. Every additional attempt requires a classified failure, positive
+expected information gain from new evidence, a corrected approach, or a
+different transport, and remaining resource budget. When that assignment's
+budget is exhausted, mark the provider unavailable for the assignment cycle,
+preserve partial output as untrusted evidence, and reshape the plan. Do not
+repeat an ambiguous paid dispatch; reconcile the run first.
+
+A v1 paid revision additionally requires authenticated, durable assignment token
+accounting; primary attempts are unaffected. The current runtime has no generic
+token authority, so it fails paid revisions closed rather than treating
+pre-stage `budget_units` or optional provider telemetry as token accounting.
 
 ## Communication and project-local collaboration
 
@@ -280,10 +291,11 @@ values. Pending, missing, reused, or unverified identities leave the project
 analysis-only and block Slack gateway activation; they do not justify borrowing
 another deployment's Slack surface.
 
-Slack delivery gets one primary attempt. A second attempt is allowed only when
-the failure is plausibly transient. A third attempt is allowed only with a
-materially different transport or new information. Never retry an ambiguous
-Slack side effect; reconcile it first. When the bounded route is exhausted,
+Slack delivery obeys its immutable assignment-specific `retry_limit` from 1
+through 3. Every additional attempt requires a classified failure, positive
+expected information gain, new evidence, a corrected approach, or a different
+transport, and remaining resource budget. Never retry an ambiguous Slack side
+effect; reconcile it first. When the bounded route is exhausted,
 continue through the same project's prior durable SQLite/API state and
 provider-native evidence. Do not route through another deployment's app,
 channel, thread, credentials, profile, or state namespace.
@@ -373,8 +385,10 @@ through the project's configured independent security, CI, and deterministic
 merge gates. A changed candidate restarts this evidence chain.
 
 After required checks are green and the exact candidate is frozen, the Director
-may request one GitHub Copilot Lite hygiene observation. It is non-gating and has
-no percentage or action authority; do not automate it on every push. A quota or
+may request one GitHub Copilot Lite hygiene observation. It is an unscored,
+reporting-only 0–4% effort lane with a hard 6% ceiling, no provider adapter or
+automatic routing, and no production credit, gate, or action authority. Without
+an authenticated contact it fails closed as unavailable; do not automate it on every push. A quota or
 availability failure and every rejected finding count as waste. Validate each
 finding independently and block only for a confirmed underlying defect. A new
 commit invalidates the observation without an automatic rerun. If Copilot
@@ -487,3 +501,5 @@ project-specific control.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->

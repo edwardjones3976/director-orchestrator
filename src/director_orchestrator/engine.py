@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
@@ -53,7 +55,7 @@ import json
 import re
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from typing import TYPE_CHECKING
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
@@ -163,10 +165,15 @@ from .team_charter import AdvisoryVote, tally_advisory_votes
 from .workload_policy import (
     DirectProductionRecord,
     EnforcementMode as WorkloadEnforcementMode,
+    FailureKind as WorkloadFailureKind,
     Provider as WorkloadProvider,
     TrustedProviderProfile,
+    RetryRequest as WorkloadRetryRequest,
+    Transport as WorkloadTransport,
     WorkKind as WorkloadKind,
+    WorkloadRecord,
     WorkloadPolicyError,
+    evaluate_retry,
     select_cheapest_capable_provider,
 )
 from .parallel_dispatch import (
@@ -253,8 +260,11 @@ _ANTIGRAVITY_TYPED_KINDS = frozenset(
 
 
 class ProviderUnavailableError(ProviderError):
-    def __init__(self, run: ProviderRun):
-        super().__init__(f"{run.provider.value} did not respond after three safe attempts")
+    def __init__(self, run: ProviderRun, *, attempt_limit: int):
+        super().__init__(
+            f"{run.provider.value} did not respond after {attempt_limit} safe attempt"
+            + ("" if attempt_limit == 1 else "s")
+        )
         self.run = run
 
 
@@ -529,6 +539,7 @@ class OrchestrationEngine:
         history: tuple[DirectProductionRecord, ...] = tuple(
             self.store.list_recent_direct_production(limit=19)
         )
+        overall_history = list(self.store.list_recent_workload_attempts(limit=19))
         selected: dict[int, ProviderName] = {}
         rewritten: dict[int, Assignment] = {}
         for assignment in sorted(plan.assignments, key=lambda item: item.sequence):
@@ -556,12 +567,21 @@ class OrchestrationEngine:
                 in_scope_providers=scope,
                 reviewer_independent_providers=frozenset(reviewer_independent),
                 direct_production_history=history,
+                overall_effort_history=overall_history,
             )
             provider_name = ProviderName(provider.value)
             selected[assignment.sequence] = provider_name
             rewritten[assignment.sequence] = assignment.model_copy(
                 update={"agent": provider_name}
             )
+            overall_history.append(
+                WorkloadRecord(
+                    assignment_id=f"{record.task_id}:{assignment.sequence}",
+                    provider=provider,
+                    effort_units=assignment.effort_points,
+                )
+            )
+            overall_history = overall_history[-19:]
         selected_plan = synchronize_trusted_provider_selection(
             plan, selected, self.settings
         )
@@ -594,12 +614,11 @@ class OrchestrationEngine:
     def _revision_limit(self, record: TaskRecord) -> int:
         """Return the revisions the declared attempt ceiling actually permits.
 
-        ``max_revisions`` is clamped to the ``MAX_REVISIONS`` setting, which a
-        deployment may raise above the declared route-attempt ceiling. The v1
-        workload contract fixes that ceiling at one primary attempt plus one
-        transient recovery plus one conditional third attempt, so the live
-        revision loop must stop at the smaller of the two rather than trusting
-        the configured maximum. Pre-policy plans keep their original authority.
+        ``max_revisions`` is clamped to the ``MAX_REVISIONS`` setting.  The v1
+        workload contract additionally binds retries to the assignment's
+        immutable pre-stage budget; no universal primary-attempt ceiling may
+        replace that task-specific authority. Pre-policy plans keep their
+        original authority.
         """
 
         plan = record.plan
@@ -607,12 +626,119 @@ class OrchestrationEngine:
             return 0
         if not self._workload_policy_applies(record):
             return plan.max_revisions
-        return max(
-            0,
-            min(
-                plan.max_revisions,
-                plan.execution_limits.total_route_attempt_limit - 1,
+        assignments = sorted(plan.assignments, key=lambda item: item.sequence)
+        if record.next_assignment_index >= len(assignments):
+            return 0
+        assignment = assignments[record.next_assignment_index]
+        return max(0, min(plan.max_revisions, assignment.retry_limit - 1))
+
+    @staticmethod
+    def _substantive_retry_basis(
+        record: TaskRecord,
+        assignment: Assignment,
+        run: ProviderRun,
+        decision: ReviewDecision,
+    ) -> tuple[bool, bool, bool]:
+        """Validate structured, candidate-bound retry facts deterministically."""
+
+        basis = decision.retry_basis
+        if basis is None:
+            return False, False, False
+        if basis.prior_result_digest != canonical_content_digest(run.result or ""):
+            return False, False, False
+        if any(index >= len(assignment.acceptance) for index in basis.failed_acceptance_indexes):
+            return False, False, False
+        if any(
+            reference.evidence_index >= len(decision.evidence)
+            or reference.acceptance_index >= len(assignment.acceptance)
+            or reference.evidence_digest
+            != canonical_content_digest(decision.evidence[reference.evidence_index])
+            for reference in basis.evidence_refs
+        ):
+            return False, False, False
+        prior_evidence_digests = {
+            canonical_content_digest(value)
+            for value in (
+                assignment.task,
+                *assignment.acceptance,
+                run.result or "",
+                *(
+                    evidence
+                    for outcome in record.assignment_outcomes
+                    if outcome.assignment_sequence == assignment.sequence
+                    for evidence in outcome.evidence
+                ),
+            )
+        }
+        if any(
+            reference.evidence_digest in prior_evidence_digests
+            for reference in basis.evidence_refs
+        ):
+            return False, False, False
+        if basis.corrected_approach.strip() != (decision.revision_prompt or "").strip():
+            return False, False, False
+        basis_digest = canonical_content_digest(
+            json.dumps(basis.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        )
+        if basis_digest in record.retry_basis_digests:
+            return False, False, False
+        return True, True, True
+
+    def _retry_request_from_persisted_authority(
+        self,
+        record: TaskRecord,
+        assignment: Assignment,
+        run: ProviderRun,
+        decision: ReviewDecision,
+    ) -> WorkloadRetryRequest:
+        """Build a fail-closed retry request from persisted deterministic facts."""
+
+        plan = record.plan
+        prestage = plan.prestage if plan is not None else None
+        exact_intents = [
+            event
+            for event in record.task_effect_ledger
+            if event.kind == "provider_intent"
+            and event.phase == "dispatch"
+            and event.plan_generation == record.plan_generation
+            and event.assignment_sequence == assignment.sequence
+            and event.provider == assignment.agent
+        ]
+        execution_started_at = (
+            min(event.recorded_at for event in exact_intents) if exact_intents else None
+        )
+        deadline = (
+            execution_started_at + timedelta(seconds=prestage.timeout_seconds)
+            if prestage is not None
+            and execution_started_at is not None
+            and execution_started_at.tzinfo is not None
+            and execution_started_at.utcoffset() is not None
+            else None
+        )
+        materially_new, corrected, positive_gain = self._substantive_retry_basis(
+            record, assignment, run, decision
+        )
+        return WorkloadRetryRequest(
+            attempt_number=record.revision_count + 2,
+            retry_limit=assignment.retry_limit,
+            previous_failure=WorkloadFailureKind.TERMINAL,
+            transport=WorkloadTransport.DIRECTOR_ADAPTER,
+            previous_transport=WorkloadTransport.DIRECTOR_ADAPTER,
+            materially_new_information=materially_new,
+            corrected_approach=corrected,
+            positive_expected_information_gain=positive_gain,
+            # No immutable assignment/packet token ceiling exists in v1. Do not
+            # invent one from optional provider telemetry or a permissive default.
+            token_budget_remaining=False,
+            cost_budget_remaining=(
+                record.cumulative_estimated_cost_usd
+                + assignment.estimated_cost_usd
+                <= self.settings.max_task_budget_usd
             ),
+            timeout_budget_remaining=(
+                deadline is not None and datetime.now(timezone.utc) < deadline
+            ),
+            cancellation_requested=record.cancellation_requested_at is not None,
         )
 
     @staticmethod
@@ -5147,6 +5273,8 @@ class OrchestrationEngine:
         assignment: Assignment,
         *,
         phase: str,
+        retry_basis_digest: str | None = None,
+        revision_prompt_digest: str | None = None,
     ) -> tuple[TaskRecord, str] | None:
         """Atomically persist one external-effect intent before provider I/O.
 
@@ -5214,6 +5342,25 @@ class OrchestrationEngine:
                 raise EffectAlreadyClaimed(
                     "The pending assignment approval changed before provider dispatch"
                 )
+            if phase == "revision" and self._workload_policy_applies(current):
+                if (
+                    current.status != TaskStatus.REVIEWING
+                    or current.cancellation_requested_at is not None
+                ):
+                    raise EffectAlreadyClaimed(
+                        "The task is no longer authorized for provider revision"
+                    )
+                if retry_basis_digest is None or revision_prompt_digest is None:
+                    raise EffectAlreadyClaimed(
+                        "Provider revision requires a persisted structured retry basis"
+                    )
+                if (
+                    retry_basis_digest in current.retry_basis_digests
+                    or revision_prompt_digest in current.revision_prompt_digests
+                ):
+                    raise EffectAlreadyClaimed(
+                        "The exact provider revision basis was already consumed"
+                    )
             if phase == "dispatch" and any(
                 run.assignment_sequence == current_assignment.sequence
                 for run in current.provider_runs
@@ -5229,6 +5376,9 @@ class OrchestrationEngine:
                 phase=phase,
                 max_task_budget_usd=self.settings.max_task_budget_usd,
             )
+            if phase == "revision" and self._workload_policy_applies(current):
+                current.retry_basis_digests.append(retry_basis_digest)
+                current.revision_prompt_digests.append(revision_prompt_digest)
             current.status = TaskStatus.RUNNING
 
         try:
@@ -5570,21 +5720,24 @@ class OrchestrationEngine:
     async def _defer_unavailable(
         self, record: TaskRecord, assignment: Assignment, run: ProviderRun
     ) -> None:
+        attempt_limit = assignment.retry_limit
         self._advance_provider_interaction(
             record,
             run,
             ProviderInteractionState.UNAVAILABLE,
             source=TransportEvidenceSource.BACKEND_OBSERVATION,
-            error_code="NO_RESPONSE_AFTER_THREE_ATTEMPTS",
-            contact_attempt_ordinal=3,
+            error_code=f"NO_RESPONSE_AFTER_{attempt_limit}_ATTEMPTS",
+            contact_attempt_ordinal=attempt_limit,
         )
         if assignment.agent not in record.unavailable_providers:
             record.unavailable_providers.append(assignment.agent)
         if assignment.sequence not in record.deferred_assignments:
             record.deferred_assignments.append(assignment.sequence)
         impact = (
-            f"Assignment {assignment.sequence} ({assignment.agent.value}) deferred after three "
-            "safe nonresponses; no duplicate dispatch was made. Scope and coverage are reduced, "
+            f"Assignment {assignment.sequence} ({assignment.agent.value}) deferred after "
+            f"{attempt_limit} safe nonresponse"
+            f"{'s' if attempt_limit != 1 else ''}; no duplicate dispatch was made. "
+            "Scope and coverage are reduced, "
             "confidence is lower, and timing depends on provider recovery or owner reassignment."
         )
         if impact not in record.availability_impacts:
@@ -6165,13 +6318,54 @@ class OrchestrationEngine:
             decision.verdict == ReviewVerdict.REVISE
             and record.revision_count < self._revision_limit(record)
         ):
+            revision_prompt = decision.revision_prompt or ""
+            revision_prompt_digest = canonical_content_digest(
+                f"assignment:{assignment.sequence}\n{revision_prompt}"
+            )
+            retry_basis_digest = (
+                canonical_content_digest(
+                    json.dumps(
+                        decision.retry_basis.model_dump(mode="json"),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
+                if decision.retry_basis is not None
+                else None
+            )
             if assignment.agent == ProviderName.PERPLEXITY:
                 return await self._stop_for_perplexity_refinement(
                     record, assignment, decision
                 )
+            if revision_prompt_digest in record.revision_prompt_digests:
+                retry_violations = (
+                    "identical_revision_prompt_must_not_be_retried",
+                )
+            elif self._workload_policy_applies(record):
+                retry_violations = evaluate_retry(
+                    self._retry_request_from_persisted_authority(
+                        record, assignment, run, decision
+                    ),
+                    mode=WorkloadEnforcementMode.ENFORCED,
+                ).violations
+            else:
+                retry_violations = ()
+            if retry_violations:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.message = (
+                    "Provider revision stopped by the immutable assignment retry gate: "
+                    + ", ".join(retry_violations)
+                )[:2_000]
+                self.store.save(record)
+                await self._status_post(record, record.message)
+                return False
             try:
                 reservation = self._reserve_effect_intent(
-                    record, assignment, phase="revision"
+                    record,
+                    assignment,
+                    phase="revision",
+                    retry_basis_digest=retry_basis_digest,
+                    revision_prompt_digest=revision_prompt_digest,
                 )
             except ValueError as exc:
                 record = self.store.get(record.task_id) or record
@@ -6515,8 +6709,9 @@ class OrchestrationEngine:
             if record is not None and assignment is not None
             else 0
         )
-        if no_response_attempts >= 3:
-            raise ProviderUnavailableError(current)
+        attempt_limit = assignment.retry_limit if assignment is not None else 1
+        if no_response_attempts >= attempt_limit:
+            raise ProviderUnavailableError(current, attempt_limit=attempt_limit)
         while current.status not in terminal:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"{current.provider.value} run timed out")
@@ -6572,8 +6767,10 @@ class OrchestrationEngine:
                         run=current,
                         error=exc,
                     )
-                if no_response_attempts >= 3:
-                    raise ProviderUnavailableError(current) from exc
+                if no_response_attempts >= attempt_limit:
+                    raise ProviderUnavailableError(
+                        current, attempt_limit=attempt_limit
+                    ) from exc
         if current.status in {
             "ERROR",
             "CANCELLED",
@@ -6640,3 +6837,5 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
@@ -316,15 +318,15 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             {
                 "claude": 36,
                 "cursor": 20,
-                "grok": 20,
+                "grok": 11,
                 "openai": 8,
-                "gemini": 11,
+                "gemini": 20,
                 "perplexity": 5,
             },
         )
         self.assertEqual(
-            directive["overall_effort_percent_status"],
-            "historical_non_enforced_reporting_only",
+            directive["workload_accounting"]["ledgers"]["overall_effort"],
+            "prospective_observed_effort_guard",
         )
         self.assertEqual(
             directive["coding_routing"]["selection_policy"],
@@ -346,13 +348,29 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 "external_openai": 30,
             },
         )
-        self.assertFalse(
+        self.assertTrue(
             directive["workload_enforcement"]["overall_effort_can_block_or_route"]
+        )
+        self.assertEqual(
+            directive["workload_enforcement"]["overall_effort_hard_ceilings_percent"]["cursor"],
+            33,
         )
         self.assertIn("estimated_roi", directive["roi_and_waste"])
         self.assertFalse(directive["copilot_lite_hygiene_review"]["gating"])
         self.assertIsNone(
             directive["copilot_lite_hygiene_review"]["workload_percentage"]
+        )
+        self.assertEqual(
+            directive["coding_routing"]["selection_order"][2],
+            "total_effort_eligibility_and_corrective_under_band_preference",
+        )
+        self.assertEqual(
+            directive["workload_enforcement"]["overall_effort_normal_bands_percent"]["github_copilot_cli_lite"],
+            [0, 4],
+        )
+        self.assertEqual(
+            directive["workload_enforcement"]["overall_effort_hard_ceilings_percent"]["github_copilot_cli_lite"],
+            6,
         )
         self.assertTrue(
             directive["pre_staging"]["required_before_provider_dispatch"]
@@ -584,8 +602,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("15", normalized)
                 self.assertIn("11", normalized)
                 self.assertIn("4", normalized)
-                self.assertIn("historical", normalized)
-                self.assertIn("non-enforced", normalized.replace("_", "-"))
+                self.assertIn("prospective", normalized)
+                self.assertIn("33", normalized)
                 self.assertIn("copilot", normalized)
                 self.assertIn("waste", normalized)
 
@@ -604,11 +622,11 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(directive["direct_workload_percent"].values()), 100)
         self.assertEqual(sum(directive["overall_effort_percent"].values()), 100)
         self.assertEqual(
-            directive["workload_accounting"]["enforced_ledger"],
+            directive["workload_accounting"]["accepted_production_ledger"],
             "direct_production",
         )
         self.assertEqual(
-            directive["workload_accounting"]["reported_only_ledger"],
+            directive["workload_accounting"]["usage_guard_ledger"],
             "overall_effort",
         )
 
@@ -827,6 +845,24 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
             with self.subTest(area=area["name"]):
                 self.assertIn(f'- name: "{area["name"]}"', contract)
                 self.assertIn(f'expectation: "{area["expectation"]}"', contract)
+
+    def test_contract_mirrors_prospective_total_effort_controls(self):
+        contract = self.contract()
+        for field in (
+            "prospective_total_effort_percent:",
+            "gemini_antigravity: 20",
+            "grok: 11",
+            "total_effort_normal_bands_percent:",
+            "cursor: [17, 23]",
+            "total_effort_hard_ceilings_percent:",
+            "cursor: 33",
+            'total_effort_status: "prospective_routing_and_hard_ceiling_guard"',
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, contract)
+
+        self.assertNotIn("historical_overall_effort_percent:", contract)
+        self.assertNotIn("historical_overall_effort_status:", contract)
 
     def test_contract_encodes_the_cursor_boundary(self):
         contract = self.contract()
@@ -1104,9 +1140,8 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
             "distinct project channel",
             "distinct deployment profile/state namespace",
             "blocks slack gateway activation",
-            "one primary attempt",
-            "second attempt",
-            "third attempt",
+            "assignment-specific `retry_limit`",
+            "positive expected information gain",
             "never retry an ambiguous slack side effect",
             "do not borrow another deployment's slack app",
             "activation evidence",
@@ -1130,9 +1165,9 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
     def test_slack_retry_policy_is_synchronized(self):
         profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
         for field in (
-            "primary_attempt_limit: 1",
-            'second_attempt_requires: "plausibly_transient_failure"',
-            'third_attempt_requires: "materially_different_transport_or_new_information"',
+            'retry_limit: "<immutable integer 1..3>"',
+            'additional_attempt_requires: "classified_failure_positive_expected_information_gain_and_new_evidence_corrected_approach_or_different_transport"',
+            "resource_budget_required: true",
             'ambiguous_slack_side_effect: "do_not_retry_reconcile_first"',
             'exhausted_route: "same_project_durable_transport_never_borrow_another_deployment_surface"',
         ):
@@ -1146,11 +1181,10 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
         ):
             normalized = " ".join(self.read(surface).split()).lower()
             for phrase in (
-                "one primary attempt",
-                "second attempt",
-                "plausibly transient",
-                "third attempt",
-                "materially different transport or new information",
+                "assignment-specific `retry_limit`",
+                "positive expected information gain",
+                "corrected approach",
+                "different transport",
                 "never retry an ambiguous slack side effect",
                 "same project's prior durable",
                 "another deployment",
@@ -1231,3 +1265,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]

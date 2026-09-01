@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
@@ -15,6 +16,8 @@ import unittest
 
 from director_orchestrator.workload_policy import (
     DEFAULT_POLICY,
+    COPILOT_LITE_HARD_CEILING,
+    COPILOT_LITE_NORMAL_BAND,
     DIRECT_PRODUCTION_TARGETS,
     FABLE_MODEL_FLOOR,
     OVERALL_TARGETS,
@@ -40,6 +43,7 @@ from director_orchestrator.workload_policy import (
     WorkloadRecord,
     direct_production_provider,
     evaluate_assignment,
+    evaluate_copilot_lite_effort,
     evaluate_efficiency,
     evaluate_retry,
     is_accepted_productive_kind,
@@ -151,9 +155,9 @@ class WorkloadTargetTests(unittest.TestCase):
             {
                 Provider.CLAUDE: 36,
                 Provider.CURSOR: 20,
-                Provider.GROK: 20,
+                Provider.GROK: 11,
                 Provider.OPENAI: 8,
-                Provider.GEMINI: 11,
+                Provider.GEMINI: 20,
                 Provider.PERPLEXITY: 5,
             },
         )
@@ -192,6 +196,12 @@ class WorkloadTargetTests(unittest.TestCase):
             ),
             (22, 28),
         )
+        self.assertEqual(DEFAULT_POLICY.overall_hard_ceiling(Provider.CURSOR), 33)
+        self.assertEqual(DEFAULT_POLICY.overall_normal_band(Provider.PERPLEXITY), (1, 7))
+        self.assertEqual(COPILOT_LITE_NORMAL_BAND, (0, 4))
+        self.assertEqual(COPILOT_LITE_HARD_CEILING, 6)
+        self.assertTrue(evaluate_copilot_lite_effort(current_units=0, total_units=99))
+        self.assertFalse(evaluate_copilot_lite_effort(current_units=6, total_units=99))
 
     def test_target_ledgers_reject_duplicates_or_incomplete_sets(self):
         with self.assertRaisesRegex(WorkloadPolicyError, "duplicate providers"):
@@ -203,7 +213,10 @@ class WorkloadTargetTests(unittest.TestCase):
 
     def test_target_ledgers_must_total_one_hundred(self):
         changed = tuple(
-            OverallTarget(item.provider, item.percent + (1 if item.provider is Provider.CLAUDE else 0))
+            dataclasses.replace(
+                item,
+                percent=item.percent + (1 if item.provider is Provider.CLAUDE else 0),
+            )
             for item in OVERALL_TARGETS
         )
         with self.assertRaisesRegex(WorkloadPolicyError, "must total 100"):
@@ -300,22 +313,23 @@ class AssignmentRoutingTests(unittest.TestCase):
         )
         result = evaluate_assignment(assignment(Provider.CLAUDE), history=history)
 
-        self.assertTrue(result.allowed)
+        self.assertFalse(result.allowed)
         self.assertIn("prospective_rolling_share:claude:9/20", result.advisories)
+        self.assertIn("total_effort_hard_ceiling_exceeded:claude:41", result.violations)
 
-    def test_skewed_overall_history_is_report_only(self):
+    def test_skewed_total_effort_history_blocks_new_overage(self):
         history = records(
             *([Provider.CLAUDE] * 9),
             *([Provider.GEMINI] * 10),
         )
         result = evaluate_assignment(assignment(Provider.CLAUDE), history=history)
 
-        self.assertTrue(result.allowed)
-        self.assertIn("overall_effort_history_report_only", result.advisories)
+        self.assertFalse(result.allowed)
+        self.assertIn("total_effort_prospective_usage_guard", result.advisories)
         self.assertIn("prospective_rolling_share:claude:10/20", result.advisories)
         self.assertFalse(any("overall" in item for item in result.violations))
 
-    def test_skewed_other_overall_provider_is_report_only(self):
+    def test_skewed_other_provider_prefers_corrective_cursor(self):
         history = tuple(
             WorkloadRecord(f"CLAUDE-{index:02d}", Provider.CLAUDE)
             for index in range(19)
@@ -327,10 +341,10 @@ class AssignmentRoutingTests(unittest.TestCase):
         )
 
         self.assertTrue(result.allowed)
-        self.assertIn("overall_effort_history_report_only", result.advisories)
+        self.assertIn("total_effort_prospective_usage_guard", result.advisories)
         self.assertFalse(any("overall" in item for item in result.violations))
 
-    def test_cursor_and_grok_overall_shares_are_report_only(self):
+    def test_cursor_25_is_allowed_but_grok_inherited_overage_blocks(self):
         for provider in (Provider.CURSOR, Provider.GROK):
             with self.subTest(provider=provider, share="25"):
                 other_primary = (
@@ -344,7 +358,7 @@ class AssignmentRoutingTests(unittest.TestCase):
                     Provider.PERPLEXITY,
                 )
                 allowed = evaluate_assignment(assignment(provider), history=history)
-                self.assertTrue(allowed.allowed)
+                self.assertEqual(allowed.allowed, provider is Provider.CURSOR)
                 self.assertIn(
                     f"prospective_rolling_share:{provider.value}:5/20",
                     allowed.advisories,
@@ -355,14 +369,18 @@ class AssignmentRoutingTests(unittest.TestCase):
                     *([Provider.GEMINI] * 14),
                 )
                 reported = evaluate_assignment(assignment(provider), history=history)
-                self.assertTrue(reported.allowed)
+                self.assertEqual(reported.allowed, provider is Provider.CURSOR)
                 self.assertIn(
                     f"prospective_rolling_share:{provider.value}:6/20",
                     reported.advisories,
                 )
-                self.assertFalse(any("overall" in item for item in reported.violations))
+                if provider is Provider.GROK:
+                    self.assertIn(
+                        "total_effort_hard_ceiling_exceeded:grok:16",
+                        reported.violations,
+                    )
 
-    def test_openai_overall_share_is_report_only(self):
+    def test_openai_total_effort_ceiling_is_enforced(self):
         allowed_history = records(
             Provider.OPENAI,
             *([Provider.CLAUDE] * 8),
@@ -385,20 +403,20 @@ class AssignmentRoutingTests(unittest.TestCase):
         )
 
         self.assertTrue(allowed.allowed)
-        self.assertTrue(blocked.allowed)
+        self.assertFalse(blocked.allowed)
         self.assertIn("prospective_rolling_share:openai:3/20", blocked.advisories)
         self.assertFalse(any("overall" in item for item in blocked.violations))
 
-    def test_overall_effort_weight_is_reported_without_blocking(self):
+    def test_total_effort_weight_is_enforced(self):
         history = records(*([Provider.GEMINI] * 19))
         result = evaluate_assignment(
             assignment(Provider.CURSOR, effort_units=20), history=history
         )
 
-        self.assertTrue(result.allowed)
+        self.assertFalse(result.allowed)
         self.assertIn("prospective_rolling_share:cursor:20/39", result.advisories)
 
-    def test_all_provider_overall_shares_are_report_only(self):
+    def test_all_provider_total_effort_hard_ceilings_block_overage(self):
         for provider in Provider:
             with self.subTest(provider=provider):
                 history = tuple(
@@ -408,12 +426,14 @@ class AssignmentRoutingTests(unittest.TestCase):
                 result = evaluate_assignment(
                     assignment(provider, effort_units=20), history=history
                 )
-                self.assertTrue(result.allowed)
+                self.assertFalse(result.allowed)
                 self.assertIn(
                     f"prospective_rolling_share:{provider.value}:39/39",
                     result.advisories,
                 )
-                self.assertFalse(any("overall" in item for item in result.violations))
+                self.assertTrue(
+                    any("total_effort_hard_ceiling_exceeded" in item for item in result.violations)
+                )
 
     def test_primary_ceiling_requires_two_other_available_primaries(self):
         result = evaluate_assignment(
@@ -482,7 +502,7 @@ class AssignmentRoutingTests(unittest.TestCase):
         self.assertTrue(result.allowed)
         self.assertIn("rolling_window_warming_up:6/20", result.advisories)
 
-    def test_duplicate_overall_assignment_identity_is_report_only(self):
+    def test_duplicate_overall_assignment_identity_does_not_relabel_history(self):
         history = (WorkloadRecord("ASSIGN-20", Provider.GEMINI),)
         result = evaluate_assignment(assignment(), history=history)
 
@@ -677,7 +697,7 @@ class DirectProductionRoutingTests(unittest.TestCase):
             result.advisories,
         )
 
-    def test_direct_allocation_is_the_only_workload_share_blocker(self):
+    def test_total_effort_guard_does_not_create_direct_production_credit(self):
         overall_history = tuple(
             WorkloadRecord(f"OVERALL-CLAUDE-{index}", Provider.CLAUDE)
             for index in range(19)
@@ -700,7 +720,7 @@ class DirectProductionRoutingTests(unittest.TestCase):
         )
 
         self.assertFalse(result.allowed)
-        self.assertIn("overall_effort_history_report_only", result.advisories)
+        self.assertIn("total_effort_prospective_usage_guard", result.advisories)
         self.assertIn(
             "direct_production_hard_threshold_exceeded:cursor:25",
             result.violations,
@@ -867,6 +887,45 @@ class TrustedProviderSelectionTests(unittest.TestCase):
 
         self.assertIs(selected, Provider.GEMINI)
 
+    def test_antigravity_is_preferred_while_below_its_normal_minimum(self):
+        profiles = (
+            TrustedProviderProfile(
+                Provider.GEMINI,
+                frozenset({WorkKind.IMPLEMENTATION}),
+                5,
+            ),
+            TrustedProviderProfile(
+                Provider.CURSOR,
+                frozenset({WorkKind.IMPLEMENTATION, WorkKind.REVIEW}),
+                1,
+            ),
+            TrustedProviderProfile(
+                Provider.CLAUDE,
+                frozenset({WorkKind.IMPLEMENTATION, WorkKind.REVIEW}),
+                2,
+            ),
+        )
+        history = records(
+            *([Provider.GEMINI] * 2),
+            *([Provider.CURSOR] * 5),
+            *([Provider.CLAUDE] * 7),
+            *([Provider.GROK] * 2),
+            Provider.OPENAI,
+            *([Provider.PERPLEXITY] * 2),
+        )
+        selected = select_cheapest_capable_provider(
+            assignment_id="SELECT-UNDER-TARGET-ANTIGRAVITY",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=profiles,
+            ready_providers=frozenset({Provider.GEMINI, Provider.CURSOR, Provider.CLAUDE}),
+            in_scope_providers=frozenset({Provider.GEMINI, Provider.CURSOR, Provider.CLAUDE}),
+            reviewer_independent_providers=frozenset({Provider.CURSOR, Provider.CLAUDE}),
+            overall_effort_history=history,
+        )
+        self.assertIs(selected, Provider.GEMINI)
+        self.assertEqual(history[0].provider, Provider.GEMINI)
+
     def test_trusted_explicit_provider_requirement_precedes_cost(self):
         selected = select_cheapest_capable_provider(
             assignment_id="SELECT-IMPLEMENTATION-2",
@@ -1007,31 +1066,39 @@ class TrustedProviderSelectionTests(unittest.TestCase):
 
 class RetryPolicyTests(unittest.TestCase):
     def test_primary_attempt_is_allowed(self):
-        result = evaluate_retry(RetryRequest(attempt_number=1))
+        result = evaluate_retry(RetryRequest(attempt_number=1, retry_limit=3))
         self.assertTrue(result.allowed)
 
-    def test_second_attempt_requires_a_transient_failure(self):
+    def test_additional_attempt_uses_assignment_budget_and_information_gain(self):
         allowed = evaluate_retry(
             RetryRequest(
                 attempt_number=2,
-                previous_failure=FailureKind.TRANSIENT,
+                retry_limit=2,
+                previous_failure=FailureKind.TERMINAL,
+                corrected_approach=True,
+                positive_expected_information_gain=True,
             )
         )
         blocked = evaluate_retry(
             RetryRequest(
                 attempt_number=2,
+                retry_limit=2,
                 previous_failure=FailureKind.TERMINAL,
             )
         )
 
         self.assertTrue(allowed.allowed)
         self.assertFalse(blocked.allowed)
-        self.assertIn("second_attempt_requires_transient_failure", blocked.violations)
+        self.assertIn(
+            "additional_attempt_requires_positive_information_gain_and_changed_basis",
+            blocked.violations,
+        )
 
     def test_third_attempt_requires_new_information_or_changed_transport(self):
         no_change = evaluate_retry(
             RetryRequest(
                 attempt_number=3,
+                retry_limit=3,
                 previous_failure=FailureKind.TRANSIENT,
                 transport=Transport.PROVIDER_API,
                 previous_transport=Transport.PROVIDER_API,
@@ -1040,24 +1107,28 @@ class RetryPolicyTests(unittest.TestCase):
         new_information = evaluate_retry(
             RetryRequest(
                 attempt_number=3,
+                retry_limit=3,
                 previous_failure=FailureKind.TERMINAL,
                 transport=Transport.PROVIDER_API,
                 previous_transport=Transport.PROVIDER_API,
                 materially_new_information=True,
+                positive_expected_information_gain=True,
             )
         )
         changed_transport = evaluate_retry(
             RetryRequest(
                 attempt_number=3,
+                retry_limit=3,
                 previous_failure=FailureKind.TRANSIENT,
                 transport=Transport.BROWSER,
                 previous_transport=Transport.PROVIDER_API,
+                positive_expected_information_gain=True,
             )
         )
 
         self.assertFalse(no_change.allowed)
         self.assertIn(
-            "third_attempt_requires_new_information_or_transport",
+            "additional_attempt_requires_positive_information_gain_and_changed_basis",
             no_change.violations,
         )
         self.assertTrue(new_information.allowed)
@@ -1071,6 +1142,7 @@ class RetryPolicyTests(unittest.TestCase):
         result = evaluate_retry(
             RetryRequest(
                 attempt_number=4,
+                retry_limit=3,
                 previous_failure=FailureKind.TRANSIENT,
                 materially_new_information=True,
                 previous_transport=Transport.LOCAL_CLI,
@@ -1086,6 +1158,7 @@ class RetryPolicyTests(unittest.TestCase):
                 result = evaluate_retry(
                     RetryRequest(
                         attempt_number=attempt_number,
+                        retry_limit=3,
                         previous_failure=FailureKind.AMBIGUOUS_PAID_DISPATCH,
                         materially_new_information=True,
                         previous_transport=Transport.LOCAL_CLI,
@@ -1100,7 +1173,11 @@ class RetryPolicyTests(unittest.TestCase):
 
     def test_retry_violation_can_run_in_shadow_mode(self):
         result = evaluate_retry(
-            RetryRequest(attempt_number=2, previous_failure=FailureKind.TERMINAL),
+            RetryRequest(
+                attempt_number=2,
+                retry_limit=2,
+                previous_failure=FailureKind.TERMINAL,
+            ),
             mode=EnforcementMode.SHADOW,
         )
         self.assertTrue(result.allowed)
@@ -1305,7 +1382,7 @@ class InputValidationTests(unittest.TestCase):
 
     def test_retry_attempt_number_must_be_positive(self):
         with self.assertRaisesRegex(WorkloadPolicyError, "positive integer"):
-            RetryRequest(attempt_number=0)
+            RetryRequest(attempt_number=0, retry_limit=1)
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | END]]
@@ -1315,3 +1392,4 @@ class InputValidationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

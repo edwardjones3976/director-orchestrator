@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 # Model interoperability contract
@@ -27,10 +29,21 @@ Every model receives the same bounded work packet and returns the same bounded r
 - allowed tools and allowed external effects
 - acceptance checks and evidence requirements
 - approval requirements
-- budget, timeout, hop, and revision ceilings
+- budget, timeout, hop, and revision ceilings, including an immutable
+  assignment-specific retry limit from 1 through 3
 - idempotency key and correlation identifiers
 
 A packet missing its authority snapshot, acceptance checks, or repository boundary is invalid and must not dispatch.
+An additional attempt is valid only within that retry limit, with a classified
+failure, positive expected information gain from new evidence, a corrected
+approach, or a different transport, and remaining resource budget. An ambiguous
+external effect is reconciled through its idempotency and provider identifiers;
+it is never blindly repeated.
+For v1 paid revisions, the additional attempt also requires authenticated,
+durable assignment token accounting; primary attempts are unaffected. The
+current runtime has no generic token authority and therefore fails paid
+revisions closed rather than treating pre-stage `budget_units` or optional
+provider telemetry as token accounting.
 
 ## Required result fields
 
@@ -120,3 +133,5 @@ Offline replay fixtures bind one validated work packet to its validated result p
 A self-contained digest detects accidental or unsynchronized modification; it is not a signature and grants no authority. Acceptance, dispatch, external writes, and merge decisions remain governed by deterministic policy and separately trusted evidence.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->

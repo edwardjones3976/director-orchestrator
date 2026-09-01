@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
@@ -16,9 +17,10 @@ model-generated suggestion as policy authority.
 
 Two percentage ledgers are intentionally separate:
 
-* ``overall_targets`` covers all provider effort, including direction, review,
-  research, validation, and implementation. It is retained for historical
-  reporting only and never authorizes or blocks dispatch.
+* ``overall_targets`` covers authenticated or directly observed provider effort,
+  including direction, review, research, validation, and implementation.  It is
+  a prospective usage guard: it may prefer an under-target provider or block new
+  effort above a hard ceiling, but it never creates production credit.
 * ``direct_production_targets`` is the sole workload-allocation blocker and
   covers authenticated, Director-accepted production output only. The external
   OpenAI lane is distinct from OpenAI's overall control-plane work.
@@ -39,6 +41,8 @@ from typing import Any, Sequence
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 FABLE_MODEL_FLOOR = "FABLE 5 ULTRA/MAX"
+COPILOT_LITE_NORMAL_BAND = (0, 4)
+COPILOT_LITE_HARD_CEILING = 6
 
 
 class WorkloadPolicyError(ValueError):
@@ -117,9 +121,24 @@ class DecisionOutcome(str, Enum):
 class OverallTarget:
     provider: Provider
     percent: int
+    normal_min_percent: int
+    normal_max_percent: int
+    hard_ceiling_percent: int
 
     def __post_init__(self) -> None:
         _validate_percent(self.percent, "overall target")
+        _validate_percent(self.normal_min_percent, "overall normal minimum")
+        _validate_percent(self.normal_max_percent, "overall normal maximum")
+        _validate_percent(self.hard_ceiling_percent, "overall hard ceiling")
+        if not (
+            self.normal_min_percent
+            <= self.percent
+            <= self.normal_max_percent
+            < self.hard_ceiling_percent
+        ):
+            raise WorkloadPolicyError(
+                "overall target must be inside its normal band below its hard ceiling"
+            )
 
 
 @dataclass(frozen=True)
@@ -139,12 +158,12 @@ def _validate_percent(value: int, label: str) -> None:
 
 
 OVERALL_TARGETS: tuple[OverallTarget, ...] = (
-    OverallTarget(Provider.CLAUDE, 36),
-    OverallTarget(Provider.CURSOR, 20),
-    OverallTarget(Provider.GROK, 20),
-    OverallTarget(Provider.OPENAI, 8),
-    OverallTarget(Provider.GEMINI, 11),
-    OverallTarget(Provider.PERPLEXITY, 5),
+    OverallTarget(Provider.CLAUDE, 36, 33, 39, 41),
+    OverallTarget(Provider.CURSOR, 20, 17, 23, 33),
+    OverallTarget(Provider.GROK, 11, 8, 14, 16),
+    OverallTarget(Provider.OPENAI, 8, 5, 11, 13),
+    OverallTarget(Provider.GEMINI, 20, 17, 23, 25),
+    OverallTarget(Provider.PERPLEXITY, 5, 1, 7, 9),
 )
 
 DIRECT_PRODUCTION_TARGETS: tuple[DirectProductionTarget, ...] = (
@@ -182,9 +201,6 @@ class WorkloadPolicy:
     direct_production_hard_overage_points: int = 5
     claude_model_floor: str = FABLE_MODEL_FLOOR
     approved_claude_model_labels: tuple[str, ...] = (FABLE_MODEL_FLOOR,)
-    primary_attempt_limit: int = 1
-    transient_recovery_limit: int = 1
-    conditional_third_attempt_limit: int = 1
     status_read_target: int = 2
     duplicate_validation_reduction_target_percent: int = 70
     total_action_reduction_target_percent: int = 60
@@ -214,9 +230,9 @@ class WorkloadPolicy:
         if {target.provider: target.percent for target in self.overall_targets} != {
             Provider.CLAUDE: 36,
             Provider.CURSOR: 20,
-            Provider.GROK: 20,
+            Provider.GROK: 11,
             Provider.OPENAI: 8,
-            Provider.GEMINI: 11,
+            Provider.GEMINI: 20,
             Provider.PERPLEXITY: 5,
         }:
             raise WorkloadPolicyError("overall targets do not match owner policy")
@@ -268,21 +284,10 @@ class WorkloadPolicy:
             raise WorkloadPolicyError("approved Claude model labels must be unique")
 
         for value, label in (
-            (self.primary_attempt_limit, "primary attempt limit"),
-            (self.transient_recovery_limit, "transient recovery limit"),
-            (self.conditional_third_attempt_limit, "conditional third attempt limit"),
             (self.status_read_target, "status read target"),
             (self.max_ordinary_actions, "ordinary action maximum"),
         ):
             _positive_int(value, label)
-        if (
-            self.primary_attempt_limit,
-            self.transient_recovery_limit,
-            self.conditional_third_attempt_limit,
-        ) != (1, 1, 1):
-            raise WorkloadPolicyError(
-                "retry policy must be one primary, one transient recovery, and one conditional third attempt"
-            )
         if self.status_read_target != 2:
             raise WorkloadPolicyError("status read target must be 2")
         if self.max_ordinary_actions != 5:
@@ -315,6 +320,13 @@ class WorkloadPolicy:
 
     def overall_target(self, provider: Provider) -> int:
         return _lookup_percent(self.overall_targets, provider)
+
+    def overall_normal_band(self, provider: Provider) -> tuple[int, int]:
+        target = _lookup_target(self.overall_targets, provider)
+        return target.normal_min_percent, target.normal_max_percent
+
+    def overall_hard_ceiling(self, provider: Provider) -> int:
+        return _lookup_target(self.overall_targets, provider).hard_ceiling_percent
 
     def direct_production_target(
         self, provider: DirectProductionProvider
@@ -361,15 +373,40 @@ def _validate_complete_targets(
 
 
 def _lookup_percent(targets: Sequence[Any], provider: Any) -> int:
+    return _lookup_target(targets, provider).percent
+
+
+def _lookup_target(targets: Sequence[Any], provider: Any) -> Any:
     for target in targets:
         if target.provider is provider:
-            return target.percent
+            return target
     raise WorkloadPolicyError(f"provider is absent from target ledger: {provider}")
 
 
 def _positive_int(value: int, label: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise WorkloadPolicyError(f"{label} must be a positive integer")
+
+
+def evaluate_copilot_lite_effort(
+    *, current_units: int, total_units: int, candidate_units: int = 1
+) -> bool:
+    """Fail closed when prospective unscored Copilot hygiene exceeds six percent.
+
+    Copilot/Lite is not a production provider and never earns a target or direct
+    credit.  This helper exists for the optional one-time hygiene lane; there is
+    deliberately no provider adapter or automatic dispatch authority.
+    """
+
+    _nonnegative_int(current_units, "Copilot current effort units")
+    _nonnegative_int(total_units, "total observed effort units")
+    _positive_int(candidate_units, "Copilot candidate effort units")
+    prospective_total = total_units + candidate_units
+    prospective_copilot = current_units + candidate_units
+    return (
+        prospective_copilot * 100
+        <= COPILOT_LITE_HARD_CEILING * prospective_total
+    )
 
 
 DEFAULT_POLICY = WorkloadPolicy.default()
@@ -631,6 +668,40 @@ def _direct_candidate_routing_rank(
     return 1
 
 
+def _total_effort_candidate_routing_rank(
+    *,
+    assignment_id: str,
+    provider: Provider,
+    effort_units: int,
+    history: tuple[WorkloadRecord, ...],
+    policy: WorkloadPolicy,
+) -> int | None:
+    """Return prospective total-effort preference, blocking only new overage.
+
+    Recorded history is immutable and remains attributed to the provider that
+    actually consumed it.  A candidate never turns that effort into accepted
+    production.  With no observed history there is no denominator from which to
+    infer an overage, so the first bounded assignment is allowed.
+    """
+
+    prior = history[-(policy.rolling_window_size - 1) :]
+    if len(prior) < policy.rolling_window_size - 1:
+        return 1
+    window = prior + (WorkloadRecord(assignment_id, provider, effort_units),)
+    total_units = sum(record.effort_units for record in window)
+    provider_units = sum(
+        record.effort_units for record in window if record.provider is provider
+    )
+    if provider_units * 100 > policy.overall_hard_ceiling(provider) * total_units:
+        return None
+    normal_min, normal_max = policy.overall_normal_band(provider)
+    if provider_units * 100 < normal_min * total_units:
+        return 0
+    if provider_units * 100 > normal_max * total_units:
+        return 2
+    return 1
+
+
 def select_cheapest_capable_provider(
     *,
     assignment_id: str,
@@ -641,6 +712,7 @@ def select_cheapest_capable_provider(
     in_scope_providers: frozenset[Provider],
     reviewer_independent_providers: frozenset[Provider],
     direct_production_history: Sequence[DirectProductionRecord] = (),
+    overall_effort_history: Sequence[WorkloadRecord] = (),
     explicit_required_provider: Provider | None = None,
     policy: WorkloadPolicy = DEFAULT_POLICY,
 ) -> Provider:
@@ -703,7 +775,12 @@ def select_cheapest_capable_provider(
             "trusted explicit provider requirement must be absent or a Provider"
         )
 
-    ranked: list[tuple[int, int, str, Provider]] = []
+    overall_history = tuple(overall_effort_history)
+    if any(not isinstance(record, WorkloadRecord) for record in overall_history):
+        raise WorkloadPolicyError(
+            "overall-effort history must contain only WorkloadRecord values"
+        )
+    ranked: list[tuple[int, int, int, str, Provider]] = []
     for profile in profiles:
         provider = profile.provider
         if kind not in profile.supported_work_kinds:
@@ -730,8 +807,18 @@ def select_cheapest_capable_provider(
         )
         if direct_rank is None:
             continue
+        total_effort_rank = _total_effort_candidate_routing_rank(
+            assignment_id=assignment_id,
+            provider=provider,
+            effort_units=effort_units,
+            history=overall_history,
+            policy=policy,
+        )
+        if total_effort_rank is None:
+            continue
         ranked.append(
             (
+                total_effort_rank,
                 direct_rank,
                 profile.trusted_cost_rank,
                 provider.value,
@@ -740,7 +827,7 @@ def select_cheapest_capable_provider(
         )
 
     if explicit_required_provider is not None:
-        for _direct_rank, _cost_rank, _provider_id, provider in ranked:
+        for _total_rank, _direct_rank, _cost_rank, _provider_id, provider in ranked:
             if provider is explicit_required_provider:
                 return provider
         raise WorkloadPolicyError(
@@ -765,10 +852,9 @@ def evaluate_assignment(
 ) -> DecisionResult:
     """Evaluate a prospective assignment without dispatching it.
 
-    Overall-effort history remains visible as advisory reporting only. The sole
-    workload-allocation blocker uses effort-weighted authenticated accepted
-    production across the candidate plus the previous 19 accepted credits. Its
-    hard cap activates only when a complete 20-credit window exists.
+    Total-effort history is a separate prospective usage guard; it may route or
+    block future dispatch but cannot create accepted-production credit.  The
+    accepted-production ledger remains independently enforced.
     """
 
     if not isinstance(mode, EnforcementMode):
@@ -837,9 +923,10 @@ def evaluate_assignment(
                 f"{policy.claude_model_floor}"
             )
 
-    # Overall effort is historical reporting only. Invalid reporting identity is
-    # surfaced as an advisory; it cannot create or remove dispatch authority.
-    advisories.append("overall_effort_history_report_only")
+    # Total effort preserves actual provider attribution and controls only the
+    # next dispatch. Invalid identity is ignored rather than allowed to invent a
+    # block or production credit.
+    advisories.append("total_effort_prospective_usage_guard")
     if overall_history_invalid:
         advisories.append("overall_effort_history_invalid_records_ignored")
     prior = records[-(policy.rolling_window_size - 1) :]
@@ -868,6 +955,30 @@ def evaluate_assignment(
             "prospective_rolling_share:"
             f"{request.provider.value}:{requested_provider_units}/{total_units}"
         )
+    if len(window) == policy.rolling_window_size:
+        total_units = sum(record.effort_units for record in window)
+        requested_provider_units = sum(
+            record.effort_units
+            for record in window
+            if record.provider is request.provider
+        )
+        ceiling = policy.overall_hard_ceiling(request.provider)
+        normal_min, normal_max = policy.overall_normal_band(request.provider)
+        if requested_provider_units * 100 > ceiling * total_units:
+            violations.append(
+                "total_effort_hard_ceiling_exceeded:"
+                f"{request.provider.value}:{ceiling}"
+            )
+        elif requested_provider_units * 100 < normal_min * total_units:
+            advisories.append(
+                "total_effort_provider_under_normal_minimum:"
+                f"{request.provider.value}:{normal_min}"
+            )
+        elif requested_provider_units * 100 > normal_max * total_units:
+            advisories.append(
+                "total_effort_provider_above_normal_band:"
+                f"{request.provider.value}:{normal_max}"
+            )
     direct_provider = direct_production_provider(request.provider)
     if direct_provider is not None and is_accepted_productive_kind(
         request.provider, request.kind
@@ -947,13 +1058,23 @@ def evaluate_assignment(
 @dataclass(frozen=True)
 class RetryRequest:
     attempt_number: int
+    retry_limit: int
     previous_failure: FailureKind = FailureKind.NONE
     transport: Transport = Transport.DIRECTOR_ADAPTER
     previous_transport: Transport | None = None
     materially_new_information: bool = False
+    corrected_approach: bool = False
+    positive_expected_information_gain: bool = False
+    token_budget_remaining: bool = True
+    cost_budget_remaining: bool = True
+    timeout_budget_remaining: bool = True
+    cancellation_requested: bool = False
 
     def __post_init__(self) -> None:
         _positive_int(self.attempt_number, "attempt number")
+        _positive_int(self.retry_limit, "assignment retry limit")
+        if self.retry_limit > 3:
+            raise WorkloadPolicyError("assignment retry limit cannot exceed 3 attempts")
         if not isinstance(self.previous_failure, FailureKind):
             raise WorkloadPolicyError("previous failure must be a FailureKind")
         if not isinstance(self.transport, Transport):
@@ -962,8 +1083,17 @@ class RetryRequest:
             self.previous_transport, Transport
         ):
             raise WorkloadPolicyError("previous transport must be absent or a Transport")
-        if not isinstance(self.materially_new_information, bool):
-            raise WorkloadPolicyError("materially new information must be boolean")
+        for value, label in (
+            (self.materially_new_information, "materially new information"),
+            (self.corrected_approach, "corrected approach"),
+            (self.positive_expected_information_gain, "positive expected information gain"),
+            (self.token_budget_remaining, "token budget remaining"),
+            (self.cost_budget_remaining, "cost budget remaining"),
+            (self.timeout_budget_remaining, "timeout budget remaining"),
+            (self.cancellation_requested, "cancellation requested"),
+        ):
+            if not isinstance(value, bool):
+                raise WorkloadPolicyError(f"{label} must be boolean")
 
 
 def evaluate_retry(
@@ -972,7 +1102,7 @@ def evaluate_retry(
     policy: WorkloadPolicy = DEFAULT_POLICY,
     mode: EnforcementMode = EnforcementMode.ENFORCED,
 ) -> DecisionResult:
-    """Enforce one primary, one transient recovery, and a conditional third try."""
+    """Enforce the immutable assignment budget and evidence-gain retry gate."""
 
     violations: list[str] = []
     advisories: list[str] = []
@@ -981,23 +1111,38 @@ def evaluate_retry(
     elif request.transport is Transport.BROWSER:
         advisories.append("browser_transport_enabled_at_lowest_priority")
 
-    if request.attempt_number == 1:
+    if request.cancellation_requested:
+        violations.append("assignment_cancelled")
+    if not request.token_budget_remaining:
+        violations.append("token_budget_exhausted")
+    if not request.cost_budget_remaining:
+        violations.append("cost_budget_exhausted")
+    if not request.timeout_budget_remaining:
+        violations.append("timeout_budget_exhausted")
+
+    if request.attempt_number > request.retry_limit:
+        violations.append("retry_limit_exceeded")
+    elif request.attempt_number == 1:
         if request.previous_failure is not FailureKind.NONE:
             violations.append("primary_attempt_must_not_have_previous_failure")
     elif request.previous_failure is FailureKind.AMBIGUOUS_PAID_DISPATCH:
         violations.append("ambiguous_paid_dispatch_must_not_be_repeated")
-    elif request.attempt_number == 2:
-        if request.previous_failure is not FailureKind.TRANSIENT:
-            violations.append("second_attempt_requires_transient_failure")
-    elif request.attempt_number == 3:
+    else:
+        if request.previous_failure is FailureKind.NONE:
+            violations.append("additional_attempt_requires_classified_failure")
         transport_changed = (
             request.previous_transport is not None
             and request.previous_transport is not request.transport
         )
-        if not (request.materially_new_information or transport_changed):
-            violations.append("third_attempt_requires_new_information_or_transport")
-    else:
-        violations.append("retry_limit_exceeded")
+        changed_basis = (
+            request.materially_new_information
+            or request.corrected_approach
+            or transport_changed
+        )
+        if not request.positive_expected_information_gain or not changed_basis:
+            violations.append(
+                "additional_attempt_requires_positive_information_gain_and_changed_basis"
+            )
 
     return _decision(mode, violations, advisories)
 
@@ -1281,3 +1426,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:21 UTC | BEGIN]]
@@ -43,6 +46,7 @@ from .interactions import (
 )
 from .models import (
     IntakeAuthentication,
+    LeanExecutionLimits,
     TaskEffectEvidence,
     TaskRecord,
     TaskStatus,
@@ -2595,6 +2599,7 @@ class TaskStore:
                             mode=mode,
                             shadow_assignment_limit=shadow_assignment_limit,
                         )
+                        overall_rows = self._overall_rollover_rows(connection)
                         direct_inputs = (
                             self._direct_rollover_inputs(connection, assignment_id)
                             if direct_relevant
@@ -2615,9 +2620,19 @@ class TaskStore:
                     # block.  Each relevant pending row is projected both ways
                     # (invoked / not invoked); a sibling is safe only when every
                     # projection agrees it clears the caps.
-                    # Overall effort remains durable historical reporting only.
-                    # It must never create a dispatch violation or authorization.
+                    # Total effort controls only prospective usage. Project every
+                    # pending sibling both ways so concurrent reservations cannot
+                    # cross a provider ceiling, while accepted-production credit
+                    # remains exclusively in the separate direct ledger.
                     extra_violations: list[str] = []
+                    extra_violations.extend(
+                        self._overall_rollover_violations(
+                            overall_rows,
+                            request=committed_request,
+                            available=available,
+                            mode=effective_mode,
+                        )
+                    )
                     if direct_inputs is not None:
                         extra_violations.extend(
                             self._direct_rollover_violations(
@@ -3395,7 +3410,91 @@ class TaskStore:
             "intake_authentication",
             IntakeAuthentication.BEARER_DRY_RUN.value,
         )
+        TaskStore._validate_and_normalize_persisted_execution_limits(payload)
         return TaskRecord.model_validate(payload)
+
+    @staticmethod
+    def _validate_and_normalize_persisted_execution_limits(
+        payload: dict[str, object],
+    ) -> None:
+        """Validate current or translate one exact historical limit contract.
+
+        Raw persisted authority must be complete before Pydantic sees it. Stored
+        JSON remains untouched; no omitted field can acquire a model default.
+        """
+
+        plan = payload.get("plan")
+        if plan is None:
+            return
+        if not isinstance(plan, dict):
+            raise ValueError("Persisted task plan must be an object")
+        limits = plan.get("execution_limits")
+        if not isinstance(limits, dict):
+            raise ValueError("Persisted execution limits must be a complete object")
+
+        current_contract = LeanExecutionLimits().model_dump(mode="json")
+        current_authority_fields = {
+            "retry_limit_source",
+            "additional_attempt_requires_classified_failure",
+            "additional_attempt_requires_positive_information_gain",
+            "additional_attempt_requires_changed_basis",
+            "token_cost_timeout_and_cancellation_budgets_enforced",
+        }
+        legacy_authority = {
+            "primary_attempt_limit": 1,
+            "transient_recovery_attempt_limit": 1,
+            "total_route_attempt_limit": 3,
+            "third_attempt_requires_new_information_or_transport": True,
+        }
+        legacy_contract = {
+            field: value
+            for field, value in current_contract.items()
+            if field not in current_authority_fields
+        }
+        legacy_contract.update(legacy_authority)
+
+        if limits.keys() == current_contract.keys():
+            selected_contract = current_contract
+            is_legacy = False
+        elif limits.keys() == legacy_contract.keys():
+            selected_contract = legacy_contract
+            is_legacy = True
+        else:
+            raise ValueError("Persisted execution limits have incomplete or mixed authority")
+        for field, expected in selected_contract.items():
+            value = limits[field]
+            if type(value) is not type(expected) or value != expected:
+                raise ValueError(
+                    f"Persisted execution limit {field} is not authoritative"
+                )
+
+        assignments = plan.get("assignments")
+        if not isinstance(assignments, list):
+            raise ValueError("Persisted plan assignments must be a list")
+        for assignment in assignments:
+            if not isinstance(assignment, dict):
+                raise ValueError("Persisted assignment must be an object")
+            has_retry_limit = "retry_limit" in assignment
+            if is_legacy and has_retry_limit:
+                raise ValueError("Persisted legacy assignment mixes retry authority")
+            if not is_legacy and not has_retry_limit:
+                raise ValueError("Persisted current assignment omits retry authority")
+            if has_retry_limit:
+                retry_limit = assignment["retry_limit"]
+                if type(retry_limit) is not int or not 1 <= retry_limit <= 3:
+                    raise ValueError("Persisted assignment retry limit is not authoritative")
+            else:
+                assignment["retry_limit"] = legacy_authority["total_route_attempt_limit"]
+
+        if not is_legacy:
+            return
+        normalized = dict(limits)
+        for field in legacy_authority:
+            normalized.pop(field)
+        normalized.update(
+            {field: current_contract[field] for field in current_authority_fields}
+        )
+        plan["execution_limits"] = normalized
 
     def _record_from_row(
         self, connection: sqlite3.Connection, row: sqlite3.Row
@@ -3713,3 +3812,6 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:21 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:50 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
@@ -149,12 +151,11 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "overall_effort_percent": {
             "claude": 36,
             "cursor": 20,
-            "grok": 20,
+            "grok": 11,
             "openai": 8,
-            "gemini": 11,
+            "gemini": 20,
             "perplexity": 5,
         },
-        "overall_effort_percent_status": "historical_non_enforced_reporting_only",
         "workload_lanes": {
             "claude": "primary_full_spectrum_programming_reasoning_qa_and_review",
             "cursor": "primary_full_spectrum_programming_reasoning_qa_and_review",
@@ -169,13 +170,13 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "effort_points": {"minimum": 1, "maximum": 100},
             "windows": ["assignment", "rolling_20_completed_assignments"],
             "ledgers": {
-                "direct_production": "sole_enforced_authenticated_accepted_productive_work_against_direct_workload_percent",
-                "overall_effort": "historical_non_enforced_all_authenticated_or_directly_observed_provider_effort",
+                "direct_production": "accepted_productive_work_allocation",
+                "overall_effort": "prospective_observed_effort_guard",
             },
             "failed_attempt_rule": "historical_effort_and_waste_only_not_accepted_productive_work",
             "control_plane_rule": "openai_control_plane_counts_only_in_historical_overall_effort",
-            "enforced_ledger": "direct_production",
-            "reported_only_ledger": "overall_effort",
+            "accepted_production_ledger": "direct_production",
+            "usage_guard_ledger": "overall_effort",
         },
         "workload_enforcement": {
             "enforced_measure": "accepted_productive_work",
@@ -197,7 +198,18 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "hard_action": "block_dispatch_and_reshape",
             "automatic_drift_correction": True,
             "automatic_enforcement_after_shadow": True,
-            "overall_effort_can_block_or_route": False,
+            "overall_effort_can_block_or_route": True,
+            "overall_effort_normal_bands_percent": {
+                "claude": [33, 39], "cursor": [17, 23],
+                "gemini": [17, 23], "grok": [8, 14],
+                "openai": [5, 11], "perplexity": [1, 7],
+                "github_copilot_cli_lite": [0, 4],
+            },
+            "overall_effort_hard_ceilings_percent": {
+                "claude": 41, "cursor": 33, "gemini": 25,
+                "grok": 16, "openai": 13, "perplexity": 9,
+                "github_copilot_cli_lite": 6,
+            },
             "degraded_team_rule": "no_threshold_relaxation_or_implicit_external_openai_spill",
             "filler_work_prohibited": True,
         },
@@ -206,6 +218,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "selection_order": [
                 "exact_scope_allowlists_transport_and_readiness",
                 "task_capability_tools_context_risk_and_independence",
+                "total_effort_eligibility_and_corrective_under_band_preference",
                 "direct_allocation_compliance_and_under_target_preference",
                 "lowest_trusted_estimated_cost",
                 "deterministic_tie_breaker",
@@ -299,7 +312,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "candidate_binding": "new_canonical_packet_revision_then_relay_delta_before_review",
             "provider_updates": "initial_packet_once_then_relevant_deltas_only",
             "authority_change": "new_owner_authorized_revision",
-            "execution_limits": "fixed_v1_defaults",
+            "execution_limits": "immutable_assignment_retry_and_resource_budgets",
             "digest": "canonical_by_enforcer",
             "invalid_or_missing_action": "PRESTAGE_REQUIRED_no_dispatch",
         },
@@ -387,7 +400,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "starting_and_current_refs_shas_and_artifact_digests",
                 "authenticated_provider_participation_unavailable_abstaining_and_labels",
                 "target_and_actual_enforced_direct_production_by_provider_deviations_and_rationale",
-                "historical_non_enforced_overall_effort_by_provider",
+                "prospective_total_effort_bands_ceilings_and_dispatch_decision",
                 "prestage_packet_digest_workload_size_effort_points_and_deltas",
                 "status_validation_action_counts_reduction_baselines_and_browser_use",
                 "openai_moderator_participant_director_actions_and_vote",
@@ -408,11 +421,14 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "participation_source": "authenticated_provider_response_only",
         },
         "availability": {
-            "attempts": 3,
-            "primary_attempts": 1,
-            "transient_recovery_attempts": 1,
-            "third_attempt_requires": "materially_different_transport_or_new_information",
-            "after": "record_unavailable_and_reshape",
+            "attempts": "immutable_assignment_prestage_retry_limit",
+            "additional_attempt_requires": [
+                "classified_failure",
+                "positive_expected_information_gain",
+                "new_evidence_corrected_approach_or_different_transport",
+                "resource_budgets_remaining",
+            ],
+            "after": "unavailable_and_reshape",
             "partial": "untrusted",
             "ambiguous": "no_duplicate_dispatch",
         },
@@ -504,11 +520,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     "availability_policy": {
         "nonresponse_attempt_limit": 3,
         "requirements": [
-            "Make one primary attempt and one recovery attempt only for a plausibly transient failure.",
-            "A third attempt requires materially different transport or new information; after it, mark the route unavailable.",
-            "Preserve partial output as untrusted evidence.",
             "Never duplicate an ambiguous paid dispatch.",
-            "Continue safe independent work; record effects on scope, confidence, timing, and coverage.",
             "Ambiguous reconciliation binds IDs only; results need provider authentication, and owner recovery text cannot authorize exact-SHA review or merge.",
         ],
     },
@@ -820,3 +832,5 @@ def tally_advisory_votes(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]

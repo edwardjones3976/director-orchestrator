@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
@@ -504,8 +505,7 @@ class CompletionWorkerTests(unittest.TestCase):
         self.assertIsNotNone(snapshot_path)
         self.assertFalse(snapshot_path.exists())
 
-    @unittest.skipIf(os.name == "nt", "POSIX permission semantics only")
-    def test_posix_cleanup_restores_readonly_parent_directory_permissions(self):
+    def test_cleanup_removes_readonly_snapshot_tree(self):
         snapshot = self.root / "readonly-posix-snapshot"
         nested = snapshot / "one" / "two"
         nested.mkdir(parents=True)
@@ -820,3 +820,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
@@ -564,7 +566,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         self.assertEqual(guarded.workload_enforcement.outcome, "disabled")
         self.assertEqual(execution_policy_errors(guarded, disabled), [])
 
-    def test_complete_plan_overall_window_is_report_only(self) -> None:
+    def test_complete_plan_overall_window_blocks_prospective_overage(self) -> None:
         assignments: list[Assignment] = []
         for sequence in range(1, 21):
             provider = (
@@ -606,9 +608,9 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         )
 
         guarded = enforce_plan(plan, "bounded coordinated work", self.settings)
-        self.assertFalse(
+        self.assertTrue(
             any(
-                "overall_hard_threshold_exceeded" in error
+                "total_effort_hard_ceiling_exceeded" in error
                 or "absolute_primary_ceiling_exceeded" in error
                 for error in execution_policy_errors(guarded, self.settings)
             )
@@ -616,10 +618,11 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
 
     def test_exact_retry_browser_and_action_limits_are_plan_metadata(self) -> None:
         limits = self._valid_plan().execution_limits
-        self.assertEqual(limits.primary_attempt_limit, 1)
-        self.assertEqual(limits.transient_recovery_attempt_limit, 1)
-        self.assertEqual(limits.total_route_attempt_limit, 3)
-        self.assertTrue(limits.third_attempt_requires_new_information_or_transport)
+        self.assertEqual(limits.retry_limit_source, "immutable_assignment_prestage")
+        self.assertTrue(limits.additional_attempt_requires_classified_failure)
+        self.assertTrue(limits.additional_attempt_requires_positive_information_gain)
+        self.assertTrue(limits.additional_attempt_requires_changed_basis)
+        self.assertTrue(limits.token_cost_timeout_and_cancellation_budgets_enforced)
         self.assertFalse(limits.ambiguous_paid_dispatch_retry_allowed)
         self.assertEqual(limits.browser_transport_priority, "lower_priority_fallback")
         self.assertEqual(limits.browser_usage_reduction_target_percent, 0)
@@ -627,6 +630,22 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         self.assertEqual(limits.status_check_reduction_target_percent, 80)
         self.assertEqual(limits.duplicate_validation_reduction_target_percent, 70)
         self.assertEqual(limits.total_action_reduction_target_percent, 60)
+
+    def test_assignment_retry_limit_cannot_exceed_digest_bound_prestage(self) -> None:
+        plan = self._valid_plan()
+        plan.prestage = plan.prestage.model_copy(
+            update={"retry_limit": 1, "digest": None}
+        )
+
+        guarded = enforce_plan(plan, "bounded implementation", self.settings)
+
+        self.assertTrue(
+            any(
+                "assignment retry limits exceed the digest-bound pre-stage retry limit"
+                in error
+                for error in execution_policy_errors(guarded, self.settings)
+            )
+        )
 
 
 if __name__ == "__main__":
@@ -636,3 +655,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]

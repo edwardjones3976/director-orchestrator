@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
@@ -165,7 +166,7 @@ class UppercutDeploymentContractTests(unittest.TestCase):
     def test_mixed_case_long_table_requires_claude_completion_evidence(self):
         shell = shutil.which("pwsh") or shutil.which("pwsh.exe")
         if shell is None:
-            self.skipTest("PowerShell 7 is unavailable in this environment")
+            self.fail("PowerShell 7 coverage is required for this deployment contract")
         start = self.script.index("function Get-CompletionVerifiedProviders")
         end = self.script.index("function Assert-CoolingProviderEvidence", start)
         function_source = self.script[start:end]
@@ -514,3 +515,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 12:34 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

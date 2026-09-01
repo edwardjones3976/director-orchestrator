@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
@@ -49,6 +51,7 @@ from .workload_policy import (
     Provider,
     WorkKind,
     WorkSize,
+    WorkloadRecord,
     WorkloadPolicy,
     WorkloadPolicyError,
     direct_production_provider,
@@ -472,6 +475,7 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
 
     errors: set[str] = set()
     direct_history: list[DirectProductionRecord] = []
+    overall_history: list[WorkloadRecord] = []
     for assignment in sorted(plan.assignments, key=lambda item: item.sequence):
         try:
             provider = _workload_provider(assignment.agent)
@@ -488,12 +492,23 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         )
         decision = evaluate_assignment(
             request,
+            history=overall_history,
             direct_production_history=direct_history,
             mode=EnforcementMode.ENFORCED,
         )
         errors.update(
             f"assignment {assignment.sequence}: workload policy {violation}"
             for violation in decision.violations
+        )
+        # Total effort is prospective and assignment ordered. Every proposed
+        # assignment, including non-productive work, becomes history for the
+        # next assignment in this exact plan.
+        overall_history.append(
+            WorkloadRecord(
+                assignment_id=request.assignment_id,
+                provider=provider,
+                effort_units=assignment.effort_points,
+            )
         )
         direct_provider = direct_production_provider(provider)
         if direct_provider is not None and is_accepted_productive_kind(
@@ -559,10 +574,18 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         errors.add("pre-stage goal must exactly match the normalized plan outcome")
     if prestage.terminal_condition != "\n".join(plan.final_acceptance):
         errors.add("pre-stage terminal condition must exactly bind final acceptance")
-    if prestage.retry_limit != plan.execution_limits.total_route_attempt_limit:
-        errors.add("pre-stage retry limit must match the plan route-attempt limit")
     if prestage.budget_units < sum(item.effort_points for item in plan.assignments):
         errors.add("pre-stage budget units do not cover planned assignment effort")
+    over_prestage_retry_budget = [
+        item.sequence
+        for item in plan.assignments
+        if item.retry_limit > prestage.retry_limit
+    ]
+    if over_prestage_retry_budget:
+        errors.add(
+            "assignment retry limits exceed the digest-bound pre-stage retry limit: "
+            + ", ".join(str(sequence) for sequence in over_prestage_retry_budget)
+        )
 
     repository_scope: list[tuple[str, str]] = []
     repository_scope_unbound = False
@@ -1406,3 +1429,5 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]

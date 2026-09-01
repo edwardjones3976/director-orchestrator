@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
@@ -46,14 +48,17 @@ An absent project allowlist blocks every live plan. Cursor cannot use an implici
 - **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.
 - **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.
 
-The sole enforced accepted-productive-work allocation is external OpenAI/Codex
+The accepted-productive-work allocation remains external OpenAI/Codex
 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity
-4%. The former 36/20/20/8/11/5 overall-effort split remains historical,
-non-enforced reporting only and cannot drive dispatch or block a candidate.
+4%. Total effort is also enforced prospectively: Claude 36%, Cursor 20%,
+Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, and Perplexity 5%, with normal
+bands of 33–39%, 17–23%, 17–23%, 8–14%, 5–11%, and 1–7%, and hard ceilings
+of 41%, 33%, 25%, 16%, 13%, and 9%, respectively. Cursor's 33% total-effort
+ceiling is intentional; it is not the direct-production threshold.
 
 Practical operating patterns:
 
-1. **Cheap-capable implementation lane:** select Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, independence, direct-allocation, and trusted-cost checks; retain the assigned provider's transport and authority limits.
+1. **Cheap-capable implementation lane:** select Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, and independence; apply total-effort eligibility and corrective under-band preference before direct-production rank, then trusted cost and deterministic tie-break; retain the assigned provider's transport and authority limits.
 2. **Exact-requirement lane:** when a trusted work order explicitly requires Claude or a named model profile, honor it; otherwise do not infer a provider requirement from task length.
 3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate artifacts. A primary model independently verifies and integrates or rejects their evidence.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
@@ -94,9 +99,11 @@ non-positive or non-finite configured value prevents the service from starting.
 
 GitHub Copilot Lite is not another provider bridge. It is an optional one-time
 hygiene observation requested only after required checks are green and the exact
-candidate is frozen. It has no workload share, provider credentials in this
-service, independent acceptance role, gate, merge authority, or every-push
-automation. Quota/unavailability and rejected findings are recorded as waste.
+candidate is frozen: an unscored reporting-only 0–4% effort lane with a hard 6%
+ceiling, no provider adapter or automatic routing, and no production credit,
+independent acceptance role, gate, merge authority, or every-push automation.
+Without an authenticated contact it fails closed as unavailable.
+Quota/unavailability and rejected findings are recorded as waste.
 A confirmed defect follows the normal correction path, and any substantive
 Copilot-authored fix makes Copilot a material author ineligible to independently
 review that candidate.
@@ -343,3 +350,5 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
