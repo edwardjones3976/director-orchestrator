@@ -1,3 +1,4 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-09-01 | 08:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
@@ -567,6 +568,164 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             self.assertEqual(selected.assignments[0].agent, ProviderName.CLAUDE)
             self.assertEqual(selected.assignments[1].agent, ProviderName.CURSOR)
 
+    def test_runtime_selector_projects_in_plan_direct_production(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "director.sqlite3"
+            settings = replace(
+                Settings(),
+                sqlite_path=str(path),
+                project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                trusted_provider_cost_ranks_json=(
+                    '{"cursor": 1, "claude": 2, "grok": 3}'
+                ),
+                claude_routine_url="https://example.invalid/claude",
+                claude_routine_token="token",
+                cursor_api_key="cursor-secret",
+                grok_enabled=True,
+                grok_api_key="grok-secret",
+            )
+            store = TaskStore(path)
+            engine = OrchestrationEngine(
+                settings,
+                store,
+                providers={
+                    ProviderName.CLAUDE: object(),
+                    ProviderName.CURSOR: object(),
+                    ProviderName.GROK: object(),
+                },
+            )
+            plan = enforce_plan(
+                DirectorPlan(
+                    project="demo",
+                    normalized_outcome=(
+                        "Implement two bounded changes and independently review "
+                        "the second candidate"
+                    ),
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=3,
+                    max_revisions=1,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.CLAUDE,
+                            kind=AssignmentKind.IMPLEMENTATION,
+                            workload_size=WorkSize.MEDIUM,
+                            effort_points=5,
+                            task="Implement the first bounded change",
+                            acceptance=["Focused tests pass"],
+                            repository="example/demo",
+                        ),
+                        Assignment(
+                            sequence=2,
+                            agent=ProviderName.CLAUDE,
+                            kind=AssignmentKind.IMPLEMENTATION,
+                            workload_size=WorkSize.MEDIUM,
+                            effort_points=5,
+                            task="Implement the second bounded change",
+                            acceptance=["Focused tests pass"],
+                            repository="example/demo",
+                        ),
+                        Assignment(
+                            sequence=3,
+                            agent=ProviderName.CURSOR,
+                            kind=AssignmentKind.INDEPENDENT_REVIEW,
+                            workload_size=WorkSize.SHORT,
+                            effort_points=2,
+                            task="Independently review the exact second candidate",
+                            acceptance=["Return findings tied to the candidate"],
+                            repository="example/demo",
+                            depends_on=[2],
+                        ),
+                    ],
+                    final_acceptance=["Exact candidate accepted"],
+                    workload_policy_version="v1",
+                    prestage=PlanPrestageRecord(
+                        packet_id="trusted-in-plan-1",
+                        goal=(
+                            "Implement two bounded changes and independently "
+                            "review the second candidate"
+                        ),
+                        terminal_condition="Exact candidate accepted",
+                        repository="example/demo",
+                        worktree="C:/worktrees/trusted-in-plan-1",
+                        branch="main",
+                        base_sha="a" * 40,
+                        producer=ProviderName.CLAUDE,
+                        independent_reviewer=ProviderName.CURSOR,
+                        owned_paths=("src/demo.py",),
+                        prohibited_paths=("private/",),
+                        required_tests=("python -m unittest tests.test_demo",),
+                        required_security_evidence=("No credential diff",),
+                        budget_units=12,
+                        timeout_seconds=3600,
+                        retry_limit=3,
+                        merge_eligibility_conditions=("Exact-SHA review accepts",),
+                        stopping_conditions=("Budget is exhausted",),
+                    ),
+                ),
+                "Implement two bounded changes and independently review the second",
+                settings,
+                activate_workload_policy=True,
+            )
+            record = TaskRecord(
+                task_id="DIR-TRUSTED-IN-PLAN",
+                status=TaskStatus.QUEUED,
+                intake=SlackIntake(
+                    source_event_id="evt-trusted-in-plan",
+                    channel_id="C1",
+                    thread_ts="1.1",
+                    user_id="U1",
+                    text="Implement two bounded changes and independently review the second",
+                ),
+            )
+            history = [
+                DirectProductionRecord(
+                    assignment_id=f"accepted-external-{index}",
+                    provider=DirectProductionProvider.EXTERNAL_OPENAI,
+                )
+                for index in range(13)
+            ]
+            history.extend(
+                DirectProductionRecord(
+                    assignment_id=f"accepted-gemini-{index}",
+                    provider=DirectProductionProvider.GEMINI,
+                )
+                for index in range(3)
+            )
+            history.append(
+                DirectProductionRecord(
+                    assignment_id="accepted-perplexity-0",
+                    provider=DirectProductionProvider.PERPLEXITY,
+                )
+            )
+            history.append(
+                DirectProductionRecord(
+                    assignment_id="accepted-grok-0",
+                    provider=DirectProductionProvider.GROK,
+                )
+            )
+            history.append(
+                DirectProductionRecord(
+                    assignment_id="accepted-claude-0",
+                    provider=DirectProductionProvider.CLAUDE,
+                )
+            )
+
+            with patch.object(
+                store,
+                "list_recent_direct_production",
+                return_value=history,
+            ):
+                selected = engine._apply_trusted_provider_selection(record, plan)
+
+            self.assertEqual(
+                [item.agent for item in selected.assignments],
+                [ProviderName.CURSOR, ProviderName.CLAUDE, ProviderName.CURSOR],
+            )
+            self.assertEqual(execution_policy_errors(selected, settings), [])
+
     def test_runtime_selector_excludes_task_unavailable_provider(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "director.sqlite3"
@@ -698,3 +857,4 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-09-01 | 08:47 UTC | END]]

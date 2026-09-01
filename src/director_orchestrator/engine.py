@@ -1,3 +1,4 @@
+# [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-09-01 | 08:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:26 UTC | BEGIN]]
@@ -173,7 +174,9 @@ from .workload_policy import (
     WorkKind as WorkloadKind,
     WorkloadRecord,
     WorkloadPolicyError,
+    direct_production_provider,
     evaluate_retry,
+    is_accepted_productive_kind,
     select_cheapest_capable_provider,
 )
 from .parallel_dispatch import (
@@ -536,9 +539,7 @@ class OrchestrationEngine:
             return plan
         profiles = self._trusted_selection_profiles()
         ready = self._trusted_ready_specialists(record)
-        history: tuple[DirectProductionRecord, ...] = tuple(
-            self.store.list_recent_direct_production(limit=19)
-        )
+        history = list(self.store.list_recent_direct_production(limit=19))
         overall_history = list(self.store.list_recent_workload_attempts(limit=19))
         selected: dict[int, ProviderName] = {}
         rewritten: dict[int, Assignment] = {}
@@ -558,8 +559,9 @@ class OrchestrationEngine:
                 reviewer_independent = reviewer_independent.difference(
                     self._trusted_material_authors(assignment, rewritten)
                 )
+            assignment_id = f"{record.task_id}:{assignment.sequence}"
             provider = select_cheapest_capable_provider(
-                assignment_id=f"{record.task_id}:{assignment.sequence}",
+                assignment_id=assignment_id,
                 kind=kind,
                 effort_units=assignment.effort_points,
                 trusted_profiles=profiles,
@@ -576,12 +578,27 @@ class OrchestrationEngine:
             )
             overall_history.append(
                 WorkloadRecord(
-                    assignment_id=f"{record.task_id}:{assignment.sequence}",
+                    assignment_id=assignment_id,
                     provider=provider,
                     effort_units=assignment.effort_points,
                 )
             )
             overall_history = overall_history[-19:]
+            # Accepted-productive credit is assignment ordered, the same as total
+            # effort. Later steps in this plan must rank against the projected
+            # ledger rather than a stale store snapshot.
+            direct_provider = direct_production_provider(provider)
+            if direct_provider is not None and is_accepted_productive_kind(
+                provider, kind
+            ):
+                history.append(
+                    DirectProductionRecord(
+                        assignment_id=assignment_id,
+                        provider=direct_provider,
+                        effort_units=assignment.effort_points,
+                    )
+                )
+                history = history[-19:]
         selected_plan = synchronize_trusted_provider_selection(
             plan, selected, self.settings
         )
@@ -6839,3 +6856,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
+# [[Cursor Grok 4.6 | cursor-grok-4.6 | 2026-09-01 | 08:47 UTC | END]]
