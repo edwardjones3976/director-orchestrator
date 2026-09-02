@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:06 UTC | BEGIN]]
 """Disposable logical backup/restore proof for the primary Postgres schema.
 
@@ -255,6 +256,13 @@ class PrimaryBackupRestoreTests(unittest.TestCase):
             import psycopg
 
             if _CONTAINER_TOOLS:
+                connection_fields = conninfo_to_dict(_TEST_DSN)
+                container_user = connection_fields.get("user")
+                container_database = connection_fields.get("dbname")
+                if not container_user or not container_database:
+                    raise AssertionError(
+                        "disposable Postgres DSN must identify its user and database"
+                    )
                 dump_name = f"/tmp/{schema}.dump"
                 try:
                     _run_backup_tool(
@@ -264,9 +272,9 @@ class PrimaryBackupRestoreTests(unittest.TestCase):
                             _TEST_CONTAINER,
                             "pg_dump",
                             "-U",
-                            "codex_test",
+                            str(container_user),
                             "-d",
-                            "director_test",
+                            str(container_database),
                             "--format=custom",
                             "--no-owner",
                             "--no-privileges",
@@ -284,9 +292,9 @@ class PrimaryBackupRestoreTests(unittest.TestCase):
                             _TEST_CONTAINER,
                             "pg_restore",
                             "-U",
-                            "codex_test",
+                            str(container_user),
                             "-d",
-                            "director_test",
+                            str(container_database),
                             "--no-owner",
                             "--no-privileges",
                             dump_name,
@@ -470,3 +478,4 @@ class PrimaryBackupRestoreTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:06 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:00 UTC | END]]

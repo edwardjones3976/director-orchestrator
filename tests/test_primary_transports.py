@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
@@ -124,6 +125,8 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             token_file = Path(directory) / "work-iq.token"
             token_file.write_text("delegated-token\n", encoding="utf-8")
+            if os.name != "nt":
+                token_file.chmod(0o600)
             with patch(
                 "director_orchestrator.primary_transports._validate_windows_token_file_acl"
             ) as acl:
@@ -137,6 +140,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                     "director_orchestrator.primary_transports._validate_windows_token_file_acl",
                     side_effect=ValueError("broad ACL"),
                 ), self.assertRaisesRegex(ValueError, "broad ACL"):
+                    read_protected_delegated_token_file(str(token_file))
+            else:
+                token_file.chmod(0o644)
+                with self.assertRaisesRegex(ValueError, "permissions are too broad"):
                     read_protected_delegated_token_file(str(token_file))
 
     def _work(self, *, objective: str = "Find official public evidence"):
@@ -887,3 +894,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | END]]

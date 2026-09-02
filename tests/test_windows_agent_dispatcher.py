@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:55 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -165,7 +166,13 @@ class WindowsAgentDispatcherExecutionTests(
             str(destination) + os.pathsep + installed_environment["PATH"]
         )
         installed = subprocess.run(
-            ["agent.cmd", "--provider", "grok", "installed route"],
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                "& agent.cmd --provider grok 'installed route'",
+            ],
             cwd=self.worktree,
             env=installed_environment,
             text=True,
@@ -186,3 +193,4 @@ class WindowsAgentDispatcherExecutionTests(
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:55 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:02 UTC | END]]
