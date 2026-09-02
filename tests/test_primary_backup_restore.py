@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:06 UTC | BEGIN]]
 """Disposable logical backup/restore proof for the primary Postgres schema.
@@ -338,6 +339,9 @@ class PrimaryBackupRestoreTests(unittest.TestCase):
                     _run_backup_tool(
                         [
                             str(_PG_RESTORE),
+                            "--dbname",
+                            environment["PGDATABASE"],
+                            "--exit-on-error",
                             "--no-owner",
                             "--no-privileges",
                             str(dump_path),
@@ -479,3 +483,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:06 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:00 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:23 UTC | END]]
