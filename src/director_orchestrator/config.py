@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
@@ -326,9 +327,19 @@ class Settings:
             "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET", ""
         )
     )
-    langgraph_primary_completion_evidence_secret: str = field(
+    langgraph_primary_independent_review_evidence_secret: str = field(
         default_factory=lambda: os.getenv(
-            "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_SECRET", ""
+            "LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET", ""
+        )
+    )
+    langgraph_primary_ci_evidence_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET", ""
+        )
+    )
+    langgraph_primary_security_evidence_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET", ""
         )
     )
     langgraph_primary_completion_evidence_actor_allowlist_json: str = field(
@@ -701,7 +712,7 @@ class Settings:
     def completion_evidence_actor_allowlist(
         self,
     ) -> dict[str, dict[str, frozenset[str]]]:
-        """Return the exact trusted bundler actors for each completion gate kind."""
+        """Return distinct trusted issuers and principals for each authority."""
 
         try:
             payload = json.loads(
@@ -737,6 +748,16 @@ class Settings:
                     )
                 normalized[role] = frozenset(actors)
             result[kind] = normalized
+        for role in ("issuers", "principals"):
+            values = [result[kind][role] for kind in sorted(required)]
+            if any(
+                left & right
+                for index, left in enumerate(values)
+                for right in values[index + 1 :]
+            ):
+                raise ValueError(
+                    f"completion evidence {role} must be disjoint across authorities"
+                )
         return result
     perplexity_allow_repository_write: bool = _bool(
         "PERPLEXITY_ALLOW_REPOSITORY_WRITE", False
@@ -1253,8 +1274,14 @@ class Settings:
         adapter_callback_secret_configured = (
             len(self.langgraph_primary_adapter_callback_secret) >= 32
         )
+        completion_authority_secrets = (
+            self.langgraph_primary_independent_review_evidence_secret,
+            self.langgraph_primary_ci_evidence_secret,
+            self.langgraph_primary_security_evidence_secret,
+        )
         completion_evidence_secret_configured = (
-            len(self.langgraph_primary_completion_evidence_secret) >= 32
+            all(len(value) >= 32 for value in completion_authority_secrets)
+            and len(set(completion_authority_secrets)) == 3
         )
         try:
             completion_evidence_actor_allowlist_configured = bool(
@@ -1412,7 +1439,7 @@ class Settings:
             if not readiness["completion_evidence_secret_configured"]:
                 problems.append(
                     "live provider dispatch requires a 32-character "
-                    "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_SECRET"
+                    "three distinct completion authority evidence secrets"
                 )
             if not readiness["completion_evidence_actor_allowlist_configured"]:
                 problems.append(
@@ -1440,7 +1467,9 @@ class Settings:
                     self.shared_secret,
                     self.slack_gateway_secret,
                     self.langgraph_primary_adapter_callback_secret,
-                    self.langgraph_primary_completion_evidence_secret,
+                    self.langgraph_primary_independent_review_evidence_secret,
+                    self.langgraph_primary_ci_evidence_secret,
+                    self.langgraph_primary_security_evidence_secret,
                     self.langgraph_primary_effect_reconciliation_secret,
                     bridge_secret,
                 )
@@ -1931,3 +1960,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]

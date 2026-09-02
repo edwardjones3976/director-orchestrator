@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
@@ -30,6 +31,7 @@ missing infrastructure is a failure, never silently omitted coverage.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import sqlite3
 import tempfile
@@ -66,6 +68,7 @@ from director_orchestrator.langgraph_postgres import (
     PrimaryWorkPacketArtifact,
     TaskWriterLease,
     _build_strict_serializer,
+    _completion_evidence_artifact_from_row,
     _configure_connection,
     _control_plane_ddl,
     _parse_connection_target,
@@ -100,6 +103,7 @@ from director_orchestrator.completion_gates import (
     domain_digest,
 )
 from director_orchestrator.primary_completion import CompletionEvidence
+from director_orchestrator.primary_commands import CompletionAuthorityProof
 
 TEST_DSN_VARIABLE = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 
@@ -129,10 +133,10 @@ def _durable_completion_evidence(task_id: str, candidate_sha: str, result_digest
     }
     ledger["ledger_digest"] = domain_digest("director-gate-ledger/v1", ledger)
     results = []
-    for gate_id, role, provider in (
-        ("review", "INDEPENDENT_REVIEWER", "cursor"),
-        ("ci", "GATE_RUNNER", "openai"),
-        ("security", "GATE_RUNNER", "grok"),
+    for gate_id, role, provider, principal in (
+        ("review", "INDEPENDENT_REVIEWER", "cursor", "review-principal"),
+        ("ci", "TRUSTED_EXTERNAL_CI", "openai", "ci-principal"),
+        ("security", "CODEX_SECURITY", "grok", "security-principal"),
     ):
         document = {
             "gate_id": gate_id,
@@ -140,13 +144,31 @@ def _durable_completion_evidence(task_id: str, candidate_sha: str, result_digest
             "executed_sha": candidate_sha,
             "status": "PASS",
             "evidence_role": role,
-            "evidence_actor": {"logical_provider": provider},
+            "evidence_actor": {
+                "logical_provider": provider,
+                "authenticated_principal": principal,
+            },
         }
         document["result_digest"] = domain_digest("director-gate-result/v1", document)
         results.append(VerifiedGateResult(document, document["result_digest"]))
+    authorities = {
+        authority: CompletionAuthorityProof(
+            authority=authority,
+            issuer_id=f"{authority}-issuer",
+            principal_id=principal,
+            issued_at=2_000_000_000,
+            nonce=(authority[0] * 32),
+            signature=(signature * 64),
+        ).model_dump(mode="json")
+        for authority, principal, signature in (
+            ("independent_review", "review-principal", "1"),
+            ("ci", "ci-principal", "2"),
+            ("security", "security-principal", "3"),
+        )
+    }
     return CompletionEvidence(
         VerifiedGateLedger(ledger, ledger["ledger_digest"]),
-        tuple(results), "ci", "security",
+        tuple(results), "ci", "security", authorities,
     )
 
 
@@ -2608,11 +2630,42 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         )
         restarted = self.second_store().read_completion_evidence(task_id=self.task_id)
         self.assertEqual(recorded, restarted)
+        with self.handle.pool.connection() as connection:
+            row = connection.execute(
+                f"SELECT task_id, candidate_sha, provider_result_digest, "
+                f"ledger_digest, evidence_digest, canonical_ledger, "
+                f"canonical_results, canonical_authorities, ci_gate_id, "
+                f"security_gate_id, writer_fencing_generation FROM "
+                f"{self.schema}.director_primary_completion_evidence "
+                "WHERE task_id = %s",
+                (self.task_id,),
+            ).fetchone()
+        tampered_row = dict(row)
+        tampered_authorities = json.loads(tampered_row["canonical_authorities"])
+        tampered_authorities["security"]["issuer_id"] = (
+            tampered_authorities["ci"]["issuer_id"]
+        )
+        tampered_row["canonical_authorities"] = json.dumps(
+            tampered_authorities, sort_keys=True, separators=(",", ":")
+        )
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "authorities are not distinct"
+        ):
+            _completion_evidence_artifact_from_row(tampered_row)
         changed = _durable_completion_evidence(
             self.task_id, candidate_sha, DIGEST_B
         )
+        changed_authorities = dict(changed.authority_proofs)
+        changed_authorities["security"] = {
+            **changed_authorities["security"],
+            "signature": "4" * 64,
+        }
         changed = CompletionEvidence(
-            changed.ledger, changed.results, "security", "ci"
+            changed.ledger,
+            changed.results,
+            "ci",
+            "security",
+            changed_authorities,
         )
         with self.assertRaisesRegex(PostgresControlPlaneError, "different content"):
             self.store.record_completion_evidence(
@@ -3381,3 +3434,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]

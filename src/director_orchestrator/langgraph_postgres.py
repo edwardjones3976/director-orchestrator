@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:25 UTC | BEGIN]]
@@ -733,6 +734,7 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             ),
             canonical_ledger text NOT NULL,
             canonical_results text NOT NULL,
+            canonical_authorities text NOT NULL,
             ci_gate_id text NOT NULL,
             security_gate_id text NOT NULL,
             writer_fencing_generation bigint NOT NULL CHECK (
@@ -740,6 +742,14 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             ),
             recorded_at timestamptz NOT NULL DEFAULT now()
         )
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_completion_evidence
+        ADD COLUMN IF NOT EXISTS canonical_authorities text NOT NULL DEFAULT '{{}}'
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_completion_evidence
+        ALTER COLUMN canonical_authorities DROP DEFAULT
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_claim (
@@ -1476,7 +1486,7 @@ def _result_packet_artifact_from_row(
 def _completion_evidence_payload(
     evidence: "CompletionEvidence", *, task_id: str, candidate_sha: str,
     provider_result_digest: str,
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str, str, str]:
     ledger = dict(evidence.ledger.document)
     if (
         ledger.get("task_id") != task_id
@@ -1509,6 +1519,63 @@ def _completion_evidence_payload(
     gate_ids = {str(item.get("gate_id")) for item in results}
     if evidence.ci_gate_id not in gate_ids or evidence.security_gate_id not in gate_ids:
         raise PostgresControlPlaneError("completion CI/security gate evidence is missing")
+    from .primary_commands import CompletionAuthorityProof
+
+    authorities = dict(evidence.authority_proofs)
+    required_authorities = {"independent_review", "ci", "security"}
+    if set(authorities) != required_authorities:
+        raise PostgresControlPlaneError(
+            "completion evidence requires three authority proofs"
+        )
+    validated_authorities: dict[str, dict[str, Any]] = {}
+    issuers: set[str] = set()
+    principals: set[str] = set()
+    for authority in sorted(required_authorities):
+        try:
+            proof = CompletionAuthorityProof.model_validate(authorities[authority])
+        except Exception as exc:
+            raise PostgresControlPlaneError(
+                f"completion {authority} authority proof is invalid"
+            ) from exc
+        if proof.authority != authority:
+            raise PostgresControlPlaneError(
+                "completion authority proof role binding is invalid"
+            )
+        if authority == "independent_review":
+            selected = [
+                item for item in results
+                if item.get("evidence_role") == "INDEPENDENT_REVIEWER"
+            ]
+        elif authority == "ci":
+            selected = [
+                item for item in results
+                if item.get("gate_id") == evidence.ci_gate_id
+                and item.get("evidence_role") == "TRUSTED_EXTERNAL_CI"
+            ]
+        else:
+            selected = [
+                item for item in results
+                if item.get("gate_id") == evidence.security_gate_id
+                and item.get("evidence_role") == "CODEX_SECURITY"
+            ]
+        actor = selected[0].get("evidence_actor") if len(selected) == 1 else None
+        principal = (
+            actor.get("authenticated_principal")
+            if isinstance(actor, Mapping)
+            else None
+        )
+        if principal != proof.principal_id:
+            raise PostgresControlPlaneError(
+                f"completion {authority} authority principal binding is invalid"
+            )
+        issuers.add(proof.issuer_id)
+        principals.add(proof.principal_id)
+        validated_authorities[authority] = proof.model_dump(mode="json")
+    if len(issuers) != 3 or len(principals) != 3:
+        raise PostgresControlPlaneError(
+            "completion evidence authorities are not distinct"
+        )
+    canonical_authorities = canonical_json_bytes(validated_authorities).decode("utf-8")
     payload = {
         "task_id": task_id,
         "candidate_sha": candidate_sha,
@@ -1517,10 +1584,12 @@ def _completion_evidence_payload(
         "result_digests": sorted(item.digest for item in evidence.results),
         "ci_gate_id": evidence.ci_gate_id,
         "security_gate_id": evidence.security_gate_id,
+        "authority_proofs_digest": document_digest(validated_authorities),
     }
     return (
         canonical_json_bytes(ledger).decode("utf-8"),
         canonical_json_bytes(results).decode("utf-8"),
+        canonical_authorities,
         calculated_ledger,
         domain_digest("director-primary-completion-artifact/v1", payload),
     )
@@ -1535,9 +1604,14 @@ def _completion_evidence_artifact_from_row(
     try:
         ledger_document = json.loads(str(row["canonical_ledger"]))
         result_documents = json.loads(str(row["canonical_results"]))
+        authority_documents = json.loads(str(row["canonical_authorities"]))
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         raise PostgresControlPlaneError("stored completion evidence is invalid JSON") from exc
-    if not isinstance(ledger_document, dict) or not isinstance(result_documents, list):
+    if (
+        not isinstance(ledger_document, dict)
+        or not isinstance(result_documents, list)
+        or not isinstance(authority_documents, dict)
+    ):
         raise PostgresControlPlaneError("stored completion evidence has invalid shape")
     ledger = VerifiedGateLedger(ledger_document, str(row["ledger_digest"]))
     results = tuple(
@@ -1549,9 +1623,19 @@ def _completion_evidence_artifact_from_row(
     from .primary_completion import CompletionEvidence
 
     evidence = CompletionEvidence(
-        ledger, results, str(row["ci_gate_id"]), str(row["security_gate_id"])
+        ledger,
+        results,
+        str(row["ci_gate_id"]),
+        str(row["security_gate_id"]),
+        authority_documents,
     )
-    canonical_ledger, canonical_results, ledger_digest, evidence_digest = (
+    (
+        canonical_ledger,
+        canonical_results,
+        canonical_authorities,
+        ledger_digest,
+        evidence_digest,
+    ) = (
         _completion_evidence_payload(
             evidence, task_id=task_id, candidate_sha=candidate_sha,
             provider_result_digest=provider_result_digest,
@@ -1560,6 +1644,7 @@ def _completion_evidence_artifact_from_row(
     if (
         canonical_ledger != str(row["canonical_ledger"])
         or canonical_results != str(row["canonical_results"])
+        or canonical_authorities != str(row["canonical_authorities"])
         or ledger_digest != str(row["ledger_digest"])
         or evidence_digest != str(row["evidence_digest"])
     ):
@@ -3286,7 +3371,13 @@ class PostgresConditionalClaimStore:
         if re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None:
             raise PostgresControlPlaneError("candidate_sha must be an exact lowercase SHA")
         generation = _require_generation(fencing_generation, "fencing_generation", minimum=1)
-        ledger_json, results_json, ledger_digest, evidence_digest = (
+        (
+            ledger_json,
+            results_json,
+            authorities_json,
+            ledger_digest,
+            evidence_digest,
+        ) = (
             _completion_evidence_payload(
                 evidence, task_id=task_id, candidate_sha=candidate_sha,
                 provider_result_digest=provider_result_digest,
@@ -3297,13 +3388,15 @@ class PostgresConditionalClaimStore:
             "provider_result_digest": provider_result_digest,
             "ledger_digest": ledger_digest, "evidence_digest": evidence_digest,
             "canonical_ledger": ledger_json, "canonical_results": results_json,
+            "canonical_authorities": authorities_json,
             "ci_gate_id": evidence.ci_gate_id,
             "security_gate_id": evidence.security_gate_id,
             "owner_token": owner_token, "generation": generation,
         }
         columns = (
             "task_id, candidate_sha, provider_result_digest, ledger_digest, "
-            "evidence_digest, canonical_ledger, canonical_results, ci_gate_id, "
+            "evidence_digest, canonical_ledger, canonical_results, "
+            "canonical_authorities, ci_gate_id, "
             "security_gate_id, writer_fencing_generation"
         )
         with self._pool.connection() as connection:
@@ -3343,7 +3436,8 @@ class PostgresConditionalClaimStore:
                         ({columns})
                         SELECT writer.task_id, %(candidate_sha)s, %(provider_result_digest)s,
                                %(ledger_digest)s, %(evidence_digest)s, %(canonical_ledger)s,
-                               %(canonical_results)s, %(ci_gate_id)s, %(security_gate_id)s,
+                               %(canonical_results)s, %(canonical_authorities)s,
+                               %(ci_gate_id)s, %(security_gate_id)s,
                                writer.fencing_generation
                         FROM {self._schema}.director_primary_task_writer writer
                         WHERE writer.task_id=%(task_id)s AND writer.engine_owner='langgraph'
@@ -3365,7 +3459,8 @@ class PostgresConditionalClaimStore:
         _require_id(task_id, "task_id")
         columns = (
             "task_id, candidate_sha, provider_result_digest, ledger_digest, "
-            "evidence_digest, canonical_ledger, canonical_results, ci_gate_id, "
+            "evidence_digest, canonical_ledger, canonical_results, "
+            "canonical_authorities, ci_gate_id, "
             "security_gate_id, writer_fencing_generation"
         )
         with self._pool.connection() as connection:
@@ -4741,3 +4836,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]

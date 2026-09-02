@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
 """Deterministic post-provider boundaries for the LangGraph primary engine.
 
@@ -8,7 +9,7 @@ not execute providers, gates, repository commands, or external effects.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
 from .completion_gates import (
@@ -48,6 +49,7 @@ class CompletionEvidence:
     results: tuple[VerifiedGateResult, ...]
     ci_gate_id: str
     security_gate_id: str
+    authority_proofs: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,3 +309,4 @@ class PrimaryCompletionServices:
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | BEGIN]]
@@ -76,6 +77,52 @@ function Get-Sha256Text {
     ).ToLowerInvariant()
 }
 
+function Get-TrustedActorAllowlist {
+    param([string]$Name)
+    if (-not $script:values.ContainsKey($Name)) {
+        throw "Trusted activation reviewer allowlist is missing: $Name."
+    }
+    $raw = ([string]$script:values[$Name]).Trim()
+    if (-not $raw.StartsWith("[") -or -not $raw.EndsWith("]")) {
+        throw "Trusted activation reviewer allowlist must be a JSON array: $Name."
+    }
+    try { $actors = @(($raw | ConvertFrom-Json)) }
+    catch { throw "Trusted activation reviewer allowlist is invalid: $Name." }
+    if ($actors.Count -lt 1 -or @($actors | Where-Object {
+        $_ -isnot [string] -or $_ -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$'
+    }).Count -gt 0 -or @($actors | Sort-Object -Unique).Count -ne $actors.Count) {
+        throw "Trusted activation reviewer allowlist is invalid: $Name."
+    }
+    return @($actors)
+}
+
+function Get-ExactReviewArtifact {
+    param([object]$Review, [string]$Kind, [string[]]$TrustedActors)
+    if ($null -eq $Review -or [string]$Review.state -cne "APPROVED" -or
+        [string]$Review.authorAssociation -notin @("OWNER", "MEMBER", "COLLABORATOR")) {
+        return $null
+    }
+    $actor = [string]$Review.author.login
+    if ($TrustedActors -cnotcontains $actor) { return $null }
+    $expected = [ordered]@{
+        actor = $actor
+        head_sha = $script:candidateCommit
+        kind = $Kind
+        schema_version = "director-activation-review/v1"
+        verdict = "ACCEPT"
+    }
+    $canonical = $expected | ConvertTo-Json -Compress
+    if ([string]$Review.body -cne $canonical) { return $null }
+    try { $artifact = [string]$Review.body | ConvertFrom-Json }
+    catch { return $null }
+    $expectedNames = @("actor", "head_sha", "kind", "schema_version", "verdict")
+    $observedNames = @($artifact.PSObject.Properties.Name | Sort-Object)
+    if (($observedNames -join "|") -cne (($expectedNames | Sort-Object) -join "|")) {
+        return $null
+    }
+    return [pscustomobject]@{ actor = $actor; body = $canonical }
+}
+
 function Get-GitHubAcceptanceFacts {
     if ([string]::IsNullOrWhiteSpace($script:GitHubRepository) -or $script:PullRequestNumber -lt 1) {
         throw "Accept requires -GitHubRepository and -PullRequestNumber."
@@ -87,7 +134,7 @@ function Get-GitHubAcceptanceFacts {
         throw "GitHub CLI is required to verify exact-head acceptance evidence."
     }
     $json = & gh pr view $script:PullRequestNumber --repo $script:GitHubRepository `
-        --json headRefOid,author,comments,reviews,statusCheckRollup
+        --json headRefOid,author,reviews,statusCheckRollup
     if ($LASTEXITCODE -ne 0) { throw "GitHub acceptance evidence could not be read." }
     $pull = $json | ConvertFrom-Json -Depth 20
     if ([string]$pull.headRefOid -cne $script:candidateCommit) {
@@ -118,22 +165,19 @@ function Get-GitHubAcceptanceFacts {
     } | Sort-Object -Unique)
     if ($runIds.Count -lt 1) { throw "Exact-head CI run identity is unavailable." }
 
-    $records = @()
-    foreach ($item in @($pull.comments) + @($pull.reviews)) {
-        if ($null -ne $item -and -not [string]::IsNullOrWhiteSpace([string]$item.body)) {
-            $records += [pscustomobject]@{
-                actor = [string]$item.author.login
-                body = [string]$item.body
-            }
-        }
+    $securityActors = Get-TrustedActorAllowlist `
+        "LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON"
+    $independentActors = Get-TrustedActorAllowlist `
+        "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON"
+    if (@($securityActors | Where-Object { $independentActors -ccontains $_ }).Count -gt 0) {
+        throw "Security and independent activation reviewer allowlists must be disjoint."
     }
-    $headMarker = "DIRECTOR_EXACT_HEAD=$($script:candidateCommit)"
-    $security = @($records | Where-Object {
-        $_.body.Contains("DIRECTOR_SECURITY_REVIEW=ACCEPT") -and $_.body.Contains($headMarker)
-    } | Select-Object -Last 1)
-    $independent = @($records | Where-Object {
-        $_.body.Contains("DIRECTOR_INDEPENDENT_REVIEW=ACCEPT") -and $_.body.Contains($headMarker)
-    } | Select-Object -Last 1)
+    $security = @($pull.reviews | ForEach-Object {
+        Get-ExactReviewArtifact $_ "security" $securityActors
+    } | Where-Object { $null -ne $_ })
+    $independent = @($pull.reviews | ForEach-Object {
+        Get-ExactReviewArtifact $_ "independent_review" $independentActors
+    } | Where-Object { $null -ne $_ })
     if ($security.Count -ne 1 -or [string]::IsNullOrWhiteSpace($security[0].actor)) {
         throw "An attributable exact-head security ACCEPT artifact is required."
     }
@@ -236,6 +280,12 @@ $required = @(
     "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA",
     "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE", "LANGGRAPH_PRIMARY_OWNER_TOKEN",
     "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET",
+    "LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET",
+    "LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET",
+    "LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET",
+    "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON",
+    "LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
+    "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON",
     "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET",
     "LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET",
     "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON",
@@ -262,6 +312,9 @@ if (@(Compare-Object ($requiredProviders | Sort-Object) ($configuredProviders | 
 foreach ($secret in @(
     "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "LANGGRAPH_PRIMARY_OWNER_TOKEN",
     "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET",
+    "LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET",
+    "LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET",
+    "LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET",
     "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET",
     "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET"
 )) {
@@ -271,6 +324,9 @@ $secretValues = @(
     $values["LANGGRAPH_PRIMARY_POSTGRES_PASSWORD"],
     $values["LANGGRAPH_PRIMARY_OWNER_TOKEN"],
     $values["LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET"],
+    $values["LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET"],
+    $values["LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET"],
+    $values["LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET"],
     $values["LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET"],
     $values["LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET"]
 )
@@ -453,3 +509,4 @@ if ($Action -eq "Rollback") {
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]

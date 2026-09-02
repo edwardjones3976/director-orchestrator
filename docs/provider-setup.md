@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
@@ -342,12 +343,26 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 
 ## Primary security credential boundaries
 
-Completion evidence uses `LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_SECRET`, never
-the provider callback secret. Configure
+Completion evidence uses three pairwise-distinct secrets:
+`LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET`,
+`LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET`, and
+`LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET`. None may equal a provider,
+shared, effect, bridge, or other ingress secret. Configure
 `LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON` with exactly
 `independent_review`, `ci`, and `security`; every entry has nonempty `issuers`
-and `principals` arrays. The signed envelope issuer and each result's
-`evidence_actor.authenticated_principal` must both match the corresponding kind.
+and `principals` arrays, and all three authorities must be pairwise disjoint.
+Each role signs only its exact result binding; the aggregate has no bundle
+credential capable of minting another role. Durable Postgres readback preserves
+and revalidates the three canonical authority proofs.
+
+Activation review authority is separately configured through
+`LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON` and
+`LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON`. These
+GitHub-login arrays must be disjoint. Only an `APPROVED` review from an
+`OWNER`, `MEMBER`, or `COLLABORATOR` is considered, and its body must equal one
+canonical JSON object with exactly `actor`, `head_sha`, `kind`,
+`schema_version`, and `verdict`. Comments, prose, quotes, code fences, extra
+fields, and substring markers are never activation evidence.
 
 Microsoft Work IQ requires the tenant, a protected non-symlink token file, and
 exact `MICROSOFT_365_COPILOT_EXPECTED_SUBJECT` plus
@@ -388,3 +403,4 @@ by the client runtime and cover `host.docker.internal`.
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->

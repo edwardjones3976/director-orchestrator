@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]] -->
@@ -400,7 +401,10 @@ Independent exact-head review, trusted CI, and security results are stored as on
 immutable completion-evidence bundle in the primary Postgres control plane. The
 bundle is accepted only under the current unexpired LangGraph writer fence and is
 bound to the task, candidate SHA, provider-result digest, gate-ledger digest, and
-individual result digests. Restart readback revalidates canonical content;
+individual result digests. Independent review, CI, and security each use a
+different secret, issuer, and authenticated principal; one aggregate signer is
+not an authority. Restart readback revalidates the canonical content and all
+three distinct authority proofs;
 missing or conflicting evidence remains `OWNER_DECISION_REQUIRED` and can never
 be replaced with a synthetic pass.
 
@@ -410,7 +414,11 @@ activation evidence, then `Activate`. `Accept` reads the canonical GitHub pull
 request, requires its head to equal the frozen candidate, requires every named
 CI check to be completed successfully with no skipped/pending/failed check, and
 requires distinct non-author security and independent-review ACCEPT artifacts
-that both name the exact head. Those facts and their digests are recorded under
+that both name the exact head. Each must be an `APPROVED` review from the
+corresponding configured, disjoint GitHub actor allowlist with an acceptable
+GitHub author association, and its body must exactly equal the canonical
+`director-activation-review/v1` JSON artifact. Comments, quoted markers, and
+free-form prose never qualify. Those facts and their digests are recorded under
 the same activation identity; operator-set booleans are not acceptance evidence.
 Activation reopens Slack only after the observed health
 projection proves Postgres, writer fencing, reconciliation, current provider
@@ -531,3 +539,4 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->

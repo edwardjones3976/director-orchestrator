@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
@@ -119,6 +120,7 @@ from .primary_commands import (
     PrimaryCommandResponse,
     ProviderResultRequest,
     RecoveryRequest,
+    verify_completion_authority_proof,
     verify_primary_ingress_proof,
 )
 from .primary_activation_commands import (
@@ -1113,18 +1115,6 @@ def primary_completion_evidence(
     task_id: str,
     request: CompletionEvidenceRequest,
 ) -> PrimaryCommandResponse:
-    if request.actor_id != request.evidence_actor_id:
-        raise HTTPException(status_code=403, detail="Completion evidence actor mismatch")
-    try:
-        verify_primary_ingress_proof(
-            settings.langgraph_primary_completion_evidence_secret,
-            settings.shared_secret,
-            request,
-            path=f"/v1/primary/tasks/{task_id}/completion-evidence",
-            proof_field="evidence_proof",
-        )
-    except PrimaryCommandBindingError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
     try:
         allowlist = settings.completion_evidence_actor_allowlist()
     except ValueError as exc:
@@ -1161,19 +1151,46 @@ def primary_completion_evidence(
         raise HTTPException(
             status_code=403, detail="Completion evidence kinds must be distinct"
         )
+    authority_secrets = {
+        "independent_review": (
+            settings.langgraph_primary_independent_review_evidence_secret
+        ),
+        "ci": settings.langgraph_primary_ci_evidence_secret,
+        "security": settings.langgraph_primary_security_evidence_secret,
+    }
+    verified_authorities = {}
     for kind, results in required_results.items():
         actor = results[0].get("evidence_actor")
         principal = (
             actor.get("authenticated_principal") if isinstance(actor, dict) else None
         )
+        try:
+            proof = verify_completion_authority_proof(
+                authority_secrets[kind],
+                settings.shared_secret,
+                request,
+                authority=kind,
+            )
+        except PrimaryCommandBindingError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         if (
-            request.evidence_actor_id not in allowlist[kind]["issuers"]
-            or principal not in allowlist[kind]["principals"]
+            proof.issuer_id not in allowlist[kind]["issuers"]
+            or proof.principal_id not in allowlist[kind]["principals"]
+            or principal != proof.principal_id
         ):
             raise HTTPException(
                 status_code=403,
                 detail=f"Completion evidence {kind} actor is not allowlisted",
             )
+        verified_authorities[kind] = proof
+    if (
+        len({proof.issuer_id for proof in verified_authorities.values()}) != 3
+        or len({proof.principal_id for proof in verified_authorities.values()}) != 3
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Completion evidence requires three distinct authorities",
+        )
     coordinator, _, _, replay = _primary_command_projection(
         task_id, request, PrimaryCommandOperation.COMPLETION_EVIDENCE
     )
@@ -1566,3 +1583,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]

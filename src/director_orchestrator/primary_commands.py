@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
@@ -52,6 +53,20 @@ class PrimaryIngressProof(BaseModel):
 
     version: Literal["v1"] = "v1"
     channel_id: str | None = Field(default=None, min_length=1, max_length=64)
+    issued_at: int = Field(ge=0)
+    nonce: str = Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    signature: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CompletionAuthorityProof(BaseModel):
+    """One independently authenticated completion-authority assertion."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal["v1"] = "v1"
+    authority: Literal["independent_review", "ci", "security"]
+    issuer_id: str = Field(pattern=_ACTOR_ID_PATTERN)
+    principal_id: str = Field(pattern=_ACTOR_ID_PATTERN)
     issued_at: int = Field(ge=0)
     nonce: str = Field(min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     signature: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -254,14 +269,15 @@ class CompletionEvidenceRequest(_BoundCommandRequest):
     schema_version: Literal["langgraph-primary-completion-evidence/v1"] = (
         "langgraph-primary-completion-evidence/v1"
     )
-    evidence_actor_id: str = Field(pattern=_ACTOR_ID_PATTERN)
     candidate_sha: str = Field(pattern=_SHA_PATTERN)
     provider_result_digest: str = Field(pattern=_DIGEST_PATTERN)
     ledger: dict[str, Any]
     results: tuple[dict[str, Any], ...] = Field(min_length=1, max_length=64)
     ci_gate_id: str = Field(min_length=1, max_length=255)
     security_gate_id: str = Field(min_length=1, max_length=255)
-    evidence_proof: PrimaryIngressProof | None = None
+    independent_review_authority_proof: CompletionAuthorityProof | None = None
+    ci_authority_proof: CompletionAuthorityProof | None = None
+    security_authority_proof: CompletionAuthorityProof | None = None
 
     def to_evidence(self):
         # Deferred imports keep the command-envelope module independent of the
@@ -280,6 +296,11 @@ class CompletionEvidenceRequest(_BoundCommandRequest):
             results=verified_results,
             ci_gate_id=self.ci_gate_id,
             security_gate_id=self.security_gate_id,
+            authority_proofs={
+                "independent_review": self.independent_review_authority_proof.model_dump(mode="json"),
+                "ci": self.ci_authority_proof.model_dump(mode="json"),
+                "security": self.security_authority_proof.model_dump(mode="json"),
+            },
         )
 
 
@@ -453,6 +474,158 @@ def _canonical_payload_digest(payload: Mapping[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+_COMPLETION_AUTHORITY_PROOF_FIELDS = {
+    "independent_review": "independent_review_authority_proof",
+    "ci": "ci_authority_proof",
+    "security": "security_authority_proof",
+}
+
+
+def _completion_authority_result(
+    request: CompletionEvidenceRequest, authority: str
+) -> Mapping[str, Any]:
+    if authority == "independent_review":
+        matches = [
+            item
+            for item in request.results
+            if item.get("evidence_role") == "INDEPENDENT_REVIEWER"
+        ]
+    elif authority == "ci":
+        matches = [
+            item
+            for item in request.results
+            if item.get("gate_id") == request.ci_gate_id
+            and item.get("evidence_role") == "TRUSTED_EXTERNAL_CI"
+        ]
+    elif authority == "security":
+        matches = [
+            item
+            for item in request.results
+            if item.get("gate_id") == request.security_gate_id
+            and item.get("evidence_role") == "CODEX_SECURITY"
+        ]
+    else:
+        raise PrimaryCommandBindingError("completion authority is unsupported")
+    if len(matches) != 1:
+        raise PrimaryCommandBindingError(
+            f"completion {authority} result binding is incomplete"
+        )
+    return matches[0]
+
+
+def _completion_authority_payload(
+    request: CompletionEvidenceRequest,
+    proof: CompletionAuthorityProof,
+) -> bytes:
+    result = _completion_authority_result(request, proof.authority)
+    actor = result.get("evidence_actor")
+    principal = (
+        actor.get("authenticated_principal") if isinstance(actor, Mapping) else None
+    )
+    if principal != proof.principal_id:
+        raise PrimaryCommandBindingError(
+            f"completion {proof.authority} principal binding changed"
+        )
+    return json.dumps(
+        {
+            "version": proof.version,
+            "authority": proof.authority,
+            "issuer_id": proof.issuer_id,
+            "principal_id": proof.principal_id,
+            "issued_at": proof.issued_at,
+            "nonce": proof.nonce,
+            "task_id": request.task_id,
+            "command_id": request.command_id,
+            "candidate_sha": request.candidate_sha,
+            "provider_result_digest": request.provider_result_digest,
+            "ledger_digest": request.ledger.get("ledger_digest"),
+            "gate_id": result.get("gate_id"),
+            "result_digest": result.get("result_digest"),
+        },
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def build_completion_authority_proof(
+    secret: str,
+    shared_secret: str,
+    request: CompletionEvidenceRequest,
+    *,
+    authority: Literal["independent_review", "ci", "security"],
+    issuer_id: str,
+    principal_id: str,
+    issued_at: int | None = None,
+    nonce: str | None = None,
+) -> CompletionAuthorityProof:
+    """Sign only one role's exact result; no bundle credential is accepted."""
+
+    if len(secret) < _MIN_SECRET_LENGTH:
+        raise PrimaryCommandBindingError(
+            "completion authority signing secret is not configured"
+        )
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise PrimaryCommandBindingError("completion authority secret must be distinct")
+    proof = CompletionAuthorityProof(
+        authority=authority,
+        issuer_id=issuer_id,
+        principal_id=principal_id,
+        issued_at=(
+            issued_at
+            if issued_at is not None
+            else int(datetime.now(timezone.utc).timestamp())
+        ),
+        nonce=nonce or secrets.token_urlsafe(32),
+        signature="0" * 64,
+    )
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        _completion_authority_payload(request, proof),
+        hashlib.sha256,
+    ).hexdigest()
+    return proof.model_copy(update={"signature": signature})
+
+
+def verify_completion_authority_proof(
+    secret: str,
+    shared_secret: str,
+    request: CompletionEvidenceRequest,
+    *,
+    authority: Literal["independent_review", "ci", "security"],
+    now: int | None = None,
+) -> CompletionAuthorityProof:
+    field = _COMPLETION_AUTHORITY_PROOF_FIELDS[authority]
+    proof = getattr(request, field)
+    if (
+        not isinstance(proof, CompletionAuthorityProof)
+        or proof.authority != authority
+        or len(secret) < _MIN_SECRET_LENGTH
+    ):
+        raise PrimaryCommandBindingError(
+            f"authenticated completion {authority} proof is required"
+        )
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise PrimaryCommandBindingError("completion authority secret must be distinct")
+    observed = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    age = observed - proof.issued_at
+    if age < -_PROOF_FUTURE_SKEW_SECONDS or age > _PROOF_TTL_SECONDS:
+        raise PrimaryCommandBindingError(
+            f"completion {authority} proof is expired or not yet valid"
+        )
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        _completion_authority_payload(request, proof),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(proof.signature, expected):
+        raise PrimaryCommandBindingError(
+            f"completion {authority} proof signature is invalid"
+        )
+    return proof
+
+
 def _proof_payload(request: _BoundCommandRequest, *, path: str, proof_field: str) -> bytes:
     body = request.model_dump(mode="json")
     proof = body.pop(proof_field, None)
@@ -543,3 +716,4 @@ def verify_primary_ingress_proof(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
