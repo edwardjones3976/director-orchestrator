@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
@@ -34,12 +35,25 @@ from .packet_results import DirectorPacketResultConsumer, PacketResultProgressio
 
 @dataclass(frozen=True, slots=True)
 class PacketResultBinding:
-    """Existing Director objects needed to consume one authenticated packet."""
+    """Existing Director objects needed to consume one authenticated packet.
+
+    ``assignment_id`` and the packet digest inside ``outcome`` are the exact
+    pair the resolver authenticated. ``graph_result_digest`` is what the graph
+    context must be carrying for that pair to be the right one: the parallel
+    ledger's aggregate digest for a wave, or the individual result digest for a
+    single-assignment edge. It is never the caller's job to guess which.
+    """
 
     record: TaskRecord
     assignment: Assignment
     work_packet: dict[str, object]
     outcome: RuntimeExecutionOutcome
+    assignment_id: str = ""
+    graph_result_digest: str | None = None
+
+    @property
+    def expected_context_digest(self) -> str | None:
+        return self.graph_result_digest or self.outcome.result_packet_digest
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +121,7 @@ class PrimaryCompletionServices:
             raise ValueError("packet result task binding mismatch")
         if context.provider_result_digest is None:
             raise ValueError("primary context has no provider result digest")
-        if binding.outcome.result_packet_digest != context.provider_result_digest:
+        if binding.expected_context_digest != context.provider_result_digest:
             raise ValueError("packet result digest binding mismatch")
         return self._packet_result_consumer.consume(
             binding.record,
@@ -313,3 +327,4 @@ class PrimaryCompletionServices:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

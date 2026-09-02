@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
@@ -27,7 +28,7 @@ import urllib.request
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from .langgraph_runtime import ProviderAdapterContext
@@ -85,21 +86,27 @@ def _signature_payload(
     writer_generation: int,
     packet_digest: str,
     writer_owner_token_digest: str,
+    work_packet_digest: str = "",
 ) -> bytes:
-    return "\n".join(
-        (
-            BRIDGE_PROTOCOL,
-            str(timestamp),
-            nonce,
-            provider,
-            task_id,
-            assignment_id,
-            idempotency_digest,
-            str(writer_generation),
-            packet_digest,
-            writer_owner_token_digest,
-        )
-    ).encode("utf-8")
+    material = [
+        BRIDGE_PROTOCOL,
+        str(timestamp),
+        nonce,
+        provider,
+        task_id,
+        assignment_id,
+        idempotency_digest,
+        str(writer_generation),
+        packet_digest,
+        writer_owner_token_digest,
+    ]
+    # A redacted lane also authenticates the opaque digest of the original work
+    # packet it was derived from. The element is appended only when it exists,
+    # so every unredacted lane keeps a byte-identical signature payload, and a
+    # stripped or forged binding changes the signature and fails closed.
+    if work_packet_digest:
+        material.append(work_packet_digest)
+    return "\n".join(material).encode("utf-8")
 
 
 def bridge_signature(secret: str, **bindings: object) -> str:
@@ -222,6 +229,10 @@ class BridgeRequest:
     nonce: str
     signature: str
     packet: bytes
+    # Present only for a redacted lane: the opaque digest of the original work
+    # packet the posted body was derived from. It is authenticated, never used
+    # to reconstruct anything the host was deliberately not shown.
+    work_packet_digest: str = ""
 
     def validate(self, secret: str, *, now: int | None = None, max_age_seconds: int = 60) -> None:
         if self.provider in UNSUPPORTED_HOST_LANES:
@@ -235,6 +246,8 @@ class BridgeRequest:
             raise HostProviderBridgeError("invalid idempotency digest")
         if _HEX_64.fullmatch(self.packet_digest) is None or _digest(self.packet) != self.packet_digest:
             raise HostProviderBridgeError("work-packet digest mismatch")
+        if self.work_packet_digest and _HEX_64.fullmatch(self.work_packet_digest) is None:
+            raise HostProviderBridgeError("origin work-packet digest is invalid")
         if self.writer_generation < 1:
             raise HostProviderBridgeError("writer generation is not active")
         if not self.writer_owner_token_digest.startswith("sha256:") or len(self.writer_owner_token_digest) != 71:
@@ -253,6 +266,7 @@ class BridgeRequest:
             writer_generation=self.writer_generation,
             packet_digest=self.packet_digest,
             writer_owner_token_digest=self.writer_owner_token_digest,
+            work_packet_digest=self.work_packet_digest,
         )
         if not hmac.compare_digest(expected, self.signature):
             raise HostProviderBridgeError("host bridge authentication failed")
@@ -474,9 +488,22 @@ class HostBridgePacketTransport:
         secret: str,
         *,
         writer_owner_token_digest: str,
+        outbound_payload_builder: Callable[[Mapping[str, Any]], Mapping[str, Any]]
+        | None = None,
+        result_normalizer: Callable[
+            [Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]
+        ]
+        | None = None,
     ) -> None:
         if provider in UNSUPPORTED_HOST_LANES or provider not in SUPPORTED_HOST_LANES:
             raise ValueError("provider is not supported by the Windows host bridge")
+        # Redaction and local normalization are one decision: a lane that is not
+        # shown the work packet cannot have its result bound by the host either.
+        if (outbound_payload_builder is None) != (result_normalizer is None):
+            raise ValueError(
+                "host bridge redaction requires both a payload builder and a "
+                "result normalizer"
+            )
         parsed = urlsplit(endpoint)
         try:
             port = parsed.port
@@ -505,6 +532,8 @@ class HostBridgePacketTransport:
         self.endpoint = endpoint
         self.secret = secret
         self.writer_owner_token_digest = writer_owner_token_digest
+        self.outbound_payload_builder = outbound_payload_builder
+        self.result_normalizer = result_normalizer
 
     def send(self, work_packet_json: bytes, *, context: ProviderAdapterContext) -> Mapping[str, object]:
         if not work_packet_json or len(work_packet_json) > _MAX_PACKET_BYTES:
@@ -515,7 +544,17 @@ class HostBridgePacketTransport:
         idempotency_key = str(packet.get("idempotency_key", ""))
         if not idempotency_key:
             raise RuntimeError("host bridge packet lacks idempotency")
-        packet_digest = _digest(work_packet_json)
+        work_packet_digest = ""
+        outbound = work_packet_json
+        if self.outbound_payload_builder is not None:
+            # A redacted lane posts a freshly built closed document. The work
+            # packet stays Director-side and is only ever referenced by digest.
+            outbound = canonical_json_bytes(self.outbound_payload_builder(packet))
+            if not outbound or len(outbound) > _MAX_PACKET_BYTES:
+                raise RuntimeError("host bridge redacted payload is not bounded")
+            work_packet_digest = _digest(work_packet_json)
+        # The transport signature binds the exact bytes that leave this process.
+        packet_digest = _digest(outbound)
         idempotency_digest = _digest(idempotency_key.encode("utf-8"))
         timestamp = int(time.time())
         nonce = hashlib.sha256(f"{time.time_ns()}:{packet_digest}".encode()).hexdigest()
@@ -529,6 +568,7 @@ class HostBridgePacketTransport:
             writer_generation=context.fencing_generation,
             packet_digest=packet_digest,
             writer_owner_token_digest=self.writer_owner_token_digest,
+            work_packet_digest=work_packet_digest,
         )
         headers = {
             "Content-Type": "application/json",
@@ -544,7 +584,9 @@ class HostBridgePacketTransport:
             "X-Director-Writer-Owner-Token-Digest": self.writer_owner_token_digest,
             "Authorization": "Director-HMAC " + bridge_signature(self.secret, **bindings),
         }
-        request = urllib.request.Request(self.endpoint, data=work_packet_json, headers=headers, method="POST")
+        if work_packet_digest:
+            headers["X-Director-Work-Packet-Digest"] = work_packet_digest
+        request = urllib.request.Request(self.endpoint, data=outbound, headers=headers, method="POST")
         try:
             with urllib.request.build_opener(_NoRedirectHandler()).open(
                 request, timeout=context.timeout_seconds
@@ -570,7 +612,14 @@ class HostBridgePacketTransport:
         decoded = json.loads(payload)
         if not isinstance(decoded, dict):
             raise RuntimeError("host provider bridge result is malformed")
-        return decoded
+        if self.result_normalizer is None:
+            return decoded
+        # The host only ever saw the redacted document, so it cannot bind the
+        # result. Normalization runs here, against the original work packet.
+        normalized = self.result_normalizer(packet, decoded)
+        if not isinstance(normalized, Mapping):
+            raise RuntimeError("host provider bridge normalization is malformed")
+        return dict(normalized)
 
 
 def dispatch_bridge_request(
@@ -601,3 +650,4 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

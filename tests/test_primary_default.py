@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
@@ -39,6 +40,8 @@ from director_orchestrator.langgraph_primary import (
 )
 from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
 from director_orchestrator.models import (
+    AssignmentKind,
+    AssignmentOutcome,
     IntakeAuthentication,
     ProviderName,
     SlackIntake,
@@ -67,10 +70,17 @@ from director_orchestrator.primary_default import (
     DefaultPrimaryActivation,
     DefaultPrimaryApplication,
     DefaultPrimaryAuthority,
+    _assignment_provider_lane,
     _execute_three_attempt_roster,
+    _live_parallel_plan,
     _primary_provider_lane,
+    _terminal_review_assignment,
+    _typed_effect_binding,
     build_automatic_primary_live_dependencies,
+    build_primary_packet_result_resolver,
+    build_typed_external_effect_grant,
     resolve_default_primary_authority,
+    typed_external_effect_grant_kinds,
 )
 
 
@@ -201,6 +211,47 @@ class ProviderAttemptRosterTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIsNone(result_digest)
         self.assertEqual("provider_outcome_unknown", reason)
+
+    def test_later_ambiguous_attempt_keeps_the_prior_authenticated_success(self) -> None:
+        invoked: list[int] = []
+        settled: list[tuple[int, ParallelAssignmentStatus]] = []
+
+        def reserve(ordinal: int) -> ProviderAttemptReservation:
+            return ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai", "json", "api",
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            )
+
+        def dispatch(attempt: ProviderAttemptReservation) -> dict[str, object]:
+            invoked.append(attempt.attempt_ordinal)
+            if attempt.attempt_ordinal == 1:
+                return {"status": "SUCCEEDED", "attempt": 1}
+            raise RuntimeError("outcome unknown")
+
+        status, result, result_digest, reason = _execute_three_attempt_roster(
+            format_roster=(("json", "api"),),
+            reserve_attempt=reserve,
+            record_attempt=lambda attempt, attempt_status, *_args: settled.append(
+                (attempt.attempt_ordinal, attempt_status)
+            ),
+            dispatch_attempt=dispatch,
+        )
+
+        # The ambiguous slot is durably terminal and consumes its attempt, but
+        # the already-authenticated first result remains the assignment result.
+        self.assertEqual([1, 2], invoked)
+        self.assertEqual(
+            [
+                (1, ParallelAssignmentStatus.SUCCEEDED),
+                (2, ParallelAssignmentStatus.AMBIGUOUS),
+            ],
+            settled,
+        )
+        self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, status)
+        assert result is not None
+        self.assertEqual(1, result["attempt"])
+        self.assertEqual(document_digest(result), result_digest)
+        self.assertEqual("provider_result_authenticated", reason)
 
 
 class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
@@ -451,6 +502,302 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                 settings,
                 handle=None,  # type: ignore[arg-type]
                 services=None,  # type: ignore[arg-type]
+            )
+
+
+class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
+    """Budget, packet identity and effect-target authority for the live wave."""
+
+    def _record(self, settings: Settings, text: str = "Implement the bounded change"):
+        intake = SlackIntake(
+            source_event_id="live-wave-event",
+            channel_id="C0BAV9CMC80",
+            user_id="U123",
+            text=text,
+            thread_ts="1787450001.123456",
+        )
+        record = TaskRecord(
+            task_id="DIR-LG-LIVEWAVE",
+            status=TaskStatus.QUEUED,
+            intake=intake,
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        record.plan = preview_plan(intake.text, settings)
+        return record
+
+    def test_live_wave_binds_a_positive_bounded_per_lane_budget(self):
+        settings = replace(
+            Settings(),
+            repository_allowlist=("owner/repository",),
+            max_task_budget_usd=2.0,
+        )
+        record = self._record(settings)
+        self.assertTrue(
+            all(
+                assignment.estimated_cost_usd == 0
+                for assignment in record.plan.assignments
+            )
+        )
+
+        _live_parallel_plan(record, settings)
+
+        lanes = settings.langgraph_primary_required_providers
+        self.assertEqual(len(lanes) + 1, len(record.plan.assignments))
+        expected = settings.max_task_budget_usd / (len(lanes) + 1)
+        for assignment in record.plan.assignments:
+            self.assertEqual(expected, assignment.estimated_cost_usd)
+            self.assertGreater(assignment.estimated_cost_usd, 0)
+            self.assertLessEqual(
+                assignment.estimated_cost_usd, settings.max_task_budget_usd
+            )
+        self.assertAlmostEqual(
+            settings.max_task_budget_usd,
+            sum(item.estimated_cost_usd for item in record.plan.assignments),
+        )
+        # Every lane, including microsoft-365-copilot, keeps its own slot.
+        self.assertEqual(
+            list(lanes),
+            [
+                item.primary_provider_lane
+                for item in record.plan.assignments[: len(lanes)]
+            ],
+        )
+
+    def test_zero_configured_task_budget_fails_the_live_wave_closed(self):
+        settings = replace(
+            Settings(),
+            repository_allowlist=("owner/repository",),
+            max_task_budget_usd=0.0,
+        )
+        record = self._record(settings)
+
+        with self.assertRaisesRegex(RuntimeError, "positive configured task budget"):
+            _live_parallel_plan(record, settings)
+
+    def test_terminal_review_barrier_is_identified_structurally(self):
+        settings = replace(
+            Settings(),
+            repository_allowlist=("owner/repository",),
+            max_task_budget_usd=2.0,
+        )
+        record = self._record(settings)
+        _live_parallel_plan(record, settings)
+        assignments = record.plan.assignments
+        producer = min(assignments, key=lambda item: item.sequence)
+        review = max(assignments, key=lambda item: item.sequence)
+
+        bound = _terminal_review_assignment(record)
+
+        self.assertIs(bound, review)
+        self.assertIsNot(bound, producer)
+        # The reviewer deliberately reuses a first-wave lane, so lane equality
+        # could never have selected the barrier.
+        reused = [
+            item
+            for item in assignments
+            if _assignment_provider_lane(item) == _assignment_provider_lane(review)
+        ]
+        self.assertGreater(len(reused), 1)
+
+        detached = record.model_copy(
+            update={
+                "plan": record.plan.model_copy(
+                    update={
+                        "assignments": [
+                            *assignments[:-1],
+                            review.model_copy(update={"depends_on": [1]}),
+                        ]
+                    }
+                )
+            }
+        )
+        self.assertIsNone(_terminal_review_assignment(detached))
+
+    def _effect_context(self, record, candidate="a" * 40, starting="a" * 40):
+        return SimpleNamespace(
+            task_id=record.task_id,
+            candidate_sha=candidate,
+            starting_sha=starting,
+        )
+
+    def _grant_settings(self, pull_number=82):
+        return replace(
+            Settings(),
+            repository_allowlist=("owner/repository",),
+            langgraph_primary_external_effect_pull_number=pull_number,
+        )
+
+    def test_github_effect_is_pinned_to_configured_director_authority(self):
+        settings = self._grant_settings()
+        record = self._record(settings)
+        grant = build_typed_external_effect_grant(
+            settings, DefaultPrimaryAuthority("a" * 40, digest("authority"))
+        )
+        assert grant is not None
+
+        system, action, target, payload = _typed_effect_binding(
+            grant=grant,
+            record=record,
+            context=self._effect_context(record),  # type: ignore[arg-type]
+            granted_kinds=frozenset({"github_mark_ready"}),
+            effect={
+                "kind": "github_mark_ready",
+                "target": "owner/repository#82",
+                "status": "NOT_ATTEMPTED",
+                "idempotency_key": "proposal-1",
+            },
+        )
+
+        self.assertEqual(("github", GITHUB_MARK_READY), (system, action))
+        self.assertEqual(
+            {
+                "repository": "owner/repository",
+                "pull_number": 82,
+                "head_sha": "a" * 40,
+                "base_sha": "a" * 40,
+            },
+            target,
+        )
+        self.assertEqual({}, payload)
+        self.assertEqual("owner/repository#82", grant.proposal_target)
+        self.assertEqual(
+            ("github_mark_ready",), typed_external_effect_grant_kinds(settings)
+        )
+
+    def test_github_effect_fails_closed_without_configured_pull_authority(self):
+        record = self._record(self._grant_settings())
+        authority = DefaultPrimaryAuthority("a" * 40, digest("authority"))
+        unconfigured = self._grant_settings(pull_number=0)
+        multi_repository = replace(
+            self._grant_settings(),
+            repository_allowlist=("owner/repository", "owner/second"),
+        )
+
+        for settings in (unconfigured, multi_repository):
+            with self.subTest(repositories=settings.repository_allowlist):
+                self.assertEqual((), typed_external_effect_grant_kinds(settings))
+                self.assertIsNone(
+                    build_typed_external_effect_grant(settings, authority)
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError, "configured positive pull request"
+                ):
+                    _typed_effect_binding(
+                        grant=None,
+                        record=record,
+                        context=self._effect_context(record),  # type: ignore[arg-type]
+                        granted_kinds=frozenset({"github_mark_ready"}),
+                        effect={
+                            "kind": "github_mark_ready",
+                            "target": "owner/repository#82",
+                            "status": "NOT_ATTEMPTED",
+                            "idempotency_key": "missing-authority",
+                        },
+                    )
+
+    def test_ungranted_effect_kind_never_reaches_a_gateway(self):
+        settings = self._grant_settings()
+        record = self._record(settings)
+        grant = build_typed_external_effect_grant(
+            settings, DefaultPrimaryAuthority("a" * 40, digest("authority"))
+        )
+
+        # The work packet, not a closed vocabulary, is the only grant authority.
+        with self.assertRaisesRegex(RuntimeError, "not granted by the work packet"):
+            _typed_effect_binding(
+                grant=grant,
+                record=record,
+                context=self._effect_context(record),  # type: ignore[arg-type]
+                granted_kinds=frozenset(),
+                effect={
+                    "kind": "github_mark_ready",
+                    "target": "owner/repository#82",
+                    "status": "NOT_ATTEMPTED",
+                    "idempotency_key": "ungranted",
+                },
+            )
+
+    def test_effect_grant_is_digested_into_owner_approval_identity(self):
+        def effect_key_digest(pull_number: int) -> str:
+            settings = self._grant_settings(pull_number=pull_number)
+            application = DefaultPrimaryApplication(
+                settings,
+                coordinator=None,  # type: ignore[arg-type]
+                services=None,  # type: ignore[arg-type]
+                authority=DefaultPrimaryAuthority("a" * 40, digest("authority")),
+            )
+            intake = SlackIntake(
+                source_event_id="effect-grant-event",
+                channel_id="C0BAV9CMC80",
+                user_id="U123",
+                text="Implement the bounded change and prepare a draft PR",
+                thread_ts="1787450001.123456",
+            )
+            record = TaskRecord(
+                task_id="DIR-LG-GRANT",
+                status=TaskStatus.QUEUED,
+                intake=intake,
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+            plan = preview_plan(intake.text, settings)
+            assignments = list(plan.assignments)
+            assignments[0] = assignments[0].model_copy(update={"allow_draft_pr": True})
+            record.plan = plan.model_copy(update={"assignments": assignments})
+            request = application._request(record)
+            self.assertTrue(request.external_effect_required)
+            assert request.effect_key_digest is not None
+            return request.effect_key_digest
+
+        configured = effect_key_digest(82)
+        self.assertEqual(configured, effect_key_digest(82))
+        # A different approved pull request is a different approval identity.
+        self.assertNotEqual(configured, effect_key_digest(83))
+        self.assertNotEqual(configured, effect_key_digest(0))
+
+    def test_redirected_repository_pull_or_revision_fails_closed(self):
+        settings = self._grant_settings()
+        record = self._record(settings)
+        grant = build_typed_external_effect_grant(
+            settings, DefaultPrimaryAuthority("a" * 40, digest("authority"))
+        )
+        assert grant is not None
+
+        def bind(effect, context=None):
+            return _typed_effect_binding(
+                grant=grant,
+                record=record,
+                context=context or self._effect_context(record),  # type: ignore[arg-type]
+                granted_kinds=frozenset({"github_mark_ready", "slack_post"}),
+                effect=effect,
+            )
+
+        def proposal(target, key):
+            return {
+                "kind": "github_mark_ready",
+                "target": target,
+                "status": "NOT_ATTEMPTED",
+                "idempotency_key": key,
+            }
+
+        with self.assertRaisesRegex(RuntimeError, "outside the repository allowlist"):
+            bind(proposal("attacker/fork#82", "redirected-repository"))
+        with self.assertRaisesRegex(RuntimeError, "not the configured pull request"):
+            bind(proposal("owner/repository#83", "redirected-pull-request"))
+        with self.assertRaisesRegex(
+            RuntimeError, "head or base is outside Director authority"
+        ):
+            bind(
+                proposal("owner/repository#82", "redirected-head"),
+                context=self._effect_context(record, candidate="c" * 40),
+            )
+        with self.assertRaisesRegex(RuntimeError, "Slack effect target changed"):
+            bind(
+                {
+                    "kind": "slack_post",
+                    "target": "C0000000000",
+                    "status": "NOT_ATTEMPTED",
+                    "idempotency_key": "redirected-channel",
+                }
             )
 
 
@@ -895,6 +1242,200 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.services = services
         self.coordinator = coordinator
         self.application = application
+
+    def same_lane_review_plan(self):
+        """A plan whose review barrier reuses the first-wave producer's lane."""
+
+        plan = self.parallel_plan()
+        assignments = list(plan.assignments)
+        assignments[2] = assignments[2].model_copy(
+            update={
+                # Same provider lane as assignment 1, which is exactly the shape
+                # a lane-matching lookup resolves to the wrong plan member.
+                "agent": ProviderName.CLAUDE,
+                "kind": AssignmentKind.INDEPENDENT_REVIEW,
+                "task": "Independent review of the complete first wave",
+            }
+        )
+        return plan.model_copy(update={"assignments": assignments})
+
+    def _record_packet_artifacts(self, record, assignment) -> str:
+        """Persist one real work/result artifact pair and return its digest."""
+
+        assignment_id = self.services._packet_router._assignment_id(record, assignment)
+        work = self.services._packet_router.planned_work_packet(record, assignment)
+        writer = self.handle.claim_store.current_task_writer(record.task_id)
+        assert writer is not None
+        self.handle.claim_store.record_work_packet_artifact(
+            task_id=record.task_id,
+            assignment_id=assignment_id,
+            packet=work,
+            owner_token=writer.owner_token,
+            fencing_generation=writer.fencing_generation,
+        )
+        result = {
+            "schema_version": "1.0",
+            "task_id": record.task_id,
+            "assignment_id": assignment_id,
+            "idempotency_key": work["idempotency_key"],
+            "authority_snapshot_digest": work["authority_snapshot_digest"],
+            "correlation": dict(work["correlation"]),
+            "provider": assignment.agent.value,
+            "run_reference": f"run-{assignment.sequence}",
+            "status": "SUCCEEDED",
+            "outcome": f"assignment {assignment.sequence} evidence",
+            "artifacts": [],
+            "checks": [],
+            "acceptance": [
+                {"check": str(check), "status": "PASS", "evidence": "recorded"}
+                for check in work["acceptance_checks"]
+            ],
+            "risks": [],
+            "blockers": [],
+            "requested_decisions": [],
+            "side_effects": [],
+            "usage": None,
+            "revision_recommended": False,
+        }
+        persisted = self.handle.claim_store.record_result_packet_artifact(
+            task_id=record.task_id,
+            assignment_id=assignment_id,
+            packet=result,
+            owner_token=writer.owner_token,
+            fencing_generation=writer.fencing_generation,
+        )
+        return persisted.document_digest
+
+    def test_packet_result_resolves_the_review_not_a_same_lane_producer(self):
+        digests: dict[int, str] = {}
+
+        def dispatch(reservation):
+            record = self.services._record(reservation.task_id)
+            assignment = next(
+                item
+                for item in record.plan.assignments
+                if item.sequence == reservation.sequence
+            )
+            recorded = self._record_packet_artifacts(record, assignment)
+            digests[reservation.sequence] = recorded
+            # The dependent review packet can only be built once its upstream
+            # outcomes are accepted, exactly as the live dispatcher records them.
+            with self.services._lock:
+                stored = self.services._records[reservation.task_id]
+                stored.assignment_outcomes.append(
+                    AssignmentOutcome(
+                        assignment_sequence=assignment.sequence,
+                        provider=assignment.agent,
+                        run_id=f"run-{assignment.sequence}",
+                        result=f"assignment {assignment.sequence} evidence",
+                        review_summary=f"assignment {assignment.sequence} evidence",
+                        provider_result_digest=recorded.removeprefix("sha256:"),
+                    )
+                )
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                recorded,
+                "provider_result_authenticated",
+            )
+
+        self.use_parallel_graph_completion_services(dispatch)
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.same_lane_review_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake().model_copy(update={"source_event_id": "same-lane-review"}),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        self.approve(self.application, self.coordinator, pending.task_id)
+        aggregate = self.coordinator.parallel_aggregate(pending.task_id)
+        state = self.coordinator._runtime.compact_state(pending.task_id)
+        record = self.application.get_task(pending.task_id)
+        self.services.register(record)
+        self.addCleanup(self.services.discard, pending.task_id)
+
+        producer = min(record.plan.assignments, key=lambda item: item.sequence)
+        review = max(record.plan.assignments, key=lambda item: item.sequence)
+        self.assertEqual(
+            _assignment_provider_lane(producer), _assignment_provider_lane(review)
+        )
+        self.assertNotEqual(digests[producer.sequence], digests[review.sequence])
+        # The graph carries the aggregate digest, never an individual one.
+        self.assertEqual(aggregate.aggregate_digest, state["provider_result_digest"])
+        self.assertNotIn(
+            state["provider_result_digest"], set(digests.values())
+        )
+
+        resolver = build_primary_packet_result_resolver(
+            handle=self.handle, services=self.services
+        )
+        binding = resolver(
+            self.handler_context(
+                pending.task_id,
+                scheduled_producer_id=str(state["scheduled_producer_id"]),
+                provider_result_digest=str(state["provider_result_digest"]),
+            )
+        )
+
+        assert binding is not None
+        review_assignment_id = self.services._packet_router._assignment_id(
+            record, review
+        )
+        self.assertEqual(review.sequence, binding.assignment.sequence)
+        self.assertEqual(review_assignment_id, binding.assignment_id)
+        self.assertEqual(
+            digests[review.sequence], binding.outcome.result_packet_digest
+        )
+        self.assertEqual(
+            aggregate.aggregate_digest, binding.expected_context_digest
+        )
+        self.assertNotEqual(
+            digests[producer.sequence], binding.outcome.result_packet_digest
+        )
+
+        # A context carrying anything but the durable aggregate fails closed.
+        self.assertIsNone(
+            resolver(
+                self.handler_context(
+                    pending.task_id,
+                    scheduled_producer_id=str(state["scheduled_producer_id"]),
+                    provider_result_digest=digests[producer.sequence],
+                )
+            )
+        )
+
+    @staticmethod
+    def handler_context(
+        task_id: str,
+        *,
+        scheduled_producer_id: str,
+        provider_result_digest: str,
+    ) -> HandlerContext:
+        return HandlerContext(
+            task_id=task_id,
+            source_event_id="source-same-lane",
+            correlation_id="correlation-same-lane",
+            intake_digest=digest("intake"),
+            scope_digest=digest("scope"),
+            authority_snapshot_digest=digest("authority"),
+            work_packet_digest=digest("work"),
+            idempotency_key_digest=digest("idempotency"),
+            starting_sha=SHA,
+            candidate_sha=SHA,
+            plan_digest=digest("plan"),
+            scheduled_producer_id=scheduled_producer_id,
+            provider_attempt_digest=digest("attempt"),
+            provider_dispatch_status="COMPLETED",
+            provider_result_digest=provider_result_digest,
+            producer_id=scheduled_producer_id,
+            reviewer_id=None,
+            revision_count=0,
+            budget_limit_units=10,
+            budget_used_units=1,
+            effect_key_digest=None,
+            effect_attempt_digest=None,
+            writer_owner_id="langgraph",
+        )
 
     def test_parallel_default_dispatches_all_ready_then_dependency(self):
         barrier = threading.Barrier(2)
@@ -1832,3 +2373,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

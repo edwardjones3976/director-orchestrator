@@ -1,3 +1,4 @@
+<!-- [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]] -->
@@ -147,11 +148,18 @@ keep `LANGGRAPH_PRIMARY_POSTGRES_SCHEMA=director_primary_v1`, and give every
 deployment a distinct versioned `LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE`.
 
 The bundled database intentionally uses unencrypted container-network transport
-while `LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=false`. That combination
-is a fail-closed staging and backup surface, not an activation configuration:
-the primary runtime will reject it. Do not weaken the flag for the non-loopback
-Compose hostname. A supervised activation must instead supply a trusted
-Postgres endpoint with `sslmode=verify-full`, an explicit trusted root
+(`?sslmode=disable`). `.env.example` ships
+`LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=false`, and the checked-in
+`docker-compose.yml` overrides it to `"true"` for the orchestrator service
+alone. That override is the sole container-only exception: it is accepted only
+for the exact Compose service hostname `langgraph-primary-db`, and every other
+non-loopback target still fails closed. It remains a
+fail-closed staging and backup surface, not an activation configuration,
+because `LANGGRAPH_PRIMARY_ENABLED=false`,
+`LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=false`, and `ALLOW_PAID_RUNS=false` keep
+the runtime closed. Do not carry the local
+exception into any other deployment. A supervised activation must instead supply
+a trusted Postgres endpoint with `sslmode=verify-full`, an explicit trusted root
 certificate, and a matching versioned schema and checkpoint namespace.
 
 `LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED` and
@@ -349,3 +357,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]] -->

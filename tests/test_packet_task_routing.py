@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
@@ -20,7 +21,10 @@ from director_orchestrator.langgraph_runtime import (
 )
 from director_orchestrator.interactions import require_verified_result
 from director_orchestrator.models import (
+    AntigravityDirective,
+    AntigravityFixtureLane,
     Assignment,
+    AssignmentKind,
     DirectorPlan,
     ProviderName,
     RiskLevel,
@@ -36,6 +40,7 @@ from director_orchestrator.packet_results import (
 from director_orchestrator.packet_routing import (
     DirectorPacketTaskRouter,
     PacketRoutingError,
+    antigravity_directive_objective,
 )
 from director_orchestrator.policy import preview_plan
 
@@ -117,6 +122,39 @@ class PacketTaskRoutingTests(unittest.TestCase):
         ])
         self.assertIn("MERGE_PULL_REQUEST", packet["prohibited_actions"])
         self.assertIn(":2:1:", packet["idempotency_key"])
+
+    def test_coordinator_typed_grant_is_the_only_extra_granted_kind(self) -> None:
+        granting = DirectorPacketTaskRouter(
+            authority_snapshots=StaticAuthoritySnapshots(),
+            boundary_adapters={"claude": self.adapter},
+            writer_owner_id="langgraph-packet-runtime",
+            writer_secret="local-test-secret",
+            timeout_seconds=120,
+            typed_effect_grant_kinds=("github_mark_ready",),
+        )
+
+        granted = granting.work_packet(self.record, self.assignment)
+        ungranted = self.router.work_packet(self.record, self.assignment)
+
+        self.assertEqual(
+            ["WRITE_ISOLATED_BRANCH", "OPEN_DRAFT_PULL_REQUEST", "github_mark_ready"],
+            granted["allowed_external_effects"],
+        )
+        self.assertNotIn("github_mark_ready", ungranted["allowed_external_effects"])
+        # The typed grant never widens the provider's own tool authority.
+        self.assertEqual(granted["allowed_tools"], ungranted["allowed_tools"])
+
+        effect_free = self.assignment.model_copy(update={"allow_draft_pr": False})
+        record = self.record.model_copy(
+            update={
+                "plan": self.record.plan.model_copy(
+                    update={"assignments": [effect_free]}
+                )
+            }
+        )
+        self.assertEqual(
+            [], granting.work_packet(record, effect_free)["allowed_external_effects"]
+        )
 
     def test_router_binds_assignment_specific_retry_limit(self) -> None:
         assignment = self.assignment.model_copy(update={"retry_limit": 1})
@@ -235,6 +273,51 @@ class PacketTaskRoutingTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(PacketRoutingError, "authority snapshot"):
             missing_router.planned_work_packet(record, research)
+
+    def test_closed_antigravity_directive_binds_internal_repository_authority(self) -> None:
+        settings = replace(Settings(), repository_allowlist=("example/demo",))
+        plan = preview_plan(
+            "Project: demo\nProduce a bounded generic module skeleton.", settings
+        )
+        assert plan.prestage is not None
+        antigravity = Assignment(
+            sequence=1,
+            agent=ProviderName.GEMINI,
+            kind=AssignmentKind.SCAFFOLDING,
+            task="Produce a bounded generic module skeleton.",
+            acceptance=["Return bounded evidence for the assigned lane"],
+            repository=None,
+            starting_ref=plan.prestage.branch,
+            antigravity_directive=AntigravityDirective(
+                lane=AntigravityFixtureLane.MODULE_SKELETON
+            ),
+            requires_approval=False,
+            allow_draft_pr=False,
+        )
+        bound_plan = plan.model_copy(update={"assignments": [antigravity]})
+        record = self.record.model_copy(update={"plan": bound_plan})
+
+        packet = self.router.planned_work_packet(record, antigravity)
+
+        # The assignment stays repository-free; only the Director-internal
+        # packet authority is reconstructed from the pre-stage boundary.
+        self.assertIsNone(antigravity.repository)
+        self.assertEqual("example/demo", packet["repository"])
+        self.assertEqual([], packet["allowed_external_effects"])
+        # The closed directive travels in the objective because it is the only
+        # packet field the Antigravity transport is allowed to forward.
+        self.assertEqual(
+            antigravity_directive_objective(antigravity.antigravity_directive),
+            packet["objective"],
+        )
+        self.assertIn("lane=module_skeleton", packet["objective"])
+
+        undirected = antigravity.model_copy(update={"antigravity_directive": None})
+        undirected_record = record.model_copy(
+            update={"plan": bound_plan.model_copy(update={"assignments": [undirected]})}
+        )
+        with self.assertRaisesRegex(PacketRoutingError, "pre-stage authority"):
+            self.router.planned_work_packet(undirected_record, undirected)
 
 
 class PacketResultConsumerTests(unittest.TestCase):
@@ -359,6 +442,51 @@ class PacketResultConsumerTests(unittest.TestCase):
             )
         self.assertEqual(self.record.provider_runs, [])
 
+    def test_not_attempted_proposals_have_no_grant_bypass(self) -> None:
+        # A NOT_ATTEMPTED proposal is what drives the typed effect gateway, so
+        # it needs the same packet grant as a performed effect.
+        for kind in ("github_mark_ready", "DEPLOY", "arbitrary_injected_effect"):
+            with self.subTest(kind=kind):
+                self.result["side_effects"] = [
+                    {
+                        "kind": kind,
+                        "target": "other/repository#7",
+                        "status": "NOT_ATTEMPTED",
+                        "idempotency_key": f"proposal-{kind}",
+                    }
+                ]
+                with self.assertRaisesRegex(
+                    PacketResultConsumptionError, "outside packet authority"
+                ):
+                    self.consumer.consume(
+                        self.record,
+                        self.assignment,
+                        self.work,
+                        self._runtime_outcome(),
+                    )
+        self.assertEqual(self.record.provider_runs, [])
+
+    def test_coordinator_grant_makes_one_typed_kind_proposable(self) -> None:
+        granted = dict(self.work)
+        granted["allowed_external_effects"] = [
+            *self.work["allowed_external_effects"],
+            "github_mark_ready",
+        ]
+        self.result["side_effects"] = [
+            {
+                "kind": "github_mark_ready",
+                "target": "example/demo#82",
+                "status": "NOT_ATTEMPTED",
+                "idempotency_key": "granted-proposal",
+            }
+        ]
+
+        progression = self.consumer.consume(
+            self.record, self.assignment, granted, self._runtime_outcome()
+        )
+
+        self.assertTrue(progression.requires_director_review)
+
     def test_digest_or_provider_identity_drift_fails_closed(self) -> None:
         outcome = self._runtime_outcome()
         bad_digest = RuntimeExecutionOutcome(
@@ -385,3 +513,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-31 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:35 UTC | BEGIN]]
@@ -750,7 +751,9 @@ class LangGraphPacketRuntime:
             if effect["idempotency_key"] in effect_keys:
                 raise PacketContractError("result contains duplicate side-effect idempotency keys")
             effect_keys.add(effect["idempotency_key"])
-            if effect["status"] != "NOT_ATTEMPTED" and effect["kind"] not in allowed_effects:
+            # No status bypass: a NOT_ATTEMPTED proposal is what drives the
+            # typed effect gateway, so its kind must already be packet-granted.
+            if effect["kind"] not in allowed_effects:
                 raise PacketContractError("result reports an unauthorized external side effect")
         usage = validated_result.get("usage")
         if usage is not None and usage.get("cost_usd") is not None:
@@ -1223,3 +1226,4 @@ class LangGraphPacketRuntime:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:35 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-31 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

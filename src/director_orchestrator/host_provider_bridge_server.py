@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:46 UTC | BEGIN]]
@@ -106,15 +107,18 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != "/health":
             self._json(404, {"ok": False})
             return
-        configured = sorted(self.server.executor.commands)  # type: ignore[attr-defined]
+        # Unauthenticated health stays at protocol plus the configured roster.
+        # Per-provider booleans are neither part of this contract nor stable
+        # against the canonical lane names; the authenticated challenge endpoint
+        # already proves the exact command map.
         self._json(
             200,
             {
                 "ok": True,
                 "protocol": BRIDGE_PROTOCOL,
-                "configured_providers": configured,
-                "cursor": False,
-                "windows_copilot": False,
+                "configured_providers": sorted(
+                    self.server.executor.commands  # type: ignore[attr-defined]
+                ),
             },
         )
 
@@ -143,6 +147,11 @@ class _Handler(BaseHTTPRequestHandler):
                 nonce=self.headers.get("X-Director-Bridge-Nonce", ""),
                 signature=authorization.removeprefix("Director-HMAC "),
                 packet=self.rfile.read(length),
+                # Present only for a redacted lane. It is covered by the request
+                # signature, so stripping or forging it fails authentication.
+                work_packet_digest=self.headers.get(
+                    "X-Director-Work-Packet-Digest", ""
+                ),
             )
             result = dispatch_bridge_request(
                 request,
@@ -210,3 +219,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

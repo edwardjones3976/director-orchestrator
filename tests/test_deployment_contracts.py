@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -80,6 +81,38 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("langgraph-primary-db:/tmp/$backupName", section)
         self.assertNotIn("n8n-db:/tmp/$backupName", section)
         self.assertIn("never commit them", section)
+
+    def test_readme_local_postgres_exception_matches_shipped_compose(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        orchestrator = compose.split("  orchestrator:\n", 1)[1].split(
+            "\n  langgraph-primary-db:", 1
+        )[0]
+        section = readme.split(
+            "### Default LangGraph-primary database (inactive by default)", 1
+        )[1].split("\n## Slack app setup", 1)[0]
+
+        # The shipped defaults are the contract the prose must describe: the
+        # closed .env value plus the orchestrator-only Compose override for the
+        # exact local service hostname.
+        self.assertIn(
+            'LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES: "true"', orchestrator
+        )
+        self.assertIn(
+            "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=false", environment
+        )
+        self.assertIn(
+            'overrides it to `"true"` for the orchestrator service', section
+        )
+        self.assertIn("LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=false", section)
+        self.assertIn("langgraph-primary-db", section)
+        self.assertIn("container-only exception", section)
+        self.assertNotIn(
+            "unencrypted container-network transport\nwhile "
+            "`LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=false`",
+            section,
+        )
 
     def test_n8n_forwards_the_authenticated_caller_header(self):
         workflow = json.loads(
@@ -190,3 +223,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

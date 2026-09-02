@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
@@ -365,6 +366,14 @@ class Settings:
     langgraph_primary_allow_insecure_local_postgres: bool = field(
         default_factory=lambda: _bool(
             "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES", False
+        )
+    )
+    # Director-owned mutation target for the typed GitHub external effect. Zero
+    # means unconfigured, and every GitHub effect then fails closed: the pull
+    # request a live mark-ready may touch is never taken from provider output.
+    langgraph_primary_external_effect_pull_number: int = field(
+        default_factory=lambda: _int(
+            "LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_PULL_NUMBER", 0
         )
     )
     langgraph_runtime_checkpoint_path: str = field(
@@ -1961,3 +1970,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
@@ -28,8 +29,12 @@ from director_orchestrator.host_provider_bridge import (
     HostBridgePacketTransport,
 )
 from director_orchestrator.primary_default import build_automatic_primary_live_dependencies
+from director_orchestrator.models import AntigravityDirective, AntigravityFixtureLane
+from director_orchestrator.packet_routing import antigravity_directive_objective
 from director_orchestrator.primary_transports import (
+    ANTIGRAVITY_CLOSED_PAYLOAD_SCHEMA,
     BoundedJsonCommandTransport,
+    antigravity_closed_payload,
     Microsoft365CopilotCapabilityEvidence,
     Microsoft365CopilotReadinessVerifier,
     Microsoft365CopilotWorkIQTransport,
@@ -284,6 +289,117 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         self.assertEqual(1, run.call_count)
         self.assertFalse(run.call_args.kwargs["shell"])
 
+    def _antigravity_work(self):
+        directive = AntigravityDirective(lane=AntigravityFixtureLane.MODULE_SKELETON)
+        return {
+            "schema_version": "1.0",
+            "task_id": "DIR-LG-ANTIGRAVITY",
+            "assignment_id": "DIR-LG-ANTIGRAVITY-5",
+            "idempotency_key": "DIR-LG-ANTIGRAVITY:1:5:aa11bb22",
+            "project": "confidential-project",
+            "repository": "owner/confidential-repository",
+            "starting_ref": "c" * 40,
+            "authority_base_ref": "main",
+            "objective": antigravity_directive_objective(directive),
+            "authority_snapshot": [
+                {
+                    "path": "docs/confidential-design.md",
+                    "commit_sha": "c" * 40,
+                    "blob_sha": "d" * 40,
+                }
+            ],
+            "authority_snapshot_digest": "sha256:" + "e" * 64,
+            "owned_paths": ["src/confidential_module"],
+            "prohibited_paths": ["docs/private-evidence"],
+            "constraints": ["Confine every repository write to src/confidential_module."],
+            "acceptance_checks": ["Return bounded evidence for the assigned lane"],
+            "correlation": {
+                "correlation_id": "corr-antigravity", "source_event_id": "source",
+                "slack_thread_ts": None, "github_issue": None,
+                "github_pull_request": None,
+            },
+            "allowed_external_effects": [],
+        }
+
+    def test_antigravity_outbound_payload_leaks_no_project_authority(self):
+        work = self._antigravity_work()
+        native = {
+            "session_id": "antigravity-session",
+            "result": '{"outcome":"generic module skeleton","status":"SUCCEEDED"}',
+        }
+        completed = type(
+            "Completed", (),
+            {"returncode": 0, "stdout": json.dumps(native).encode(), "stderr": b""},
+        )()
+        with TemporaryDirectory() as directory:
+            transport = NativeCommandPacketTransport(
+                "antigravity",
+                ("agy.exe", "--print"),
+                cwd=directory,
+                prompt_mode="stdin",
+                payload_mode="antigravity-closed-directive",
+            )
+            with patch("subprocess.run", return_value=completed) as run:
+                result = transport.send(
+                    json.dumps(work).encode(), context=self._context()
+                )
+
+        sent = run.call_args.kwargs["input"].decode("utf-8")
+        # Nothing that identifies the project may cross the boundary.
+        for confidential in (
+            work["repository"],
+            work["project"],
+            work["starting_ref"],
+            work["authority_snapshot_digest"],
+            work["authority_snapshot"][0]["path"],
+            work["authority_snapshot"][0]["blob_sha"],
+            work["owned_paths"][0],
+            work["prohibited_paths"][0],
+            work["constraints"][0],
+            work["acceptance_checks"][0],
+            work["authority_base_ref"],
+        ):
+            self.assertNotIn(confidential, sent)
+        for allowed in (
+            work["objective"],
+            work["task_id"],
+            work["assignment_id"],
+            work["idempotency_key"],
+            work["correlation"]["correlation_id"],
+        ):
+            self.assertIn(allowed, sent)
+        self.assertIn(ANTIGRAVITY_CLOSED_PAYLOAD_SCHEMA, sent)
+        self.assertFalse(run.call_args.kwargs["shell"])
+        # The Director still rebinds the result to the full private packet.
+        self.assertEqual("antigravity", result["provider"])
+        self.assertEqual(work["authority_snapshot_digest"], result["authority_snapshot_digest"])
+        self.assertEqual("NOT_RUN", result["acceptance"][0]["status"])
+
+    def test_antigravity_payload_requires_a_bound_closed_directive(self):
+        work = self._antigravity_work()
+        work["objective"] = "Implement the owner's confidential change"
+
+        with self.assertRaisesRegex(RuntimeError, "bound closed directive"):
+            antigravity_closed_payload(work)
+
+        effectful = self._antigravity_work()
+        effectful["allowed_external_effects"] = ["OPEN_DRAFT_PULL_REQUEST"]
+        with self.assertRaisesRegex(RuntimeError, "cannot receive external effects"):
+            antigravity_closed_payload(effectful)
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "bound to the Antigravity lane"):
+                NativeCommandPacketTransport(
+                    "claude",
+                    ("claude.exe",),
+                    cwd=directory,
+                    payload_mode="antigravity-closed-directive",
+                )
+            with self.assertRaisesRegex(ValueError, "bound to the Antigravity lane"):
+                NativeCommandPacketTransport(
+                    "antigravity", ("agy.exe",), cwd=directory
+                )
+
     def test_openai_is_one_tool_free_bound_responses_call(self):
         work = self._work()
         response = Mock()
@@ -516,6 +632,17 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             self.assertNotIn(provider, transports)
         self.assertNotIn("microsoft-365-copilot", transports)
         self.assertFalse(observed["microsoft-365-copilot"].callable)
+
+        # Replacing the native Antigravity lane must not reopen the packet: the
+        # bridge lane carries the same closed-directive contract, and no other
+        # bridge lane is redacted.
+        antigravity = transports["antigravity"]
+        self.assertIs(antigravity.outbound_payload_builder, antigravity_closed_payload)
+        self.assertIsNotNone(antigravity.result_normalizer)
+        for provider in ("claude", "grok", "github-copilot"):
+            with self.subTest(provider=provider):
+                self.assertIsNone(transports[provider].outbound_payload_builder)
+                self.assertIsNone(transports[provider].result_normalizer)
 
     def test_bridge_configuration_without_signed_challenge_is_not_callable(self):
         with TemporaryDirectory() as directory, patch(
@@ -895,3 +1022,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

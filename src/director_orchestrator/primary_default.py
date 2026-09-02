@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -113,6 +114,7 @@ from .primary_parallel import (
     ParallelDispatchOutcome,
     ParallelDispatchPolicy,
     ParallelReservation,
+    PostgresParallelDispatch,
     ProviderAttemptReservation,
     deterministic_format_roster,
 )
@@ -160,12 +162,22 @@ def _execute_three_attempt_roster(
         try:
             result = dispatch_attempt(attempt)
         except BaseException:
+            # The ambiguous slot is durably terminal and is never redispatched.
+            # An already-authenticated earlier success is still the assignment
+            # result: discarding it would strand or re-bill completed paid work.
             record_attempt(
                 attempt,
                 ParallelAssignmentStatus.AMBIGUOUS,
                 None,
                 "provider_outcome_unknown",
             )
+            if successful_result is not None:
+                return (
+                    ParallelAssignmentStatus.SUCCEEDED,
+                    successful_result,
+                    successful_digest,
+                    "provider_result_authenticated",
+                )
             return (
                 ParallelAssignmentStatus.AMBIGUOUS,
                 None,
@@ -231,6 +243,189 @@ def _assignment_provider_lane(assignment: Assignment) -> str:
     return assignment.primary_provider_lane or _primary_provider_lane(assignment.agent)
 
 
+GITHUB_MARK_READY_EFFECT_KIND = "github_mark_ready"
+_SHA40 = re.compile(r"^[0-9a-f]{40}$")
+_GITHUB_EFFECT_TARGET = re.compile(
+    r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TypedExternalEffectGrant:
+    """The exact typed external effect the coordinator authorizes for one task.
+
+    The grant is built from Director configuration and already-verified
+    repository authority before dispatch, never from provider output. Owner
+    approval digests it, the work packet grants its kind, and the executed
+    intent must reproduce it coordinate for coordinate.
+    """
+
+    kind: str
+    system: str
+    action: str
+    repository: str
+    pull_number: int
+    base_sha: str
+    head_sha: str
+
+    def __post_init__(self) -> None:
+        if self.kind != GITHUB_MARK_READY_EFFECT_KIND:
+            raise ValueError("typed external effect grant kind is unsupported")
+        if not self.repository or self.repository.count("/") != 1:
+            raise ValueError("typed external effect grant repository is malformed")
+        if type(self.pull_number) is not int or self.pull_number < 1:
+            raise ValueError("typed external effect grant pull number is malformed")
+        for value in (self.base_sha, self.head_sha):
+            if _SHA40.fullmatch(value) is None:
+                raise ValueError("typed external effect grant SHA is malformed")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "system": self.system,
+            "action": self.action,
+            "repository": self.repository,
+            "pull_number": self.pull_number,
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+        }
+
+    @property
+    def target(self) -> dict[str, Any]:
+        return {
+            "repository": self.repository,
+            "pull_number": self.pull_number,
+            "head_sha": self.head_sha,
+            "base_sha": self.base_sha,
+        }
+
+    @property
+    def proposal_target(self) -> str:
+        return f"{self.repository}#{self.pull_number}"
+
+
+def typed_external_effect_grant_kinds(settings: Settings) -> tuple[str, ...]:
+    """Return the effect kinds the coordinator can grant under this config."""
+
+    if len(settings.repository_allowlist) != 1:
+        return ()
+    if int(settings.langgraph_primary_external_effect_pull_number) < 1:
+        return ()
+    return (GITHUB_MARK_READY_EFFECT_KIND,)
+
+
+def build_typed_external_effect_grant(
+    settings: Settings, authority: DefaultPrimaryAuthority
+) -> TypedExternalEffectGrant | None:
+    """Build the coordinator's exact typed grant, or none when unconfigured."""
+
+    if not typed_external_effect_grant_kinds(settings):
+        return None
+    pull_number = int(settings.langgraph_primary_external_effect_pull_number)
+    repository = settings.repository_allowlist[0].removesuffix(".git").strip("/")
+    if _SHA40.fullmatch(authority.starting_sha) is None:
+        return None
+    return TypedExternalEffectGrant(
+        kind=GITHUB_MARK_READY_EFFECT_KIND,
+        system="github",
+        action=GITHUB_MARK_READY,
+        repository=repository,
+        pull_number=pull_number,
+        # The Director-verified head is the only revision a live mark-ready may
+        # touch. A provider-produced candidate that differs fails closed below.
+        base_sha=authority.starting_sha,
+        head_sha=authority.starting_sha,
+    )
+
+
+def _terminal_review_assignment(record: TaskRecord) -> Assignment | None:
+    """Return the plan's exact terminal review barrier, or nothing.
+
+    The barrier is identified structurally - the highest-sequence independent
+    review that depends on every other plan member - never by provider lane. A
+    reviewer deliberately reuses a first-wave lane, so lane equality can select
+    the producer's packets instead of the review's artifacts.
+    """
+
+    plan = record.plan
+    if plan is None or not plan.assignments:
+        return None
+    review = max(plan.assignments, key=lambda item: item.sequence)
+    if review.kind is not AssignmentKind.INDEPENDENT_REVIEW:
+        return None
+    remaining = {
+        item.sequence for item in plan.assignments if item.sequence != review.sequence
+    }
+    if set(review.depends_on) != remaining:
+        return None
+    return review
+
+
+def _typed_effect_binding(
+    *,
+    grant: TypedExternalEffectGrant | None,
+    record: TaskRecord,
+    context: HandlerContext,
+    granted_kinds: frozenset[str],
+    effect: Mapping[str, Any],
+) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+    """Bind one proposal to the coordinator's exact typed grant.
+
+    The proposal selects nothing but *which* granted effect is requested. Its
+    kind must be granted by the work packet, and its target must match the
+    Director-owned grant exactly; every mutation coordinate is then taken from
+    the grant, so a redirected repository, pull request, base or head cannot
+    reach the gateway.
+    """
+
+    kind = str(effect.get("kind", ""))
+    target_text = str(effect.get("target", ""))
+    if kind not in granted_kinds:
+        raise RuntimeError("external effect kind is not granted by the work packet")
+    if kind == "slack_post":
+        if target_text != record.intake.channel_id:
+            raise RuntimeError("Slack effect target changed")
+        return (
+            "slack",
+            SLACK_POST_MESSAGE,
+            {
+                "channel": record.intake.channel_id,
+                "thread_ts": record.intake.thread_ts,
+            },
+            {
+                "text": (
+                    f"Director task {context.task_id} completed at "
+                    f"{context.candidate_sha}."
+                )
+            },
+        )
+    if kind == GITHUB_MARK_READY_EFFECT_KIND:
+        if grant is None:
+            raise RuntimeError(
+                "GitHub effect requires one allowlisted repository and a "
+                "configured positive pull request"
+            )
+        match = _GITHUB_EFFECT_TARGET.fullmatch(target_text)
+        if match is None:
+            raise RuntimeError("GitHub effect target is malformed")
+        if match.group(1).removesuffix(".git").lower() != grant.repository.lower():
+            raise RuntimeError(
+                "GitHub effect target is outside the repository allowlist"
+            )
+        if int(match.group(2)) != grant.pull_number:
+            raise RuntimeError(
+                "GitHub effect target is not the configured pull request"
+            )
+        # The authenticated candidate must be the exact revision the owner
+        # approved. A different head is a different mutation, not this one.
+        if context.candidate_sha != grant.head_sha or (
+            context.starting_sha != grant.base_sha
+        ):
+            raise RuntimeError("GitHub effect head or base is outside Director authority")
+        return ("github", GITHUB_MARK_READY, grant.target, {})
+    raise RuntimeError("external effect action is unsupported")
+
+
 def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
     """Expand one normalized preview into an all-lane wave and one review barrier."""
 
@@ -247,6 +442,16 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
         )
     if len(required) + 1 > 20:
         raise RuntimeError("live primary provider roster exceeds the bounded plan size")
+    # The paid-off preview always declares a zero cost. A live wave must carry a
+    # trusted positive per-lane limit derived from the configured task budget so
+    # the packet, the dispatcher and the transport all enforce the same ceiling.
+    assignment_count = len(required) + 1
+    task_budget_usd = float(settings.max_task_budget_usd)
+    lane_budget_usd = task_budget_usd / assignment_count
+    if task_budget_usd <= 0.0 or lane_budget_usd <= 0.0:
+        raise RuntimeError(
+            "live primary dispatch requires a positive configured task budget"
+        )
 
     plan = record.plan
     work_template = min(plan.assignments, key=lambda item: item.sequence)
@@ -297,6 +502,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
                     "requires_approval": is_research,
                     "allow_draft_pr": False,
                     "retry_limit": 3,
+                    "estimated_cost_usd": lane_budget_usd,
                 }
             )
         )
@@ -321,6 +527,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
             "requires_approval": False,
             "allow_draft_pr": False,
             "retry_limit": 3,
+            "estimated_cost_usd": lane_budget_usd,
         }
     )
     record.plan = plan.model_copy(update={"assignments": [*first_wave, review]})
@@ -431,6 +638,98 @@ class DefaultPrimaryLiveDependencies:
         for name, dependency in required_callables.items():
             if not callable(dependency):
                 raise ValueError(f"live primary {name} is unavailable")
+
+
+def build_primary_packet_result_resolver(
+    *,
+    handle: PostgresCheckpointHandle,
+    services: "DefaultDryRunServices",
+    parallel: Any | None = None,
+) -> PacketResultResolver:
+    """Resolve the exact terminal review packet the graph aggregate stands for.
+
+    The live graph resumes its single provider edge with the parallel ledger's
+    ``aggregate_digest``, while every packet artifact carries its own individual
+    digest. This resolver therefore verifies the aggregate the graph is carrying,
+    then reads the terminal review assignment's exact identifier and result
+    digest out of that same durable aggregate map. The pair it returns - review
+    assignment ID and review result digest - is what evidence, acceptance and
+    effects all consume, so nothing downstream can fall back to a producer that
+    merely reuses the reviewer's provider lane.
+    """
+
+    dispatch = parallel if parallel is not None else PostgresParallelDispatch(
+        handle.claim_store
+    )
+
+    def packet_result(context: HandlerContext) -> PacketResultBinding | None:
+        record = services._record(context.task_id)
+        if context.provider_result_digest is None:
+            return None
+        review = _terminal_review_assignment(record)
+        if review is None:
+            return None
+        assignment_id = services._packet_router._assignment_id(record, review)
+        try:
+            aggregate = dispatch.aggregate(context.task_id)
+        except Exception:
+            return None
+        graph_result_digest: str | None = None
+        review_result_digest = aggregate.result_digests.get(assignment_id)
+        if aggregate.aggregate_digest == context.provider_result_digest:
+            # The parallel wave: the graph carries the aggregate, and the exact
+            # review result digest comes from that same durable map.
+            if (
+                not aggregate.terminal
+                or aggregate.ambiguous_slot_count
+                or aggregate.statuses.get(assignment_id) != "SUCCEEDED"
+                or not review_result_digest
+            ):
+                return None
+            graph_result_digest = aggregate.aggregate_digest
+        elif review_result_digest == context.provider_result_digest:
+            # The single-assignment edge: the graph already carries the exact
+            # review result digest.
+            graph_result_digest = review_result_digest
+        else:
+            return None
+        work = handle.claim_store.read_work_packet_artifact(
+            task_id=context.task_id, assignment_id=assignment_id
+        )
+        result = handle.claim_store.read_result_packet_artifact(
+            task_id=context.task_id, assignment_id=assignment_id
+        )
+        if work is None or result is None:
+            return None
+        if (
+            str(work.packet.get("assignment_id")) != assignment_id
+            or str(result.packet.get("assignment_id")) != assignment_id
+            or result.document_digest != review_result_digest
+        ):
+            return None
+        packet = dict(result.packet)
+        status = (
+            RuntimeExecutionStatus.COMPLETED
+            if packet.get("status") == "SUCCEEDED"
+            else RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
+            if packet.get("status") == "OWNER_DECISION_REQUIRED"
+            else RuntimeExecutionStatus.REJECTED
+        )
+        return PacketResultBinding(
+            record=record,
+            assignment=review,
+            work_packet=dict(work.packet),
+            outcome=RuntimeExecutionOutcome(
+                status=status,
+                reason="authenticated_primary_result_artifact",
+                result_packet=packet,
+                result_packet_digest=result.document_digest,
+            ),
+            assignment_id=assignment_id,
+            graph_result_digest=graph_result_digest,
+        )
+
+    return packet_result
 
 
 def build_automatic_primary_live_dependencies(
@@ -547,53 +846,15 @@ def build_automatic_primary_live_dependencies(
             raise RuntimeError("authenticated result does not bind one exact candidate SHA")
         return next(iter(candidates))
 
-    def packet_result(context: HandlerContext) -> PacketResultBinding | None:
-        record = services._record(context.task_id)
-        if record.plan is None or context.scheduled_producer_id is None:
-            return None
-        assignment = next(
-            (
-                item for item in record.plan.assignments
-                if _assignment_provider_lane(item) == context.scheduled_producer_id
-            ),
-            None,
-        )
-        if assignment is None:
-            return None
-        assignment_id = services._packet_router._assignment_id(record, assignment)
-        work = handle.claim_store.read_work_packet_artifact(
-            task_id=context.task_id, assignment_id=assignment_id
-        )
-        result = handle.claim_store.read_result_packet_artifact(
-            task_id=context.task_id, assignment_id=assignment_id
-        )
-        if work is None or result is None:
-            return None
-        packet = dict(result.packet)
-        status = (
-            RuntimeExecutionStatus.COMPLETED
-            if packet.get("status") == "SUCCEEDED"
-            else RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
-            if packet.get("status") == "OWNER_DECISION_REQUIRED"
-            else RuntimeExecutionStatus.REJECTED
-        )
-        return PacketResultBinding(
-            record=record,
-            assignment=assignment,
-            work_packet=dict(work.packet),
-            outcome=RuntimeExecutionOutcome(
-                status=status,
-                reason="authenticated_primary_result_artifact",
-                result_packet=packet,
-                result_packet_digest=result.document_digest,
-            ),
-        )
+    packet_result = build_primary_packet_result_resolver(
+        handle=handle, services=services
+    )
 
     def authenticated_result(context: HandlerContext) -> Mapping[str, Any] | None:
         binding = packet_result(context)
         if binding is None or binding.outcome.result_packet is None:
             return None
-        if binding.outcome.result_packet_digest != context.provider_result_digest:
+        if binding.expected_context_digest != context.provider_result_digest:
             return None
         return binding.outcome.result_packet
 
@@ -844,6 +1105,7 @@ class DefaultDryRunServices:
                     or "default-plan-packet-binding-only"
                 ),
                 timeout_seconds=settings.provider_timeout_seconds,
+                typed_effect_grant_kinds=typed_external_effect_grant_kinds(settings),
             )
         self._packet_router = packet_router
         self._records: dict[str, TaskRecord] = {}
@@ -1164,6 +1426,9 @@ class DefaultPrimaryApplication:
         self.coordinator = coordinator
         self.services = services
         self.authority = authority
+        # The coordinator's exact typed external-effect grant, created from
+        # configuration and verified repository authority before any dispatch.
+        self.effect_grant = build_typed_external_effect_grant(settings, authority)
         self._parallel_dispatcher = parallel_dispatcher
 
     def _parallel_policy(self) -> ParallelDispatchPolicy:
@@ -1334,6 +1599,14 @@ class DefaultPrimaryApplication:
                         "task_id": task_id,
                         "plan": record.plan.model_dump(mode="json"),
                         "effect": "authorized_assignment_effect",
+                        # Owner approval digests the exact typed grant: kind,
+                        # repository, configured pull request, base and head. A
+                        # different grant is a different approval identity.
+                        "effect_grant": (
+                            None
+                            if self.effect_grant is None
+                            else self.effect_grant.as_dict()
+                        ),
                     }
                 )
                 if effect_units > 0
@@ -1618,6 +1891,7 @@ class DefaultPrimaryActivation:
                 "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED is disabled"
             )
         authority = resolve_default_primary_authority(settings)
+        effect_grant = build_typed_external_effect_grant(settings, authority)
         from .completion_proof import CompletionAuthorityVerifier
 
         completion_secrets = (
@@ -1708,49 +1982,47 @@ class DefaultPrimaryActivation:
                             )
                         item = proposed[0]
                         kind = str(item.get("kind", ""))
-                        target_text = str(item.get("target", ""))
-                        if kind == "slack_post":
-                            record = services._record(context.task_id)
-                            if target_text != record.intake.channel_id:
-                                raise RuntimeError("Slack effect target changed")
-                            system, action = "slack", SLACK_POST_MESSAGE
-                            target: Mapping[str, Any] = {
-                                "channel": record.intake.channel_id,
-                                "thread_ts": record.intake.thread_ts,
-                            }
-                            payload: Mapping[str, Any] = {
-                                "text": (
-                                    f"Director task {context.task_id} completed at "
-                                    f"{context.candidate_sha}."
-                                )
-                            }
-                        elif kind == "github_mark_ready":
-                            match = re.fullmatch(
-                                r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)",
-                                target_text,
+                        if binding is None:
+                            raise RuntimeError(
+                                "external effect lacks its authenticated work packet"
                             )
-                            if match is None:
-                                raise RuntimeError("GitHub effect target is malformed")
-                            system, action = "github", GITHUB_MARK_READY
-                            target = {
-                                "repository": match.group(1),
-                                "pull_number": int(match.group(2)),
-                                "head_sha": context.candidate_sha,
-                                "base_sha": context.starting_sha,
-                            }
-                            payload = {}
-                        else:
-                            raise RuntimeError("external effect action is unsupported")
+                        system, action, target, payload = _typed_effect_binding(
+                            grant=effect_grant,
+                            record=services._record(context.task_id),
+                            context=context,
+                            granted_kinds=frozenset(
+                                str(value)
+                                for value in binding.work_packet.get(
+                                    "allowed_external_effects", []
+                                )
+                            ),
+                            effect=item,
+                        )
                         approval = intent_store.approval_binding(
                             task_id=context.task_id,
                             effect_key_digest=reservation.effect_key_digest,
                         )
+                        # The exact kind and target are bound into the durable
+                        # intent identity together with the signed owner
+                        # approval, so a redirected repository, pull request,
+                        # base or head cannot reuse this approved reservation.
                         stable_key = _digest(
                             {
                                 "provider_idempotency_key": item.get("idempotency_key"),
                                 "effect_key_digest": reservation.effect_key_digest,
                                 "system": system,
                                 "action": action,
+                                "kind": kind,
+                                "target": dict(target),
+                                "effect_grant": (
+                                    None if effect_grant is None else effect_grant.as_dict()
+                                ),
+                                "approval_receipt_digest": str(
+                                    approval["approval_receipt_digest"]
+                                ),
+                                "authorization_nonce_digest": str(
+                                    approval["authorization_nonce_digest"]
+                                ),
                             }
                         )
                         return TypedEffectIntent(
@@ -1944,6 +2216,23 @@ class DefaultPrimaryActivation:
                         services._packet_router.planned_work_packet(record, assignment),
                     )
                     packet_digest = document_digest(packet)
+                    # A live lane needs a trusted positive per-lane and
+                    # per-attempt limit bounded by the configured task budget
+                    # before any attempt reservation or paid provider call.
+                    limits = packet["limits"]
+                    assignment_budget_usd = float(limits["budget_usd"])
+                    attempt_budget_usd = assignment_budget_usd / 3.0
+                    if (
+                        assignment_budget_usd <= 0.0
+                        or attempt_budget_usd <= 0.0
+                        or assignment_budget_usd
+                        > float(settings.max_task_budget_usd)
+                    ):
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED,
+                            None,
+                            "live_lane_budget_unauthorized",
+                        )
                     writer = handle.claim_store.current_task_writer(record.task_id)
                     if (
                         writer is None
@@ -1961,15 +2250,13 @@ class DefaultPrimaryActivation:
                     )
                     if artifact.document_digest != packet_digest:
                         raise RuntimeError("parallel work-packet persistence changed")
-                    limits = packet["limits"]
                     format_roster = live_dependencies.format_roster(provider)
-                    attempt_budget_usd = float(limits["budget_usd"]) / 3.0
                     attempt_timeout_seconds = max(
                         1, int(limits["timeout_seconds"]) // 3
                     )
                     budget_evidence_digest = _digest(
                         {
-                            "assignment_budget_usd": float(limits["budget_usd"]),
+                            "assignment_budget_usd": assignment_budget_usd,
                             "assignment_timeout_seconds": int(limits["timeout_seconds"]),
                             "attempt_budget_usd": attempt_budget_usd,
                             "attempt_timeout_seconds": attempt_timeout_seconds,
@@ -2275,3 +2562,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
