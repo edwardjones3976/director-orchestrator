@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -90,6 +91,7 @@ from .packet_contracts import (
 from .completion_gates import VerifiedGateLedger, VerifiedGateResult, domain_digest
 
 if TYPE_CHECKING:
+    from .completion_proof import CompletionAuthorityVerifier
     from .primary_completion import CompletionEvidence
 from .provider_activation import (
     ACTIVATION_EVIDENCE_VERSION,
@@ -722,6 +724,7 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_completion_evidence (
             task_id text PRIMARY KEY
                 REFERENCES {schema}.director_primary_task_writer (task_id),
+            command_id text NOT NULL,
             candidate_sha text NOT NULL CHECK (candidate_sha ~ '^[0-9a-f]{{40}}$'),
             provider_result_digest text NOT NULL CHECK (
                 provider_result_digest ~ '^sha256:[0-9a-f]{{64}}$'
@@ -750,6 +753,14 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         f"""
         ALTER TABLE {schema}.director_primary_completion_evidence
         ALTER COLUMN canonical_authorities DROP DEFAULT
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_completion_evidence
+        ADD COLUMN IF NOT EXISTS command_id text NOT NULL DEFAULT ''
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_completion_evidence
+        ALTER COLUMN command_id DROP DEFAULT
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_claim (
@@ -1485,7 +1496,8 @@ def _result_packet_artifact_from_row(
 
 def _completion_evidence_payload(
     evidence: "CompletionEvidence", *, task_id: str, candidate_sha: str,
-    provider_result_digest: str,
+    provider_result_digest: str, verifier: "CompletionAuthorityVerifier",
+    enforce_freshness: bool = True,
 ) -> tuple[str, str, str, str, str]:
     ledger = dict(evidence.ledger.document)
     if (
@@ -1519,65 +1531,24 @@ def _completion_evidence_payload(
     gate_ids = {str(item.get("gate_id")) for item in results}
     if evidence.ci_gate_id not in gate_ids or evidence.security_gate_id not in gate_ids:
         raise PostgresControlPlaneError("completion CI/security gate evidence is missing")
-    from .primary_commands import CompletionAuthorityProof
-
-    authorities = dict(evidence.authority_proofs)
-    required_authorities = {"independent_review", "ci", "security"}
-    if set(authorities) != required_authorities:
-        raise PostgresControlPlaneError(
-            "completion evidence requires three authority proofs"
+    try:
+        verified = verifier.verify_evidence(
+            evidence,
+            task_id=task_id,
+            candidate_sha=candidate_sha,
+            provider_result_digest=provider_result_digest,
+            enforce_freshness=enforce_freshness,
         )
-    validated_authorities: dict[str, dict[str, Any]] = {}
-    issuers: set[str] = set()
-    principals: set[str] = set()
-    for authority in sorted(required_authorities):
-        try:
-            proof = CompletionAuthorityProof.model_validate(authorities[authority])
-        except Exception as exc:
-            raise PostgresControlPlaneError(
-                f"completion {authority} authority proof is invalid"
-            ) from exc
-        if proof.authority != authority:
-            raise PostgresControlPlaneError(
-                "completion authority proof role binding is invalid"
-            )
-        if authority == "independent_review":
-            selected = [
-                item for item in results
-                if item.get("evidence_role") == "INDEPENDENT_REVIEWER"
-            ]
-        elif authority == "ci":
-            selected = [
-                item for item in results
-                if item.get("gate_id") == evidence.ci_gate_id
-                and item.get("evidence_role") == "TRUSTED_EXTERNAL_CI"
-            ]
-        else:
-            selected = [
-                item for item in results
-                if item.get("gate_id") == evidence.security_gate_id
-                and item.get("evidence_role") == "CODEX_SECURITY"
-            ]
-        actor = selected[0].get("evidence_actor") if len(selected) == 1 else None
-        principal = (
-            actor.get("authenticated_principal")
-            if isinstance(actor, Mapping)
-            else None
-        )
-        if principal != proof.principal_id:
-            raise PostgresControlPlaneError(
-                f"completion {authority} authority principal binding is invalid"
-            )
-        issuers.add(proof.issuer_id)
-        principals.add(proof.principal_id)
-        validated_authorities[authority] = proof.model_dump(mode="json")
-    if len(issuers) != 3 or len(principals) != 3:
-        raise PostgresControlPlaneError(
-            "completion evidence authorities are not distinct"
-        )
+    except Exception as exc:
+        raise PostgresControlPlaneError("completion authority proof verification failed") from exc
+    validated_authorities = {
+        authority: proof.model_dump(mode="json")
+        for authority, proof in verified.items()
+    }
     canonical_authorities = canonical_json_bytes(validated_authorities).decode("utf-8")
     payload = {
         "task_id": task_id,
+        "command_id": evidence.command_id,
         "candidate_sha": candidate_sha,
         "provider_result_digest": provider_result_digest,
         "ledger_digest": calculated_ledger,
@@ -1597,6 +1568,8 @@ def _completion_evidence_payload(
 
 def _completion_evidence_artifact_from_row(
     row: Mapping[str, Any],
+    *,
+    verifier: "CompletionAuthorityVerifier",
 ) -> PrimaryCompletionEvidenceArtifact:
     task_id = str(row["task_id"])
     candidate_sha = str(row["candidate_sha"])
@@ -1623,11 +1596,12 @@ def _completion_evidence_artifact_from_row(
     from .primary_completion import CompletionEvidence
 
     evidence = CompletionEvidence(
-        ledger,
-        results,
-        str(row["ci_gate_id"]),
-        str(row["security_gate_id"]),
-        authority_documents,
+        ledger=ledger,
+        results=results,
+        ci_gate_id=str(row["ci_gate_id"]),
+        security_gate_id=str(row["security_gate_id"]),
+        command_id=str(row["command_id"]),
+        authority_proofs=authority_documents,
     )
     (
         canonical_ledger,
@@ -1638,7 +1612,8 @@ def _completion_evidence_artifact_from_row(
     ) = (
         _completion_evidence_payload(
             evidence, task_id=task_id, candidate_sha=candidate_sha,
-            provider_result_digest=provider_result_digest,
+            provider_result_digest=provider_result_digest, verifier=verifier,
+            enforce_freshness=False,
         )
     )
     if (
@@ -1720,6 +1695,9 @@ class PostgresConditionalClaimStore:
     storage_identity: str = ""
     database_instance_id: str = ""
     _store_provenance: object = field(repr=False, default=None)
+    _completion_authority_verifier: "CompletionAuthorityVerifier | None" = field(
+        repr=False, default=None
+    )
 
     def __post_init__(self) -> None:
         if self._store_provenance is not _FACTORY_PROVENANCE:
@@ -1738,6 +1716,14 @@ class PostgresConditionalClaimStore:
         """
 
         return self._store_provenance is _FACTORY_PROVENANCE
+
+    def _require_completion_authority_verifier(self) -> "CompletionAuthorityVerifier":
+        verifier = self._completion_authority_verifier
+        if verifier is None:
+            raise PostgresControlPlaneError(
+                "completion authority verifier is not configured"
+            )
+        return verifier
 
     # -- task ownership ---------------------------------------------------
 
@@ -3371,6 +3357,7 @@ class PostgresConditionalClaimStore:
         if re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None:
             raise PostgresControlPlaneError("candidate_sha must be an exact lowercase SHA")
         generation = _require_generation(fencing_generation, "fencing_generation", minimum=1)
+        verifier = self._require_completion_authority_verifier()
         (
             ledger_json,
             results_json,
@@ -3380,11 +3367,12 @@ class PostgresConditionalClaimStore:
         ) = (
             _completion_evidence_payload(
                 evidence, task_id=task_id, candidate_sha=candidate_sha,
-                provider_result_digest=provider_result_digest,
+                provider_result_digest=provider_result_digest, verifier=verifier,
             )
         )
         parameters = {
             "task_id": task_id, "candidate_sha": candidate_sha,
+            "command_id": evidence.command_id,
             "provider_result_digest": provider_result_digest,
             "ledger_digest": ledger_digest, "evidence_digest": evidence_digest,
             "canonical_ledger": ledger_json, "canonical_results": results_json,
@@ -3394,7 +3382,7 @@ class PostgresConditionalClaimStore:
             "owner_token": owner_token, "generation": generation,
         }
         columns = (
-            "task_id, candidate_sha, provider_result_digest, ledger_digest, "
+            "task_id, command_id, candidate_sha, provider_result_digest, ledger_digest, "
             "evidence_digest, canonical_ledger, canonical_results, "
             "canonical_authorities, ci_gate_id, "
             "security_gate_id, writer_fencing_generation"
@@ -3424,7 +3412,7 @@ class PostgresConditionalClaimStore:
                     parameters,
                 )
                 if existing is not None:
-                    artifact = _completion_evidence_artifact_from_row(existing)
+                    artifact = _completion_evidence_artifact_from_row(existing, verifier=verifier)
                     if artifact.evidence_digest != evidence_digest:
                         raise PostgresControlPlaneError(
                             "completion evidence identity was replayed with different content"
@@ -3434,7 +3422,7 @@ class PostgresConditionalClaimStore:
                     connection,
                     f"""INSERT INTO {self._schema}.director_primary_completion_evidence
                         ({columns})
-                        SELECT writer.task_id, %(candidate_sha)s, %(provider_result_digest)s,
+                        SELECT writer.task_id, %(command_id)s, %(candidate_sha)s, %(provider_result_digest)s,
                                %(ledger_digest)s, %(evidence_digest)s, %(canonical_ledger)s,
                                %(canonical_results)s, %(canonical_authorities)s,
                                %(ci_gate_id)s, %(security_gate_id)s,
@@ -3451,14 +3439,15 @@ class PostgresConditionalClaimStore:
                     raise PostgresControlPlaneError(
                         "completion evidence insert lost its immutable identity race"
                     )
-        return _completion_evidence_artifact_from_row(row)
+        return _completion_evidence_artifact_from_row(row, verifier=verifier)
 
     def read_completion_evidence(
         self, *, task_id: str
     ) -> PrimaryCompletionEvidenceArtifact | None:
         _require_id(task_id, "task_id")
+        verifier = self._require_completion_authority_verifier()
         columns = (
-            "task_id, candidate_sha, provider_result_digest, ledger_digest, "
+            "task_id, command_id, candidate_sha, provider_result_digest, ledger_digest, "
             "evidence_digest, canonical_ledger, canonical_results, "
             "canonical_authorities, ci_gate_id, "
             "security_gate_id, writer_fencing_generation"
@@ -3469,7 +3458,9 @@ class PostgresConditionalClaimStore:
                 f"SELECT {columns} FROM {self._schema}.director_primary_completion_evidence WHERE task_id=%(task_id)s",
                 {"task_id": task_id},
             )
-        return None if row is None else _completion_evidence_artifact_from_row(row)
+        return None if row is None else _completion_evidence_artifact_from_row(
+            row, verifier=verifier
+        )
 
     def read_result_packet_artifact(
         self, *, task_id: str, assignment_id: str
@@ -4736,6 +4727,7 @@ def open_postgres_control_plane(
     schema: str = DEFAULT_CONTROL_PLANE_SCHEMA,
     bounds: PostgresPoolBounds | None = None,
     allow_insecure_local_transport: bool = False,
+    completion_authority_verifier: "CompletionAuthorityVerifier | None" = None,
 ) -> PostgresCheckpointHandle:
     """Open, bound, and initialize the strict production Postgres control plane.
 
@@ -4791,6 +4783,7 @@ def open_postgres_control_plane(
             storage_identity=identity,
             database_instance_id=database_instance_id,
             _store_provenance=_FACTORY_PROVENANCE,
+            _completion_authority_verifier=completion_authority_verifier,
         )
     except Exception:
         pool.close()
@@ -4837,3 +4830,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]

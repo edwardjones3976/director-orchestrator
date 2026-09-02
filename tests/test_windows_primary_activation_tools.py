@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
@@ -71,6 +72,14 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("Pull request head does not match the exact activation candidate", text)
         self.assertIn("The pull request author cannot self-accept", text)
         self.assertIn("Invoke-Evidence -Command record -Stage ACCEPTED", text)
+        self.assertIn("Assert-CanonicalAcceptanceArtifact", text)
+        self.assertIn('[string]$artifact.version -cne "director-primary-acceptance-artifact/v1"', text)
+        self.assertIn("Accept requires -AcceptanceArtifactPath from the independent evidence issuers", text)
+        self.assertIn("-AcceptanceArtifactPath $verifiedArtifactPath", text)
+        self.assertIn('"--acceptance-artifact", "/run/director-acceptance.json"', text)
+        self.assertNotIn("-Stage ACCEPTED -EvidenceDigest", text)
+        self.assertNotIn("HMACSHA256", text)
+        self.assertNotIn("New-TemporaryFile", text)
         # Free-form comments and quoted markers are not review authority. Only an
         # exact canonical JSON body on an APPROVED trusted review can match.
         github_view = text[text.index("gh pr view") : text.index("$pull =", text.index("gh pr view"))]
@@ -112,3 +121,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]

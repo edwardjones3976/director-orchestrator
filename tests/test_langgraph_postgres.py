@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
@@ -103,7 +104,11 @@ from director_orchestrator.completion_gates import (
     domain_digest,
 )
 from director_orchestrator.primary_completion import CompletionEvidence
-from director_orchestrator.primary_commands import CompletionAuthorityProof
+from director_orchestrator.completion_proof import (
+    CompletionAuthorityVerifier,
+    build_completion_authority_proof,
+)
+from director_orchestrator.primary_commands import CompletionEvidenceRequest
 
 TEST_DSN_VARIABLE = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 
@@ -120,6 +125,14 @@ DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
 DIGEST_C = "sha256:" + "c" * 64
 DIGEST_D = "sha256:" + "d" * 64
+REVIEW_SECRET = "review-" + "r" * 40
+CI_SECRET = "ci-" + "c" * 40
+SECURITY_SECRET = "security-" + "s" * 40
+COMPLETION_VERIFIER = CompletionAuthorityVerifier(
+    independent_review_secret=REVIEW_SECRET,
+    ci_secret=CI_SECRET,
+    security_secret=SECURITY_SECRET,
+)
 
 
 def _durable_completion_evidence(task_id: str, candidate_sha: str, result_digest: str):
@@ -151,25 +164,43 @@ def _durable_completion_evidence(task_id: str, candidate_sha: str, result_digest
         }
         document["result_digest"] = domain_digest("director-gate-result/v1", document)
         results.append(VerifiedGateResult(document, document["result_digest"]))
-    authorities = {
-        authority: CompletionAuthorityProof(
+    request = CompletionEvidenceRequest(
+        task_id=task_id,
+        command_id=f"completion-{task_id}",
+        actor_id="completion-ingress",
+        expected_projection_digest=DIGEST_A,
+        expected_fencing_generation=1,
+        candidate_sha=candidate_sha,
+        provider_result_digest=result_digest,
+        ledger=ledger,
+        results=tuple(item.document for item in results),
+        ci_gate_id="ci",
+        security_gate_id="security",
+    )
+    issued_at = int(datetime.now(timezone.utc).timestamp())
+    proofs = {}
+    for authority, principal, secret in (
+        ("independent_review", "review-principal", REVIEW_SECRET),
+        ("ci", "ci-principal", CI_SECRET),
+        ("security", "security-principal", SECURITY_SECRET),
+    ):
+        proofs[authority] = build_completion_authority_proof(
+            secret,
+            "",
+            request,
             authority=authority,
             issuer_id=f"{authority}-issuer",
             principal_id=principal,
-            issued_at=2_000_000_000,
-            nonce=(authority[0] * 32),
-            signature=(signature * 64),
-        ).model_dump(mode="json")
-        for authority, principal, signature in (
-            ("independent_review", "review-principal", "1"),
-            ("ci", "ci-principal", "2"),
-            ("security", "security-principal", "3"),
+            issued_at=issued_at,
+            nonce=authority[0] * 32,
         )
-    }
-    return CompletionEvidence(
-        VerifiedGateLedger(ledger, ledger["ledger_digest"]),
-        tuple(results), "ci", "security", authorities,
-    )
+    return request.model_copy(
+        update={
+            "independent_review_authority_proof": proofs["independent_review"],
+            "ci_authority_proof": proofs["ci"],
+            "security_authority_proof": proofs["security"],
+        }
+    ).to_evidence()
 
 
 def _work_packet(
@@ -359,6 +390,7 @@ def _store(rows: list[object]) -> tuple[PostgresConditionalClaimStore, _Connecti
         # The fabrication tests prove this sentinel is unreachable by accident;
         # a behavioural test needs a genuinely provenance-checked store.
         _store_provenance=langgraph_postgres._FACTORY_PROVENANCE,
+        _completion_authority_verifier=COMPLETION_VERIFIER,
     )
     return store, connection
 
@@ -1625,6 +1657,26 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
         self.pools: list[_Pool] = []
         self.metadata: dict[str, object] = {}
 
+    def test_completion_placeholder_signature_is_rejected_before_persistence(self):
+        store, connection = _store([])
+        evidence = _durable_completion_evidence("task-proof", "c" * 40, DIGEST_B)
+        authorities = dict(evidence.authority_proofs)
+        authorities["ci"] = {**authorities["ci"], "signature": "0" * 64}
+        placeholder = dataclasses.replace(evidence, authority_proofs=authorities)
+
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "proof verification failed"
+        ):
+            store.record_completion_evidence(
+                task_id="task-proof",
+                candidate_sha="c" * 40,
+                provider_result_digest=DIGEST_B,
+                evidence=placeholder,
+                owner_token="completion-writer",
+                fencing_generation=1,
+            )
+        self.assertEqual([], connection.executed)
+
     def dependencies(self, *, serializer_type: type | None = None):
         state = self.metadata
 
@@ -2203,6 +2255,7 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
             schema=cls.schema,
             bounds=PostgresPoolBounds(min_size=1, max_size=6),
             allow_insecure_local_transport=True,
+            completion_authority_verifier=COMPLETION_VERIFIER,
         )
         cls.store = cls.handle.claim_store
 
@@ -2236,6 +2289,7 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
             _TEST_DSN,
             schema=self.schema,
             allow_insecure_local_transport=True,
+            completion_authority_verifier=COMPLETION_VERIFIER,
         )
         self.addCleanup(handle.close)
         return handle.claim_store
@@ -2632,7 +2686,7 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         self.assertEqual(recorded, restarted)
         with self.handle.pool.connection() as connection:
             row = connection.execute(
-                f"SELECT task_id, candidate_sha, provider_result_digest, "
+                f"SELECT task_id, command_id, candidate_sha, provider_result_digest, "
                 f"ledger_digest, evidence_digest, canonical_ledger, "
                 f"canonical_results, canonical_authorities, ci_gate_id, "
                 f"security_gate_id, writer_fencing_generation FROM "
@@ -2642,16 +2696,16 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
             ).fetchone()
         tampered_row = dict(row)
         tampered_authorities = json.loads(tampered_row["canonical_authorities"])
-        tampered_authorities["security"]["issuer_id"] = (
-            tampered_authorities["ci"]["issuer_id"]
-        )
+        tampered_authorities["security"]["signature"] = "4" * 64
         tampered_row["canonical_authorities"] = json.dumps(
             tampered_authorities, sort_keys=True, separators=(",", ":")
         )
         with self.assertRaisesRegex(
-            PostgresControlPlaneError, "authorities are not distinct"
+            PostgresControlPlaneError, "proof verification failed"
         ):
-            _completion_evidence_artifact_from_row(tampered_row)
+            _completion_evidence_artifact_from_row(
+                tampered_row, verifier=COMPLETION_VERIFIER
+            )
         changed = _durable_completion_evidence(
             self.task_id, candidate_sha, DIGEST_B
         )
@@ -2661,13 +2715,14 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
             "signature": "4" * 64,
         }
         changed = CompletionEvidence(
-            changed.ledger,
-            changed.results,
-            "ci",
-            "security",
-            changed_authorities,
+            ledger=changed.ledger,
+            results=changed.results,
+            ci_gate_id="ci",
+            security_gate_id="security",
+            command_id=changed.command_id,
+            authority_proofs=changed_authorities,
         )
-        with self.assertRaisesRegex(PostgresControlPlaneError, "different content"):
+        with self.assertRaisesRegex(PostgresControlPlaneError, "proof verification failed"):
             self.store.record_completion_evidence(
                 task_id=self.task_id,
                 candidate_sha=candidate_sha,
@@ -3435,3 +3490,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -15,6 +16,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ComposeProject,
     [Parameter(Mandatory = $true)][ValidateRange(1024, 65535)][int]$HostPort,
     [string]$BackupPath,
+    [string]$AcceptanceArtifactPath,
     [string]$GitHubRepository,
     [ValidateRange(1, [int]::MaxValue)][int]$PullRequestNumber,
     [int]$TimeoutSeconds = 180
@@ -194,23 +196,74 @@ function Get-GitHubAcceptanceFacts {
     $ciDigest = Get-Sha256Text (($checks | ConvertTo-Json -Depth 10 -Compress))
     $securityDigest = Get-Sha256Text $security[0].body
     $independentDigest = Get-Sha256Text $independent[0].body
-    return @{
+    return [ordered]@{
         candidate_commit = $script:candidateCommit
         candidate_tree = $script:candidateTree
-        remote_head_commit = [string]$pull.headRefOid
         ci_conclusion = "SUCCESS"
+        ci_evidence_digest = $ciDigest
         ci_required_check_count = $requiredChecks.Count
         ci_run_ids = $runIds
-        ci_evidence_digest = $ciDigest
-        security_verdict = "ACCEPT"
+        independent_review_evidence_digest = $independentDigest
+        independent_review_verdict = "ACCEPT"
+        independent_reviewed_commit = $script:candidateCommit
+        independent_reviewer = [string]$independent[0].actor
+        pull_request_author = [string]$pull.author.login
+        remote_head_commit = [string]$pull.headRefOid
+        security_evidence_digest = $securityDigest
         security_reviewer = [string]$security[0].actor
         security_reviewed_commit = $script:candidateCommit
-        security_evidence_digest = $securityDigest
-        independent_review_verdict = "ACCEPT"
-        independent_reviewer = [string]$independent[0].actor
-        independent_reviewed_commit = $script:candidateCommit
-        independent_review_evidence_digest = $independentDigest
+        security_verdict = "ACCEPT"
     }
+}
+
+function Assert-CanonicalAcceptanceArtifact {
+    param(
+        [Collections.Specialized.OrderedDictionary]$Facts,
+        [string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Accept requires -AcceptanceArtifactPath from the independent evidence issuers."
+    }
+    $resolved = (Resolve-Path -LiteralPath $Path).Path
+    try { $artifact = Get-Content -LiteralPath $resolved -Raw | ConvertFrom-Json -Depth 20 }
+    catch { throw "The independently supplied acceptance artifact is invalid JSON." }
+    $expectedNames = @(
+        "attestations", "facts", "facts_digest", "pull_request_number",
+        "repository", "version"
+    )
+    $observedNames = @($artifact.PSObject.Properties.Name | Sort-Object)
+    if (($observedNames -join "|") -cne (($expectedNames | Sort-Object) -join "|")) {
+        throw "The independently supplied acceptance artifact contract is invalid."
+    }
+    $factsJson = $Facts | ConvertTo-Json -Depth 8 -Compress
+    $artifactFactsJson = $artifact.facts | ConvertTo-Json -Depth 8 -Compress
+    if ($artifactFactsJson -cne $factsJson -or
+        [string]$artifact.facts_digest -cne (Get-Sha256Text $factsJson) -or
+        [long]$artifact.pull_request_number -ne $script:PullRequestNumber -or
+        [string]$artifact.repository -cne $script:GitHubRepository -or
+        [string]$artifact.version -cne "director-primary-acceptance-artifact/v1") {
+        throw "The independently supplied artifact does not match canonical GitHub facts."
+    }
+    $attestationNames = @($artifact.attestations.PSObject.Properties.Name | Sort-Object)
+    $expectedAttestationNames = @("ci", "independent_review", "security")
+    if (($attestationNames -join "|") -cne (($expectedAttestationNames | Sort-Object) -join "|")) {
+        throw "The independently supplied acceptance attestations are invalid."
+    }
+    $expectedIssuers = @{
+        ci = "github-actions"
+        independent_review = [string]$artifact.facts.independent_reviewer
+        security = [string]$artifact.facts.security_reviewer
+    }
+    foreach ($kind in $expectedAttestationNames) {
+        $attestation = $artifact.attestations.$kind
+        $names = @($attestation.PSObject.Properties.Name | Sort-Object)
+        if (($names -join "|") -cne "issuer|signature" -or
+            [string]$attestation.issuer -cne [string]$expectedIssuers[$kind] -or
+            [string]$attestation.signature -cnotmatch '^[0-9a-f]{64}$') {
+            throw "The independently supplied $kind acceptance attestation is invalid."
+        }
+    }
+    return $resolved
 }
 
 function Get-DatabaseBinding {
@@ -243,8 +296,8 @@ function Invoke-Evidence {
     param(
         [ValidateSet("record", "require-ready", "verify-backup", "bind-legacy-inventory")][string]$Command,
         [string]$Stage,
-        [string]$EvidenceDigest,
         [string]$FactsJson = "{}",
+        [string]$AcceptanceArtifactPath,
         [string]$BackupDigest,
         [string]$LegacyInventoryDigest,
         [int]$LegacyTaskCount
@@ -262,7 +315,16 @@ function Invoke-Evidence {
         "--checkpoint-namespace", ([string]$script:values["LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE"])
     )
     if ($Command -eq "record") {
-        $arguments += @("--stage", $Stage, "--evidence-digest", $EvidenceDigest, "--facts-json", $FactsJson)
+        $arguments += @("--stage", $Stage)
+        if ($Stage -eq "ACCEPTED") {
+            if ([string]::IsNullOrWhiteSpace($AcceptanceArtifactPath)) {
+                throw "ACCEPTED requires the canonical verified artifact path."
+            }
+            $arguments += @("--acceptance-artifact", "/run/director-acceptance.json")
+        }
+        else {
+            $arguments += @("--evidence-digest", (Get-Sha256Text $FactsJson), "--facts-json", $FactsJson)
+        }
     }
     elseif ($Command -eq "verify-backup") {
         $arguments += @("--backup-digest", $BackupDigest)
@@ -270,7 +332,14 @@ function Invoke-Evidence {
     elseif ($Command -eq "bind-legacy-inventory") {
         $arguments += @("--legacy-inventory-digest", $LegacyInventoryDigest, "--legacy-task-count", [string]$LegacyTaskCount)
     }
-    Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator @arguments
+    if ($Command -eq "record" -and $Stage -eq "ACCEPTED") {
+        Invoke-Compose run --rm --no-deps -T `
+            -v "${AcceptanceArtifactPath}:/run/director-acceptance.json:ro" `
+            --entrypoint python orchestrator @arguments
+    }
+    else {
+        Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator @arguments
+    }
 }
 
 $environmentPath = (Resolve-Path -LiteralPath $EnvironmentFile).Path
@@ -362,16 +431,16 @@ $databaseIdentity = [string]$databaseBinding[0]
 $databaseInstanceId = [string]$databaseBinding[1]
 
 if ($Action -eq "Preflight") {
-    $digest = Get-Sha256Text "$candidateCommit|$candidateTree|$ComposeProject|$databaseIdentity|preflight"
-    Invoke-Evidence -Command record -Stage PREFLIGHT -EvidenceDigest $digest -FactsJson '{"compose_config_valid":true,"snapshot_exact":true}'
+    Invoke-Evidence -Command record -Stage PREFLIGHT -FactsJson '{"compose_config_valid":true,"snapshot_exact":true}'
     Write-Host "Primary preflight passed; no service or provider was started."
     return
 }
 if ($Action -eq "Accept") {
     $facts = Get-GitHubAcceptanceFacts
-    $factsJson = $facts | ConvertTo-Json -Depth 8 -Compress
-    $digest = Get-Sha256Text $factsJson
-    Invoke-Evidence -Command record -Stage ACCEPTED -EvidenceDigest $digest -FactsJson $factsJson
+    $verifiedArtifactPath = Assert-CanonicalAcceptanceArtifact `
+        -Facts $facts -Path $AcceptanceArtifactPath
+    Invoke-Evidence -Command record -Stage ACCEPTED `
+        -AcceptanceArtifactPath $verifiedArtifactPath
     Write-Host "Exact-head CI, security, and independent-review acceptance evidence was bound."
     return
 }
@@ -386,8 +455,7 @@ if ($Action -eq "Migrate") {
     Invoke-Compose build orchestrator
     Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
         "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); print('schema_current=true'); h.close()"
-    $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|migrated"
-    Invoke-Evidence -Command record -Stage MIGRATED -EvidenceDigest $digest -FactsJson '{"schema_current":true}'
+    Invoke-Evidence -Command record -Stage MIGRATED -FactsJson '{"schema_current":true}'
     Write-Host "Primary Postgres schema migration/verification completed."
     return
 }
@@ -410,8 +478,7 @@ if ($Action -eq "Backup") {
     }
     finally { & docker exec $container rm -f -- $temporary | Out-Null }
     $backupDigest = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
-    $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$backupDigest"
-    Invoke-Evidence -Command record -Stage BACKED_UP -EvidenceDigest $digest -FactsJson ("{`"backup_digest`":`"sha256:$backupDigest`"}")
+    Invoke-Evidence -Command record -Stage BACKED_UP -FactsJson ("{`"backup_digest`":`"sha256:$backupDigest`"}")
     Write-Host "Primary Postgres backup completed without displaying credentials."
     return
 }
@@ -451,9 +518,9 @@ if ($Action -eq "RestoreDrill") {
         & docker exec $container dropdb -U director_primary --if-exists $database | Out-Null
         & docker exec $container rm -f -- $temporary | Out-Null
     }
-    $facts = "{`"backup_digest`":`"sha256:$restoreDigest`",`"required_control_plane_tables`":$requiredTableCount,`"checkpoint_tables`":$checkpointTableCount,`"schema_evidence_rows`":$schemaEvidenceRows}"
-    $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$facts|restore"
-    Invoke-Evidence -Command record -Stage RESTORE_PROVED -EvidenceDigest $digest -FactsJson $facts
+    # Key order is canonical so the script and Python store hash identical JSON.
+    $facts = "{`"backup_digest`":`"sha256:$restoreDigest`",`"checkpoint_tables`":$checkpointTableCount,`"required_control_plane_tables`":$requiredTableCount,`"schema_evidence_rows`":$schemaEvidenceRows}"
+    Invoke-Evidence -Command record -Stage RESTORE_PROVED -FactsJson $facts
     Write-Host "Primary Postgres restore drill completed in a disposable database."
     return
 }
@@ -471,8 +538,7 @@ if ($Action -eq "Activate") {
             if (-not [bool]$primary.$field) { throw "Primary activation health failed at $field." }
         }
         if ([string]$primary.new_intake_owner -cne "langgraph" -or -not [bool]$primary.provider_activation.combined_live_ready -or [int]$primary.ambiguous_effect_count -ne 0) { throw "Primary activation ownership/provider/reconciliation proof failed." }
-        $digest = Get-Sha256Text "$candidateCommit|$ComposeProject|$databaseIdentity|$databaseInstanceId|$($primary.intake_fencing_generation)|activated"
-        Invoke-Evidence -Command record -Stage ACTIVATED -EvidenceDigest $digest -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
+        Invoke-Evidence -Command record -Stage ACTIVATED -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
         Invoke-Compose up -d n8n slackbot
         Write-Host "Primary activation health passed and authenticated intake was reopened."
         return
@@ -510,3 +576,4 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]

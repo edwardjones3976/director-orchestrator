@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]] -->
@@ -418,8 +419,21 @@ that both name the exact head. Each must be an `APPROVED` review from the
 corresponding configured, disjoint GitHub actor allowlist with an acceptable
 GitHub author association, and its body must exactly equal the canonical
 `director-activation-review/v1` JSON artifact. Comments, quoted markers, and
-free-form prose never qualify. Those facts and their digests are recorded under
-the same activation identity; operator-set booleans are not acceptance evidence.
+free-form prose never qualify. The CI, security, and independent-review issuers
+must supply a closed canonical artifact with a canonical facts digest and their
+separate domain-separated HMAC attestations. The control process does not mint
+those attestations: it requires `-AcceptanceArtifactPath`, independently reads
+GitHub, and fails unless the supplied artifact exactly matches the observed
+repository, pull request, head, checks, and reviews. `ACCEPTED` accepts only that
+exact artifact path;
+raw `--facts-json` and caller-selected `--evidence-digest` values are rejected.
+The durable record retains the source artifact and its digest for deterministic
+offline replay. Every reader of an accepted history must be constructed with all
+three distinct verifier secrets; replay revalidates the full closed artifact and
+all three attestations before readiness can pass. Every stage digest is also
+recomputed from canonical facts on read, so coordinated public-fact/hash rewrite,
+fact mutation, artifact substitution, or digest replacement fails closed.
+Operator-set booleans are not acceptance evidence.
 Activation reopens Slack only after the observed health
 projection proves Postgres, writer fencing, reconciliation, current provider
 activation, graph ownership, and zero ambiguous effects. Rollback stops Slack and
@@ -540,3 +554,4 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]] -->

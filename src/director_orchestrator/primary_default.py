@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -1617,12 +1618,30 @@ class DefaultPrimaryActivation:
                 "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED is disabled"
             )
         authority = resolve_default_primary_authority(settings)
+        from .completion_proof import CompletionAuthorityVerifier
+
+        completion_secrets = (
+            settings.langgraph_primary_independent_review_evidence_secret,
+            settings.langgraph_primary_ci_evidence_secret,
+            settings.langgraph_primary_security_evidence_secret,
+        )
+        completion_verifier = (
+            CompletionAuthorityVerifier(
+                independent_review_secret=completion_secrets[0],
+                ci_secret=completion_secrets[1],
+                security_secret=completion_secrets[2],
+                shared_secret=settings.shared_secret,
+            )
+            if any(completion_secrets)
+            else None
+        )
         handle = open_postgres_control_plane(
             settings.langgraph_primary_postgres_dsn,
             schema=settings.langgraph_primary_postgres_schema,
             allow_insecure_local_transport=(
                 settings.langgraph_primary_allow_insecure_local_postgres
             ),
+            completion_authority_verifier=completion_verifier,
         )
         try:
             bindings = settings.primary_provider_activation_bindings()
@@ -2255,3 +2274,4 @@ class DefaultPrimaryActivation:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]

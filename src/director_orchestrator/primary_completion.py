@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
 """Deterministic post-provider boundaries for the LangGraph primary engine.
@@ -50,6 +51,7 @@ class CompletionEvidence:
     ci_gate_id: str
     security_gate_id: str
     authority_proofs: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
+    command_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,3 +312,4 @@ class PrimaryCompletionServices:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]

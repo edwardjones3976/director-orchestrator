@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
@@ -373,7 +374,7 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
             main, "_primary_command_projection",
             return_value=(coordinator, projection, SimpleNamespace(), None),
         ), patch.object(main, "_record_primary_command", return_value=MagicMock()), patch(
-            "director_orchestrator.primary_commands.datetime"
+            "director_orchestrator.completion_proof.datetime"
         ) as clock:
             clock.now.return_value = datetime.fromtimestamp(2_000_000_001, timezone.utc)
             main.primary_completion_evidence("task-1", request)
@@ -496,3 +497,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | BEGIN]]
@@ -10,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import tempfile
 import uuid
 from dataclasses import asdict, dataclass
@@ -17,6 +19,32 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Mapping
+
+
+ACCEPTANCE_ARTIFACT_VERSION = "director-primary-acceptance-artifact/v1"
+_ACCEPTANCE_SECRET_ENVIRONMENTS = {
+    "ci": "LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET",
+    "independent_review": "LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET",
+    "security": "LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET",
+}
+_ACCEPTANCE_FACT_NAMES = {
+    "candidate_commit",
+    "candidate_tree",
+    "ci_conclusion",
+    "ci_evidence_digest",
+    "ci_required_check_count",
+    "ci_run_ids",
+    "independent_review_evidence_digest",
+    "independent_review_verdict",
+    "independent_reviewed_commit",
+    "independent_reviewer",
+    "pull_request_author",
+    "remote_head_commit",
+    "security_evidence_digest",
+    "security_reviewed_commit",
+    "security_reviewer",
+    "security_verdict",
+}
 
 
 class ActivationEvidenceError(RuntimeError):
@@ -33,6 +61,49 @@ class ActivationStage(StrEnum):
 
 
 _ORDER = tuple(ActivationStage)
+
+
+def _canonical_json(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ActivationEvidenceError("activation facts are not canonical JSON") from exc
+
+
+def canonical_facts_digest(facts: Mapping[str, Any]) -> str:
+    return hashlib.sha256(_canonical_json(dict(facts))).hexdigest()
+
+
+def _closed_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for name, item in pairs:
+        if name in value:
+            raise ActivationEvidenceError("canonical artifact contains duplicate fields")
+        value[name] = item
+    return value
+
+
+def _acceptance_issuer(kind: str, facts: Mapping[str, Any]) -> str:
+    if kind == "ci":
+        return "github-actions"
+    field = "security_reviewer" if kind == "security" else "independent_reviewer"
+    issuer = facts.get(field)
+    if not isinstance(issuer, str) or not issuer:
+        raise ActivationEvidenceError("acceptance artifact issuer is invalid")
+    return issuer
+
+
+def _acceptance_signature(
+    kind: str, issuer: str, secret: str, payload: bytes
+) -> str:
+    domain = f"director-primary-acceptance/{kind}/{issuer}/v1\0".encode("ascii")
+    return hmac.new(secret.encode("utf-8"), domain + payload, hashlib.sha256).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,9 +136,17 @@ class ActivationIdentity:
 
 
 class ActivationEvidenceStore:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        acceptance_secrets: Mapping[str, str] | None = None,
+    ) -> None:
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._acceptance_secrets = (
+            dict(acceptance_secrets) if acceptance_secrets is not None else None
+        )
 
     def load(self) -> dict[str, Any] | None:
         if not self.path.exists():
@@ -78,6 +157,7 @@ class ActivationEvidenceStore:
             raise ActivationEvidenceError("activation evidence is unreadable") from exc
         if not isinstance(value, dict) or value.get("version") != "primary-activation-evidence/v1":
             raise ActivationEvidenceError("activation evidence contract is invalid")
+        self._validate_history(value)
         return value
 
     def record(
@@ -88,6 +168,10 @@ class ActivationEvidenceStore:
         evidence_digest: str,
         facts: Mapping[str, Any],
     ) -> dict[str, Any]:
+        if stage is ActivationStage.ACCEPTED:
+            raise ActivationEvidenceError(
+                "ACCEPTED requires a verified canonical acceptance artifact"
+            )
         if len(evidence_digest) != 64 or any(c not in "0123456789abcdef" for c in evidence_digest):
             raise ActivationEvidenceError("stage evidence digest must be sha256 hex")
         current = self.load()
@@ -109,8 +193,11 @@ class ActivationEvidenceStore:
         if expected_index >= len(_ORDER) or _ORDER[expected_index] is not stage:
             raise ActivationEvidenceError("activation stages are missing, duplicated, or out of order")
         facts_dict = dict(facts)
-        if stage is ActivationStage.ACCEPTED:
-            self._validate_acceptance(identity, facts_dict)
+        expected_evidence_digest = canonical_facts_digest(facts_dict)
+        if not hmac.compare_digest(evidence_digest, expected_evidence_digest):
+            raise ActivationEvidenceError(
+                "stage evidence digest does not match canonical facts"
+            )
         backup_digest = facts_dict.get("backup_digest")
         if stage in (ActivationStage.BACKED_UP, ActivationStage.RESTORE_PROVED):
             self._require_artifact_digest(backup_digest)
@@ -136,10 +223,231 @@ class ActivationEvidenceStore:
         self._atomic_write(current)
         return current
 
+    def record_acceptance_artifact(
+        self,
+        identity: ActivationIdentity,
+        artifact_path: str | Path,
+    ) -> dict[str, Any]:
+        artifact = self._load_acceptance_artifact(artifact_path)
+        facts_digest = self._validate_acceptance_artifact(identity, artifact)
+        facts = artifact["facts"]
+
+        current = self.load()
+        if current is None:
+            raise ActivationEvidenceError("activation evidence must start at PREFLIGHT")
+        if current.get("identity_digest") != identity.digest or current.get("identity") != asdict(identity):
+            raise ActivationEvidenceError("activation evidence belongs to another candidate/profile/database")
+        stages = current.get("stages")
+        if not isinstance(stages, list) or len(stages) != 1 or stages[0].get("stage") != ActivationStage.PREFLIGHT.value:
+            raise ActivationEvidenceError("activation stages are missing, duplicated, or out of order")
+        stages.append(
+            {
+                "stage": ActivationStage.ACCEPTED.value,
+                "evidence_digest": facts_digest,
+                "recorded_at": datetime.now(UTC).isoformat(),
+                "facts": facts,
+                "source_artifact": artifact,
+                "source_artifact_digest": hashlib.sha256(
+                    _canonical_json(artifact)
+                ).hexdigest(),
+            }
+        )
+        self._atomic_write(current)
+        return current
+
+    @staticmethod
+    def _load_acceptance_artifact(path: str | Path) -> dict[str, Any]:
+        source = Path(path)
+        try:
+            raw = source.read_bytes()
+        except OSError as exc:
+            raise ActivationEvidenceError("canonical acceptance artifact is unreadable") from exc
+        if len(raw) > 256 * 1024:
+            raise ActivationEvidenceError("canonical acceptance artifact is oversized")
+        try:
+            artifact = json.loads(raw, object_pairs_hook=_closed_json_object)
+        except json.JSONDecodeError as exc:
+            raise ActivationEvidenceError("canonical acceptance artifact is invalid JSON") from exc
+        ActivationEvidenceStore._validate_acceptance_artifact_contract(artifact)
+        return artifact
+
+    @staticmethod
+    def _validate_acceptance_artifact_contract(artifact: object) -> None:
+        expected_names = {
+            "attestations", "facts", "facts_digest", "pull_request_number",
+            "repository", "version",
+        }
+        if not isinstance(artifact, dict) or set(artifact) != expected_names:
+            raise ActivationEvidenceError("canonical acceptance artifact contract is invalid")
+        if artifact.get("version") != ACCEPTANCE_ARTIFACT_VERSION:
+            raise ActivationEvidenceError("canonical acceptance artifact version is invalid")
+        if not isinstance(artifact.get("facts"), dict):
+            raise ActivationEvidenceError("canonical acceptance artifact facts are invalid")
+        if (
+            not isinstance(artifact.get("repository"), str)
+            or re.fullmatch(
+                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", artifact["repository"]
+            )
+            is None
+        ):
+            raise ActivationEvidenceError("acceptance artifact repository is invalid")
+        pull_request_number = artifact.get("pull_request_number")
+        if isinstance(pull_request_number, bool) or not isinstance(pull_request_number, int) or pull_request_number < 1:
+            raise ActivationEvidenceError("acceptance artifact pull request is invalid")
+        if not isinstance(artifact.get("facts_digest"), str):
+            raise ActivationEvidenceError("acceptance artifact facts digest is invalid")
+        attestations = artifact.get("attestations")
+        if not isinstance(attestations, dict) or set(attestations) != set(_ACCEPTANCE_SECRET_ENVIRONMENTS):
+            raise ActivationEvidenceError("acceptance artifact attestations are invalid")
+        for kind, value in attestations.items():
+            if not isinstance(value, dict) or set(value) != {"issuer", "signature"}:
+                raise ActivationEvidenceError("acceptance artifact attestations are invalid")
+            issuer = value.get("issuer")
+            signature = value.get("signature")
+            if (
+                not isinstance(issuer, str)
+                or not issuer
+                or not isinstance(signature, str)
+                or len(signature) != 64
+                or any(character not in "0123456789abcdef" for character in signature)
+            ):
+                raise ActivationEvidenceError("acceptance artifact attestations are invalid")
+
+    def _validate_history(self, value: Mapping[str, Any]) -> None:
+        identity_value = value.get("identity")
+        if not isinstance(identity_value, dict):
+            raise ActivationEvidenceError("activation evidence identity is malformed")
+        try:
+            identity = ActivationIdentity(**identity_value)
+        except (TypeError, ActivationEvidenceError) as exc:
+            raise ActivationEvidenceError("activation evidence identity is malformed") from exc
+        observed_identity_digest = value.get("identity_digest")
+        if (
+            not isinstance(observed_identity_digest, str)
+            or not hmac.compare_digest(observed_identity_digest, identity.digest)
+        ):
+            raise ActivationEvidenceError("activation evidence identity digest is invalid")
+        stages = value.get("stages")
+        if not isinstance(stages, list):
+            raise ActivationEvidenceError("activation stage history is malformed")
+        for item in stages:
+            if not isinstance(item, dict) or not isinstance(item.get("facts"), dict):
+                raise ActivationEvidenceError("activation stage history is malformed")
+            observed = item.get("evidence_digest")
+            expected = canonical_facts_digest(item["facts"])
+            if not isinstance(observed, str) or not hmac.compare_digest(observed, expected):
+                raise ActivationEvidenceError(
+                    "activation stage evidence digest does not match canonical facts"
+                )
+            if item.get("stage") == ActivationStage.ACCEPTED.value:
+                artifact = item.get("source_artifact")
+                if not isinstance(artifact, dict) or artifact.get("facts") != item["facts"]:
+                    raise ActivationEvidenceError(
+                        "acceptance artifact was substituted or removed"
+                    )
+                if artifact.get("facts_digest") != observed:
+                    raise ActivationEvidenceError(
+                        "acceptance artifact digest does not match recorded facts"
+                    )
+                artifact_digest = item.get("source_artifact_digest")
+                expected_artifact_digest = hashlib.sha256(
+                    _canonical_json(artifact)
+                ).hexdigest()
+                if (
+                    not isinstance(artifact_digest, str)
+                    or not hmac.compare_digest(
+                        artifact_digest, expected_artifact_digest
+                    )
+                ):
+                    raise ActivationEvidenceError(
+                        "acceptance artifact was mutated or substituted"
+                    )
+                verified_facts_digest = self._validate_acceptance_artifact(
+                    identity, artifact
+                )
+                if not hmac.compare_digest(verified_facts_digest, observed):
+                    raise ActivationEvidenceError(
+                        "acceptance artifact does not match durable stage evidence"
+                    )
+
+    def _validate_acceptance_artifact(
+        self, identity: ActivationIdentity, artifact: Mapping[str, Any]
+    ) -> str:
+        self._validate_acceptance_artifact_contract(artifact)
+        facts = artifact.get("facts")
+        if not isinstance(facts, dict):
+            raise ActivationEvidenceError("canonical acceptance artifact facts are invalid")
+        self._validate_acceptance(identity, facts)
+        unsigned = {
+            name: artifact.get(name)
+            for name in (
+                "facts",
+                "facts_digest",
+                "pull_request_number",
+                "repository",
+                "version",
+            )
+        }
+        facts_digest = canonical_facts_digest(facts)
+        artifact_facts_digest = artifact.get("facts_digest")
+        if (
+            not isinstance(artifact_facts_digest, str)
+            or not hmac.compare_digest(artifact_facts_digest, facts_digest)
+        ):
+            raise ActivationEvidenceError(
+                "acceptance artifact facts digest does not match canonical facts"
+            )
+        supplied_secrets = self._acceptance_secrets
+        if supplied_secrets is None:
+            raise ActivationEvidenceError(
+                "accepted evidence requires durable attestation verifier secrets"
+            )
+        relevant_secrets = {
+            kind: supplied_secrets.get(kind)
+            for kind in _ACCEPTANCE_SECRET_ENVIRONMENTS
+        }
+        if any(
+            not isinstance(secret, str) or len(secret) < 32
+            for secret in relevant_secrets.values()
+        ):
+            raise ActivationEvidenceError(
+                "acceptance artifact verification authority is unavailable"
+            )
+        if len(set(relevant_secrets.values())) != len(_ACCEPTANCE_SECRET_ENVIRONMENTS):
+            raise ActivationEvidenceError(
+                "acceptance artifact verification authorities must be distinct"
+            )
+        attestations = artifact.get("attestations")
+        if not isinstance(attestations, dict):
+            raise ActivationEvidenceError("acceptance artifact attestations are invalid")
+        payload = _canonical_json(unsigned)
+        for kind, secret in relevant_secrets.items():
+            attestation = attestations.get(kind)
+            if not isinstance(attestation, dict):
+                raise ActivationEvidenceError(
+                    f"acceptance artifact {kind} attestation is invalid"
+                )
+            issuer = _acceptance_issuer(kind, facts)
+            if attestation.get("issuer") != issuer:
+                raise ActivationEvidenceError(
+                    f"acceptance artifact {kind} issuer is invalid"
+                )
+            observed = attestation.get("signature")
+            expected = _acceptance_signature(kind, issuer, str(secret), payload)
+            if not isinstance(observed, str) or not hmac.compare_digest(
+                observed, expected
+            ):
+                raise ActivationEvidenceError(
+                    f"acceptance artifact {kind} attestation is invalid"
+                )
+        return facts_digest
+
     @staticmethod
     def _validate_acceptance(
         identity: ActivationIdentity, facts: Mapping[str, Any]
     ) -> None:
+        if set(facts) != _ACCEPTANCE_FACT_NAMES:
+            raise ActivationEvidenceError("acceptance artifact facts contract is invalid")
         exact_fields = {
             "candidate_commit": identity.candidate_commit,
             "candidate_tree": identity.candidate_tree,
@@ -171,15 +479,20 @@ class ActivationEvidenceStore:
             )
         security_actor = facts.get("security_reviewer")
         independent_actor = facts.get("independent_reviewer")
+        pull_request_author = facts.get("pull_request_author")
         if (
             not isinstance(security_actor, str)
             or not security_actor.strip()
             or not isinstance(independent_actor, str)
             or not independent_actor.strip()
             or hmac.compare_digest(security_actor.casefold(), independent_actor.casefold())
+            or not isinstance(pull_request_author, str)
+            or not pull_request_author.strip()
+            or hmac.compare_digest(security_actor.casefold(), pull_request_author.casefold())
+            or hmac.compare_digest(independent_actor.casefold(), pull_request_author.casefold())
         ):
             raise ActivationEvidenceError(
-                "security and independent reviews require distinct attributable reviewers"
+                "producer and acceptance actors require distinct attributable identities"
             )
         for name in (
             "ci_evidence_digest",
@@ -331,6 +644,13 @@ def _identity(arguments: argparse.Namespace) -> ActivationIdentity:
     )
 
 
+def _acceptance_secrets_from_environment() -> dict[str, str]:
+    return {
+        kind: os.environ.get(environment, "")
+        for kind, environment in _ACCEPTANCE_SECRET_ENVIRONMENTS.items()
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("record", "require-ready", "verify-backup", "bind-legacy-inventory"))
@@ -345,12 +665,16 @@ def main() -> None:
     parser.add_argument("--checkpoint-namespace", required=True)
     parser.add_argument("--stage", choices=tuple(stage.value for stage in ActivationStage))
     parser.add_argument("--evidence-digest")
-    parser.add_argument("--facts-json", default="{}")
+    parser.add_argument("--facts-json")
+    parser.add_argument("--acceptance-artifact")
     parser.add_argument("--backup-digest")
     parser.add_argument("--legacy-inventory-digest")
     parser.add_argument("--legacy-task-count", type=int)
     arguments = parser.parse_args()
-    store = ActivationEvidenceStore(arguments.artifact)
+    store = ActivationEvidenceStore(
+        arguments.artifact,
+        acceptance_secrets=_acceptance_secrets_from_environment(),
+    )
     identity = _identity(arguments)
     if arguments.command == "require-ready":
         store.require_ready(identity)
@@ -372,14 +696,30 @@ def main() -> None:
         )
         print("legacy_ownership_inventory_bound=true")
         return
-    if arguments.stage is None or arguments.evidence_digest is None:
-        parser.error("record requires --stage and --evidence-digest")
-    facts = json.loads(arguments.facts_json)
+    if arguments.stage is None:
+        parser.error("record requires --stage")
+    stage = ActivationStage(arguments.stage)
+    if stage is ActivationStage.ACCEPTED:
+        if arguments.facts_json is not None or arguments.evidence_digest is not None:
+            parser.error("ACCEPTED refuses --facts-json and --evidence-digest")
+        if arguments.acceptance_artifact is None:
+            parser.error("ACCEPTED requires --acceptance-artifact")
+        store.record_acceptance_artifact(
+            identity,
+            arguments.acceptance_artifact,
+        )
+        print("activation_stage_recorded=true")
+        return
+    if arguments.acceptance_artifact is not None:
+        parser.error("--acceptance-artifact is only valid for ACCEPTED")
+    if arguments.evidence_digest is None:
+        parser.error("record requires --evidence-digest")
+    facts = json.loads(arguments.facts_json or "{}")
     if not isinstance(facts, dict):
         parser.error("--facts-json must be an object")
     store.record(
         identity,
-        ActivationStage(arguments.stage),
+        stage,
         evidence_digest=arguments.evidence_digest,
         facts=facts,
     )
@@ -393,3 +733,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
