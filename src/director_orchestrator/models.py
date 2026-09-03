@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
@@ -256,7 +258,16 @@ class Assignment(BaseModel):
     # pre-stage packet; deterministic policy validates the resulting route.
     workload_size: WorkSize = WorkSize.SIMPLE
     effort_points: int = Field(default=1, ge=1, le=100)
-    retry_limit: int = Field(default=3, ge=1, le=3)
+    retry_limit: int = Field(default=3, ge=3, le=3)
+    # Live LangGraph-primary plans may bind a transport lane that is broader than
+    # the historical Director agent enum. Model-authored plans leave this unset;
+    # the deterministic primary planner supplies it after policy normalization.
+    primary_provider_lane: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9-]{0,63}$",
+    )
     model_label: str | None = Field(default=None, min_length=1, max_length=255)
     task: str = Field(min_length=1, max_length=10_000)
     acceptance: list[str] = Field(min_length=1, max_length=20)
@@ -428,7 +439,7 @@ class PlanPrestageRecord(BaseModel):
     required_security_evidence: tuple[str, ...] = Field(min_length=1, max_length=100)
     budget_units: int = Field(ge=1, le=100_000)
     timeout_seconds: int = Field(ge=1, le=604_800)
-    retry_limit: int = Field(ge=1, le=3)
+    retry_limit: int = Field(ge=3, le=3)
     merge_eligibility_conditions: tuple[str, ...] = Field(
         min_length=1, max_length=50
     )
@@ -1204,3 +1215,6 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]

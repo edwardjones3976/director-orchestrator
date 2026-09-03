@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
@@ -650,7 +651,6 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         enforcement = self.directive["workload_enforcement"]
         self.assertEqual(enforcement["enforced_measure"], "accepted_productive_work")
         self.assertEqual(enforcement["normal_tolerance_percentage_points"], 3)
-        self.assertEqual(enforcement["hard_overage_percentage_points"], 5)
         self.assertEqual(
             enforcement["evaluate"],
             [
@@ -658,24 +658,10 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 "rolling_20_projected_accepted_productive_work",
             ],
         )
-        self.assertEqual(
-            enforcement["hard_thresholds_percent"],
-            {
-                "claude": 30,
-                "cursor": 25,
-                "grok": 16,
-                "gemini": 20,
-                "perplexity": 9,
-                "external_openai": 30,
-            },
-        )
-        self.assertTrue(enforcement["overall_effort_can_block_or_route"])
-        self.assertEqual(
-            enforcement["overall_effort_hard_ceilings_percent"]["cursor"], 33
-        )
+        self.assertFalse(enforcement["overall_effort_can_block_or_route"])
         self.assertTrue(enforcement["automatic_drift_correction"])
         self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
-        self.assertEqual(enforcement["hard_action"], "block_dispatch_and_reshape")
+        self.assertEqual(enforcement["share_pressure_action"], "soft_preference_only")
 
     def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
         coding = self.directive["coding_routing"]
@@ -765,13 +751,13 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         copilot = self.directive["copilot_lite_hygiene_review"]
         self.assertFalse(copilot["provider_or_committee_member"])
         self.assertIsNone(copilot["workload_percentage"])
-        self.assertEqual(
-            self.directive["workload_enforcement"]["overall_effort_normal_bands_percent"]["github_copilot_cli_lite"],
-            [0, 4],
+        self.assertNotIn(
+            "github_copilot_cli_lite",
+            self.directive["workload_enforcement"]["overall_effort_normal_bands_percent"],
         )
         self.assertEqual(
-            self.directive["workload_enforcement"]["overall_effort_hard_ceilings_percent"]["github_copilot_cli_lite"],
-            6,
+            copilot["attempts"],
+            "three_each_configured_format_before_reuse",
         )
         self.assertFalse(copilot["automatic_every_push"])
         self.assertFalse(copilot["gating"])
@@ -784,7 +770,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         availability = self.directive["availability"]
         self.assertEqual(
             availability["attempts"],
-            "immutable_assignment_prestage_retry_limit",
+            "exactly_three_per_assignment",
         )
         self.assertIn(
             "positive_expected_information_gain",
@@ -904,7 +890,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 "starting_and_current_refs_shas_and_artifact_digests",
                 "authenticated_provider_participation_unavailable_abstaining_and_labels",
                 "target_and_actual_enforced_direct_production_by_provider_deviations_and_rationale",
-                "prospective_total_effort_bands_ceilings_and_dispatch_decision",
+                "prospective_total_effort_soft_bands_and_share_advisories",
                 "prestage_packet_digest_workload_size_effort_points_and_deltas",
                 "status_validation_action_counts_reduction_baselines_and_browser_use",
                 "openai_moderator_participant_director_actions_and_vote",
@@ -913,7 +899,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 "unresolved_risks_limitations_blockers_and_confidence",
                 "measured_cost_token_usage_elapsed_time_and_unavailable_telemetry",
                 "roi_first_pass_yield_correction_rate_and_categorized_waste_with_missing_telemetry",
-                "copilot_lite_one_time_result_quota_state_validated_findings_and_material_authorship",
+                "copilot_lite_result_attempt_formats_quota_state_validated_findings_and_material_authorship",
                 "rolling_commit_baseline_current_measurement_delta_and_exclusions",
                 "scope_or_authority_changes_and_exact_stored_owner_authorization",
                 "recovery_state_rollback_and_restart_evidence_integrity",
@@ -930,7 +916,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
         self.assertEqual(
             self.directive["availability"]["attempts"],
-            "immutable_assignment_prestage_retry_limit",
+            "exactly_three_per_assignment",
         )
         self.assertEqual(
             self.charter["availability_policy"]["nonresponse_attempt_limit"], 3
@@ -1630,7 +1616,7 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
             result="partial",
         )
         engine = OrchestrationEngine(replace(Settings(), provider_poll_seconds=0), None)
-        for retry_limit in (1, 2, 3):
+        for retry_limit in (3,):
             with self.subTest(retry_limit=retry_limit):
                 assignment = Assignment(
                     sequence=1,
@@ -2146,3 +2132,5 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

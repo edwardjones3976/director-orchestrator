@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
 from __future__ import annotations
@@ -200,7 +201,7 @@ class ExternalOpenAIProductiveWorkTests(unittest.TestCase):
             )
         self.assertEqual(len(self.store.list_recent_direct_production()), 1)
 
-    def test_external_openai_candidate_hard_cap_is_transactional(self) -> None:
+    def test_external_openai_candidate_share_does_not_block_transaction(self) -> None:
         authorization = self.authorization(effort_units=1)
         evidence = self.evidence(effort_units=1)
         self.store.record_external_openai_production_authorization(authorization)
@@ -235,11 +236,7 @@ class ExternalOpenAIProductiveWorkTests(unittest.TestCase):
                     ),
                 )
 
-        with self.assertRaisesRegex(
-            WorkloadReservationConflict,
-            "direct_production_hard_threshold_exceeded:external_openai:30",
-        ):
-            self.store.record_external_openai_production_credit(evidence)
+        self.assertTrue(self.store.record_external_openai_production_credit(evidence))
 
         with self.store._connect() as connection:
             credit_count = connection.execute(
@@ -248,8 +245,8 @@ class ExternalOpenAIProductiveWorkTests(unittest.TestCase):
             evidence_count = connection.execute(
                 "SELECT COUNT(*) AS count FROM external_openai_production_evidence"
             ).fetchone()["count"]
-        self.assertEqual(credit_count, 19)
-        self.assertEqual(evidence_count, 0)
+        self.assertEqual(credit_count, 20)
+        self.assertEqual(evidence_count, 1)
 
     def test_new_stale_authority_fails_but_completed_exact_replay_survives(self) -> None:
         authorization = self.authorization()
@@ -295,3 +292,5 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:50 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

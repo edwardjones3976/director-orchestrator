@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
@@ -438,7 +439,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         ):
             self.assertIn(expected, charter)
         self.assertIn("Enforce two prospective workload controls", prompt)
-        self.assertIn("Total effort may route or block", prompt)
+        self.assertIn("provider share never blocks an otherwise safe route", prompt)
         self.assertIn("cheapest capable trusted model first", prompt)
         self.assertIn("GitHub Copilot Lite", prompt)
         self.assertIn("canonical matching UTC contribution", prompt)
@@ -1203,3 +1204,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]

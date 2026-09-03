@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
@@ -38,6 +39,11 @@ from .chatgpt_bridge import (
 # [[Codex | GPT-5.6 | 2026-08-23 19:17 UTC | END]]
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .models import OwnerApproval, SlackIntake, TaskRecord, TaskStatus
+from .primary_commands import (
+    ApprovalResumeRequest,
+    PrimaryIngressProof,
+    build_primary_ingress_proof,
+)
 
 
 settings = Settings()
@@ -483,6 +489,48 @@ def _task_and_version(response) -> tuple[TaskRecord, int]:
     return TaskRecord.model_validate(response.json()), int(raw_version)
 
 
+def _primary_approval_payload(response, *, actor_id: str, event_id: str) -> dict | None:
+    projection = response.headers.get("X-Primary-Projection-Digest")
+    generation = response.headers.get("X-Primary-Writer-Generation")
+    kind = response.headers.get("X-Primary-Approval-Kind")
+    request_digest = response.headers.get("X-Primary-Approval-Digest")
+    if projection is None:
+        return None
+    if not generation or not generation.isdigit() or not kind or not request_digest:
+        raise ValueError("Director primary task response omitted approval bindings")
+    task_id = str(response.json()["task_id"])
+    path = f"/v1/primary/tasks/{task_id}/approvals/resume"
+    placeholder = PrimaryIngressProof(
+        issued_at=int(datetime.now(timezone.utc).timestamp()),
+        nonce=secrets.token_urlsafe(32),
+        signature="0" * 64,
+    )
+    request = ApprovalResumeRequest(
+        task_id=task_id,
+        command_id=event_id,
+        actor_id=actor_id,
+        expected_projection_digest=projection,
+        expected_fencing_generation=int(generation),
+        kind=kind,
+        request_digest=request_digest,
+        approval_event_id=event_id,
+        slack_gateway_proof=placeholder,
+    )
+    proof = build_primary_ingress_proof(
+        settings.slack_gateway_secret,
+        settings.shared_secret,
+        request,
+        path=path,
+        proof_field="slack_gateway_proof",
+        issued_at=placeholder.issued_at,
+        nonce=placeholder.nonce,
+        channel_id=settings.slack_channel_id,
+    )
+    return request.model_copy(
+        update={"slack_gateway_proof": proof}
+    ).model_dump(mode="json")
+
+
 def _forward(event: dict, client, *, require_prefix: bool) -> None:
     if event.get("bot_id") or event.get("subtype") in {"bot_message", "message_changed", "message_deleted"}:
         return
@@ -563,7 +611,7 @@ def command_handler(ack, command, client, respond):
         respond(_tag("Aesop Director only accepts owner commands in the configured private channel."), response_type="ephemeral")
         return
     text = command.get("text", "").strip()
-    approval = re.match(r"(?is)^approve\s+(DIR-[A-F0-9]+)(?:\s+(.+))?$", text)
+    approval = re.match(r"(?is)^approve\s+(DIR-(?:LG-)?[A-F0-9]+)(?:\s+(.+))?$", text)
     if approval:
         task_id, note = approval.group(1).upper(), approval.group(2) or "Approved"
         try:
@@ -577,6 +625,21 @@ def command_handler(ack, command, client, respond):
                 headers={"Authorization": f"Bearer {settings.shared_secret}"},
                 timeout=20,
             )
+            primary_payload = _primary_approval_payload(
+                current,
+                actor_id=command["user_id"],
+                event_id=str(command.get("trigger_id") or secrets.token_urlsafe(24)),
+            )
+            if primary_payload is not None:
+                response = httpx.post(
+                    f"{settings.orchestrator_base_url}/v1/primary/tasks/{task_id}/approvals/resume",
+                    headers={"Authorization": f"Bearer {settings.shared_secret}"},
+                    json=primary_payload,
+                    timeout=20,
+                )
+                response.raise_for_status()
+                respond(_tag(f"*{task_id} — RESUMING*\nYour approval was recorded."), response_type="ephemeral")
+                return
             record, task_version = _task_and_version(current)
             if record.status == TaskStatus.FAILED:
                 assignments = sorted(
@@ -652,6 +715,26 @@ def approval_button_handler(ack, body, client):
             headers={"Authorization": f"Bearer {settings.shared_secret}"},
             timeout=20,
         )
+        primary_payload = _primary_approval_payload(
+            current,
+            actor_id=user_id,
+            event_id=str(body.get("action_ts") or secrets.token_urlsafe(24)),
+        )
+        if primary_payload is not None:
+            response = httpx.post(
+                f"{settings.orchestrator_base_url}/v1/primary/tasks/{task_id}/approvals/resume",
+                headers={"Authorization": f"Bearer {settings.shared_secret}"},
+                json=primary_payload,
+                timeout=20,
+            )
+            response.raise_for_status()
+            message = body.get("message", {})
+            client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=message.get("thread_ts") or message.get("ts"),
+                text=_tag(f"*{task_id} — RESUMING*\nOwner approval was recorded from Slack."),
+            )
+            return
         record, task_version = _task_and_version(current)
         payload = _signed_owner_payload(task_id, record, task_version, payload)
         response = httpx.post(
@@ -689,3 +772,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:53 UTC | END]]

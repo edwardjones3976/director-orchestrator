@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
@@ -545,9 +546,9 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         )
         self.assertTrue(guarded.workload_enforcement.allowed)
         self.assertTrue(guarded.workload_enforcement.would_block)
-        self.assertTrue(
+        self.assertFalse(
             any(
-                "direct_production_hard_threshold_exceeded:grok:16" in violation
+                "overall" in violation or "share" in violation
                 for violation in guarded.workload_enforcement.violations
             )
         )
@@ -566,7 +567,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         self.assertEqual(guarded.workload_enforcement.outcome, "disabled")
         self.assertEqual(execution_policy_errors(guarded, disabled), [])
 
-    def test_complete_plan_overall_window_blocks_prospective_overage(self) -> None:
+    def test_complete_plan_overall_window_keeps_share_pressure_soft(self) -> None:
         assignments: list[Assignment] = []
         for sequence in range(1, 21):
             provider = (
@@ -608,12 +609,9 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         )
 
         guarded = enforce_plan(plan, "bounded coordinated work", self.settings)
-        self.assertTrue(
-            any(
-                "total_effort_hard_ceiling_exceeded" in error
-                or "absolute_primary_ceiling_exceeded" in error
-                for error in execution_policy_errors(guarded, self.settings)
-            )
+        errors = execution_policy_errors(guarded, self.settings)
+        self.assertFalse(
+            any("overall" in error or "share" in error for error in errors)
         )
 
     def test_exact_retry_browser_and_action_limits_are_plan_metadata(self) -> None:
@@ -631,7 +629,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         self.assertEqual(limits.duplicate_validation_reduction_target_percent, 70)
         self.assertEqual(limits.total_action_reduction_target_percent, 60)
 
-    def test_assignment_retry_limit_cannot_exceed_digest_bound_prestage(self) -> None:
+    def test_assignment_retry_limit_is_canonicalized_to_exactly_three(self) -> None:
         plan = self._valid_plan()
         plan.prestage = plan.prestage.model_copy(
             update={"retry_limit": 1, "digest": None}
@@ -639,12 +637,9 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
 
         guarded = enforce_plan(plan, "bounded implementation", self.settings)
 
-        self.assertTrue(
-            any(
-                "assignment retry limits exceed the digest-bound pre-stage retry limit"
-                in error
-                for error in execution_policy_errors(guarded, self.settings)
-            )
+        self.assertIn(
+            "pre-stage packet is invalid: prestage attempt budget must be exactly 3",
+            execution_policy_errors(guarded, self.settings),
         )
 
 
@@ -657,3 +652,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

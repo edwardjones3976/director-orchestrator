@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 name: CI
@@ -32,6 +33,7 @@ jobs:
           --head "$HEAD_SHA"
           --github-event "$GITHUB_EVENT_PATH"
 
+  # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:15 UTC | BEGIN]]
   python:
     name: Python 3.12 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -64,6 +66,60 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Start disposable PostgreSQL (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="director-primary-ci-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker run --detach --rm \
+            --name "$container" \
+            --publish 127.0.0.1:55433:5432 \
+            --env POSTGRES_HOST_AUTH_METHOD=trust \
+            --env POSTGRES_USER=director_ci \
+            --env POSTGRES_DB=director_test \
+            postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
+          for attempt in $(seq 1 30); do
+            if docker exec "$container" pg_isready -U director_ci -d director_test >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "Disposable PostgreSQL did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+          echo "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable" >> "$GITHUB_ENV"
+          echo "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=$container" >> "$GITHUB_ENV"
+      - name: Start disposable PostgreSQL (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $initdb = Get-ChildItem 'C:\Program Files\PostgreSQL\*\bin\initdb.exe' -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $initdb) {
+            $installPassword = [guid]::NewGuid().ToString('N')
+            choco install postgresql17 --yes --no-progress --params "/Password:$installPassword"
+            $initdb = Get-ChildItem 'C:\Program Files\PostgreSQL\*\bin\initdb.exe' |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+          }
+          $bin = $initdb.Directory.FullName
+          $data = Join-Path $env:RUNNER_TEMP 'director-primary-postgres'
+          & (Join-Path $bin 'initdb.exe') -D $data -U director_ci --auth=trust --encoding=UTF8
+          if ($LASTEXITCODE -ne 0) { throw 'initdb failed' }
+          & (Join-Path $bin 'pg_ctl.exe') -D $data -o '-p 55433 -h 127.0.0.1' -w start
+          if ($LASTEXITCODE -ne 0) { throw 'pg_ctl start failed' }
+          & (Join-Path $bin 'createdb.exe') -h 127.0.0.1 -p 55433 -U director_ci director_test
+          if ($LASTEXITCODE -ne 0) { throw 'createdb failed' }
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "DIRECTOR_PRIMARY_CI_PGDATA=$data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python -m pip check
       - run: python -m unittest discover -s tests -v
@@ -72,6 +128,24 @@ jobs:
       - run: python -m compileall -q src scripts tests
       - run: python -m json.tool n8n/workflows/director-intake.json
       - run: python -m json.tool docs/oracle-review-artifact.example.json
+      - name: Stop disposable PostgreSQL (Linux)
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [ -n "${LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER:-}" ]; then
+            docker rm --force "$LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER" >/dev/null 2>&1 || true
+          fi
+      - name: Stop disposable PostgreSQL (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if ($env:DIRECTOR_PRIMARY_CI_PGDATA) {
+            $pgCtl = Get-Command pg_ctl.exe -ErrorAction SilentlyContinue
+            if ($pgCtl) {
+              & $pgCtl.Source -D $env:DIRECTOR_PRIMARY_CI_PGDATA -m fast -w stop
+            }
+          }
+  # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:15 UTC | END]]
 
   containers:
     name: Compose and container build
@@ -160,3 +234,4 @@ jobs:
           python scripts/recovery_probe.py resume-substituted-identity --database "$substituted_database"
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | END]]

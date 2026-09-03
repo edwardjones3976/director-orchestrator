@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:40 UTC | BEGIN]] -->
@@ -180,7 +181,7 @@ project-local fit here and link back for authority boundaries.
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
 | Codex Security | independent security evidence for eligible repository changes | product direction, acceptance, merge, or deployment authority |
-| GitHub Copilot Lite | one requested post-green, exact-candidate-frozen unscored reporting-only hygiene observation | a provider role, production credit, gate, every-push trigger, independent acceptance, or merge authority |
+| GitHub Copilot Lite | post-green, exact-candidate-frozen unscored reporting-only hygiene observation with exactly three attempt slots | a provider role, production credit, gate, every-push trigger, independent acceptance, or merge authority |
 
 Each row summarizes the canonical role definitions in
 [`team-operating-charter.md`](team-operating-charter.md#roles).
@@ -189,8 +190,8 @@ Accepted productive work remains enforced at external OpenAI/Codex
 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%.
 Total effort is prospectively guarded at Claude/Cursor/Gemini-Antigravity/Grok/
 OpenAI/Perplexity targets of 36/20/20/11/8/5, normal bands of
-33–39/17–23/17–23/8–14/5–11/1–7, and hard ceilings of
-41/33/25/16/13/9. Cursor's 33% hard ceiling is deliberate.
+33–39/17–23/17–23/8–14/5–11/1–7. Former ceiling markers remain visible for
+drift reporting, but workload share is never a dispatch blocker.
 
 Choose the cheapest capable trusted model, never simply the cheapest contact.
 First establish exact scope and allowlists, usable transport, readiness,
@@ -204,9 +205,8 @@ the selected provider/model, and the tie-break reason.
 For paid routing, only the operator-authored `TRUSTED_PROVIDER_COST_RANKS`
 setting supplies the comparable total order. It must cover every configured
 ready specialist with unique positive ranks and is never inferred, generated,
-or rewritten by a provider. A candidate provider at its hard threshold is
-blocked; another provider's inherited overage remains advisory so corrective
-under-target routing can proceed.
+or rewritten by a provider. Allocation is a soft preference after capability,
+scope, independence, safety, and resource eligibility.
 
 ### Firecrawl privacy routing
 
@@ -256,13 +256,12 @@ external-action authority. Use no skill merely because it exists; select it
 only when its workflow materially improves the active module.
 
 Availability is not a reason to fabricate coverage. Each safe provider contact
-is bounded and recorded by an immutable assignment-specific `retry_limit` from
-1 through 3. Every additional attempt requires a classified failure, positive
-expected information gain from new evidence, a corrected approach, or a
-different transport, and remaining resource budget. When that assignment's
-budget is exhausted, mark the provider unavailable for the assignment cycle,
-preserve partial output as untrusted evidence, and reshape the plan. Do not
-repeat an ambiguous paid dispatch; reconcile the run first.
+is bounded and recorded under an immutable exact three-attempt assignment
+budget. Invoke each configured provider format/transport once before reuse and
+fail closed when more than three formats are required. Persist every child
+attempt in the append-only Postgres ledger. Resource and cancellation bounds
+remain mandatory. Do not repeat an ambiguous paid dispatch; reconcile the run
+first, and never promote failed output into the final result artifact.
 
 A v1 paid revision additionally requires authenticated, durable assignment token
 accounting; primary attempts are unaffected. The current runtime has no generic
@@ -291,8 +290,8 @@ values. Pending, missing, reused, or unverified identities leave the project
 analysis-only and block Slack gateway activation; they do not justify borrowing
 another deployment's Slack surface.
 
-Slack delivery obeys its immutable assignment-specific `retry_limit` from 1
-through 3. Every additional attempt requires a classified failure, positive
+Slack delivery obeys its immutable assignment-specific `retry_limit` of exactly
+3. Every additional attempt requires a classified failure, positive
 expected information gain, new evidence, a corrected approach, or a different
 transport, and remaining resource budget. Never retry an ambiguous Slack side
 effect; reconcile it first. When the bounded route is exhausted,
@@ -385,9 +384,11 @@ through the project's configured independent security, CI, and deterministic
 merge gates. A changed candidate restarts this evidence chain.
 
 After required checks are green and the exact candidate is frozen, the Director
-may request one GitHub Copilot Lite hygiene observation. It is an unscored,
-reporting-only 0–4% effort lane with a hard 6% ceiling, no provider adapter or
-automatic routing, and no production credit, gate, or action authority. Without
+may request a GitHub Copilot Lite hygiene observation. It has no assigned
+workload share, range, or ceiling, no provider adapter or automatic routing,
+and no production credit, gate, or action authority. A request binds exactly
+three attempt slots and exercises each configured eligible format once before
+reuse. Without
 an authenticated contact it fails closed as unavailable; do not automate it on every push. A quota or
 availability failure and every rejected finding count as waste. Validate each
 finding independently and block only for a confirmed underlying defect. A new
@@ -405,7 +406,7 @@ failures. Never invent or blend missing cost telemetry.
 ## Minimal integration fix lane
 
 Before opening a new correction assignment, check whether the defect qualifies
-for the one-attempt minimal-fix procedure in
+for the exactly-three-attempt minimal-fix procedure in
 [`team-operating-charter.md`](team-operating-charter.md#minimal-integration-fix-procedure).
 Use it only for a tiny, unambiguous, reversible, mechanically correctable
 surface with an already-established expected result and an existing focused
@@ -503,3 +504,5 @@ project-specific control.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->

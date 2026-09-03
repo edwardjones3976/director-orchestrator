@@ -1,3 +1,15 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:48 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
@@ -14,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import importlib
 import secrets
 from contextlib import asynccontextmanager
 
@@ -97,6 +110,24 @@ from .providers import provider_registry
 from .parallel_dispatch import (
     DailyTaskBudgetLedger,
 )
+from .primary_commands import (
+    ApprovalResumeRequest,
+    CancellationRequest,
+    CompletionEvidenceRequest,
+    EffectReconciliationRequest,
+    PrimaryCommandBindingError,
+    PrimaryCommandOperation,
+    PrimaryCommandResponse,
+    ProviderResultRequest,
+    RecoveryRequest,
+    verify_completion_authority_proof,
+    verify_primary_ingress_proof,
+)
+from .primary_activation_commands import (
+    ProviderActivationAdvanceProofError,
+    ProviderActivationAdvanceRequest,
+    verify_provider_activation_advance_proof,
+)
 from .workload_policy import EnforcementMode
 
 
@@ -118,9 +149,17 @@ settings = Settings()
 settings.validate_workload_policy_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 settings.validate_langgraph_configuration()
+settings.validate_langgraph_primary_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 store = TaskStore(settings.sqlite_path)
+primary_default_activation = None
+if settings.langgraph_primary_enabled:
+    # Lazy import preserves the default-off startup boundary. Enabling primary
+    # mode must construct its real Postgres application router or fail startup.
+    from .primary_default import DefaultPrimaryActivation
+
+    primary_default_activation = DefaultPrimaryActivation(settings)
 settings.validate_parallel_dispatch_configuration()
 providers = provider_registry(settings)
 packet_task_router = None
@@ -132,7 +171,9 @@ if settings.langgraph_runtime_readiness()["live_provider_dispatch"]:
         )
     packet_task_router = DirectorPacketTaskRouter(
         authority_snapshots=LocalGitAuthoritySnapshotResolver(
-            settings.repository_allowlist[0], settings.repository_snapshot_root
+            settings.repository_allowlist[0],
+            settings.repository_snapshot_root,
+            max_files=settings.langgraph_primary_snapshot_max_files,
         ),
         boundary_adapters=build_primary_packet_adapters(
             providers,
@@ -315,8 +356,35 @@ async def _chatgpt_bridge_expiry_loop() -> None:
             continue
 
 
+async def _primary_intake_lease_loop() -> None:
+    while True:
+        await asyncio.sleep(10.0)
+        if primary_default_activation is None:
+            continue
+        try:
+            primary_default_activation.renew()
+        except Exception:
+            # Intake re-checks observed Postgres authority and fails closed. The
+            # public health surface exposes the lost writer lease.
+            continue
+
+
+async def _primary_reconciliation_loop() -> None:
+    while True:
+        await asyncio.sleep(30.0)
+        if primary_default_activation is None:
+            continue
+        try:
+            primary_default_activation.reconcile_once()
+        except Exception:
+            continue
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if primary_default_activation is not None:
+        primary_default_activation.start()
+        primary_default_activation.reconcile_once()
     # Startup fails closed if stale encrypted recovery material cannot be swept.
     chatgpt_bridge.store.sweep_expired_answers()
     initial_resumes = store.claim_privacy_cleanup_resumes()
@@ -338,12 +406,20 @@ async def lifespan(_: FastAPI):
     chatgpt_bridge_expiry_task = asyncio.create_task(
         _chatgpt_bridge_expiry_loop()
     )
+    primary_intake_lease_task = asyncio.create_task(
+        _primary_intake_lease_loop()
+    )
+    primary_reconciliation_task = asyncio.create_task(
+        _primary_reconciliation_loop()
+    )
     tasks = [
         *recovery_tasks,
         monitor_task,
         privacy_recovery_task,
         recoverable_task,
         chatgpt_bridge_expiry_task,
+        primary_intake_lease_task,
+        primary_reconciliation_task,
     ]
     try:
         yield
@@ -354,6 +430,8 @@ async def lifespan(_: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
         runtime_activation.close()
+        if primary_default_activation is not None:
+            primary_default_activation.close()
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 
 
@@ -394,6 +472,40 @@ def health() -> dict:
         ),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
         "langgraph": settings.langgraph_shadow_readiness(),
+        # Configuration is deliberately separate from observed authority. Until
+        # the production coordinator is attached to these command routes, every
+        # operational primary claim remains false even if an operator supplies
+        # otherwise valid PostgreSQL settings.
+        "langgraph_primary": (
+            primary_default_activation.health()
+            if primary_default_activation is not None
+            else {
+                **settings.langgraph_primary_configuration_readiness(),
+                "primary_graph_constructed": False,
+                "primary_router_wired": False,
+                "checkpoint_backend_postgres": False,
+                "checkpoint_schema_current": False,
+                "claim_store_ready": False,
+                "effect_ledger_ready": False,
+                "effect_executor_ready": False,
+                "writer_lease_ready": False,
+                "reconciliation_worker_ready": False,
+                "primary_runtime_active": False,
+                "new_intake_owner": "legacy",
+                "legacy_new_intake_disabled": False,
+                "intake_fencing_generation": 0,
+                "graph_task_count": 0,
+                "ambiguous_effect_count": 0,
+                "provider_activation": {
+                    "app_dry_run_ready": False,
+                    "app_live_ready": False,
+                    "runtime_adapter_dry_run_ready": False,
+                    "runtime_adapter_live_ready": False,
+                    "combined_dry_run_ready": False,
+                    "combined_live_ready": False,
+                },
+            }
+        ),
         # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
         # Booleans and one transport identifier only: no path, namespace value,
@@ -519,6 +631,44 @@ def intake(
         except StaleApproval as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+    if primary_default_activation is not None:
+        if not settings.langgraph_primary_new_intake_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="LangGraph primary intake is not activated",
+            )
+        assert primary_default_activation.application is not None
+        try:
+            return primary_default_activation.application.create_intake(
+                payload,
+                intake_authentication=intake_authentication,
+                authenticated_replay_identity=replay_identity,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="LangGraph primary intake is unavailable",
+            ) from exc
+    if settings.langgraph_primary_postgres_dsn:
+        postgres_module = importlib.import_module(
+            ".langgraph_postgres", package=__package__
+        )
+        fence = postgres_module.open_postgres_control_plane(
+            settings.langgraph_primary_postgres_dsn,
+            schema=settings.langgraph_primary_postgres_schema,
+            allow_insecure_local_transport=(
+                settings.langgraph_primary_allow_insecure_local_postgres
+            ),
+        )
+        try:
+            authority = fence.claim_store.current_intake_authority()
+            if authority.legacy_new_intake_disabled:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Legacy intake is fenced by the shared cutover epoch",
+                )
+        finally:
+            fence.close()
     task_id = f"DIR-{secrets.token_hex(5).upper()}"
     record = TaskRecord(
         task_id=task_id,
@@ -545,12 +695,569 @@ def intake(
 
 @app.get("/v1/tasks/{task_id}", response_model=TaskRecord, dependencies=[Depends(require_auth)])
 def get_task(task_id: str, response: Response) -> TaskRecord:
+    if primary_default_activation is not None:
+        assert primary_default_activation.application is not None
+        primary_record = primary_default_activation.application.get_task(task_id)
+        if primary_record is not None:
+            assert primary_default_activation.coordinator is not None
+            projection = primary_default_activation.coordinator.get_projection(task_id)
+            writer = primary_default_activation.coordinator.get_task_writer(task_id)
+            if projection is None or writer is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="LangGraph primary projection is unavailable",
+                )
+            response.headers["X-Task-Engine-Owner"] = "langgraph"
+            response.headers["X-Primary-Projection-Digest"] = (
+                projection.projection_digest
+            )
+            response.headers["X-Primary-Projection-Version"] = str(
+                projection.projection_version
+            )
+            response.headers["X-Primary-Writer-Generation"] = str(
+                writer.fencing_generation
+            )
+            pending = projection.projection.get("pending_approval")
+            if isinstance(pending, dict):
+                response.headers["X-Primary-Approval-Kind"] = str(pending["kind"])
+                response.headers["X-Primary-Approval-Digest"] = str(
+                    pending["request_digest"]
+                )
+            return primary_record
     versioned = store.get_versioned(task_id)
     if versioned is None:
         raise HTTPException(status_code=404, detail="Task not found")
     record, version = versioned
     response.headers["X-Task-Record-Version"] = str(version)
     return record
+
+
+def _primary_command_projection(
+    task_id: str,
+    request: object,
+    operation: PrimaryCommandOperation,
+):
+    if primary_default_activation is None:
+        raise HTTPException(status_code=404, detail="LangGraph primary task not found")
+    coordinator = primary_default_activation.coordinator
+    if coordinator is None:
+        raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
+    try:
+        request.validate_path(task_id)
+        receipt = coordinator.read_command_receipt(
+            task_id=task_id,
+            operation=operation.value,
+            command_id=request.command_id,
+        )
+        if receipt is not None:
+            return coordinator, None, None, PrimaryCommandResponse.from_receipt(
+                request=request,
+                operation=operation,
+                receipt=receipt,
+            )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    projection = coordinator.get_projection(task_id)
+    if projection is None:
+        raise HTTPException(status_code=404, detail="LangGraph primary task not found")
+    writer = coordinator.get_task_writer(task_id)
+    if writer is None:
+        raise HTTPException(status_code=409, detail="LangGraph task writer lease is unavailable")
+    try:
+        request.validate_path_and_fence(
+            path_task_id=task_id,
+            current_fencing_generation=writer.fencing_generation,
+        )
+        try:
+            request.validate_projection(projection.projection_digest)
+        except PrimaryCommandBindingError:
+            if not request.runtime_replay_is_evidenced(projection.projection):
+                raise
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return coordinator, projection, writer, None
+
+
+def _require_primary_owner_actor(actor_id: str) -> None:
+    if not owner_identity_matches(actor_id, settings.slack_owner_user_id):
+        raise HTTPException(status_code=403, detail="Owner identity mismatch")
+
+
+def _verify_primary_owner_command_proof(
+    task_id: str,
+    request: CancellationRequest | RecoveryRequest,
+    operation: PrimaryCommandOperation,
+) -> None:
+    proof = request.gateway_proof
+    if (
+        proof is None
+        or not settings.slack_channel_id
+        or proof.channel_id is None
+        or not hmac.compare_digest(proof.channel_id, settings.slack_channel_id)
+    ):
+        raise HTTPException(status_code=403, detail="Slack command channel mismatch")
+    suffix = "cancel" if operation == PrimaryCommandOperation.CANCELLATION else "recover"
+    path = f"/v1/primary/tasks/{task_id}/{suffix}"
+    try:
+        nonce_digest = verify_primary_ingress_proof(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            request,
+            path=path,
+            proof_field="gateway_proof",
+        )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    _require_primary_owner_actor(request.actor_id)
+    coordinator, _, writer, replay = _primary_command_projection(
+        task_id, request, operation
+    )
+    if replay is not None:
+        return
+    assert writer is not None
+    try:
+        coordinator.claim_command_authorization(
+            task_id=task_id,
+            operation=operation.value,
+            command_id=request.command_id,
+            command_digest=request.command_digest,
+            nonce_digest=nonce_digest,
+            proof_version=proof.version,
+            actor_id=request.actor_id,
+            fencing_generation=writer.fencing_generation,
+            proof_expires_at=proof.issued_at + 300,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/provider-activations/{provider_id}/advance",
+    response_model=dict[str, bool],
+    dependencies=[Depends(require_auth)],
+)
+def primary_advance_provider_activation(
+    provider_id: str, request: ProviderActivationAdvanceRequest
+) -> dict[str, bool]:
+    try:
+        authorization = verify_provider_activation_advance_proof(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            provider_id,
+            request,
+        )
+    except ProviderActivationAdvanceProofError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    _require_primary_owner_actor(authorization.actor_id)
+    if primary_default_activation is None:
+        raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
+    activation = primary_default_activation.provider_activation
+    if activation is None:
+        raise HTTPException(
+            status_code=409, detail="Provider activation bindings are unavailable"
+        )
+    try:
+        activation.record_authorized(
+            provider_id=provider_id,
+            evidence_schema_version=request.evidence_schema_version,
+            binding_version=request.binding_version,
+            surface=request.surface,
+            stage=request.stage,
+            expected_revision=request.expected_revision,
+            evidence_id=request.evidence_id,
+            evidence_digest=request.evidence_digest,
+            observed_at=request.observed_at,
+            expires_at=request.expires_at,
+            authorization=authorization,
+        )
+        return activation.health()
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _primary_command_response(
+    request: object,
+    operation: PrimaryCommandOperation,
+) -> PrimaryCommandResponse:
+    assert primary_default_activation is not None
+    assert primary_default_activation.coordinator is not None
+    projection = primary_default_activation.coordinator.get_projection(request.task_id)
+    writer = primary_default_activation.coordinator.get_task_writer(request.task_id)
+    if projection is None or writer is None:
+        raise HTTPException(status_code=409, detail="LangGraph command result is unavailable")
+    return PrimaryCommandResponse.from_projection(
+        request=request,
+        operation=operation,
+        projection=projection,
+        fencing_generation=writer.fencing_generation,
+    )
+
+
+def _record_primary_command(
+    request: object,
+    operation: PrimaryCommandOperation,
+) -> PrimaryCommandResponse:
+    assert primary_default_activation is not None
+    coordinator = primary_default_activation.coordinator
+    assert coordinator is not None
+    projection = coordinator.get_projection(request.task_id)
+    if projection is None:
+        raise HTTPException(status_code=409, detail="LangGraph command result is unavailable")
+    coordinator.record_command_receipt(
+        task_id=request.task_id,
+        operation=operation.value,
+        command_id=request.command_id,
+        command_digest=request.command_digest,
+        projection=projection,
+    )
+    return _primary_command_response(request, operation)
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/approvals/resume",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_resume_approval(
+    task_id: str, request: ApprovalResumeRequest
+) -> PrimaryCommandResponse:
+    _require_primary_owner_actor(request.actor_id)
+    if (
+        request.slack_gateway_proof is None
+        or not settings.slack_channel_id
+        or request.slack_gateway_proof.channel_id is None
+        or not hmac.compare_digest(
+            request.slack_gateway_proof.channel_id, settings.slack_channel_id
+        )
+    ):
+        raise HTTPException(status_code=403, detail="Slack approval channel mismatch")
+    try:
+        nonce_digest = verify_primary_ingress_proof(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            request,
+            path=f"/v1/primary/tasks/{task_id}/approvals/resume",
+            proof_field="slack_gateway_proof",
+        )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    coordinator, _, writer, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.APPROVAL_RESUME
+    )
+    if replay is not None:
+        return replay
+    assert writer is not None
+    try:
+        coordinator.claim_command_authorization(
+            task_id=task_id,
+            operation=PrimaryCommandOperation.APPROVAL_RESUME.value,
+            command_id=request.command_id,
+            command_digest=request.command_digest,
+            nonce_digest=nonce_digest,
+            proof_version=request.slack_gateway_proof.version,
+            actor_id=request.actor_id,
+            fencing_generation=writer.fencing_generation,
+            proof_expires_at=request.slack_gateway_proof.issued_at + 300,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        command = request.to_command()
+        if (
+            request.kind.value == "external_effect"
+            and command.decision.value == "approve"
+        ):
+            # Keep the external-effect persistence chain behind the primary-mode
+            # route. Default-off startup must not import this Postgres-backed
+            # effect implementation merely to construct the legacy app.
+            from .primary_effect_gateways import PostgresTypedEffectIntentStore
+
+            assert primary_default_activation.handle is not None
+            PostgresTypedEffectIntentStore(
+                pool=primary_default_activation.handle.pool,
+                schema=settings.langgraph_primary_postgres_schema,
+            ).record_approval_binding(
+                task_id=task_id,
+                effect_key_digest=coordinator.pending_effect_key(task_id),
+                approval_request_digest=request.request_digest,
+                approval_receipt_digest=command.receipt_digest,
+                command_id=request.command_id,
+                command_digest=request.command_digest,
+                authorization_nonce_digest=nonce_digest,
+                actor_id=request.actor_id,
+                writer_owner_id="langgraph",
+                writer_fencing_generation=writer.fencing_generation,
+            )
+        primary_default_activation.application.resume_approval(command)
+        response = _record_primary_command(
+            request, PrimaryCommandOperation.APPROVAL_RESUME
+        )
+        return response
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/provider-results",
+    response_model=PrimaryCommandResponse,
+)
+def primary_provider_result(
+    task_id: str,
+    request: ProviderResultRequest,
+    authorization: str | None = Header(default=None),
+) -> PrimaryCommandResponse:
+    # FastAPI resolves Header(...) to str/None. Direct internal calls retain the
+    # descriptor object and are already inside the application trust boundary.
+    external_ingress = authorization is None or isinstance(authorization, str)
+    if external_ingress:
+        if (
+            request.assignment_id is None
+            or request.provider_run_id is None
+            or request.provider_id is None
+            or request.actor_id != request.producer_id
+            or request.provider_id != request.producer_id
+        ):
+            raise HTTPException(status_code=403, detail="Provider actor binding mismatch")
+        if request.provider_id == "claude":
+            if not bearer_matches(settings.claude_callback_secret, authorization):
+                raise HTTPException(status_code=401, detail="Unauthorized")
+        else:
+            try:
+                verify_primary_ingress_proof(
+                    settings.langgraph_primary_adapter_callback_secret,
+                    settings.shared_secret,
+                    request,
+                    path=f"/v1/primary/tasks/{task_id}/provider-results",
+                    proof_field="callback_proof",
+                )
+            except PrimaryCommandBindingError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.PROVIDER_RESULT
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        if (
+            request.assignment_id is None
+            or request.provider_id is None
+            or request.provider_run_id is None
+        ):
+            raise ValueError(
+                "parallel provider callback requires assignment, provider, and run identity"
+            )
+        primary_default_activation.application.record_provider_callback(
+            task_id=task_id,
+            assignment_id=request.assignment_id,
+            provider_id=request.provider_id,
+            provider_run_id=request.provider_run_id,
+            command=request.to_command(),
+        )
+        return _record_primary_command(
+            request, PrimaryCommandOperation.PROVIDER_RESULT
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/effects/reconcile",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_reconcile_effect(
+    task_id: str, request: EffectReconciliationRequest
+) -> PrimaryCommandResponse:
+    if request.actor_id != request.writer_owner_id:
+        raise HTTPException(status_code=403, detail="Effect actor binding mismatch")
+    if request.result_digest is None or request.readback_digest is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Effect reconciliation requires result and readback evidence",
+        )
+    try:
+        verify_primary_ingress_proof(
+            settings.langgraph_primary_effect_reconciliation_secret,
+            settings.shared_secret,
+            request,
+            path=f"/v1/primary/tasks/{task_id}/effects/reconcile",
+            proof_field="writer_proof",
+        )
+    except PrimaryCommandBindingError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.EFFECT_RECONCILIATION
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        primary_default_activation.application.reconcile_effect(
+            task_id, request.to_command()
+        )
+        return _record_primary_command(
+            request, PrimaryCommandOperation.EFFECT_RECONCILIATION
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/completion-evidence",
+    response_model=PrimaryCommandResponse,
+)
+def primary_completion_evidence(
+    task_id: str,
+    request: CompletionEvidenceRequest,
+) -> PrimaryCommandResponse:
+    try:
+        allowlist = settings.completion_evidence_actor_allowlist()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if request.ci_gate_id == request.security_gate_id:
+        raise HTTPException(
+            status_code=403, detail="Completion CI and security gate ids must differ"
+        )
+    required_results = {
+        "independent_review": [
+            item for item in request.results
+            if item.get("evidence_role") == "INDEPENDENT_REVIEWER"
+        ],
+        "ci": [
+            item for item in request.results
+            if item.get("gate_id") == request.ci_gate_id
+            and item.get("evidence_role") == "TRUSTED_EXTERNAL_CI"
+        ],
+        "security": [
+            item for item in request.results
+            if item.get("gate_id") == request.security_gate_id
+            and item.get("evidence_role") == "CODEX_SECURITY"
+        ],
+    }
+    if any(len(results) != 1 for results in required_results.values()):
+        raise HTTPException(
+            status_code=403, detail="Completion evidence kind binding is incomplete"
+        )
+    selected_digests = {
+        str(results[0].get("result_digest", ""))
+        for results in required_results.values()
+    }
+    if len(selected_digests) != len(required_results):
+        raise HTTPException(
+            status_code=403, detail="Completion evidence kinds must be distinct"
+        )
+    authority_secrets = {
+        "independent_review": (
+            settings.langgraph_primary_independent_review_evidence_secret
+        ),
+        "ci": settings.langgraph_primary_ci_evidence_secret,
+        "security": settings.langgraph_primary_security_evidence_secret,
+    }
+    verified_authorities = {}
+    for kind, results in required_results.items():
+        actor = results[0].get("evidence_actor")
+        principal = (
+            actor.get("authenticated_principal") if isinstance(actor, dict) else None
+        )
+        try:
+            proof = verify_completion_authority_proof(
+                authority_secrets[kind],
+                settings.shared_secret,
+                request,
+                authority=kind,
+            )
+        except PrimaryCommandBindingError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if (
+            proof.issuer_id not in allowlist[kind]["issuers"]
+            or proof.principal_id not in allowlist[kind]["principals"]
+            or principal != proof.principal_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Completion evidence {kind} actor is not allowlisted",
+            )
+        verified_authorities[kind] = proof
+    if (
+        len({proof.issuer_id for proof in verified_authorities.values()}) != 3
+        or len({proof.principal_id for proof in verified_authorities.values()}) != 3
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Completion evidence requires three distinct authorities",
+        )
+    coordinator, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.COMPLETION_EVIDENCE
+    )
+    if replay is not None:
+        return replay
+    try:
+        coordinator.record_completion_evidence(
+            task_id=task_id,
+            candidate_sha=request.candidate_sha,
+            provider_result_digest=request.provider_result_digest,
+            evidence=request.to_evidence(),
+        )
+        return _record_primary_command(
+            request, PrimaryCommandOperation.COMPLETION_EVIDENCE
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/cancel",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_cancel(
+    task_id: str, request: CancellationRequest
+) -> PrimaryCommandResponse:
+    _verify_primary_owner_command_proof(
+        task_id, request, PrimaryCommandOperation.CANCELLATION
+    )
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.CANCELLATION
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        primary_default_activation.application.cancel(task_id)
+        return _record_primary_command(request, PrimaryCommandOperation.CANCELLATION)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/primary/tasks/{task_id}/recover",
+    response_model=PrimaryCommandResponse,
+    dependencies=[Depends(require_auth)],
+)
+def primary_recover(
+    task_id: str, request: RecoveryRequest
+) -> PrimaryCommandResponse:
+    _verify_primary_owner_command_proof(
+        task_id, request, PrimaryCommandOperation.RECOVERY
+    )
+    _, _, _, replay = _primary_command_projection(
+        task_id, request, PrimaryCommandOperation.RECOVERY
+    )
+    if replay is not None:
+        return replay
+    assert primary_default_activation is not None
+    assert primary_default_activation.application is not None
+    try:
+        primary_default_activation.application.recover(task_id)
+        return _record_primary_command(request, PrimaryCommandOperation.RECOVERY)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _apply_owner_decision(record: TaskRecord, approval: OwnerApproval) -> None:
@@ -641,6 +1348,15 @@ def _consume_owner_decision(task_store: TaskStore, task_id: str, approval: Owner
 
 @app.post("/v1/tasks/{task_id}/approve", response_model=TaskRecord, dependencies=[Depends(require_auth)])
 def approve(task_id: str, approval: OwnerApproval, background: BackgroundTasks) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Paid-off LangGraph task cannot cross its execution approval interrupt",
+        )
     if not owner_identity_matches(approval.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     try:
@@ -663,6 +1379,12 @@ def recover_oracle_stop(
     approval: OracleRecoveryApproval,
     background: BackgroundTasks,
 ) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(status_code=409, detail="Command is not valid for this LangGraph task")
     if not owner_identity_matches(approval.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     versioned = store.get_versioned(task_id)
@@ -715,6 +1437,12 @@ def reconcile_dispatch(
     resolution: AmbiguousDispatchResolution,
     background: BackgroundTasks,
 ) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(status_code=409, detail="Use LangGraph effect reconciliation")
     if not owner_identity_matches(resolution.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     versioned = store.get_versioned(task_id)
@@ -741,6 +1469,12 @@ def reconcile_dispatch(
     dependencies=[Depends(require_claude_callback_auth)],
 )
 def claude_callback(task_id: str, callback: ClaudeCallback, background: BackgroundTasks) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(status_code=409, detail="LangGraph task has no pending Claude callback")
     versioned = store.get_versioned(task_id)
     if versioned is None:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -802,6 +1536,12 @@ def complete_run(
     completion: ManualRunCompletion,
     background: BackgroundTasks,
 ) -> TaskRecord:
+    if (
+        primary_default_activation is not None
+        and primary_default_activation.application is not None
+        and primary_default_activation.application.get_task(task_id) is not None
+    ):
+        raise HTTPException(status_code=409, detail="Use the LangGraph provider-result command")
     if not owner_identity_matches(completion.owner_user_id, settings.slack_owner_user_id):
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
     versioned = store.get_versioned(task_id)
@@ -821,6 +1561,7 @@ def complete_run(
     background.add_task(engine.run, task_id)
     return stored
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
@@ -832,3 +1573,14 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:23 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:48 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:29 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]

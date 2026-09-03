@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
@@ -92,6 +93,7 @@ class PolicyTests(unittest.TestCase):
         )
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
+        self.assertTrue(plan.assignments[0].requires_approval)
 
     def test_dry_run_research_plan_does_not_copy_intake_into_the_search_query(self):
         text = (
@@ -951,3 +953,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | BEGIN]]
@@ -20,7 +21,8 @@ Two percentage ledgers are intentionally separate:
 * ``overall_targets`` covers authenticated or directly observed provider effort,
   including direction, review, research, validation, and implementation.  It is
   a prospective usage guard: it may prefer an under-target provider or block new
-  effort above a hard ceiling, but it never creates production credit.
+  effort using soft preferences, but it never blocks solely because of share and
+  never creates production credit.
 * ``direct_production_targets`` is the sole workload-allocation blocker and
   covers authenticated, Director-accepted production output only. The external
   OpenAI lane is distinct from OpenAI's overall control-plane work.
@@ -42,7 +44,6 @@ from typing import Any, Sequence
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 FABLE_MODEL_FLOOR = "FABLE 5 ULTRA/MAX"
 COPILOT_LITE_NORMAL_BAND = (0, 4)
-COPILOT_LITE_HARD_CEILING = 6
 
 
 class WorkloadPolicyError(ValueError):
@@ -123,21 +124,14 @@ class OverallTarget:
     percent: int
     normal_min_percent: int
     normal_max_percent: int
-    hard_ceiling_percent: int
 
     def __post_init__(self) -> None:
         _validate_percent(self.percent, "overall target")
         _validate_percent(self.normal_min_percent, "overall normal minimum")
         _validate_percent(self.normal_max_percent, "overall normal maximum")
-        _validate_percent(self.hard_ceiling_percent, "overall hard ceiling")
-        if not (
-            self.normal_min_percent
-            <= self.percent
-            <= self.normal_max_percent
-            < self.hard_ceiling_percent
-        ):
+        if not self.normal_min_percent <= self.percent <= self.normal_max_percent:
             raise WorkloadPolicyError(
-                "overall target must be inside its normal band below its hard ceiling"
+                "overall target must be inside its normal band"
             )
 
 
@@ -158,12 +152,12 @@ def _validate_percent(value: int, label: str) -> None:
 
 
 OVERALL_TARGETS: tuple[OverallTarget, ...] = (
-    OverallTarget(Provider.CLAUDE, 36, 33, 39, 41),
-    OverallTarget(Provider.CURSOR, 20, 17, 23, 33),
-    OverallTarget(Provider.GROK, 11, 8, 14, 16),
-    OverallTarget(Provider.OPENAI, 8, 5, 11, 13),
-    OverallTarget(Provider.GEMINI, 20, 17, 23, 25),
-    OverallTarget(Provider.PERPLEXITY, 5, 1, 7, 9),
+    OverallTarget(Provider.CLAUDE, 36, 33, 39),
+    OverallTarget(Provider.CURSOR, 20, 17, 23),
+    OverallTarget(Provider.GROK, 11, 8, 14),
+    OverallTarget(Provider.OPENAI, 8, 5, 11),
+    OverallTarget(Provider.GEMINI, 20, 17, 23),
+    OverallTarget(Provider.PERPLEXITY, 5, 1, 7),
 )
 
 DIRECT_PRODUCTION_TARGETS: tuple[DirectProductionTarget, ...] = (
@@ -198,7 +192,6 @@ class WorkloadPolicy:
     )
     rolling_window_size: int = 20
     direct_production_soft_tolerance_points: int = 3
-    direct_production_hard_overage_points: int = 5
     claude_model_floor: str = FABLE_MODEL_FLOOR
     approved_claude_model_labels: tuple[str, ...] = (FABLE_MODEL_FLOOR,)
     status_read_target: int = 2
@@ -268,10 +261,6 @@ class WorkloadPolicy:
             raise WorkloadPolicyError(
                 "direct-production soft tolerance must remain plus or minus 3 points"
             )
-        if self.direct_production_hard_overage_points != 5:
-            raise WorkloadPolicyError(
-                "direct-production hard overage must remain target plus 5 points"
-            )
         if not self.claude_model_floor.strip():
             raise WorkloadPolicyError("Claude model floor must not be blank")
         if self.claude_model_floor not in self.approved_claude_model_labels:
@@ -325,22 +314,10 @@ class WorkloadPolicy:
         target = _lookup_target(self.overall_targets, provider)
         return target.normal_min_percent, target.normal_max_percent
 
-    def overall_hard_ceiling(self, provider: Provider) -> int:
-        return _lookup_target(self.overall_targets, provider).hard_ceiling_percent
-
     def direct_production_target(
         self, provider: DirectProductionProvider
     ) -> int:
         return _lookup_percent(self.direct_production_targets, provider)
-
-    def direct_production_hard_threshold(
-        self, provider: DirectProductionProvider
-    ) -> int:
-        return min(
-            100,
-            self.direct_production_target(provider)
-            + self.direct_production_hard_overage_points,
-        )
 
     def direct_production_soft_band(
         self, provider: DirectProductionProvider
@@ -391,22 +368,17 @@ def _positive_int(value: int, label: str) -> None:
 def evaluate_copilot_lite_effort(
     *, current_units: int, total_units: int, candidate_units: int = 1
 ) -> bool:
-    """Fail closed when prospective unscored Copilot hygiene exceeds six percent.
+    """Validate prospective unscored Copilot hygiene accounting.
 
     Copilot/Lite is not a production provider and never earns a target or direct
-    credit.  This helper exists for the optional one-time hygiene lane; there is
+    credit.  This helper exists for the optional hygiene lane; there is
     deliberately no provider adapter or automatic dispatch authority.
     """
 
     _nonnegative_int(current_units, "Copilot current effort units")
     _nonnegative_int(total_units, "total observed effort units")
     _positive_int(candidate_units, "Copilot candidate effort units")
-    prospective_total = total_units + candidate_units
-    prospective_copilot = current_units + candidate_units
-    return (
-        prospective_copilot * 100
-        <= COPILOT_LITE_HARD_CEILING * prospective_total
-    )
+    return True
 
 
 DEFAULT_POLICY = WorkloadPolicy.default()
@@ -628,7 +600,7 @@ def _direct_candidate_routing_rank(
     history: tuple[DirectProductionRecord, ...],
     policy: WorkloadPolicy,
 ) -> int | None:
-    """Return the soft-allocation tier, or ``None`` when the hard cap blocks."""
+    """Return the soft-allocation tier; workload share never blocks."""
 
     if not is_accepted_productive_kind(provider, kind):
         return 1
@@ -653,13 +625,6 @@ def _direct_candidate_routing_rank(
         for record in window
         if record.provider is direct_provider
     )
-    if (
-        len(window) == policy.rolling_window_size
-        and provider_units * 100
-        > policy.direct_production_hard_threshold(direct_provider) * total_units
-    ):
-        return None
-
     soft_floor, soft_ceiling = policy.direct_production_soft_band(direct_provider)
     if provider_units * 100 < soft_floor * total_units:
         return 0
@@ -676,7 +641,7 @@ def _total_effort_candidate_routing_rank(
     history: tuple[WorkloadRecord, ...],
     policy: WorkloadPolicy,
 ) -> int | None:
-    """Return prospective total-effort preference, blocking only new overage.
+    """Return prospective total-effort preference without a share blocker.
 
     Recorded history is immutable and remains attributed to the provider that
     actually consumed it.  A candidate never turns that effort into accepted
@@ -692,8 +657,6 @@ def _total_effort_candidate_routing_rank(
     provider_units = sum(
         record.effort_units for record in window if record.provider is provider
     )
-    if provider_units * 100 > policy.overall_hard_ceiling(provider) * total_units:
-        return None
     normal_min, normal_max = policy.overall_normal_band(provider)
     if provider_units * 100 < normal_min * total_units:
         return 0
@@ -719,7 +682,7 @@ def select_cheapest_capable_provider(
     """Select deterministically from trusted facts without rewriting an assignment.
 
     A trusted explicit provider requirement wins only after capability, readiness,
-    scope, reviewer-independence, and direct hard-limit checks. Otherwise direct
+    scope, reviewer-independence, and deterministic eligibility checks. Otherwise direct
     providers below the target-minus-three soft band are preferred, followed by
     providers inside the band, then providers above target-plus-three; trusted
     cost rank and provider id break ties. Missing trusted facts fail closed.
@@ -962,14 +925,8 @@ def evaluate_assignment(
             for record in window
             if record.provider is request.provider
         )
-        ceiling = policy.overall_hard_ceiling(request.provider)
         normal_min, normal_max = policy.overall_normal_band(request.provider)
-        if requested_provider_units * 100 > ceiling * total_units:
-            violations.append(
-                "total_effort_hard_ceiling_exceeded:"
-                f"{request.provider.value}:{ceiling}"
-            )
-        elif requested_provider_units * 100 < normal_min * total_units:
+        if requested_provider_units * 100 < normal_min * total_units:
             advisories.append(
                 "total_effort_provider_under_normal_minimum:"
                 f"{request.provider.value}:{normal_min}"
@@ -1028,29 +985,6 @@ def evaluate_assignment(
                     "direct_production_above_soft_band:"
                     f"{direct_provider.value}:{soft_ceiling}"
                 )
-            for provider in DirectProductionProvider:
-                provider_units = sum(
-                    record.effort_units
-                    for record in direct_window
-                    if record.provider is provider
-                )
-                if provider_units == 0:
-                    continue
-                direct_threshold = policy.direct_production_hard_threshold(
-                    provider
-                )
-                if provider_units * 100 <= direct_threshold * direct_total:
-                    continue
-                if provider is direct_provider:
-                    violations.append(
-                        "direct_production_hard_threshold_exceeded:"
-                        f"{provider.value}:{direct_threshold}"
-                    )
-                else:
-                    advisories.append(
-                        "direct_production_other_provider_over_hard_threshold:"
-                        f"{provider.value}:{direct_threshold}"
-                    )
 
     return _decision(mode, violations, advisories)
 
@@ -1073,8 +1007,8 @@ class RetryRequest:
     def __post_init__(self) -> None:
         _positive_int(self.attempt_number, "attempt number")
         _positive_int(self.retry_limit, "assignment retry limit")
-        if self.retry_limit > 3:
-            raise WorkloadPolicyError("assignment retry limit cannot exceed 3 attempts")
+        if self.retry_limit != 3:
+            raise WorkloadPolicyError("assignment attempt budget must be exactly 3")
         if not isinstance(self.previous_failure, FailureKind):
             raise WorkloadPolicyError("previous failure must be a FailureKind")
         if not isinstance(self.transport, Transport):
@@ -1102,7 +1036,7 @@ def evaluate_retry(
     policy: WorkloadPolicy = DEFAULT_POLICY,
     mode: EnforcementMode = EnforcementMode.ENFORCED,
 ) -> DecisionResult:
-    """Enforce the immutable assignment budget and evidence-gain retry gate."""
+    """Enforce the three-attempt budget, resource gates, and ambiguity safety."""
 
     violations: list[str] = []
     advisories: list[str] = []
@@ -1140,8 +1074,8 @@ def evaluate_retry(
             or transport_changed
         )
         if not request.positive_expected_information_gain or not changed_basis:
-            violations.append(
-                "additional_attempt_requires_positive_information_gain_and_changed_basis"
+            advisories.append(
+                "additional_attempt_information_gain_or_changed_basis_not_observed"
             )
 
     return _decision(mode, violations, advisories)
@@ -1322,8 +1256,8 @@ class PrestagePacket:
         _positive_int(self.budget_units, "prestage budget units")
         _positive_int(self.timeout_seconds, "prestage timeout seconds")
         _positive_int(self.retry_limit, "prestage retry limit")
-        if self.retry_limit > 3:
-            raise WorkloadPolicyError("prestage retry limit cannot exceed 3 attempts")
+        if self.retry_limit != 3:
+            raise WorkloadPolicyError("prestage attempt budget must be exactly 3")
 
     def canonical_payload(self) -> dict[str, Any]:
         """Return a fresh JSON-compatible representation, excluding its digest."""
@@ -1427,3 +1361,5 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]

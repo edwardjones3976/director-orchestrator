@@ -1,4 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -16,6 +18,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -639,6 +642,7 @@ class CompletionGateRuntimeTests(unittest.TestCase):
 
             for label, target in (("escaping", outside), ("contained", inside)):
                 link = repository / f"link-{label}"
+                emulate_link = False
                 try:
                     link.symlink_to(target, target_is_directory=True)
                 except (OSError, NotImplementedError) as exc:
@@ -659,16 +663,33 @@ class CompletionGateRuntimeTests(unittest.TestCase):
                 gate["working_directory"] = link.name
                 rebind_ledger(verified.document)
                 with self.subTest(link=label):
-                    with self.assertRaisesRegex(
-                        CompletionGateError, "symbolic link|reparse point"
-                    ):
-                        self.registry.execute(
-                            verified,
-                            "director.contract-tests",
-                            repository_root=repository,
-                            enabled=True,
-                            isolated_proof_enabled=True,
+                    original_reject_link = RunnerRegistry._reject_link
+
+                    def reject_link(candidate: Path, description: str):
+                        if emulate_link and candidate == link:
+                            raise CompletionGateError(
+                                f"{description} must not be a symbolic link"
+                            )
+                        return original_reject_link(candidate, description)
+
+                    link_context = (
+                        patch.object(
+                            RunnerRegistry, "_reject_link", side_effect=reject_link
                         )
+                        if emulate_link
+                        else nullcontext()
+                    )
+                    with link_context:
+                        with self.assertRaisesRegex(
+                            CompletionGateError, "symbolic link|reparse point"
+                        ):
+                            self.registry.execute(
+                                verified,
+                                "director.contract-tests",
+                                repository_root=repository,
+                                enabled=True,
+                                isolated_proof_enabled=True,
+                            )
 
     def test_a_working_directory_outside_the_repository_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -838,6 +859,7 @@ class CompletionGateRuntimeTests(unittest.TestCase):
             self.assertEqual("PASS", execute().status)
 
             alias = Path(temporary) / "outside-alias.py"
+            emulate_hard_link = False
             try:
                 os.link(script, alias)
             except (OSError, NotImplementedError, AttributeError) as exc:
@@ -848,8 +870,25 @@ class CompletionGateRuntimeTests(unittest.TestCase):
                 "hard-link count coverage is required",
             )
 
-            with self.assertRaisesRegex(CompletionGateError, "hard link"):
-                execute()
+            if emulate_hard_link:
+                original_reject_link = RunnerRegistry._reject_link
+
+                def report_two_links(candidate: Path, description: str):
+                    info = original_reject_link(candidate, description)
+                    if candidate == script:
+                        fields = list(info)
+                        fields[3] = 2
+                        return os.stat_result(fields)
+                    return info
+
+                with patch.object(
+                    RunnerRegistry, "_reject_link", side_effect=report_two_links
+                ):
+                    with self.assertRaisesRegex(CompletionGateError, "hard link"):
+                        execute()
+            else:
+                with self.assertRaisesRegex(CompletionGateError, "hard link"):
+                    execute()
     # [[Claude | Claude Opus 5 | 2026-08-25 | 03:26 UTC | END]]
 
     def test_aggregate_rejects_planned_or_partial_evidence(self):
@@ -877,3 +916,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]

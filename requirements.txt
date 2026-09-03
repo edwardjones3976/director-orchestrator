@@ -1,9 +1,16 @@
+# [[Claude | Claude Opus 5 | 2026-08-31 | 15:05 UTC | BEGIN]]
+# [[Claude | Claude Opus 5 | 2026-08-31 | 12:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:35 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | BEGIN]]
 fastapi>=0.115,<1
 httpx>=0.28,<1
 jsonschema>=4.23,<5
 langgraph==1.2.10
+langgraph-checkpoint-postgres==3.1.2
 langgraph-checkpoint-sqlite==3.1.1
+psycopg[binary,pool]>=3.2,<4
+# Named directly because the bounded control-plane pool imports psycopg_pool.
+psycopg-pool>=3.2,<4
 PyJWT[crypto]>=2.10,<3
 pydantic>=2.10,<3
 rfc8785>=0.1.4,<1
@@ -11,4 +18,7 @@ slack-bolt>=1.23,<2
 uvicorn[standard]>=0.34,<1
 
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:35 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-31 | 12:40 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-08-31 | 15:05 UTC | END]]
 

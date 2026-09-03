@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
@@ -16,6 +17,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Mapping
+from unittest import mock
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -143,6 +145,48 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
         self.assertEqual(readiness["live_provider_dispatch"], True)
         self.assertNotIn("provider", readiness)
         self.assertNotIn("healthy", readiness)
+
+    def test_postgres_checkpoint_rejects_active_runtime(self):
+        with self.assertRaisesRegex(
+            ValueError, "only for inactive offline replay"
+        ):
+            LangGraphPacketRuntime(
+                postgres_checkpoint=object(),  # type: ignore[arg-type]
+                ledger_database_path=str(self.root / "postgres-active-ledger.sqlite3"),
+                legacy_database_path=str(self.legacy_path),
+                runtime_active=True,
+            )
+
+    def test_postgres_checkpoint_rejects_live_provider_dispatch(self):
+        with self.assertRaisesRegex(
+            ValueError, "only for inactive offline replay"
+        ):
+            LangGraphPacketRuntime(
+                postgres_checkpoint=object(),  # type: ignore[arg-type]
+                ledger_database_path=str(self.root / "postgres-live-ledger.sqlite3"),
+                legacy_database_path=str(self.legacy_path),
+                allow_live_provider_dispatch=True,
+            )
+
+    def test_offline_postgres_mixed_backend_reports_no_single_writer(self):
+        binding = mock.Mock(
+            checkpointer=object(),
+            storage_identity="postgres:sha256:" + "a" * 64,
+        )
+        with mock.patch(
+            "director_orchestrator.langgraph_runtime._resolve_postgres_checkpoint_binding",
+            return_value=binding,
+        ):
+            runtime = LangGraphPacketRuntime(
+                postgres_checkpoint=object(),  # type: ignore[arg-type]
+                ledger_database_path=str(self.root / "postgres-offline-ledger.sqlite3"),
+                legacy_database_path=str(self.legacy_path),
+            )
+
+        readiness = runtime.readiness().as_dict()
+        self.assertFalse(readiness["runtime_active"])
+        self.assertFalse(readiness["live_provider_dispatch"])
+        self.assertFalse(readiness["single_writer"])
 
     def test_offline_replay_never_calls_an_adapter_and_is_idempotent(self):
         first = self.runtime.run_packet(
@@ -1144,3 +1188,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | END]]

@@ -1,8 +1,14 @@
+<!-- [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]] -->
@@ -16,7 +22,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=867ee22ad06cab7797617f39ee404f6d704972487cd8978cc020de9b5fde99bd -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=98b9d155991e0867d55d48400ebb62ce390bfde533044e062c7932da6b97c63c -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -31,8 +37,8 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - An OpenAI Director planner/reviewer using Structured Outputs.
 - A primary OpenAI–Claude–Cursor–Grok team selected through a cheap-capable-model-first policy, with Gemini/Antigravity and Perplexity retained as bounded supplemental specialists.
 - Two prospective workload controls: accepted productive work targets of external OpenAI/Codex 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%; and total-effort targets of Claude 36%, Cursor 20%, Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, and Perplexity 5%.
-- Default-on deterministic accepted-productive-work and total-effort enforcement, an immutable pre-stage packet, rolling 20-assignment drift control, cheap-capable-model selection, and a five-action ordinary review-to-merge ceiling. The total-effort normal bands are Claude 33–39%, Cursor 17–23%, Gemini/Antigravity 17–23%, Grok 8–14%, OpenAI 5–11%, and Perplexity 1–7%; hard ceilings are 41%, 33%, 25%, 16%, 13%, and 9%, respectively.
-- An optional one-time GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It is an unscored reporting-only 0–4% effort lane with a hard 6% ceiling, no provider adapter or automatic routing, and no production credit, gate, authority, or every-push trigger; without an authenticated contact it fails closed as unavailable.
+- Default-on deterministic accepted-productive-work and total-effort accounting, an immutable pre-stage packet, rolling 20-assignment soft drift preferences, cheap-capable-model selection, and a five-action ordinary review-to-merge ceiling. The total-effort normal bands are Claude 33–39%, Cursor 17–23%, Gemini/Antigravity 17–23%, Grok 8–14%, OpenAI 5–11%, and Perplexity 1–7%; provider share never blocks an otherwise safe route.
+- An optional GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It has no assigned workload share, range, or ceiling, no provider adapter or automatic routing, and no production credit, gate, authority, or every-push trigger; without an authenticated contact it fails closed as unavailable. A requested review uses exactly three attempt slots, exercising every configured eligible format once before reuse.
 - Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
 - Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
@@ -128,6 +134,80 @@ The bootstrap script creates `.env` with random local secrets and starts the sta
 Open `http://localhost:5678`, create the local n8n owner login, and import `n8n/workflows/director-intake.json`. Activate that workflow after inspection.
 
 For always-on operation, enable Docker Desktop's start-on-sign-in option, disable sleep/hibernation for the host while plugged in, keep Windows and Docker auto-restart behavior enabled, and use a UPS if this desktop is expected to act as infrastructure. Containers use `restart: unless-stopped`; in-progress provider polls resume from durable task state after the orchestrator restarts.
+
+### Default LangGraph-primary database (inactive by default)
+
+Compose provisions `langgraph-primary-db` and its
+`langgraph-primary-db-data` volume separately from n8n's database and volume.
+The orchestrator waits for this database's readiness check, but the database
+does not make LangGraph primary: `LANGGRAPH_PRIMARY_ENABLED=false`,
+`LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=false`, and `ALLOW_PAID_RUNS=false` keep
+new intake, provider calls, and external effects closed. Before any supervised
+activation, replace both primary placeholders through the approved secret store,
+keep `LANGGRAPH_PRIMARY_POSTGRES_SCHEMA=director_primary_v1`, and give every
+deployment a distinct versioned `LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE`.
+
+The bundled database intentionally uses unencrypted container-network transport
+(`?sslmode=disable`). `.env.example` ships
+`LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=false`, and the checked-in
+`docker-compose.yml` overrides it to `"true"` for the orchestrator service
+alone. That override is the sole container-only exception: it is accepted only
+for the exact Compose service hostname `langgraph-primary-db`, and every other
+non-loopback target still fails closed. It remains a
+fail-closed staging and backup surface, not an activation configuration,
+because `LANGGRAPH_PRIMARY_ENABLED=false`,
+`LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=false`, and `ALLOW_PAID_RUNS=false` keep
+the runtime closed. Do not carry the local
+exception into any other deployment. A supervised activation must instead supply
+a trusted Postgres endpoint with `sslmode=verify-full`, an explicit trusted root
+certificate, and a matching versioned schema and checkpoint namespace.
+
+`LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED` and
+`LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` are mutually exclusive. Live
+dispatch additionally requires paid runs and an exact non-secret activation
+binding for every required provider. Each binding is only an identity/version
+tuple; authentication secrets remain in the provider's approved credential
+store. Observed app and runtime-adapter evidence must both reach `LIVE_OK`
+before that provider can cross the primary dispatch boundary.
+
+Paid-off project canaries may set both
+`LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` and
+`LANGGRAPH_PRIMARY_PINNED_TREE_SHA` to exact 40-hex Git object IDs. This narrow
+mode still requires the configured origin repository identity, a clean
+worktree, and exact HEAD, starting-ref, and computed-tree matches, but it does
+not require a remote-tracking ref. Leave both values empty for the normal
+origin-tracking branch check; a missing, malformed, or mismatched pin fails
+startup.
+
+Back up the Default primary database with the activation switches still off:
+
+```powershell
+$env:DIRECTOR_ENV_FILE = ".env"
+$backupName = "director-primary-$(Get-Date -Format yyyyMMdd-HHmmss).dump"
+New-Item -ItemType Directory -Force ".\backups" | Out-Null
+docker compose --env-file .env exec -T langgraph-primary-db pg_dump --username=director_primary --dbname=director_primary --format=custom --file="/tmp/$backupName"
+docker compose --env-file .env cp "langgraph-primary-db:/tmp/$backupName" ".\backups\$backupName"
+docker compose --env-file .env exec -T langgraph-primary-db rm -f "/tmp/$backupName"
+```
+
+Restore only during a supervised maintenance window. Keep both primary switches
+and paid execution off, stop every Director client of the database, and restore
+one explicitly named backup. n8n is not stopped or restored because it uses a
+different database and volume.
+
+```powershell
+$env:DIRECTOR_ENV_FILE = ".env"
+$backupName = "director-primary-YYYYMMDD-HHMMSS.dump"
+docker compose --env-file .env stop orchestrator slackbot
+docker compose --env-file .env cp ".\backups\$backupName" "langgraph-primary-db:/tmp/$backupName"
+docker compose --env-file .env exec -T langgraph-primary-db pg_restore --username=director_primary --dbname=director_primary --clean --if-exists --no-owner --no-privileges --exit-on-error --single-transaction "/tmp/$backupName"
+docker compose --env-file .env exec -T langgraph-primary-db rm -f "/tmp/$backupName"
+docker compose --env-file .env up -d orchestrator slackbot
+docker compose --env-file .env ps
+```
+
+Treat backup files as sensitive operational data. Store them encrypted, restrict
+access, verify a disposable restore before relying on them, and never commit them.
 
 ## Slack app setup
 
@@ -271,3 +351,10 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]] -->

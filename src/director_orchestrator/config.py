@@ -1,5 +1,17 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]]
@@ -159,6 +171,12 @@ def _default_langgraph_runtime_namespace() -> str:
     return f"director-{safe_profile}-runtime-v1"
 
 
+def _default_langgraph_primary_namespace() -> str:
+    profile = os.getenv("APP_ENV", "local").strip().lower() or "local"
+    safe_profile = "-".join(part for part in profile.replace("_", "-").split("-") if part)
+    return f"director-{safe_profile}-primary-v1"
+
+
 def _pairwise_isolated(paths: tuple[str, ...]) -> bool:
     """Every configured store must be a distinct file from every other one.
 
@@ -241,6 +259,122 @@ class Settings:
     )
     langgraph_runtime_task_writer_enabled: bool = field(
         default_factory=lambda: _bool("LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED", False)
+    )
+    # The primary runtime is separate from the historical SQLite packet runtime.
+    # Both switches default off. The second switch is deliberately narrower: it
+    # authorizes an atomic ownership transition only after the application has
+    # constructed and validated the production coordinator.
+    langgraph_primary_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_PRIMARY_ENABLED", False)
+    )
+    langgraph_primary_new_intake_enabled: bool = field(
+        default_factory=lambda: _bool("LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED", False)
+    )
+    langgraph_primary_offline_simulation_enabled: bool = field(
+        default_factory=lambda: _bool(
+            "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED", False
+        )
+    )
+    langgraph_primary_live_provider_dispatch_enabled: bool = field(
+        default_factory=lambda: _bool(
+            "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", False
+        )
+    )
+    langgraph_primary_required_providers: tuple[str, ...] = field(
+        default_factory=lambda: _csv(
+            "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS",
+            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot,microsoft-365-copilot",
+        )
+    )
+    langgraph_primary_provider_activation_bindings_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "{}"
+        ).strip()
+    )
+    # Optional immutable canary authority. Both values are required together;
+    # ordinary deployments retain origin-tracking branch verification.
+    langgraph_primary_pinned_commit_sha: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA", ""
+        ).strip().lower()
+    )
+    langgraph_primary_pinned_tree_sha: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PINNED_TREE_SHA", ""
+        ).strip().lower()
+    )
+    langgraph_primary_snapshot_max_files: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES", 512)
+    )
+    langgraph_primary_postgres_dsn: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_POSTGRES_DSN", "")
+    )
+    langgraph_primary_postgres_schema: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA", "director_primary_v1"
+        ).strip()
+    )
+    langgraph_primary_checkpoint_namespace: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE",
+            _default_langgraph_primary_namespace(),
+        ).strip()
+    )
+    langgraph_primary_owner_token: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_OWNER_TOKEN", "")
+    )
+    langgraph_primary_adapter_callback_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET", ""
+        )
+    )
+    langgraph_primary_independent_review_evidence_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET", ""
+        )
+    )
+    langgraph_primary_ci_evidence_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET", ""
+        )
+    )
+    langgraph_primary_security_evidence_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET", ""
+        )
+    )
+    langgraph_primary_completion_evidence_actor_allowlist_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON", "{}"
+        ).strip()
+    )
+    langgraph_primary_effect_reconciliation_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET", ""
+        )
+    )
+    langgraph_primary_host_bridge_endpoint: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", ""
+        ).strip()
+    )
+    langgraph_primary_host_bridge_secret: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", ""
+        )
+    )
+    langgraph_primary_allow_insecure_local_postgres: bool = field(
+        default_factory=lambda: _bool(
+            "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES", False
+        )
+    )
+    # Director-owned mutation target for the typed GitHub external effect. Zero
+    # means unconfigured, and every GitHub effect then fails closed: the pull
+    # request a live mark-ready may touch is never taken from provider output.
+    langgraph_primary_external_effect_pull_number: int = field(
+        default_factory=lambda: _int(
+            "LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_PULL_NUMBER", 0
+        )
     )
     langgraph_runtime_checkpoint_path: str = field(
         default_factory=lambda: os.getenv(
@@ -571,6 +705,69 @@ class Settings:
     perplexity_daily_request_limit: int = _int(
         "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
     )
+    microsoft_365_copilot_delegated_token_file: str = os.getenv(
+        "MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE", ""
+    ).strip()
+    microsoft_365_copilot_tenant_id: str = os.getenv(
+        "MICROSOFT_365_COPILOT_TENANT_ID", ""
+    ).strip().lower()
+    microsoft_365_copilot_expected_subject: str = os.getenv(
+        "MICROSOFT_365_COPILOT_EXPECTED_SUBJECT", ""
+    ).strip()
+    microsoft_365_copilot_expected_object_id: str = os.getenv(
+        "MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID", ""
+    ).strip().lower()
+
+    def completion_evidence_actor_allowlist(
+        self,
+    ) -> dict[str, dict[str, frozenset[str]]]:
+        """Return distinct trusted issuers and principals for each authority."""
+
+        try:
+            payload = json.loads(
+                self.langgraph_primary_completion_evidence_actor_allowlist_json
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError("completion evidence actor allowlist is invalid JSON") from exc
+        required = {"independent_review", "ci", "security"}
+        if not isinstance(payload, dict) or set(payload) != required:
+            raise ValueError(
+                "completion evidence actor allowlist must contain exactly "
+                "independent_review, ci, and security"
+            )
+        result: dict[str, dict[str, frozenset[str]]] = {}
+        for kind, policy in payload.items():
+            if not isinstance(policy, dict) or set(policy) != {"issuers", "principals"}:
+                raise ValueError(f"completion evidence {kind} policy is invalid")
+            normalized: dict[str, frozenset[str]] = {}
+            for role in ("issuers", "principals"):
+                actors = policy[role]
+                if (
+                    not isinstance(actors, list)
+                    or not actors
+                    or not all(
+                        isinstance(actor, str)
+                        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}", actor)
+                        for actor in actors
+                    )
+                    or len(set(actors)) != len(actors)
+                ):
+                    raise ValueError(
+                        f"completion evidence {kind} {role} are invalid"
+                    )
+                normalized[role] = frozenset(actors)
+            result[kind] = normalized
+        for role in ("issuers", "principals"):
+            values = [result[kind][role] for kind in sorted(required)]
+            if any(
+                left & right
+                for index, left in enumerate(values)
+                for right in values[index + 1 :]
+            ):
+                raise ValueError(
+                    f"completion evidence {role} must be disjoint across authorities"
+                )
+        return result
     perplexity_allow_repository_write: bool = _bool(
         "PERPLEXITY_ALLOW_REPOSITORY_WRITE", False
     )
@@ -1062,6 +1259,306 @@ class Settings:
                 + "; ".join(problems)
             )
 
+    def langgraph_primary_configuration_readiness(self) -> dict[str, bool]:
+        """Report configuration prerequisites without claiming live authority."""
+
+        dsn_configured = bool(self.langgraph_primary_postgres_dsn.strip())
+        schema_configured = bool(
+            re.fullmatch(
+                r"[a-z][a-z0-9_]{0,62}",
+                self.langgraph_primary_postgres_schema,
+            )
+        )
+        namespace_configured = bool(
+            self.langgraph_primary_checkpoint_namespace.strip()
+        )
+        namespace_isolated = namespace_configured and all(
+            self.langgraph_primary_checkpoint_namespace.strip() != item
+            for item in (
+                self.langgraph_checkpoint_namespace.strip(),
+                self.langgraph_runtime_checkpoint_namespace.strip(),
+            )
+        )
+        owner_token_configured = len(self.langgraph_primary_owner_token) >= 32
+        adapter_callback_secret_configured = (
+            len(self.langgraph_primary_adapter_callback_secret) >= 32
+        )
+        completion_authority_secrets = (
+            self.langgraph_primary_independent_review_evidence_secret,
+            self.langgraph_primary_ci_evidence_secret,
+            self.langgraph_primary_security_evidence_secret,
+        )
+        completion_evidence_secret_configured = (
+            all(len(value) >= 32 for value in completion_authority_secrets)
+            and len(set(completion_authority_secrets)) == 3
+        )
+        try:
+            completion_evidence_actor_allowlist_configured = bool(
+                self.completion_evidence_actor_allowlist()
+            )
+        except ValueError:
+            completion_evidence_actor_allowlist_configured = False
+        effect_reconciliation_secret_configured = (
+            len(self.langgraph_primary_effect_reconciliation_secret) >= 32
+        )
+        authority_root_configured = bool(self.repository_snapshot_root.strip())
+        single_repository_configured = len(self.repository_allowlist) == 1
+        single_starting_ref_configured = len(self.allowed_starting_refs) == 1
+        pinned_commit = self.langgraph_primary_pinned_commit_sha.strip()
+        pinned_tree = self.langgraph_primary_pinned_tree_sha.strip()
+        authority_pins_valid = (not pinned_commit and not pinned_tree) or bool(
+            re.fullmatch(r"[0-9a-fA-F]{40}", pinned_commit)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", pinned_tree)
+        )
+        snapshot_max_files_valid = (
+            isinstance(self.langgraph_primary_snapshot_max_files, int)
+            and not isinstance(self.langgraph_primary_snapshot_max_files, bool)
+            and 1 <= self.langgraph_primary_snapshot_max_files <= 4096
+        )
+        required_providers_valid = bool(self.langgraph_primary_required_providers) and (
+            len(set(self.langgraph_primary_required_providers))
+            == len(self.langgraph_primary_required_providers)
+        )
+        try:
+            activation_bindings_configured = (
+                set(self.primary_provider_activation_bindings())
+                == set(self.langgraph_primary_required_providers)
+            )
+        except ValueError:
+            activation_bindings_configured = False
+        configuration_valid = (
+            dsn_configured
+            and schema_configured
+            and namespace_configured
+            and namespace_isolated
+            and owner_token_configured
+            and authority_root_configured
+            and single_repository_configured
+            and single_starting_ref_configured
+            and authority_pins_valid
+            and snapshot_max_files_valid
+        )
+        return {
+            "enabled": self.langgraph_primary_enabled,
+            "new_intake_requested": self.langgraph_primary_new_intake_enabled,
+            "postgres_dsn_configured": dsn_configured,
+            "postgres_schema_configured": schema_configured,
+            "checkpoint_namespace_configured": namespace_configured,
+            "checkpoint_namespace_isolated": namespace_isolated,
+            "owner_token_configured": owner_token_configured,
+            "adapter_callback_secret_configured": (
+                adapter_callback_secret_configured
+            ),
+            "completion_evidence_secret_configured": (
+                completion_evidence_secret_configured
+            ),
+            "completion_evidence_actor_allowlist_configured": (
+                completion_evidence_actor_allowlist_configured
+            ),
+            "effect_reconciliation_secret_configured": (
+                effect_reconciliation_secret_configured
+            ),
+            "authority_root_configured": authority_root_configured,
+            "single_repository_configured": single_repository_configured,
+            "single_starting_ref_configured": single_starting_ref_configured,
+            "authority_pins_valid": authority_pins_valid,
+            "snapshot_max_files_valid": snapshot_max_files_valid,
+            "required_providers_valid": required_providers_valid,
+            "provider_activation_bindings_configured": (
+                activation_bindings_configured
+            ),
+            "offline_simulation_requested": (
+                self.langgraph_primary_offline_simulation_enabled
+            ),
+            "live_provider_dispatch_requested": (
+                self.langgraph_primary_live_provider_dispatch_enabled
+            ),
+            "configuration_valid": configuration_valid,
+            "startup_allowed": (
+                not self.langgraph_primary_enabled or configuration_valid
+            ),
+            # Ownership is observed from Postgres by the activation component;
+            # configuration alone can never claim it.
+            "primary_runtime_active": False,
+            "legacy_new_intake_disabled": False,
+        }
+
+    def validate_langgraph_primary_configuration(self) -> None:
+        """Reject incomplete primary activation before opening PostgreSQL."""
+
+        readiness = self.langgraph_primary_configuration_readiness()
+        if not readiness["snapshot_max_files_valid"]:
+            raise ValueError(
+                "LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES must be between 1 and 4096"
+            )
+        if not self.langgraph_primary_enabled:
+            if (
+                self.langgraph_primary_new_intake_enabled
+                or self.langgraph_primary_offline_simulation_enabled
+                or self.langgraph_primary_live_provider_dispatch_enabled
+            ):
+                raise ValueError(
+                    "A LangGraph primary execution switch requires "
+                    "LANGGRAPH_PRIMARY_ENABLED"
+                )
+            return
+        problems: list[str] = []
+        if (
+            self.langgraph_primary_offline_simulation_enabled
+            and self.langgraph_primary_live_provider_dispatch_enabled
+        ):
+            problems.append(
+                "offline simulation and live provider dispatch are mutually exclusive"
+            )
+        if not readiness["required_providers_valid"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS must be non-empty and unique"
+            )
+        if self.langgraph_primary_live_provider_dispatch_enabled:
+            if not self.allow_paid_runs:
+                problems.append(
+                    "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED requires ALLOW_PAID_RUNS"
+                )
+            if not readiness["provider_activation_bindings_configured"]:
+                problems.append(
+                    "live provider dispatch requires exact provider activation bindings"
+                )
+            if "microsoft-365-copilot" in self.langgraph_primary_required_providers:
+                if not self.microsoft_365_copilot_delegated_token_file:
+                    problems.append(
+                        "Microsoft 365 Copilot requires a protected delegated token file"
+                    )
+                if not re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                    self.microsoft_365_copilot_tenant_id,
+                ):
+                    problems.append("Microsoft 365 Copilot tenant id is invalid")
+                if not self.microsoft_365_copilot_expected_subject:
+                    problems.append("Microsoft 365 Copilot expected subject is required")
+                if not re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                    self.microsoft_365_copilot_expected_object_id,
+                ):
+                    problems.append("Microsoft 365 Copilot expected object id is invalid")
+            if len(self.langgraph_primary_adapter_callback_secret) < 32:
+                problems.append(
+                    "live provider dispatch requires a 32-character "
+                    "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET"
+                )
+            if not readiness["completion_evidence_secret_configured"]:
+                problems.append(
+                    "live provider dispatch requires a 32-character "
+                    "three distinct completion authority evidence secrets"
+                )
+            if not readiness["completion_evidence_actor_allowlist_configured"]:
+                problems.append(
+                    "live provider dispatch requires an exact completion evidence "
+                    "actor allowlist"
+                )
+            if len(self.langgraph_primary_effect_reconciliation_secret) < 32:
+                problems.append(
+                    "live provider dispatch requires a 32-character "
+                    "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET"
+                )
+            bridge_endpoint = self.langgraph_primary_host_bridge_endpoint
+            bridge_secret = self.langgraph_primary_host_bridge_secret
+            if bool(bridge_endpoint) != bool(bridge_secret):
+                problems.append(
+                    "host provider bridge endpoint and secret must be configured together"
+                )
+            if bridge_secret and len(bridge_secret) < 32:
+                problems.append(
+                    "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET must contain at least 32 characters"
+                )
+            ingress_secrets = tuple(
+                value
+                for value in (
+                    self.shared_secret,
+                    self.slack_gateway_secret,
+                    self.langgraph_primary_adapter_callback_secret,
+                    self.langgraph_primary_independent_review_evidence_secret,
+                    self.langgraph_primary_ci_evidence_secret,
+                    self.langgraph_primary_security_evidence_secret,
+                    self.langgraph_primary_effect_reconciliation_secret,
+                    bridge_secret,
+                )
+                if value
+            )
+            if len(set(ingress_secrets)) != len(ingress_secrets):
+                problems.append("primary ingress secrets must be pairwise distinct")
+        if not readiness["postgres_dsn_configured"]:
+            problems.append("LANGGRAPH_PRIMARY_POSTGRES_DSN must be configured")
+        if not readiness["postgres_schema_configured"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA must be a safe versioned identifier"
+            )
+        if not readiness["checkpoint_namespace_configured"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE must be configured"
+            )
+        elif not readiness["checkpoint_namespace_isolated"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE must differ from shadow and runtime namespaces"
+            )
+        if not readiness["owner_token_configured"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_OWNER_TOKEN must contain at least 32 characters"
+            )
+        if not readiness["authority_root_configured"]:
+            problems.append("REPOSITORY_SNAPSHOT_ROOT must be configured")
+        if not readiness["single_repository_configured"]:
+            problems.append(
+                "REPOSITORY_ALLOWLIST must contain exactly one repository"
+            )
+        if not readiness["single_starting_ref_configured"]:
+            problems.append(
+                "ALLOWED_STARTING_REFS must contain exactly one starting ref"
+            )
+        if not readiness["authority_pins_valid"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA and "
+                "LANGGRAPH_PRIMARY_PINNED_TREE_SHA must be supplied together "
+                "as 40-character hexadecimal values"
+            )
+        if problems:
+            raise ValueError(
+                "Invalid enabled LangGraph primary configuration: "
+                + "; ".join(problems)
+            )
+
+    def primary_provider_activation_bindings(self):
+        """Parse bounded, non-secret provider activation identities."""
+
+        from .provider_activation import ProviderActivationBinding
+
+        try:
+            payload = json.loads(
+                self.langgraph_primary_provider_activation_bindings_json or "{}"
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError("provider activation bindings must be valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("provider activation bindings must be an object")
+        expected_fields = {
+            "workspace_id",
+            "provider_version",
+            "app_version",
+            "runtime_adapter_version",
+            "workspace_version",
+            "binding_version",
+        }
+        bindings = {}
+        for provider_id, raw in payload.items():
+            if not isinstance(provider_id, str) or not isinstance(raw, dict):
+                raise ValueError("provider activation binding is malformed")
+            if set(raw) != expected_fields:
+                raise ValueError("provider activation binding fields are invalid")
+            bindings[provider_id] = ProviderActivationBinding(
+                provider_id=provider_id,
+                **raw,
+            )
+        return bindings
+
     def completion_gate_readiness(self) -> dict[str, bool]:
         """Report Completion Gate evidence readiness without claiming authority.
 
@@ -1462,3 +1959,15 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:34 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:31 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

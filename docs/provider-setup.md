@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
@@ -52,9 +55,18 @@ The accepted-productive-work allocation remains external OpenAI/Codex
 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity
 4%. Total effort is also enforced prospectively: Claude 36%, Cursor 20%,
 Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, and Perplexity 5%, with normal
-bands of 33–39%, 17–23%, 17–23%, 8–14%, 5–11%, and 1–7%, and hard ceilings
-of 41%, 33%, 25%, 16%, 13%, and 9%, respectively. Cursor's 33% total-effort
-ceiling is intentional; it is not the direct-production threshold.
+bands of 33–39%, 17–23%, 17–23%, 8–14%, 5–11%, and 1–7%. These shares are
+accounting and soft routing preferences only; no provider workload-share
+percentage blocks an otherwise safe assignment.
+
+Every assignment has exactly three authorized attempt slots. The Director
+derives a deterministic roster of the provider's configured packet formats and
+transports, rejects rosters larger than three, and invokes every roster entry
+once before reusing one. Each child attempt is appended to Postgres before I/O
+and settled with exact provider, format, transport, idempotency, budget,
+result, and reason digests. An ambiguous paid attempt stops redispatch until
+authenticated reconciliation; a failed attempt remains untrusted and cannot
+overwrite the final assignment result artifact.
 
 Practical operating patterns:
 
@@ -97,12 +109,14 @@ non-positive or non-finite configured value prevents the service from starting.
 | Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
 
-GitHub Copilot Lite is not another provider bridge. It is an optional one-time
+GitHub Copilot Lite is not another provider bridge. It is an optional
 hygiene observation requested only after required checks are green and the exact
-candidate is frozen: an unscored reporting-only 0–4% effort lane with a hard 6%
-ceiling, no provider adapter or automatic routing, and no production credit,
+candidate is frozen. It has no assigned workload share, range, or ceiling,
+no provider adapter or automatic routing, and no production credit,
 independent acceptance role, gate, merge authority, or every-push automation.
-Without an authenticated contact it fails closed as unavailable.
+Without an authenticated contact it fails closed as unavailable. A requested
+observation binds exactly three attempt slots and exercises each configured
+eligible format once before reuse.
 Quota/unavailability and rejected findings are recorded as waste.
 A confirmed defect follows the normal correction path, and any substantive
 Copilot-authored fix makes Copilot a material author ineligible to independently
@@ -327,6 +341,40 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 
 ## Official references
 
+## Primary security credential boundaries
+
+Completion evidence uses three pairwise-distinct secrets:
+`LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET`,
+`LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET`, and
+`LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET`. None may equal a provider,
+shared, effect, bridge, or other ingress secret. Configure
+`LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON` with exactly
+`independent_review`, `ci`, and `security`; every entry has nonempty `issuers`
+and `principals` arrays, and all three authorities must be pairwise disjoint.
+Each role signs only its exact result binding; the aggregate has no bundle
+credential capable of minting another role. Durable Postgres readback preserves
+and revalidates the three canonical authority proofs.
+
+Activation review authority is separately configured through
+`LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON` and
+`LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON`. These
+GitHub-login arrays must be disjoint. Only an `APPROVED` review from an
+`OWNER`, `MEMBER`, or `COLLABORATOR` is considered, and its body must equal one
+canonical JSON object with exactly `actor`, `head_sha`, `kind`,
+`schema_version`, and `verdict`. Comments, prose, quotes, code fences, extra
+fields, and substring markers are never activation evidence.
+
+Microsoft Work IQ requires the tenant, a protected non-symlink token file, and
+exact `MICROSOFT_365_COPILOT_EXPECTED_SUBJECT` plus
+`MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID`. Windows ACLs may grant access only
+to the current user, SYSTEM, or Administrators; POSIX files must be runtime-owned
+and have no group or other permissions.
+
+The Windows bridge permits plaintext HTTP only on an exact loopback host.
+Container-to-host use must use HTTPS. An all-interface bridge bind requires
+explicit TLS certificate and private-key files; the certificate must be trusted
+by the client runtime and cover `host.docker.internal`.
+
 - OpenAI Responses and Structured Outputs: https://developers.openai.com/api/docs/guides/structured-outputs
 - Cursor Cloud Agents API: https://cursor.com/docs/cloud-agent/api/endpoints
 - Claude Code Routines: https://docs.anthropic.com/en/docs/claude-code/routines
@@ -352,3 +400,7 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
