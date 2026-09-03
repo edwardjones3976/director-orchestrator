@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
@@ -172,6 +173,95 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("not the primary database", tooling)
         self.assertIn("activation evidence", tooling)
 
+    def test_postgres_test_lane_skill_is_discoverable_and_complete(self) -> None:
+        skill = (ROOT / ".agents" / "skills" / "postgres-test-lane" / "SKILL.md").read_text(encoding="utf-8")
+        frontmatter, body = skill.split("---", 2)[1:]
+        self.assertIn("name: postgres-test-lane", frontmatter)
+        description_line = next(line for line in frontmatter.splitlines() if line.startswith("description:"))
+        description = description_line[len("description:"):].strip().strip('"')
+        # Codex lists a repository skill as "<name>: <description>" cut near 80
+        # characters before any file is opened, so the triggers must lead.
+        for token in ("Postgres", "tests", "windows-postgres-test-lane.ps1", "docker run"):
+            self.assertIn(token, description[:80])
+        self.assertIn("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", description)
+        self.assertIn("report the gap", description)
+        for phrase in (
+            "when_to_use:",
+            "run the tests",
+            "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN is required",
+            "docker run postgres",
+            "55433",
+            "no Docker",
+            "argument-hint:",
+        ):
+            self.assertIn(phrase, frontmatter)
+        for required in (
+            "windows-postgres-test-lane.ps1 -Action Start",
+            "windows-postgres-test-lane.ps1 -Action Stop",
+            "windows-postgres-test-lane.ps1 -Action Test",
+            "-TestNames tests.test_langgraph_postgres",
+            "-Action Status",
+            "-Action Dsn",
+            "-Python",
+            "-HostPort",
+            "-ContainerName",
+            "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=director-primary-test-pg",
+            "postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable",
+            "director-orchestrator.postgres-test-lane",
+            "hand-start",
+            "never removes a container it did not create",
+            "not the primary database",
+            "not a shared provider workflow skill",
+            "Cursor Cloud",
+            "report the gap",
+        ):
+            self.assertIn(required, body)
+        self.assertLess(body.index("-Action Start"), body.index("unittest discover"))
+        self.assertLess(body.index("unittest discover"), body.index("-Action Stop"))
+        # The skill names the forbidden act but never supplies a recipe or a digest copy.
+        self.assertNotIn("docker run --detach", body)
+        self.assertNotIn("sha256:", body)
+        postgres_suites = {
+            path.name
+            for path in (ROOT / "tests").glob("test_*.py")
+            if path.name != Path(__file__).name
+            and "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN" in path.read_text(encoding="utf-8")
+        }
+        self.assertEqual(set(re.findall(r"`tests/(test_[a-z_]+\.py)`", body)), postgres_suites)
+
+    def test_agents_rules_route_every_agent_to_the_postgres_test_lane(self) -> None:
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        heading = "\n## Postgres-backed unit tests"
+        cloud_heading = "\n## Cursor Cloud specific instructions"
+        self.assertLess(agents.index(heading), agents.index(cloud_heading))
+        section = agents.split(heading, 1)[1].split("\n## ", 1)[0]
+        for required in (
+            "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN",
+            "scripts/windows-postgres-test-lane.ps1 -Action Start",
+            "-Action Stop",
+            "-Action Test",
+            ".agents/skills/postgres-test-lane/SKILL.md",
+            "hand-start",
+            "docker run",
+            "127.0.0.1:55433",
+            "did not label",
+            "-HostPort",
+            "Cursor Cloud",
+            "report the gap",
+        ):
+            self.assertIn(required, section)
+        # The rule names the forbidden act but never supplies a recipe for it.
+        self.assertNotIn("docker run --detach", section)
+        self.assertNotIn("POSTGRES_HOST_AUTH_METHOD", section)
+        cloud = agents.split(cloud_heading, 1)[1].split("\n## ", 1)[0]
+        self.assertIn("Postgres-backed unit tests", cloud)
+        self.assertIn("report the gap", cloud)
+
+    def test_claude_code_sessions_import_the_agent_operating_rules(self) -> None:
+        claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+        visible = [line.strip() for line in claude.splitlines() if line.strip() and "[[" not in line]
+        self.assertEqual(visible, ["@AGENTS.md"])
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -184,3 +274,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]]
