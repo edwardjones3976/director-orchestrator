@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
@@ -6,6 +7,7 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:10 UTC | BEGIN]]
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -111,6 +113,65 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("Preflight", text)
         self.assertIn("no provider was invoked", text)
 
+    def test_postgres_test_lane_mirrors_ci_and_refuses_foreign_containers(self) -> None:
+        text = self.text("windows-postgres-test-lane.ps1")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        for action in ('"Start"', '"Stop"', '"Status"', '"Dsn"', '"Test"'):
+            self.assertIn(action, text)
+        pattern = re.compile(r"postgres:17-alpine@sha256:[0-9a-f]{64}")
+        self.assertEqual(len(pattern.findall(text)), 1)
+        digests = set(pattern.findall(text)) | set(pattern.findall(compose)) | set(pattern.findall(workflow))
+        self.assertEqual(len(digests), 1)
+        self.assertIn('$databaseUser = "director_ci"', text)
+        self.assertIn('$databaseName = "director_test"', text)
+        self.assertIn("[int]$HostPort = 55433", text)
+        self.assertIn('$dsn = "postgresql://${databaseUser}@127.0.0.1:${HostPort}/${databaseName}?sslmode=disable"', text)
+        self.assertIn("postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable", workflow)
+        self.assertIn('--publish "127.0.0.1:${HostPort}:5432"', text)
+        self.assertIn("POSTGRES_HOST_AUTH_METHOD=trust", text)
+        self.assertIn("docker run --detach --rm", text)
+        self.assertIn("pg_isready -h 127.0.0.1 -U $databaseUser -d $databaseName", text)
+        self.assertIn("[DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)", text)
+        self.assertIn("Net.Sockets.TcpClient", text)
+        self.assertIn("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", text)
+        self.assertIn("LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER", text)
+        self.assertIn("director-orchestrator.postgres-test-lane", text)
+        self.assertIn("was not created by this script", text)
+        self.assertIn('--filter "publish=$HostPort"', text)
+        self.assertIn("docker rm --force --volumes", text)
+        for forbidden in (
+            "docker compose", "docker start", "docker inspect", "langgraph-primary-db",
+            "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "Read-DotEnv", "0.0.0.0", "Remove-Item",
+            "-AsHashtable", "ToHexString", "$IsWindows", " && ", " || ", " ?? ",
+        ):
+            self.assertNotIn(forbidden, text)
+        start = text.index("function Start-Lane")
+        self.assertLess(text.index("Get-LaneContainer", start), text.index("docker run", start))
+        self.assertLess(text.index("Wait-LaneReady", start), text.index("Export-LaneEnvironment", start))
+        test_section = text[text.index('if ($Action -eq "Dsn")'):]
+        self.assertIn("finally {", test_section)
+        unittest_index = test_section.index("-m unittest")
+        self.assertLess(unittest_index, test_section.index("Stop-Lane", unittest_index))
+        self.assertIn("$originalProcessEnvironment", test_section)
+
+    def test_postgres_test_lane_is_documented(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        section = readme.split("\n## Local validation", 1)[1].split("\n## LangGraph transition planning", 1)[0]
+        self.assertIn("windows-postgres-test-lane.ps1 -Action Start", section)
+        self.assertIn("windows-postgres-test-lane.ps1 -Action Stop", section)
+        self.assertIn("windows-postgres-test-lane.ps1 -Action Test", section)
+        self.assertIn("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", section)
+        self.assertIn("LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER", section)
+        self.assertIn("postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable", section)
+        self.assertLess(section.index("-Action Start"), section.index("unittest discover"))
+        self.assertLess(section.index("unittest discover"), section.index("-Action Stop"))
+        operations = (ROOT / "docs" / "langgraph-primary-operations.md").read_text(encoding="utf-8")
+        tooling = operations.split("## Windows Docker activation tooling", 1)[1]
+        self.assertIn("scripts/windows-postgres-test-lane.ps1", tooling)
+        self.assertIn("not the primary database", tooling)
+        self.assertIn("activation evidence", tooling)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -122,3 +183,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]]
