@@ -1,3 +1,5 @@
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:38 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
@@ -41,6 +43,7 @@ _SUPPORTED_TRAILER_KEYS = frozenset(
 )
 _CURSOR_SUMMARY_OPEN = "<!-- CURSOR_SUMMARY -->"
 _CURSOR_SUMMARY_CLOSE = "<!-- /CURSOR_SUMMARY -->"
+_CURSOR_SUMMARY_INVALID = "pull-request body contains an invalid CURSOR_SUMMARY block"
 
 
 def _strict_tag(line: str):
@@ -93,33 +96,58 @@ def _without_trailing_git_trailers(text: str) -> str:
     return "\n".join(lines[: end_index + 1])
 
 
-def _without_trailing_cursor_summary_block(text: str) -> str:
-    """Ignore one terminal Cursor summary block in Markdown envelopes only.
-
-    The block is removed only when the opening and closing delimiters each
-    appear exactly once, the closing delimiter is the last nonblank line, and
-    the opening delimiter precedes it. Summary contents are not parsed beyond
-    line boundaries; any other placement or duplication leaves the text intact.
-    """
-
-    lines = text.splitlines()
-    nonblank_indices = [index for index, line in enumerate(lines) if line.strip()]
-    if not nonblank_indices:
-        return text
-    if lines[nonblank_indices[-1]].strip() != _CURSOR_SUMMARY_CLOSE:
-        return text
+def _cursor_summary_delimiter_indices(lines: list[str]) -> tuple[list[int], list[int]]:
     open_indices = [
         index for index, line in enumerate(lines) if line.strip() == _CURSOR_SUMMARY_OPEN
     ]
     close_indices = [
         index for index, line in enumerate(lines) if line.strip() == _CURSOR_SUMMARY_CLOSE
     ]
-    if len(open_indices) != 1 or len(close_indices) != 1:
+    return open_indices, close_indices
+
+
+def _terminal_cursor_summary_shape(lines: list[str]) -> tuple[int, int] | None:
+    open_indices, close_indices = _cursor_summary_delimiter_indices(lines)
+    if not open_indices and not close_indices:
+        return None
+    nonblank_indices = [index for index, line in enumerate(lines) if line.strip()]
+    if (
+        len(open_indices) != 1
+        or len(close_indices) != 1
+        or open_indices[0] >= close_indices[0]
+        or not nonblank_indices
+        or close_indices[0] != nonblank_indices[-1]
+    ):
+        return None
+    return open_indices[0], close_indices[0]
+
+
+def _without_trailing_cursor_summary_block(text: str) -> str:
+    """Return text with one terminal Cursor summary block removed, if present.
+
+  Only the accepted terminal shape is removed. Any other delimiter placement
+  leaves the text unchanged so callers can distinguish strip from fail-closed
+  validation.
+    """
+
+    lines = text.splitlines()
+    shape = _terminal_cursor_summary_shape(lines)
+    if shape is None:
         return text
-    open_index, close_index = open_indices[0], close_indices[0]
-    if open_index >= close_index or close_index != nonblank_indices[-1]:
-        return text
+    open_index, _close_index = shape
     return "\n".join(lines[:open_index])
+
+
+def _prepare_markdown_envelope_text(text: str) -> tuple[str, list[str]]:
+    lines = text.splitlines()
+    open_indices, close_indices = _cursor_summary_delimiter_indices(lines)
+    if not open_indices and not close_indices:
+        return text, []
+    shape = _terminal_cursor_summary_shape(lines)
+    if shape is None:
+        return text, [_CURSOR_SUMMARY_INVALID]
+    open_index, _close_index = shape
+    return "\n".join(lines[:open_index]), []
 
 
 def _git(*args: str, binary: bool = False) -> str | bytes:
@@ -286,7 +314,9 @@ def _validate_submission_envelope(
 ) -> list[str]:
     envelope_text = text
     if require_markdown_boundary:
-        envelope_text = _without_trailing_cursor_summary_block(text)
+        envelope_text, cursor_summary_errors = _prepare_markdown_envelope_text(text)
+        if cursor_summary_errors:
+            return cursor_summary_errors
 
     def strict_tag(line: str):
         candidate = line.strip()
@@ -454,3 +484,5 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:38 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]

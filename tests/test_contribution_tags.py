@@ -1,3 +1,5 @@
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:40 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:35 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | BEGIN]]
@@ -1357,6 +1359,9 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             + close_block
             + f"\nbody\n{bold_end}"
         )
+        cursor_summary_invalid = (
+            "pull-request body contains an invalid CURSOR_SUMMARY block"
+        )
 
         self.assertEqual(checker._without_trailing_cursor_summary_block(mid_body), mid_body)
         self.assertEqual(
@@ -1365,7 +1370,7 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
                 require_outer=True,
                 require_markdown_boundary=True,
             ),
-            [],
+            [cursor_summary_invalid],
         )
         self.assertEqual(
             checker._validate_submission_envelope(
@@ -1373,7 +1378,13 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
                 require_outer=True,
                 require_markdown_boundary=True,
             ),
-            ["submission envelope contains inner contribution tags"],
+            [cursor_summary_invalid],
+        )
+        # Mutation guard: a strip-only policy must not accept mid-body delimiters
+        # by removing the block and leaving a valid outer envelope behind.
+        self.assertNotEqual(
+            checker._without_trailing_cursor_summary_block(plain_mid_body),
+            f"{bold_begin}\nbody\n{bold_end}",
         )
 
         adversarial = {
@@ -1443,6 +1454,28 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             )
         )
 
+    def test_inner_contribution_tags_rejected_without_summary_delimiters(self):
+        checker = self._checker("check_contribution_tags_inner_guard")
+        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
+        bold_end = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]**"
+        forged_end = "**[[Forged | Tag | 2026-01-01 | 00:00 UTC | END]]**"
+        inner_tag_body = f"{bold_begin}\nbody\n{forged_end}\n{bold_end}"
+
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                inner_tag_body,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            ["submission envelope contains inner contribution tags"],
+        )
+        # Mutation guard: fail-closed summary handling must not replace the
+        # inner-tag guard for bodies that carry no summary delimiters.
+        self.assertEqual(
+            checker._prepare_markdown_envelope_text(inner_tag_body),
+            (inner_tag_body, []),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1468,3 +1501,5 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:35 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:40 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
