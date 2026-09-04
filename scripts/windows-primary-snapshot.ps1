@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | BEGIN]]
@@ -19,8 +20,8 @@ Set-StrictMode -Version Latest
 function Get-GitHubRepositoryFromRemoteUrl {
     param([Parameter(Mandatory = $true)][string]$RemoteUrl)
 
+    if ([regex]::IsMatch($RemoteUrl, '[^\x00-\x7F]')) { return $null }
     $value = $RemoteUrl.Trim()
-    if ([regex]::IsMatch($value, '[^\x00-\x7F]')) { return $null }
     $match = [regex]::Match(
         $value,
         '^(?:https://github\.com/|git@github\.com:)(?<owner>[A-Za-z0-9][A-Za-z0-9-]{0,38})/(?<repository>[A-Za-z0-9._-]+?)(?:\.git)?/?$',
@@ -87,3 +88,4 @@ Write-Host "Snapshot verification passed at the exact requested commit and tree.
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | END]]

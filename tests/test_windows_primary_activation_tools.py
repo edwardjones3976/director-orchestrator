@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
@@ -60,6 +61,7 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
             missing_target = root / "missing"
             wrong_repository_target = root / "wrong-repository"
             unicode_target = root / "unicode"
+            unicode_space_target = root / "unicode-space"
             harness = r'''
 $ErrorActionPreference = "Stop"
 $global:gitCalls = [System.Collections.Generic.List[string]]::new()
@@ -79,6 +81,10 @@ function global:git {
         }
         if ($arguments[-1] -eq "missing") { $global:LASTEXITCODE = 2; return }
         if ($arguments[-1] -eq "unicode") { Write-Output "https://gıthub.com/example/demo.git"; return }
+        if ($arguments[-1] -eq "unicode-space") {
+            Write-Output "$([char]0x00A0)https://github.com/example/demo.git$([char]0x2003)"
+            return
+        }
     }
     if ($arguments[0] -eq "ls-remote") {
         Write-Output "__COMMIT__`trefs/heads/main"
@@ -154,6 +160,17 @@ try {
 }
 if (-not $unicode) { throw "A Unicode GitHub lookalike was not rejected." }
 if (Test-Path -LiteralPath "__UNICODE__") { throw "A Unicode lookalike created a target." }
+$unicodeSpace = $false
+try {
+    & "__SCRIPT__" -Action Create -Source "__SOURCE__" -SourceRemoteName unicode-space `
+        -Target "__UNICODE_SPACE__" -ExpectedRepository example/demo -StartingRef main `
+        -ExpectedCommit "__COMMIT__" -ExpectedTree "__TREE__"
+} catch {
+    if ($_.Exception.Message -notmatch "does not match the repository allowlist") { throw }
+    $unicodeSpace = $true
+}
+if (-not $unicodeSpace) { throw "Unicode edge whitespace was not rejected." }
+if (Test-Path -LiteralPath "__UNICODE_SPACE__") { throw "Unicode edge whitespace created a target." }
 $global:gitCalls | ForEach-Object { Write-Output $_ }
 '''
             replacements = {
@@ -165,6 +182,7 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
                 "__MISSING__": str(missing_target),
                 "__WRONG_REPOSITORY__": str(wrong_repository_target),
                 "__UNICODE__": str(unicode_target),
+                "__UNICODE_SPACE__": str(unicode_space_target),
                 "__GITHUB_URL__": github_url,
                 "__CURSOR_URL__": cursor_url,
                 "__COMMIT__": commit,
@@ -189,6 +207,7 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
             self.assertFalse(missing_target.exists())
             self.assertFalse(wrong_repository_target.exists())
             self.assertFalse(unicode_target.exists())
+            self.assertFalse(unicode_space_target.exists())
             calls = [
                 line.split(chr(31))
                 for line in completed.stdout.splitlines()
@@ -309,3 +328,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | END]]
