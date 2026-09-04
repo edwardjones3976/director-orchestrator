@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]] -->
@@ -102,11 +103,32 @@ That read is read-only in the strict sense: `Settings` opens the ledger through
 a `mode=ro` connection with `query_only` pinned, and creates no file, no
 directory, and no table. Constructing `Settings` cannot modify anything on disk.
 
-Those maps are startup snapshots, not live authorization answers. Revocation is
-visible immediately through `RightsLedger.held_rights_for_build(...)`, but an
-already-constructed `Settings` remains unchanged until restart. No privileged
-operation may rely on the snapshot. A future runtime consumer must check the
-ledger with the independently established active digest at the moment of use.
+Those maps are construction-time snapshots, not live authorization answers. An
+already-constructed `Settings` never changes, and `main.py` keeps exactly one of
+them for the life of the process, so nothing that decides anything may read
+them. Two lookups exist for that instead:
+
+| Lookup | Freshness | Use it when |
+| --- | --- | --- |
+| `RightsLedger.held_rights_for_build(kind, subject, active_digest)` | Exact, read at the call | A privileged operation is about to act. The answer is bound to the digest of the build actually running. |
+| `config.current_provisioned_rights(kind)` | At most `RIGHTS_SNAPSHOT_TTL_SECONDS` (5s) stale | Something needs a current-enough view and is not itself about to act on it. |
+| `Settings.provisioned_*_rights` | Frozen at construction | Display and readiness only. Never authorization. |
+
+`current_provisioned_rights` is what keeps "automatic" and "revocable" true in a
+long-lived process. A grant recorded after boot becomes visible within the TTL
+without a restart, and — the direction that matters — a revoked right stops
+being reported within the same bound. Changing either environment variable takes
+effect at the next call rather than after the TTL, because the cached answer
+records the configuration it was derived from. `invalidate_provisioned_rights_cache()`
+makes an in-process change visible at once.
+
+The refresh is bounded in both directions. Staleness is bounded by the TTL;
+work is bounded by performing the read while holding the cache lock, so callers
+that arrive together share one read instead of opening the database once each. A
+deployment that has not opted in — no `RIGHTS_LEDGER_PATH`, or no active build
+configured — performs no read at all and stores no cache entry, so none of this
+machinery runs until an operator opts in. `/health` is unaffected: readiness maps
+read only the frozen snapshot and perform no database work.
 
 Expected ledger availability and operator-data failures return no rights. A
 programming defect is allowed to surface rather than being hidden behind an
@@ -183,3 +205,4 @@ privileged boundary remains a separate reviewed owner decision.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
@@ -403,12 +404,32 @@ class RightsLedger:
                         ),
                     )
                     for right in granted:
+                        # An explicit upsert rather than INSERT OR REPLACE.
+                        # OR REPLACE deletes the conflicting row and inserts a
+                        # new one, so it rewrites columns this statement never
+                        # names and would fire any delete-side trigger or
+                        # cascade a later schema adds. Naming the three columns
+                        # a re-grant may move keeps the rest of the row exactly
+                        # as stored.
+                        #
+                        # revoked_at and revoked_by are deliberately not in the
+                        # update list. A revoked right was already classified as
+                        # withheld earlier in this same transaction, which holds
+                        # the write lock, so a revoked row cannot reach here;
+                        # and if that classification were ever wrong, leaving
+                        # the columns alone keeps the right revoked instead of
+                        # resurrecting it through a rebuild.
                         connection.execute(
                             """
-                            INSERT OR REPLACE INTO provisioned_right
+                            INSERT INTO provisioned_right
                             (subject_kind, subject_id, right_name, build_digest,
                              granted_at, notice_id, revoked_at, revoked_by)
                             VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+                            ON CONFLICT (subject_kind, subject_id, right_name)
+                            DO UPDATE SET
+                                build_digest = excluded.build_digest,
+                                granted_at   = excluded.granted_at,
+                                notice_id    = excluded.notice_id
                             """,
                             (
                                 verification.subject_kind.value,
@@ -483,8 +504,12 @@ class RightsLedger:
         treated as a wildcard.
 
         This reads the ledger at the moment of the call, so a revocation is
-        visible immediately. `Settings` holds a snapshot instead; anything that
-        needs a current answer must call this rather than read the snapshot.
+        visible immediately and a new grant is visible immediately. The
+        `Settings` rights maps are a construction-time snapshot instead, and
+        `main.py` keeps one `Settings` for the life of the process; anything
+        that needs a current answer must call this, or
+        `config.current_provisioned_rights` where a bounded staleness is
+        acceptable and the caller is not about to act on the answer.
         """
         if not _DIGEST.fullmatch(active_build_digest):
             raise RightsProvisioningError("active build digest must be an exact sha256")
@@ -668,3 +693,4 @@ def parse_active_build_digests(raw: str) -> dict[tuple[SubjectKind, str], str]:
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]]

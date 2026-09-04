@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]]
 # [[OpenAI | GPT-5.6 | 2026-09-04 | 11:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
@@ -18,13 +19,19 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from director_orchestrator.config import Settings
+from director_orchestrator.config import (
+    RIGHTS_SNAPSHOT_TTL_SECONDS,
+    Settings,
+    current_provisioned_rights,
+    invalidate_provisioned_rights_cache,
+)
 from director_orchestrator.rights_provisioning import (
     AUTHORITY_BEARING_RIGHTS,
     InstallVerification,
@@ -224,6 +231,36 @@ class RightsLedgerTests(unittest.TestCase):
         assert rebuilt.notice is not None
         self.assertEqual(rebuilt.notice.build_digest, DIGEST_B)
 
+    def test_rebinding_updates_the_row_and_leaves_the_earlier_notice_intact(
+        self,
+    ) -> None:
+        # The rebind is an upsert of three columns, not a delete-and-reinsert,
+        # and it must not disturb the earlier notice: the owner's record of the
+        # first grant is evidence about a build that really did hold the right.
+        first = self.ledger.provision(verification(digest=DIGEST_A), now=RAISED_AT)
+        second = self.ledger.provision(verification(digest=DIGEST_B), now=RAISED_AT)
+        assert first.notice is not None and second.notice is not None
+        ledger_path = Path(self.temp.name) / "rights.sqlite3"
+        with closing(sqlite3.connect(ledger_path)) as connection:
+            rows = connection.execute(
+                """
+                SELECT build_digest, granted_at, notice_id, revoked_at, revoked_by
+                FROM provisioned_right
+                WHERE subject_kind = 'provider' AND subject_id = 'antigravity'
+                  AND right_name = 'review_verdict'
+                """
+            ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], DIGEST_B)
+        self.assertEqual(rows[0][2], second.notice.notice_id)
+        self.assertIsNone(rows[0][3])
+        self.assertIsNone(rows[0][4])
+        # Both notices survive, each describing the build it was raised for.
+        notices = {notice.notice_id: notice for notice in self.ledger.pending_notices()}
+        self.assertEqual(len(notices), 2)
+        self.assertEqual(notices[first.notice.notice_id].build_digest, DIGEST_A)
+        self.assertEqual(notices[second.notice.notice_id].build_digest, DIGEST_B)
+
     def test_revocation_outranks_reinstallation(self) -> None:
         self.ledger.provision(verification())
         self.assertTrue(
@@ -400,6 +437,14 @@ class RightsLedgerTests(unittest.TestCase):
 class SettingsIntegrationTests(unittest.TestCase):
     """The ledger reaches Settings without changing a deployment that opted out."""
 
+    def setUp(self) -> None:
+        # Each case owns its own ledger path, and the cache is keyed by that
+        # path, but clearing it makes these assertions independent of order.
+        invalidate_provisioned_rights_cache()
+
+    def tearDown(self) -> None:
+        invalidate_provisioned_rights_cache()
+
     def test_absent_ledger_path_grants_nothing(self) -> None:
         with hermetic_env():
             settings = Settings()
@@ -523,12 +568,16 @@ class SettingsIntegrationTests(unittest.TestCase):
                 "review_verdict",
                 revoked_by="owner",
             )
-            # Settings is explicitly a startup snapshot. The privileged
-            # operation boundary must use held_rights_for_build instead.
+            # Settings is explicitly a construction-time snapshot. The
+            # privileged operation boundary must use held_rights_for_build, or
+            # current_provisioned_rights for a bounded-freshness answer.
             self.assertEqual(
                 settings.provisioned_provider_rights.get("antigravity"),
                 frozenset({"review_verdict"}),
             )
+            # A fresh process starts with an empty read cache, so clearing it is
+            # what "restart" means to this module.
+            invalidate_provisioned_rights_cache()
             with hermetic_env(
                 RIGHTS_LEDGER_PATH=str(path),
                 RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(),
@@ -580,6 +629,183 @@ class SettingsIntegrationTests(unittest.TestCase):
         )
 
 
+class ProvisionedRightsRefreshTests(unittest.TestCase):
+    """A rights change must not need a restart, and must not cost a read per call.
+
+    main.py builds one module-level Settings and keeps it for the life of the
+    process. If a decision point read that snapshot, a subject provisioned after
+    boot would stay invisible and — the direction that matters — a revoked right
+    would keep working until every process was restarted. These pin the lookup
+    that does not have that property, and pin the cost of having it.
+    """
+
+    def setUp(self) -> None:
+        invalidate_provisioned_rights_cache()
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp.name) / "rights.sqlite3"
+        self.ledger = RightsLedger(self.path)
+        self.env = hermetic_env(
+            RIGHTS_LEDGER_PATH=str(self.path),
+            RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(),
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.addCleanup(invalidate_provisioned_rights_cache)
+        self.addCleanup(self.temp.cleanup)
+
+    def test_a_grant_recorded_after_boot_becomes_visible(self) -> None:
+        self.assertEqual(current_provisioned_rights("provider", now=0.0), {})
+        self.ledger.provision(verification())
+        # Still inside the staleness budget: the cached answer stands.
+        self.assertEqual(current_provisioned_rights("provider", now=0.0), {})
+        self.assertEqual(
+            current_provisioned_rights(
+                "provider", now=RIGHTS_SNAPSHOT_TTL_SECONDS
+            ).get("antigravity"),
+            frozenset({"review_verdict"}),
+        )
+
+    def test_a_revocation_stops_being_honoured_within_the_bound(self) -> None:
+        self.ledger.provision(verification())
+        self.assertEqual(
+            current_provisioned_rights("provider", now=0.0).get("antigravity"),
+            frozenset({"review_verdict"}),
+        )
+        self.assertTrue(
+            self.ledger.revoke_right(
+                SubjectKind.PROVIDER,
+                "antigravity",
+                "review_verdict",
+                revoked_by="owner",
+            )
+        )
+        # The staleness is bounded, not unbounded: one TTL, not one restart.
+        self.assertEqual(
+            current_provisioned_rights("provider", now=RIGHTS_SNAPSHOT_TTL_SECONDS),
+            {},
+        )
+
+    def test_an_in_process_revocation_can_be_made_visible_at_once(self) -> None:
+        self.ledger.provision(verification())
+        self.assertEqual(
+            current_provisioned_rights("provider", now=0.0).get("antigravity"),
+            frozenset({"review_verdict"}),
+        )
+        self.ledger.revoke_right(
+            SubjectKind.PROVIDER,
+            "antigravity",
+            "review_verdict",
+            revoked_by="owner",
+        )
+        invalidate_provisioned_rights_cache()
+        self.assertEqual(current_provisioned_rights("provider", now=0.0), {})
+
+    def test_a_configuration_change_is_not_held_back_by_the_cache(self) -> None:
+        self.ledger.provision(verification(digest=DIGEST_A))
+        self.assertEqual(
+            current_provisioned_rights("provider", now=0.0).get("antigravity"),
+            frozenset({"review_verdict"}),
+        )
+        # Same instant, different active build: the answer was derived from
+        # configuration that no longer holds, so it cannot be reused.
+        with hermetic_env(
+            RIGHTS_LEDGER_PATH=str(self.path),
+            RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(digest=DIGEST_B),
+        ):
+            self.assertEqual(current_provisioned_rights("provider", now=0.0), {})
+
+    def test_a_rewound_clock_produces_a_fresh_read_never_a_stale_one(self) -> None:
+        self.assertEqual(current_provisioned_rights("provider", now=100.0), {})
+        self.ledger.provision(verification())
+        self.assertEqual(
+            current_provisioned_rights("provider", now=0.0).get("antigravity"),
+            frozenset({"review_verdict"}),
+        )
+
+    def test_concurrent_lookups_cost_one_ledger_read(self) -> None:
+        self.ledger.provision(verification())
+        reads = []
+        lock = threading.Lock()
+        real = current_provisioned_rights.__globals__["_read_provisioned_rights"]
+
+        def counting(kind: str, path: str, active_raw: str):
+            with lock:
+                reads.append(kind)
+            return real(kind, path, active_raw)
+
+        start = threading.Barrier(24)
+        results: list[dict[str, frozenset[str]]] = []
+
+        def worker() -> None:
+            start.wait()
+            answer = current_provisioned_rights("provider", now=0.0)
+            with lock:
+                results.append(answer)
+
+        with patch(
+            "director_orchestrator.config._read_provisioned_rights",
+            side_effect=counting,
+        ):
+            threads = [threading.Thread(target=worker) for _ in range(24)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        # Bounded I/O: arriving together costs one read, not one per caller.
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(len(results), 24)
+        for answer in results:
+            self.assertEqual(answer.get("antigravity"), frozenset({"review_verdict"}))
+
+    def test_the_returned_map_cannot_be_mutated_through_the_cache(self) -> None:
+        self.ledger.provision(verification())
+        first = current_provisioned_rights("provider", now=0.0)
+        first["antigravity"] = frozenset({"repository_write"})
+        first["injected"] = frozenset({"review_verdict"})
+        second = current_provisioned_rights("provider", now=0.0)
+        self.assertEqual(second.get("antigravity"), frozenset({"review_verdict"}))
+        self.assertNotIn("injected", second)
+
+    def test_an_unreadable_ledger_is_still_no_rights(self) -> None:
+        self.path.write_bytes(b"not a database")
+        self.assertEqual(current_provisioned_rights("provider", now=0.0), {})
+
+    def test_a_programmer_defect_still_surfaces(self) -> None:
+        with patch(
+            "director_orchestrator.rights_provisioning.RightsLedger.subject_ids",
+            side_effect=RuntimeError("programmer defect"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "programmer defect"):
+                current_provisioned_rights("provider", now=0.0)
+
+
+class OptedOutRefreshTests(unittest.TestCase):
+    """A deployment that has not opted in must do no work and keep no state."""
+
+    def setUp(self) -> None:
+        invalidate_provisioned_rights_cache()
+        self.addCleanup(invalidate_provisioned_rights_cache)
+
+    def test_no_ledger_path_reads_nothing(self) -> None:
+        with hermetic_env(), patch(
+            "director_orchestrator.config._read_provisioned_rights",
+            side_effect=AssertionError("an opted-out deployment must not read"),
+        ):
+            self.assertEqual(current_provisioned_rights("provider"), {})
+            self.assertEqual(current_provisioned_rights("project"), {})
+
+    def test_a_ledger_without_an_active_build_reads_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rights.sqlite3"
+            RightsLedger(path).provision(verification())
+            with hermetic_env(RIGHTS_LEDGER_PATH=str(path)), patch(
+                "director_orchestrator.config._read_provisioned_rights",
+                side_effect=AssertionError("no active build must not read"),
+            ):
+                self.assertEqual(current_provisioned_rights("provider"), {})
+
+
 class ActiveBuildConfigurationTests(unittest.TestCase):
     def test_active_build_map_is_strict_and_canonical(self) -> None:
         self.assertEqual(
@@ -613,3 +839,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | END]]
 # [[OpenAI | GPT-5.6 | 2026-09-04 | 11:03 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]]
