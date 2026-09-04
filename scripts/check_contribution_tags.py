@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
@@ -37,6 +38,7 @@ _SUPPORTED_TRAILER_KEYS = frozenset(
         "signed-off-by",
     }
 )
+_CURSOR_SUMMARY_MARKER = re.compile(r"CURSOR_SUMMARY", re.IGNORECASE)
 
 
 def _strict_tag(line: str):
@@ -316,6 +318,12 @@ def _validate_github_event(path: Path) -> list[str]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload.get("pull_request"), dict):
         body = payload["pull_request"].get("body") or ""
+        if _CURSOR_SUMMARY_MARKER.search(body):
+            return [
+                "pull-request body contains a forbidden CURSOR_SUMMARY marker; "
+                "configure Cursor Bugbot PR Summary as a comment and remove the "
+                "injected summary block"
+            ]
         return _validate_submission_envelope(
             body, require_outer=True, require_markdown_boundary=True
         )
@@ -411,3 +419,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | END]]

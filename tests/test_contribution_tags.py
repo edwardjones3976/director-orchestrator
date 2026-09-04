@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
@@ -421,6 +422,18 @@ class ProviderRoleHandoffTests(unittest.TestCase):
 
 
 class ContributionPolicySurfaceTests(unittest.TestCase):
+    @staticmethod
+    def _checker(name: str):
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            name, root / "scripts" / "check_contribution_tags.py"
+        )
+        assert spec is not None
+        assert spec.loader is not None
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        return checker
+
     def test_roles_and_tagging_policy_are_present_on_authoritative_surfaces(self):
         root = Path(__file__).resolve().parents[1]
         charter = (root / "docs" / "team-operating-charter.md").read_text(
@@ -489,6 +502,65 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(checker._validate_github_event(event), [])
+
+    def test_pull_request_event_rejects_cursor_summary_markers_everywhere(self):
+        checker = self._checker("check_contribution_tags_cursor_summary")
+        begin = "**[[Cursor | Agent | 2026-09-04 | 10:04 UTC | BEGIN]]**"
+        end = "**[[Cursor | Agent | 2026-09-04 | 10:04 UTC | END]]**"
+        bodies = (
+            f"{begin}\nbody\n{end}\n<!-- CURSOR_SUMMARY -->\nsummary\n<!-- /CURSOR_SUMMARY -->",
+            f"{begin}\n<!-- CURSOR_SUMMARY -->\nsummary\n<!-- /CURSOR_SUMMARY -->\n{end}",
+            f"{begin}\n<!-- cursor_summary -->\nforged\n{end}",
+            f"{begin}\n<!-- CURSOR_SUMMARY --><!-- CURSOR_SUMMARY -->\nnested\n{end}",
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            for body in bodies:
+                with self.subTest(body=body):
+                    event.write_text(
+                        json.dumps(
+                            {"action": "edited", "pull_request": {"body": body}}
+                        ),
+                        encoding="utf-8",
+                    )
+                    errors = checker._validate_github_event(event)
+                    self.assertEqual(len(errors), 1)
+                    self.assertIn("forbidden CURSOR_SUMMARY marker", errors[0])
+
+    def test_edited_event_accepts_an_ordinary_valid_envelope(self):
+        checker = self._checker("check_contribution_tags_edited_event")
+        body = (
+            "**[[Cursor | Agent | 2026-09-04 | 10:04 UTC | BEGIN]]**\n"
+            "ordinary body\n"
+            "**[[Cursor | Agent | 2026-09-04 | 10:04 UTC | END]]**"
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            event.write_text(
+                json.dumps({"action": "edited", "pull_request": {"body": body}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(checker._validate_github_event(event), [])
+
+    def test_contribution_attribution_has_one_dedicated_workflow(self):
+        root = Path(__file__).resolve().parents[1]
+        workflows = {
+            path.name: path.read_text(encoding="utf-8")
+            for path in (root / ".github" / "workflows").glob("*.yml")
+        }
+        producers = [
+            name
+            for name, text in workflows.items()
+            if "name: Contribution attribution" in text
+        ]
+        self.assertEqual(producers, ["contribution-attribution.yml"])
+        workflow = workflows["contribution-attribution.yml"]
+        for event_type in ("opened", "synchronize", "reopened", "edited"):
+            self.assertIn(event_type, workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("concurrency:", workflow)
+        self.assertNotIn("name: Contribution attribution", workflows["ci.yml"])
 
     def test_submission_envelope_rejects_visible_content_outside_boundaries(self):
         root = Path(__file__).resolve().parents[1]
@@ -1205,3 +1277,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | END]]

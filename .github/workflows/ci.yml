@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
@@ -15,24 +16,6 @@ permissions:
   contents: read
 
 jobs:
-  contribution-attribution:
-    name: Contribution attribution
-    runs-on: ubuntu-latest
-    env:
-      PYTHONPATH: src
-      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-      HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Validate changed files and submission envelope
-        run: >-
-          python scripts/check_contribution_tags.py
-          --base "$BASE_SHA"
-          --head "$HEAD_SHA"
-          --github-event "$GITHUB_EVENT_PATH"
-
   # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:15 UTC | BEGIN]]
   python:
     name: Python 3.12 (${{ matrix.os }})
@@ -235,3 +218,4 @@ jobs:
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | END]]
