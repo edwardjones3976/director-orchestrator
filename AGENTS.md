@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Agent Operating Rules
 
@@ -12,7 +13,7 @@ These rules apply to every AI coding agent working in this repository.
 7. Verify webhook signatures or bearer secrets before processing callbacks. Use constant-time comparison for secrets and signatures.
 8. Add or update tests for behavioral changes. Run the relevant tests and report exact commands and results.
 9. Prefer reversible changes. Do not delete data or rewrite history without explicit owner authorization.
-10. Stop in `OWNER_DECISION_REQUIRED` when an action involves deployment, publishing, merge, deletion, purchases, external representation, sensitive data, credentials, or expanded access.
+10. Stop in `OWNER_DECISION_REQUIRED` when an action involves deployment, publishing, merge, deletion, purchases, external representation, sensitive data, credentials, or expanded access. Stopping is the default and stays the default. The only exception is a decision class the owner has explicitly delegated under `docs/human-out-of-the-loop-operation.md`, which is off unless configured and which never removes a deterministic gate.
 
 ## Contribution attribution
 
@@ -32,6 +33,15 @@ These rules apply to every AI coding agent working in this repository.
   --base <base-sha> --head <head-sha>`. See
   `docs/contribution-attribution-policy.md` for the canonical rules.
 11. Communicate concisely and accurately. Reuse fresh verified evidence; repeat a call or test only after state changes, an ambiguous result, or a named coverage gap. Before another paid or tool attempt, identify its expected information gain and stop, reshape, or escalate when that gain is low. Correct inaccuracies before dependent work. Brevity must not omit uncertainty, required evidence, safety gates, or unresolved risks.
+
+## Human-out-of-the-loop operation
+
+- `docs/human-out-of-the-loop-operation.md` defines the only way a decision that would otherwise stop in `OWNER_DECISION_REQUIRED` may be resolved without the owner present. Read it before assuming any decision is yours to make.
+- It is **default off**. A deployment operates in `ATTENDED` state unless the owner has configured a live grant, and it returns to `ATTENDED` whenever configuration is absent, invalid, expired, or unreadable. The document's presence grants nothing, and no phase past documented authority is built yet.
+- Delegation changes who supplies a verdict. It never changes whether a gate runs. No deterministic gate in `src/director_orchestrator/policy.py` is removed, relaxed, or made advisory by any grant, and rule 4 still forbids model output from removing an approval requirement.
+- Deployment, publication, deletion, history rewrite, purchases, billing, credential or access changes, merges into a protected branch, and edits to the framework itself are never delegable under any configuration. A decision that is not plainly an enumerated delegable class is treated as non-delegable.
+- Rule 3 is unaffected: no agent merges its own pull request. A delegated merge requires the producer, the reviewer, and the acting agent to be three distinct identities, plus two concurring exact-SHA `ACCEPT` verdicts from different providers, neither of them a material author.
+- Absence of evidence is never consent. A provider that is out of quota, unauthenticated, silent, or absent has not approved anything, and its silence may not be counted, inferred, or waited out.
 
 ## Cursor Cloud specific instructions
 
@@ -56,3 +66,4 @@ Gate 0 was accepted by the owner on 2026-08-16 against the checkpoint recorded i
 
 During dual operation, exactly one engine may own provider dispatch and GitHub/Slack side effects for a task. Models cannot remove deterministic policy gates, approve their own work, or treat checkpoint rollback as reversal of an external action.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]] -->
