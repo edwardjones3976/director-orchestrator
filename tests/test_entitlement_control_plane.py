@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:30 UTC | BEGIN]]
@@ -9,6 +10,7 @@ import os
 import json
 import tempfile
 import threading
+import time
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -1207,9 +1209,24 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         allowed_query = _boundary_query(installation_id=installation_id, now=issued)
         allowed = self.store.query_action_boundary(allowed_query)
         self.assertTrue(allowed.permitted)
+        self.assertIsNotNone(allowed.authorization_binding_digest)
+        self.assertNotEqual(
+            allowed.authorization_binding_digest, allowed_query.runtime_proof.digest
+        )
+        with self.handle.pool.connection() as connection:
+            claim = connection.execute(
+                f"SELECT authorization_document, authorization_binding_digest "
+                f"FROM {self.schema}.entitlement_runtime_authorization_claim "
+                "WHERE nonce_digest = %s",
+                (allowed_query.runtime_proof.nonce_digest,),
+            ).fetchone()
         self.assertEqual(
+            document_digest(dict(claim["authorization_document"])),
             allowed.authorization_binding_digest,
-            allowed_query.runtime_proof.digest,
+        )
+        self.assertEqual(
+            claim["authorization_document"]["registration_document_digest"],
+            _registration().digest,
         )
         # A movable branch name can never satisfy exact-SHA review authority.
         movable = self.store.query_action_boundary(
@@ -1649,10 +1666,10 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         self.assertFalse(any(thread.is_alive() for thread in threads), failures)
         self.assertEqual(failures, [])
         self.assertEqual(sum(decision.permitted for decision in decisions), 1)
-        self.assertEqual(
-            {decision.authorization_binding_digest for decision in decisions},
-            {query.runtime_proof.digest},
-        )
+        bindings = {decision.authorization_binding_digest for decision in decisions}
+        self.assertEqual(len(bindings), 1)
+        self.assertNotIn(None, bindings)
+        self.assertNotIn(query.runtime_proof.digest, bindings)
         self.assertEqual(
             sum(decision.denial_reason == "runtime authorization already consumed"
                 for decision in decisions),
@@ -1680,6 +1697,93 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         self.assertEqual(
             mismatched.denial_reason, "runtime authorization nonce binding mismatch"
         )
+
+    def test_action_claim_cannot_commit_from_pre_revocation_eligibility(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        outcome = self.store.grant_from_attestation(
+            _attestation(installation_id=installation_id),
+            idempotency_key_digest=document_digest({"grant": installation_id}),
+        )
+        self.store.mark_notice_delivered(
+            outcome.notice.notice_id,
+            idempotency_key_digest=document_digest({"deliver": installation_id}),
+            route_proof=_route_proof(outcome.notice, "DELIVERED"),
+        )
+        revoke_action = _install_action(
+            "revoke", installation_id, outcome.entitlement_generation
+        )
+        query = _boundary_query(installation_id=installation_id)
+        revoke_done: list[str] = []
+        query_decisions = []
+        failures: list[str] = []
+        query_started = threading.Event()
+
+        def revoke_worker() -> None:
+            try:
+                revoke_done.append(
+                    self.store.revoke(installation_id, owner_action=revoke_action)
+                )
+            except Exception as exc:
+                failures.append(f"revoke:{type(exc).__name__}:{exc}")
+
+        def query_worker() -> None:
+            query_started.set()
+            try:
+                query_decisions.append(self.store.query_action_boundary(query))
+            except Exception as exc:
+                failures.append(f"query:{type(exc).__name__}:{exc}")
+
+        with self.handle.pool.connection() as blocker:
+            blocker.execute("BEGIN")
+            blocker.execute(
+                f"SELECT 1 FROM {self.schema}.entitlement_current_generation "
+                "WHERE installation_id = %s FOR UPDATE",
+                (installation_id,),
+            )
+            revoke_thread = threading.Thread(target=revoke_worker)
+            revoke_thread.start()
+            lock_key = f"{self.schema}:{installation_id}"
+            revoke_holds_installation_lock = False
+            for _ in range(100):
+                with self.handle.pool.connection() as probe:
+                    acquired = probe.execute(
+                        "SELECT pg_try_advisory_lock(hashtext(%s)) AS acquired",
+                        (lock_key,),
+                    ).fetchone()["acquired"]
+                    if acquired:
+                        probe.execute(
+                            "SELECT pg_advisory_unlock(hashtext(%s))", (lock_key,)
+                        )
+                    else:
+                        revoke_holds_installation_lock = True
+                        break
+                time.sleep(0.01)
+            self.assertTrue(revoke_holds_installation_lock)
+            query_thread = threading.Thread(target=query_worker)
+            query_thread.start()
+            self.assertTrue(query_started.wait(timeout=2))
+            time.sleep(0.05)
+            self.assertTrue(query_thread.is_alive())
+            blocker.execute("COMMIT")
+        revoke_thread.join(timeout=10)
+        query_thread.join(timeout=10)
+        self.assertFalse(revoke_thread.is_alive())
+        self.assertFalse(query_thread.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(len(revoke_done), 1)
+        self.assertEqual(len(query_decisions), 1)
+        self.assertFalse(query_decisions[0].permitted)
+        self.assertEqual(
+            query_decisions[0].lifecycle_status, EntitlementLifecycleStatus.REVOKED
+        )
+        with self.handle.pool.connection() as connection:
+            claim_count = connection.execute(
+                f"SELECT count(*) AS count "
+                f"FROM {self.schema}.entitlement_runtime_authorization_claim "
+                "WHERE nonce_digest = %s",
+                (query.runtime_proof.nonce_digest,),
+            ).fetchone()["count"]
+        self.assertEqual(claim_count, 0)
 
     def test_owner_action_expiry_and_nonce_replay_are_rejected(self) -> None:
         installation_id = f"install-{uuid.uuid4().hex[:8]}"
@@ -1892,3 +1996,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:30 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | END]]

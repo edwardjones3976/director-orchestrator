@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:05 UTC | BEGIN]]
@@ -303,6 +304,7 @@ def _entitlement_ddl(schema: str) -> tuple[str, ...]:
             build_digest text NOT NULL,
             source_commit_sha text NOT NULL,
             source_tree_sha text NOT NULL,
+            authorization_document jsonb NOT NULL,
             authorization_binding_digest text NOT NULL,
             claimed_at timestamptz NOT NULL DEFAULT now()
         )
@@ -449,6 +451,11 @@ def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) ->
             "destination_id", "verified", "owner_signature_principal",
             "owner_signature_digest", "health_proof_document", "health_proof_digest",
             "health_proof_nonce_digest", "health_proof_expires_at", "verified_at",
+        },
+        "entitlement_runtime_authorization_claim": {
+            "nonce_digest", "installation_id", "action_type", "effect_digest",
+            "build_digest", "source_commit_sha", "source_tree_sha",
+            "authorization_document", "authorization_binding_digest", "claimed_at",
         },
     }
     for table_name, required_columns in expected_columns.items():
@@ -2492,7 +2499,11 @@ class EntitlementControlPlaneStore:
         self, query: EntitlementActionBoundaryQuery
     ) -> EntitlementActionBoundaryResult:
         trusted_now = self._clock()
-        with self._pool.connection() as connection:
+        with self._pool.connection() as connection, connection.transaction():
+            # Eligibility and the immutable effect claim are one serializable
+            # critical section relative to every authority mutation.
+            self._lock_project(connection, query.project_profile_id)
+            self._lock_installation(connection, query.installation_id)
             if connection.execute(
                 f"""
                 SELECT 1 FROM {self._schema}.entitlement_preemptive_revocation
@@ -2530,6 +2541,7 @@ class EntitlementControlPlaneStore:
                   AND cg.project_profile_id = %s
                   AND cg.provider_id = %s
                   AND cg.subject_id = %s
+                FOR UPDATE OF cg, pr, st
                 """,
                 (
                     query.installation_id,
@@ -2710,10 +2722,19 @@ class EntitlementControlPlaneStore:
             expected_destination: str | None = None
             if query.action_type == EntitlementActionType.SLACK_WRITE:
                 expected_destination = str(registration["slack_destination_id"])
+                slack_authority = connection.execute(
+                    f"""
+                    SELECT verified, health_proof_expires_at
+                    FROM {self._schema}.entitlement_slack_destination
+                    WHERE destination_id = %s
+                    FOR SHARE
+                    """,
+                    (expected_destination,),
+                ).fetchone()
                 if (
-                    not row["slack_destination_verified"]
-                    or row["slack_health_expires_at"] is None
-                    or row["slack_health_expires_at"] <= trusted_now
+                    slack_authority is None
+                    or not slack_authority["verified"]
+                    or slack_authority["health_proof_expires_at"] <= trusted_now
                 ):
                     return EntitlementActionBoundaryResult(
                         permitted=False,
@@ -2772,14 +2793,43 @@ class EntitlementControlPlaneStore:
                     audit_event_ids=audit_ids,
                     denial_reason="repository scope mismatch",
                 )
-            binding_digest = proof.digest
+            authorization_document = {
+                "schema_version": "EntitlementAuthorizationBinding/v1",
+                "query": query.to_document(),
+                "runtime_proof_digest": proof.digest,
+                "project_profile_id": query.project_profile_id,
+                "provider_id": query.provider_id,
+                "subject_id": query.subject_id,
+                "installation_id": query.installation_id,
+                "repository": query.repository,
+                "ref": query.ref,
+                "path": query.path,
+                "action_type": query.action_type.value,
+                "destination_id": query.destination_id,
+                "effect_digest": query.effect_digest,
+                "build_digest": query.current_build_digest,
+                "source_commit_sha": proof.source_commit_sha,
+                "source_tree_sha": proof.source_tree_sha,
+                "registration_generation": int(row["registration_generation"]),
+                "registration_document_digest": str(
+                    row["registration_document_digest"]
+                ),
+                "entitlement_generation": int(row["entitlement_generation"]),
+                "lifecycle_status": lifecycle.value,
+                "notice_id": str(row["notice_id"]),
+                "notice_delivery_state": notice_state.value,
+                "notice_deadline": deadline.isoformat(),
+                "profile_template_id": str(row["profile_template_id"]),
+                "template_digest": str(row["template_digest"]),
+            }
+            binding_digest = document_digest(authorization_document)
             claimed = connection.execute(
                 f"""
                 INSERT INTO {self._schema}.entitlement_runtime_authorization_claim (
                     nonce_digest, installation_id, action_type, destination_id,
                     effect_digest, build_digest, source_commit_sha, source_tree_sha,
-                    authorization_binding_digest
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    authorization_document, authorization_binding_digest
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
                 ON CONFLICT (nonce_digest) DO NOTHING
                 RETURNING authorization_binding_digest
                 """,
@@ -2792,6 +2842,7 @@ class EntitlementControlPlaneStore:
                     query.current_build_digest,
                     proof.source_commit_sha,
                     proof.source_tree_sha,
+                    json.dumps(authorization_document),
                     binding_digest,
                 ),
             ).fetchone()
@@ -2800,7 +2851,7 @@ class EntitlementControlPlaneStore:
                     f"""
                     SELECT installation_id, action_type, destination_id, effect_digest,
                            build_digest, source_commit_sha, source_tree_sha,
-                           authorization_binding_digest
+                           authorization_document, authorization_binding_digest
                     FROM {self._schema}.entitlement_runtime_authorization_claim
                     WHERE nonce_digest = %s
                     """,
@@ -2824,7 +2875,12 @@ class EntitlementControlPlaneStore:
                     str(prior_claim["build_digest"]),
                     str(prior_claim["source_commit_sha"]),
                     str(prior_claim["source_tree_sha"]),
+                    dict(prior_claim["authorization_document"]),
                     str(prior_claim["authorization_binding_digest"]),
+                )
+                expected_claim = expected_claim[:-1] + (
+                    authorization_document,
+                    expected_claim[-1],
                 )
                 if actual_claim != expected_claim:
                     return EntitlementActionBoundaryResult(
@@ -3123,3 +3179,4 @@ def entitlement_store_from_handle(handle: EntitlementStoreHandle) -> Entitlement
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | END]]
