@@ -2,6 +2,7 @@
 description: Require safe contribution attribution without changing structured formats or authority
 alwaysApply: true
 ---
+<!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Contribution attribution
 
@@ -14,9 +15,15 @@ alwaysApply: true
   binaries, generated artifacts, or any format whose behavior or validity they
   could change. Attribute those changes in the commit, pull request, or handoff
   envelope instead.
-- Tags record authorship only. They do not authenticate a provider, grant
-  authority, replace an exact SHA/digest, or satisfy approval, review, CI,
-  security, budget, allowlist, merge, or deployment gates.
+- Tags acknowledge actual contributions only. They do not authenticate a
+  provider, grant authority, replace an exact SHA/digest, or satisfy approval,
+  review, CI, security, budget, allowlist, merge, or deployment gates.
+- Work produced or materially authored by a provider remains attributed solely
+  to that provider or those providers. The Director/OpenAI does not inherit
+  authorship through delegation, routing, coordination, QA, review, acceptance,
+  relay, merge eligibility evaluation, or merge execution; those activities
+  create no code authorship, and no tag may imply inherited authorship.
 - Before handoff, run `PYTHONPATH=src python scripts/check_contribution_tags.py
   --base <base-sha> --head <head-sha>` on the committed candidate.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->

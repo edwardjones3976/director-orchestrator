@@ -1,3 +1,4 @@
+<!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
@@ -519,6 +520,31 @@ invalidate all review, security, CI, and merge evidence tied to the previous
 candidate. Batch compatible trivial corrections before the new independent
 review when doing so does not conceal risk.
 
+## Director and provider authorship boundary
+
+Authorship follows actual production. Work produced or materially authored by a
+provider remains attributed solely to that provider or those providers. The
+Director/OpenAI does not inherit authorship through delegation, routing,
+coordination, QA, review, acceptance, relay, merge eligibility evaluation, or
+merge execution; those control-plane activities create no code authorship.
+
+The Director delegates the substantial majority of coding to capable specialist
+providers. Its own responsibilities are decomposition, routing, workload,
+budget, and safety enforcement, QA, independent-review orchestration, exact-SHA
+evidence reconciliation, and eligible merge execution. Reviewing or merging a
+candidate never converts the Director into one of its authors, and the Director
+still may not independently accept or merge code it actually materially
+authored.
+
+Provider output retains its accurate identity and provenance. Contribution tags
+acknowledge actual contributions only and never imply inherited authorship, so a
+Director relay envelope records the relay rather than authorship of the relayed
+work.
+
+This boundary is an attribution rule. It removes no deterministic gate and
+changes no owner authority: exact-SHA review, independent acceptance, security,
+CI, budget, allowlist, approval, and merge gates all apply unchanged.
+
 ## Contribution attribution
 
 Every safe human-visible response and changed taggable artifact uses a matching
@@ -699,3 +725,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->

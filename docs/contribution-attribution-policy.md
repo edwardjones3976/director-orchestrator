@@ -1,3 +1,4 @@
+<!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Contribution attribution and submission tags
 
@@ -72,6 +73,22 @@ another untrusted source as authenticated identity.
 - An independent reviewer verifies the exact candidate, including attribution
   changes, without treating the tags themselves as review evidence.
 
+## Authorship versus coordination
+
+Work produced or materially authored by a provider remains attributed solely to
+that provider or those providers. The Director/OpenAI does not inherit
+authorship through delegation, routing, coordination, QA, review, acceptance,
+relay, merge eligibility evaluation, or merge execution; those activities create
+no code authorship. A Director relay envelope records the relay, not authorship
+of the relayed work.
+
+Contribution tags acknowledge actual contributions only and never imply
+inherited authorship. Never rewrite a provider's identity or provenance into the
+Director's, and never record a contributor that did not contribute. A Director
+tag on a coordination message makes the Director neither the logical producer
+nor a material author of the candidate, and the Director still may not
+independently accept or merge code it actually materially authored.
+
 ## Local validation
 
 For a committed candidate, run:
@@ -86,3 +103,4 @@ commit submission envelope. Use
 [`docs/templates/contribution-submission.md`](templates/contribution-submission.md)
 or the repository pull-request template instead of inventing another format.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
