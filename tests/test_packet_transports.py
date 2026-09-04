@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
@@ -213,6 +214,8 @@ class LocalGitAuthoritySnapshotTests(unittest.TestCase):
             "https://github.com.example.invalid/example/demo.git",
             "ssh://git@github.com/example/demo.git",
             "https://origin.cursor.com/example/demo.git",
+            "https://gıthub.com/example/demo.git",
+            "httpſ://github.com/example/demo.git",
         ):
             with self.subTest(remote=untrusted):
                 self.assertIsNone(normalize(untrusted))
@@ -1318,3 +1321,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]

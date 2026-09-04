@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | BEGIN]]
 [CmdletBinding()]
@@ -18,10 +19,13 @@ Set-StrictMode -Version Latest
 function Get-GitHubRepositoryFromRemoteUrl {
     param([Parameter(Mandatory = $true)][string]$RemoteUrl)
 
+    $value = $RemoteUrl.Trim()
+    if ([regex]::IsMatch($value, '[^\x00-\x7F]')) { return $null }
     $match = [regex]::Match(
-        $RemoteUrl.Trim(),
+        $value,
         '^(?:https://github\.com/|git@github\.com:)(?<owner>[A-Za-z0-9][A-Za-z0-9-]{0,38})/(?<repository>[A-Za-z0-9._-]+?)(?:\.git)?/?$',
-        [Text.RegularExpressions.RegexOptions]::IgnoreCase
+        ([Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
+            [Text.RegularExpressions.RegexOptions]::CultureInvariant)
     )
     if (-not $match.Success) { return $null }
     return ("{0}/{1}" -f $match.Groups["owner"].Value, $match.Groups["repository"].Value).ToLowerInvariant()
@@ -82,3 +86,4 @@ if ($normalized -cne $ExpectedRepository.Trim('/').ToLowerInvariant()) {
 Write-Host "Snapshot verification passed at the exact requested commit and tree."
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]

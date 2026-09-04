@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
@@ -62,7 +63,7 @@ _GITHUB_REMOTE = re.compile(
     r"^(?:https://github\.com/|git@github\.com:)"
     r"(?P<repository>[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]+?)"
     r"(?:\.git)?/?$",
-    re.IGNORECASE,
+    re.IGNORECASE | re.ASCII,
 )
 _MAX_CANONICAL_HANDOFF_BYTES = 256 * 1024
 _SIDE_EFFECT_STATUSES = {"NOT_ATTEMPTED", "ATTEMPTED", "COMPLETED", "FAILED"}
@@ -97,6 +98,8 @@ _TERMINAL_FAILURE = {
 def canonical_github_remote_repository(remote: str) -> str | None:
     """Return owner/repository only for an exact supported GitHub remote URL."""
 
+    if not remote.isascii():
+        return None
     match = _GITHUB_REMOTE.fullmatch(remote.strip())
     if match is None:
         return None
@@ -1208,3 +1211,4 @@ def build_primary_packet_adapters(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
