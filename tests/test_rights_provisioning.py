@@ -653,6 +653,13 @@ class ProvisionedRightsRefreshTests(unittest.TestCase):
         self.addCleanup(invalidate_provisioned_rights_cache)
         self.addCleanup(self.temp.cleanup)
 
+    def test_the_staleness_budget_is_small_enough_to_be_a_bound(self) -> None:
+        # Every other test here measures freshness in units of the constant, so
+        # they all still pass if the constant is raised. This is the assertion
+        # that a revoked right stops working in seconds rather than in hours.
+        self.assertGreater(RIGHTS_SNAPSHOT_TTL_SECONDS, 0.0)
+        self.assertLessEqual(RIGHTS_SNAPSHOT_TTL_SECONDS, 60.0)
+
     def test_a_grant_recorded_after_boot_becomes_visible(self) -> None:
         self.assertEqual(current_provisioned_rights("provider", now=0.0), {})
         self.ledger.provision(verification())
