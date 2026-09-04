@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
@@ -620,13 +621,23 @@ def parse_active_build_digests(raw: str) -> dict[tuple[SubjectKind, str], str]:
     half-parsed map would quietly activate whichever subjects happened to
     parse. Callers that must not fail closed loudly should catch
     `RightsProvisioningError` and treat it as "no subject holds anything".
+
+    Every rejection leaves as `RightsProvisioningError`, including the ones
+    `json.loads` raises that are not `JSONDecodeError`: an integer literal past
+    CPython's 4300-digit conversion cap raises a bare `ValueError` from the
+    scanner, and deep nesting raises `RecursionError`. Those escaping would
+    reach `Settings()`, which `main.py` constructs at module scope, so a
+    mistyped environment variable would stop the service booting instead of
+    yielding no rights.
     """
     text = raw.strip()
     if not text:
         return {}
     try:
         payload = json.loads(text)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
+        # ValueError subsumes JSONDecodeError; RecursionError is a RuntimeError
+        # and is not caught by it, so both are named.
         raise RightsProvisioningError(
             "active build digests must be valid JSON"
         ) from exc
@@ -656,3 +667,4 @@ def parse_active_build_digests(raw: str) -> dict[tuple[SubjectKind, str], str]:
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | END]]

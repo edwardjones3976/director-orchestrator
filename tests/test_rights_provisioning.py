@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
@@ -478,6 +479,16 @@ class SettingsIntegrationTests(unittest.TestCase):
                 '{"provider:antigravity":"too-short"}',
                 '{"antigravity":"' + DIGEST_A + '"}',
                 '{"provider:antigravity":42}',
+                # json.loads raises more than JSONDecodeError. An integer
+                # literal past CPython's 4300-digit conversion cap raises a
+                # bare ValueError from the scanner, and deep nesting raises
+                # RecursionError. Neither is caught by the narrow except in
+                # config.py, so before these were translated they escaped to
+                # Settings() -- which main.py builds at module scope, making a
+                # mistyped variable a service that will not boot rather than
+                # one that grants nothing.
+                "1" * 4301,
+                "[" * 3000 + "]" * 3000,
             ):
                 with self.subTest(raw=raw):
                     with hermetic_env(
@@ -598,3 +609,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | END]]
