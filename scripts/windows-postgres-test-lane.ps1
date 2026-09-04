@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]]
@@ -63,13 +64,17 @@ function Test-LaneReady {
     # redirected stderr must not become a terminating error under 5.1. The TCP
     # probe inside the container skips the initdb-phase socket-only server, and
     # the host probe proves the Docker Desktop port forward is up.
-    $ErrorActionPreference = "Continue"
-    & docker exec $ContainerName pg_isready -h 127.0.0.1 -U $databaseUser -d $databaseName 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { return $false }
-    $client = New-Object Net.Sockets.TcpClient
-    try { $client.Connect("127.0.0.1", $HostPort); return $true }
-    catch { return $false }
-    finally { $client.Dispose() }
+    $priorErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & docker exec $ContainerName pg_isready -h 127.0.0.1 -U $databaseUser -d $databaseName 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $false }
+        $client = New-Object Net.Sockets.TcpClient
+        try { $client.Connect("127.0.0.1", $HostPort); return $true }
+        catch { return $false }
+        finally { $client.Dispose() }
+    }
+    finally { $ErrorActionPreference = $priorErrorActionPreference }
 }
 
 function Wait-LaneReady {
@@ -198,3 +203,4 @@ Write-Host "Unit tests passed against the disposable PostgreSQL lane; the contai
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:35 UTC | END]]

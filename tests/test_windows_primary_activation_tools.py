@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]]
@@ -141,6 +142,20 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("pg_isready -h 127.0.0.1 -U $databaseUser -d $databaseName", text)
         self.assertIn("[DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)", text)
         self.assertIn("Net.Sockets.TcpClient", text)
+        readiness = text[
+            text.index("function Test-LaneReady"):text.index("function Wait-LaneReady")
+        ]
+        self.assertIn(
+            "$priorErrorActionPreference = $ErrorActionPreference", readiness
+        )
+        self.assertIn(
+            "finally { $ErrorActionPreference = $priorErrorActionPreference }",
+            readiness,
+        )
+        self.assertLess(
+            readiness.index("$priorErrorActionPreference = $ErrorActionPreference"),
+            readiness.index('$ErrorActionPreference = "Continue"'),
+        )
         self.assertIn("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", text)
         self.assertIn("LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER", text)
         self.assertIn("director-orchestrator.postgres-test-lane", text)
@@ -302,3 +317,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:50 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:35 UTC | END]]
