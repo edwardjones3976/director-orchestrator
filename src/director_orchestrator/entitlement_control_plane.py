@@ -35,6 +35,7 @@ from .entitlement_contracts import (
     NoticeRouteProofV1,
     ProjectRegistrationV1,
     RepositoryScope,
+    RuntimeEvidenceProofV1,
     SignedEntitlementTemplateV1,
     SlackDestinationHealthProofV1,
     SubjectKind,
@@ -74,6 +75,7 @@ class EntitlementStoreHandle:
     schema: str
     storage_identity: str
     trusted_verifier_secret: bytes
+    route_verifier_secret: bytes
     owner_authority_secret: bytes
 
     def close(self) -> None:
@@ -88,6 +90,14 @@ def _require_schema(schema: str) -> str:
     return schema
 
 
+def _validate_secret_material(value: bytes, *, label: str) -> bytes:
+    if len(value) < 32 or len(set(value)) < 16:
+        raise EntitlementControlPlaneError(
+            f"{label} must contain at least 32 bytes of nontrivial entropy"
+        )
+    return value
+
+
 def _read_secret_file(path: str) -> bytes:
     resolved = Path(path).expanduser()
     if not resolved.is_file():
@@ -96,11 +106,7 @@ def _read_secret_file(path: str) -> bytes:
     if not value:
         raise EntitlementControlPlaneError("secret file is empty")
     encoded = value.encode("utf-8")
-    if len(encoded) < 32 or len(set(encoded)) < 16:
-        raise EntitlementControlPlaneError(
-            "secret must contain at least 32 bytes of nontrivial entropy"
-        )
-    return encoded
+    return _validate_secret_material(encoded, label="secret")
 
 
 def _storage_identity(parsed: Mapping[str, str], *, schema: str) -> str:
@@ -216,6 +222,8 @@ def _entitlement_ddl(schema: str) -> tuple[str, ...]:
             granted_capabilities jsonb NOT NULL,
             granted_capabilities_digest text NOT NULL,
             build_digest text NOT NULL,
+            source_commit_sha text NOT NULL,
+            source_tree_sha text NOT NULL,
             lifecycle_status text NOT NULL,
             notice_id text NOT NULL,
             notice_delivery_state text NOT NULL,
@@ -412,6 +420,7 @@ def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) ->
             "provider_id", "registration_generation", "entitlement_generation",
             "profile_template_id", "template_digest", "registration_document_digest",
             "granted_capabilities", "granted_capabilities_digest", "build_digest",
+            "source_commit_sha", "source_tree_sha",
             "lifecycle_status", "notice_id", "notice_delivery_state",
             "notice_pending_since", "granted_at", "last_event_id", "updated_at",
         },
@@ -437,18 +446,23 @@ def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) ->
                 f"entitlement schema column contract mismatch for {table_name}"
             )
     expected_triggers = {
-        "entitlement_event_immutable",
-        "entitlement_preemptive_revocation_immutable",
-        "entitlement_install_attestation_immutable",
-        "entitlement_owner_action_nonce_immutable",
-        "entitlement_route_proof_nonce_immutable",
+        ("entitlement_event_immutable", "entitlement_event", 27, "entitlement_reject_mutation"),
+        ("entitlement_preemptive_revocation_immutable", "entitlement_preemptive_revocation", 27, "entitlement_reject_mutation"),
+        ("entitlement_install_attestation_immutable", "entitlement_install_attestation", 27, "entitlement_reject_mutation"),
+        ("entitlement_owner_action_nonce_immutable", "entitlement_owner_action_nonce", 27, "entitlement_reject_mutation"),
+        ("entitlement_route_proof_nonce_immutable", "entitlement_route_proof_nonce", 27, "entitlement_reject_mutation"),
     }
     actual_triggers = {
-        str(row["trigger_name"])
+        (str(row["trigger_name"]), str(row["table_name"]), int(row["trigger_type"]), str(row["function_name"]))
         for row in connection.execute(
             """
-            SELECT trigger_name FROM information_schema.triggers
-            WHERE trigger_schema = %s
+            SELECT trigger.tgname AS trigger_name, relation.relname AS table_name,
+                   trigger.tgtype AS trigger_type, procedure.proname AS function_name
+            FROM pg_trigger AS trigger
+            JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+            JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            JOIN pg_proc AS procedure ON procedure.oid = trigger.tgfoid
+            WHERE namespace.nspname = %s AND NOT trigger.tgisinternal
             """,
             (schema,),
         ).fetchall()
@@ -466,6 +480,76 @@ def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) ->
     ).fetchone()
     if active_index is None:
         raise EntitlementControlPlaneError("active registration uniqueness constraint is missing")
+    expected_key_constraints = {
+        ("entitlement_schema_manifest", "p", ("singleton",)),
+        ("entitlement_signed_template", "p", ("profile_template_id",)),
+        ("entitlement_slack_destination", "p", ("destination_id",)),
+        ("entitlement_slack_destination", "u", ("health_proof_nonce_digest",)),
+        ("entitlement_project_registration", "p", ("project_profile_id", "registration_generation")),
+        ("entitlement_install_attestation", "p", ("attestation_id",)),
+        ("entitlement_install_attestation", "u", ("nonce_digest",)),
+        ("entitlement_event", "p", ("event_id",)),
+        ("entitlement_event", "u", ("idempotency_key_digest",)),
+        ("entitlement_current_generation", "p", ("installation_id",)),
+        ("entitlement_owner_notice", "p", ("notice_id",)),
+        ("entitlement_idempotency_outcome", "p", ("idempotency_key_digest",)),
+        ("entitlement_preemptive_revocation", "p", ("installation_id",)),
+        ("entitlement_owner_action_nonce", "p", ("nonce_digest",)),
+        ("entitlement_route_proof_nonce", "p", ("nonce_digest",)),
+    }
+    actual_key_constraints = {
+        (str(row["table_name"]), str(row["constraint_type"]), tuple(row["columns"]))
+        for row in connection.execute(
+            """
+            SELECT relation.relname AS table_name,
+                   con.contype::text AS constraint_type,
+                   array_agg(attribute.attname ORDER BY key_column.ordinality) AS columns
+            FROM pg_constraint AS con
+            JOIN pg_class AS relation ON relation.oid = con.conrelid
+            JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            JOIN unnest(con.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+              ON true
+            JOIN pg_attribute AS attribute
+              ON attribute.attrelid = relation.oid AND attribute.attnum = key_column.attnum
+            WHERE namespace.nspname = %s AND con.contype IN ('p', 'u')
+            GROUP BY relation.relname, con.contype, con.oid
+            """,
+            (schema,),
+        ).fetchall()
+    }
+    if not expected_key_constraints.issubset(actual_key_constraints):
+        raise EntitlementControlPlaneError("entitlement schema key constraint contract mismatch")
+    ownership = connection.execute(
+        """
+        SELECT
+          (SELECT pg_get_userbyid(namespace.nspowner)
+             FROM pg_namespace AS namespace WHERE namespace.nspname = %s) AS schema_owner,
+          current_user AS current_owner,
+          bool_and(pg_get_userbyid(relation.relowner) = current_user) AS tables_owned,
+          (SELECT pg_get_userbyid(procedure.proowner) = current_user
+             FROM pg_proc AS procedure
+             JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+            WHERE namespace.nspname = %s
+              AND procedure.proname = 'entitlement_reject_mutation') AS function_owned,
+          (SELECT lower(procedure.prosrc) LIKE '%%raise exception ''immutable entitlement row''%%'
+             FROM pg_proc AS procedure
+             JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+            WHERE namespace.nspname = %s
+              AND procedure.proname = 'entitlement_reject_mutation') AS function_body_valid
+        FROM pg_class AS relation
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = %s AND relation.relkind = 'r'
+        """,
+        (schema, schema, schema, schema),
+    ).fetchone()
+    if (
+        ownership is None
+        or ownership["schema_owner"] != ownership["current_owner"]
+        or not ownership["tables_owned"]
+        or not ownership["function_owned"]
+        or not ownership["function_body_valid"]
+    ):
+        raise EntitlementControlPlaneError("entitlement schema ownership contract mismatch")
 
 
 class EntitlementControlPlaneStore:
@@ -476,14 +560,27 @@ class EntitlementControlPlaneStore:
         schema: str,
         storage_identity: str,
         trusted_verifier_secret: bytes,
+        route_verifier_secret: bytes,
         owner_authority_secret: bytes,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._pool = pool
         self._schema = _require_schema(schema)
         self._storage_identity = storage_identity
-        self._trusted_verifier_secret = trusted_verifier_secret
-        self._owner_authority_secret = owner_authority_secret
+        self._trusted_verifier_secret = _validate_secret_material(
+            trusted_verifier_secret, label="install verifier secret"
+        )
+        self._route_verifier_secret = _validate_secret_material(
+            route_verifier_secret, label="route verifier secret"
+        )
+        self._owner_authority_secret = _validate_secret_material(
+            owner_authority_secret, label="owner authority secret"
+        )
+        if len({self._trusted_verifier_secret, self._route_verifier_secret,
+                self._owner_authority_secret}) != 3:
+            raise EntitlementControlPlaneError(
+                "owner, install-verifier, and route-verifier secrets must be cryptographically separated"
+            )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     @property
@@ -502,9 +599,8 @@ class EntitlementControlPlaneStore:
             (f"{self._schema}:project:{project_profile_id}",),
         )
 
-    def _claim_owner_action(
+    def _validate_owner_action(
         self,
-        connection: Any,
         *,
         action: EntitlementOwnerActionV1,
         operation: str,
@@ -512,9 +608,10 @@ class EntitlementControlPlaneStore:
         expected_generation: int | None,
         idempotency_key_digest: str,
         request_digest: str,
+        require_fresh: bool = True,
     ) -> None:
         now = self._clock()
-        if action.issued_at > now or action.expires_at <= now:
+        if require_fresh and (action.issued_at > now or action.expires_at <= now):
             raise EntitlementControlPlaneError("owner action is not currently valid")
         if (
             action.operation != operation
@@ -532,6 +629,26 @@ class EntitlementControlPlaneStore:
             raise EntitlementControlPlaneError(
                 f"owner action signature invalid: {exc}"
             ) from exc
+
+    def _claim_owner_action(
+        self,
+        connection: Any,
+        *,
+        action: EntitlementOwnerActionV1,
+        operation: str,
+        installation_id: str,
+        expected_generation: int | None,
+        idempotency_key_digest: str,
+        request_digest: str,
+    ) -> None:
+        self._validate_owner_action(
+            action=action,
+            operation=operation,
+            installation_id=installation_id,
+            expected_generation=expected_generation,
+            idempotency_key_digest=idempotency_key_digest,
+            request_digest=request_digest,
+        )
         inserted = connection.execute(
             f"""
             INSERT INTO {self._schema}.entitlement_owner_action_nonce (
@@ -605,7 +722,7 @@ class EntitlementControlPlaneStore:
         ):
             raise EntitlementControlPlaneError("notice route proof binding mismatch")
         try:
-            proof.verify_signature(trusted_verifier_secret=self._trusted_verifier_secret)
+            proof.verify_signature(trusted_verifier_secret=self._route_verifier_secret)
         except EntitlementContractError as exc:
             raise EntitlementControlPlaneError(
                 f"notice route proof signature invalid: {exc}"
@@ -759,7 +876,7 @@ class EntitlementControlPlaneStore:
             raise EntitlementControlPlaneError("Slack health proof is not fresh")
         try:
             health_proof.verify_signature(
-                trusted_verifier_secret=self._trusted_verifier_secret
+                trusted_verifier_secret=self._route_verifier_secret
             )
         except EntitlementContractError as exc:
             raise EntitlementControlPlaneError(
@@ -962,6 +1079,9 @@ class EntitlementControlPlaneStore:
                     or current["provider_id"] != attestation.provider_id
                 ):
                     raise EntitlementControlPlaneError("installation identity cannot change")
+                # Serialize registration selection with supersession so a first grant
+                # cannot appear after the supersession scan has completed.
+                self._lock_project(connection, attestation.project_profile_id)
                 registration = connection.execute(
                     f"""
                     SELECT document, document_digest, profile_template_id, owner_policy_digest,
@@ -1115,11 +1235,12 @@ class EntitlementControlPlaneStore:
                             profile_template_id, template_digest, build_digest,
                             registration_document_digest, granted_capabilities,
                             granted_capabilities_digest,
+                            source_commit_sha, source_tree_sha,
                             lifecycle_status, notice_id, notice_delivery_state,
                             notice_pending_since, granted_at, last_event_id
                         ) VALUES (
                             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s
                         )
                         """,
                         (
@@ -1136,6 +1257,8 @@ class EntitlementControlPlaneStore:
                             registration["document_digest"],
                             json.dumps(expected_capabilities),
                             capabilities_digest,
+                            attestation.source_commit_sha,
+                            attestation.source_tree_sha,
                             EntitlementLifecycleStatus.ACTIVE.value,
                             notice.notice_id,
                             OwnerNoticeDeliveryState.PENDING.value,
@@ -1160,6 +1283,8 @@ class EntitlementControlPlaneStore:
                             registration_document_digest = %s,
                             granted_capabilities = %s::jsonb,
                             granted_capabilities_digest = %s,
+                            source_commit_sha = %s,
+                            source_tree_sha = %s,
                             lifecycle_status = %s,
                             notice_id = %s,
                             notice_delivery_state = %s,
@@ -1183,6 +1308,8 @@ class EntitlementControlPlaneStore:
                             registration["document_digest"],
                             json.dumps(expected_capabilities),
                             capabilities_digest,
+                            attestation.source_commit_sha,
+                            attestation.source_tree_sha,
                             EntitlementLifecycleStatus.ACTIVE.value,
                             notice.notice_id,
                             OwnerNoticeDeliveryState.PENDING.value,
@@ -1247,6 +1374,7 @@ class EntitlementControlPlaneStore:
             build_digest=notice_doc["build_digest"],
             pending_since=datetime.fromisoformat(notice_doc["pending_since"]),
             delivery_proof_digest=notice_doc.get("delivery_proof_digest"),
+            ack_proof_digest=notice_doc.get("ack_proof_digest"),
         )
         return EntitlementGrantOutcome(
             granted_capabilities=tuple(document["granted_capabilities"]),
@@ -1386,6 +1514,42 @@ class EntitlementControlPlaneStore:
             connection.execute("BEGIN")
             try:
                 self._lock_installation(connection, attestation.installation_id)
+                cached = self._load_idempotent_outcome(
+                    connection,
+                    owner_action.idempotency_key_digest,
+                    operation="restore",
+                    request_digest=request_digest,
+                )
+                if cached is not None:
+                    self._validate_owner_action(
+                        action=owner_action,
+                        operation="restore",
+                        installation_id=attestation.installation_id,
+                        expected_generation=owner_action.expected_generation,
+                        idempotency_key_digest=owner_action.idempotency_key_digest,
+                        request_digest=request_digest,
+                        require_fresh=False,
+                    )
+                    live_lineage = connection.execute(
+                        f"""
+                        SELECT entitlement_generation, last_event_id
+                        FROM {self._schema}.entitlement_current_generation
+                        WHERE installation_id = %s
+                        FOR UPDATE
+                        """,
+                        (attestation.installation_id,),
+                    ).fetchone()
+                    if (
+                        live_lineage is None
+                        or int(live_lineage["entitlement_generation"])
+                        != int(cached["entitlement_generation"])
+                        or str(live_lineage["last_event_id"]) != str(cached["event_id"])
+                    ):
+                        raise EntitlementControlPlaneError(
+                            "stored restore outcome is no longer the current lineage"
+                        )
+                    connection.execute("COMMIT")
+                    return self._outcome_from_document(cached, idempotent_replay=True)
                 current = connection.execute(
                     f"""
                     SELECT entitlement_generation, lifecycle_status, profile_template_id,
@@ -1412,15 +1576,6 @@ class EntitlementControlPlaneStore:
                     raise EntitlementControlPlaneError(
                         "restore attestation does not match installation lineage"
                     )
-                cached = self._load_idempotent_outcome(
-                    connection,
-                    owner_action.idempotency_key_digest,
-                    operation="restore",
-                    request_digest=request_digest,
-                )
-                if cached is not None:
-                    connection.execute("COMMIT")
-                    return self._outcome_from_document(cached, idempotent_replay=True)
                 self._claim_owner_action(
                     connection,
                     action=owner_action,
@@ -1430,6 +1585,7 @@ class EntitlementControlPlaneStore:
                     idempotency_key_digest=owner_action.idempotency_key_digest,
                     request_digest=request_digest,
                 )
+                self._lock_project(connection, attestation.project_profile_id)
                 registration = connection.execute(
                     f"""
                     SELECT document, document_digest, profile_template_id, owner_policy_digest,
@@ -1586,6 +1742,8 @@ class EntitlementControlPlaneStore:
                         profile_template_id = %s,
                         template_digest = %s,
                         build_digest = %s,
+                        source_commit_sha = %s,
+                        source_tree_sha = %s,
                         registration_document_digest = %s,
                         granted_capabilities = %s::jsonb,
                         granted_capabilities_digest = %s,
@@ -1606,6 +1764,8 @@ class EntitlementControlPlaneStore:
                         profile_template_id,
                         attestation.template_digest,
                         attestation.artifact_digest,
+                        attestation.source_commit_sha,
+                        attestation.source_tree_sha,
                         registration["document_digest"],
                         json.dumps(expected_capabilities),
                         capabilities_digest,
@@ -2294,6 +2454,7 @@ class EntitlementControlPlaneStore:
     def query_action_boundary(
         self, query: EntitlementActionBoundaryQuery
     ) -> EntitlementActionBoundaryResult:
+        trusted_now = self._clock()
         with self._pool.connection() as connection:
             if connection.execute(
                 f"""
@@ -2317,13 +2478,17 @@ class EntitlementControlPlaneStore:
                        pr.owner_policy_digest AS registration_owner_policy_digest,
                        pr.superseded_at, st.template_digest AS live_template_digest,
                        st.capabilities AS live_template_capabilities,
-                       st.owner_policy_digest AS template_owner_policy_digest
+                       st.owner_policy_digest AS template_owner_policy_digest,
+                       sd.verified AS slack_destination_verified,
+                       sd.health_proof_expires_at AS slack_health_expires_at
                 FROM {self._schema}.entitlement_current_generation cg
                 JOIN {self._schema}.entitlement_project_registration pr
                   ON pr.project_profile_id = cg.project_profile_id
                  AND pr.registration_generation = cg.registration_generation
                 JOIN {self._schema}.entitlement_signed_template st
                   ON st.profile_template_id = cg.profile_template_id
+                LEFT JOIN {self._schema}.entitlement_slack_destination sd
+                  ON sd.destination_id = pr.slack_destination_id
                 WHERE cg.installation_id = %s
                   AND cg.project_profile_id = %s
                   AND cg.provider_id = %s
@@ -2386,7 +2551,7 @@ class EntitlementControlPlaneStore:
             )
             if (
                 notice_state == OwnerNoticeDeliveryState.PENDING
-                and query.now >= deadline
+                and trusted_now >= deadline
             ):
                 return EntitlementActionBoundaryResult(
                     permitted=False,
@@ -2404,6 +2569,58 @@ class EntitlementControlPlaneStore:
                     notice_delivery_state=notice_state,
                     audit_event_ids=audit_ids,
                     denial_reason="notice suspension active",
+                )
+            proof = query.runtime_proof
+            try:
+                proof.verify_signature(
+                    trusted_verifier_secret=self._trusted_verifier_secret
+                )
+            except EntitlementContractError:
+                return EntitlementActionBoundaryResult(
+                    permitted=False,
+                    entitlement_generation=int(row["entitlement_generation"]),
+                    lifecycle_status=lifecycle,
+                    notice_delivery_state=notice_state,
+                    audit_event_ids=audit_ids,
+                    denial_reason="runtime evidence signature invalid",
+                )
+            if proof.issued_at > trusted_now or proof.expires_at <= trusted_now:
+                return EntitlementActionBoundaryResult(
+                    permitted=False,
+                    entitlement_generation=int(row["entitlement_generation"]),
+                    lifecycle_status=lifecycle,
+                    notice_delivery_state=notice_state,
+                    audit_event_ids=audit_ids,
+                    denial_reason="runtime evidence is not fresh",
+                )
+            if (
+                proof.installation_id != query.installation_id
+                or proof.build_digest != query.current_build_digest
+                or proof.action_type != query.action_type
+                or proof.destination_id != query.destination_id
+                or proof.effect_digest != query.effect_digest
+                or proof.source_commit_sha != row["source_commit_sha"]
+                or proof.source_tree_sha != row["source_tree_sha"]
+            ):
+                return EntitlementActionBoundaryResult(
+                    permitted=False,
+                    entitlement_generation=int(row["entitlement_generation"]),
+                    lifecycle_status=lifecycle,
+                    notice_delivery_state=notice_state,
+                    audit_event_ids=audit_ids,
+                    denial_reason="runtime evidence binding mismatch",
+                )
+            if (
+                query.action_type == EntitlementActionType.REVIEW_EXACT_SHA
+                and query.ref != proof.source_commit_sha
+            ):
+                return EntitlementActionBoundaryResult(
+                    permitted=False,
+                    entitlement_generation=int(row["entitlement_generation"]),
+                    lifecycle_status=lifecycle,
+                    notice_delivery_state=notice_state,
+                    audit_event_ids=audit_ids,
+                    denial_reason="review ref is not the attested exact commit",
                 )
             if row["build_digest"] != query.current_build_digest:
                 return EntitlementActionBoundaryResult(
@@ -2456,6 +2673,19 @@ class EntitlementControlPlaneStore:
             expected_destination: str | None = None
             if query.action_type == EntitlementActionType.SLACK_WRITE:
                 expected_destination = str(registration["slack_destination_id"])
+                if (
+                    not row["slack_destination_verified"]
+                    or row["slack_health_expires_at"] is None
+                    or row["slack_health_expires_at"] <= trusted_now
+                ):
+                    return EntitlementActionBoundaryResult(
+                        permitted=False,
+                        entitlement_generation=int(row["entitlement_generation"]),
+                        lifecycle_status=lifecycle,
+                        notice_delivery_state=notice_state,
+                        audit_event_ids=audit_ids,
+                        denial_reason="Slack destination health proof is stale",
+                    )
             elif query.action_type == EntitlementActionType.NOTION_WRITE:
                 expected_destination = str(registration["notion_destination_id"])
             elif query.action_type == EntitlementActionType.N8N_WRITE:
@@ -2512,16 +2742,18 @@ class EntitlementControlPlaneStore:
                 notice_delivery_state=notice_state,
                 audit_event_ids=audit_ids,
                 denial_reason=None,
+                authorization_binding_digest=proof.digest,
             )
 
     def authoritative_capabilities(
-        self, installation_id: str, *, current_build_digest: str, now: datetime | None = None
+        self, installation_id: str, *, runtime_proof: RuntimeEvidenceProofV1
     ) -> frozenset[str]:
-        moment = now or self._clock()
+        moment = self._clock()
         with self._pool.connection() as connection:
             row = connection.execute(
                 f"""
-                SELECT cg.lifecycle_status, cg.build_digest, cg.profile_template_id,
+                SELECT cg.lifecycle_status, cg.build_digest, cg.source_commit_sha,
+                       cg.source_tree_sha, cg.profile_template_id,
                        cg.template_digest, cg.registration_document_digest,
                        cg.granted_capabilities, cg.granted_capabilities_digest,
                        cg.notice_delivery_state, cg.notice_pending_since,
@@ -2554,7 +2786,20 @@ class EntitlementControlPlaneStore:
                 and moment >= deadline
             ):
                 return frozenset()
-            if row["build_digest"] != current_build_digest:
+            try:
+                runtime_proof.verify_signature(
+                    trusted_verifier_secret=self._trusted_verifier_secret
+                )
+            except EntitlementContractError:
+                return frozenset()
+            if (
+                runtime_proof.installation_id != installation_id
+                or runtime_proof.build_digest != row["build_digest"]
+                or runtime_proof.source_commit_sha != row["source_commit_sha"]
+                or runtime_proof.source_tree_sha != row["source_tree_sha"]
+                or runtime_proof.issued_at > moment
+                or runtime_proof.expires_at <= moment
+            ):
                 return frozenset()
             granted = tuple(row["granted_capabilities"])
             code_capabilities = tuple(
@@ -2691,15 +2936,17 @@ def open_entitlement_control_plane(
     *,
     schema: str = DEFAULT_ENTITLEMENT_SCHEMA,
     trusted_verifier_secret_file: str,
+    route_verifier_secret_file: str,
     owner_authority_secret_file: str,
     allow_insecure_local_transport: bool = False,
 ) -> EntitlementStoreHandle:
     schema = _require_schema(schema)
     trusted_verifier_secret = _read_secret_file(trusted_verifier_secret_file)
+    route_verifier_secret = _read_secret_file(route_verifier_secret_file)
     owner_authority_secret = _read_secret_file(owner_authority_secret_file)
-    if trusted_verifier_secret == owner_authority_secret:
+    if len({trusted_verifier_secret, route_verifier_secret, owner_authority_secret}) != 3:
         raise EntitlementControlPlaneError(
-            "owner and verifier secrets must be cryptographically separated"
+            "owner, install-verifier, and route-verifier secrets must be cryptographically separated"
         )
     pool_type, dict_row = _load_pool_dependencies()
     try:
@@ -2747,6 +2994,7 @@ def open_entitlement_control_plane(
         schema=schema,
         storage_identity=storage_identity,
         trusted_verifier_secret=trusted_verifier_secret,
+        route_verifier_secret=route_verifier_secret,
         owner_authority_secret=owner_authority_secret,
     )
 
@@ -2757,6 +3005,7 @@ def entitlement_store_from_handle(handle: EntitlementStoreHandle) -> Entitlement
         schema=handle.schema,
         storage_identity=handle.storage_identity,
         trusted_verifier_secret=handle.trusted_verifier_secret,
+        route_verifier_secret=handle.route_verifier_secret,
         owner_authority_secret=handle.owner_authority_secret,
     )
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:25 UTC | END]]

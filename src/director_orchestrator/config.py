@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
@@ -513,6 +514,11 @@ class Settings:
     entitlement_trusted_verifier_secret_file: str = field(
         default_factory=lambda: os.getenv(
             "ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE", ""
+        ).strip()
+    )
+    entitlement_route_verifier_secret_file: str = field(
+        default_factory=lambda: os.getenv(
+            "ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", ""
         ).strip()
     )
     entitlement_owner_authority_secret_file: str = field(
@@ -2006,3 +2012,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:05 UTC | END]]

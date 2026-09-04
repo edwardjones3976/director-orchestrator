@@ -28,6 +28,7 @@ OWNER_ACTION_VERSION = "EntitlementOwnerAction/v1"
 SLACK_DESTINATION_PROOF_VERSION = "SlackDestinationHealthProof/v1"
 ACTION_BOUNDARY_QUERY_VERSION = "EntitlementActionBoundaryQuery/v1"
 NOTICE_ROUTE_PROOF_VERSION = "NoticeRouteProof/v1"
+RUNTIME_EVIDENCE_PROOF_VERSION = "RuntimeEvidenceProof/v1"
 
 SHARED_INTEGRATIONS_TEMPLATE_ID = "shared-integrations/v1"
 
@@ -202,7 +203,13 @@ def _decode_strict_json(raw: bytes, *, source: str) -> dict[str, Any]:
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_constant,
         )
-    except (json.JSONDecodeError, TypeError, ValueError, EntitlementContractError) as exc:
+    except (
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+        RecursionError,
+        EntitlementContractError,
+    ) as exc:
         raise EntitlementContractError(f"{source} is not valid JSON") from exc
     if not isinstance(value, dict):
         raise EntitlementContractError(f"{source} must be a JSON object")
@@ -751,6 +758,7 @@ class OwnerNoticeV1:
     build_digest: str
     pending_since: datetime
     delivery_proof_digest: str | None = None
+    ack_proof_digest: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("notice_id", "installation_id", "project_profile_id", "subject_id"):
@@ -767,6 +775,10 @@ class OwnerNoticeV1:
             self.delivery_proof_digest
         ):
             raise EntitlementContractError("delivery_proof_digest must be sha256")
+        if self.ack_proof_digest is not None and not _SHA256.fullmatch(
+            self.ack_proof_digest
+        ):
+            raise EntitlementContractError("ack_proof_digest must be sha256")
 
     def to_document(self) -> dict[str, Any]:
         return {
@@ -783,6 +795,7 @@ class OwnerNoticeV1:
             "build_digest": self.build_digest,
             "pending_since": self.pending_since.isoformat(),
             "delivery_proof_digest": self.delivery_proof_digest,
+            "ack_proof_digest": self.ack_proof_digest,
         }
 
 
@@ -978,6 +991,75 @@ class NoticeRouteProofV1:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeEvidenceProofV1:
+    installation_id: str
+    build_digest: str
+    source_commit_sha: str
+    source_tree_sha: str
+    action_type: EntitlementActionType
+    destination_id: str | None
+    effect_digest: str
+    verifier_principal: str
+    issued_at: datetime
+    expires_at: datetime
+    nonce_digest: str
+    verifier_signature_digest: str
+
+    def __post_init__(self) -> None:
+        for name in ("installation_id", "verifier_principal"):
+            if not _IDENTIFIER.fullmatch(getattr(self, name)):
+                raise EntitlementContractError(f"{name} is malformed")
+        if not _SHA256.fullmatch(self.build_digest) or not _SHA256.fullmatch(self.effect_digest):
+            raise EntitlementContractError("runtime build/effect digest must be sha256")
+        if not _GIT_SHA1.fullmatch(self.source_commit_sha) or not _GIT_SHA1.fullmatch(self.source_tree_sha):
+            raise EntitlementContractError("runtime source commit/tree must be git sha1")
+        if not isinstance(self.action_type, EntitlementActionType):
+            raise EntitlementContractError("runtime action_type is unknown")
+        if self.destination_id is not None and not _IDENTIFIER.fullmatch(self.destination_id):
+            raise EntitlementContractError("runtime destination_id is malformed")
+        for name in ("nonce_digest", "verifier_signature_digest"):
+            if not _SHA256.fullmatch(getattr(self, name)):
+                raise EntitlementContractError(f"{name} must be sha256")
+        _require_utc(self.issued_at, "issued_at")
+        _require_utc(self.expires_at, "expires_at")
+        if self.expires_at <= self.issued_at:
+            raise EntitlementContractError("runtime proof expiry must follow issuance")
+
+    def signing_document(self) -> dict[str, Any]:
+        return {
+            "schema_version": RUNTIME_EVIDENCE_PROOF_VERSION,
+            "installation_id": self.installation_id,
+            "build_digest": self.build_digest,
+            "source_commit_sha": self.source_commit_sha,
+            "source_tree_sha": self.source_tree_sha,
+            "action_type": self.action_type.value,
+            "destination_id": self.destination_id,
+            "effect_digest": self.effect_digest,
+            "verifier_principal": self.verifier_principal,
+            "issued_at": self.issued_at.isoformat(),
+            "expires_at": self.expires_at.isoformat(),
+            "nonce_digest": self.nonce_digest,
+        }
+
+    def to_document(self) -> dict[str, Any]:
+        document = self.signing_document()
+        document["verifier_signature_digest"] = self.verifier_signature_digest
+        return document
+
+    @property
+    def digest(self) -> str:
+        return document_digest(self.to_document())
+
+    def verify_signature(self, *, trusted_verifier_secret: bytes) -> None:
+        verify_signature(
+            principal=self.verifier_principal,
+            signature_digest=self.verifier_signature_digest,
+            signing_payload=signing_bytes(self.signing_document()),
+            secret=trusted_verifier_secret,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class EntitlementActionBoundaryQuery:
     project_profile_id: str
     repository: str
@@ -991,6 +1073,7 @@ class EntitlementActionBoundaryQuery:
     destination_id: str | None
     effect_digest: str
     reserved_spend_usd: float
+    runtime_proof: RuntimeEvidenceProofV1
     now: datetime
 
     def __post_init__(self) -> None:
@@ -1031,6 +1114,8 @@ class EntitlementActionBoundaryQuery:
         if self.action_type not in SPEND_BEARING_ACTIONS and self.reserved_spend_usd != 0:
             raise EntitlementContractError("non-spend action cannot carry a spend reservation")
         _require_utc(self.now, "now")
+        if not isinstance(self.runtime_proof, RuntimeEvidenceProofV1):
+            raise EntitlementContractError("runtime_proof is required")
 
     def to_document(self) -> dict[str, Any]:
         return {
@@ -1047,6 +1132,7 @@ class EntitlementActionBoundaryQuery:
             "destination_id": self.destination_id,
             "effect_digest": self.effect_digest,
             "reserved_spend_usd": self.reserved_spend_usd,
+            "runtime_proof": self.runtime_proof.to_document(),
             "now": self.now.isoformat(),
         }
 
@@ -1059,6 +1145,7 @@ class EntitlementActionBoundaryResult:
     notice_delivery_state: OwnerNoticeDeliveryState | None
     audit_event_ids: tuple[str, ...]
     denial_reason: str | None
+    authorization_binding_digest: str | None = None
 
 
 def _strict_document(raw: bytes, *, version: str, keys: frozenset[str]) -> dict[str, Any]:
@@ -1217,7 +1304,8 @@ def parse_entitlement_event_v1(raw: bytes) -> EntitlementEventV1:
 def parse_owner_notice_v1(raw: bytes) -> OwnerNoticeV1:
     keys = frozenset({"schema_version", "notice_id", "installation_id", "entitlement_generation",
                       "delivery_state", "project_profile_id", "subject_kind", "subject_id", "template_id",
-                      "authority_bearing_capabilities", "build_digest", "pending_since", "delivery_proof_digest"})
+                      "authority_bearing_capabilities", "build_digest", "pending_since",
+                      "delivery_proof_digest", "ack_proof_digest"})
     document = _strict_document(raw, version=OWNER_NOTICE_VERSION, keys=keys)
     try:
         delivery = OwnerNoticeDeliveryState(_require_type(document["delivery_state"], str, "delivery_state"))
@@ -1227,6 +1315,9 @@ def parse_owner_notice_v1(raw: bytes) -> OwnerNoticeV1:
     proof = document["delivery_proof_digest"]
     if proof is not None:
         _require_type(proof, str, "delivery_proof_digest")
+    ack_proof = document["ack_proof_digest"]
+    if ack_proof is not None:
+        _require_type(ack_proof, str, "ack_proof_digest")
     return OwnerNoticeV1(
         notice_id=_require_type(document["notice_id"], str, "notice_id"),
         installation_id=_require_type(document["installation_id"], str, "installation_id"),
@@ -1240,6 +1331,7 @@ def parse_owner_notice_v1(raw: bytes) -> OwnerNoticeV1:
         build_digest=_require_type(document["build_digest"], str, "build_digest"),
         pending_since=_parse_utc(document["pending_since"], "pending_since"),
         delivery_proof_digest=proof,
+        ack_proof_digest=ack_proof,
     )
 
 
@@ -1289,6 +1381,7 @@ def parse_entitlement_action_boundary_query_v1(raw: bytes) -> EntitlementActionB
     keys = frozenset({"schema_version", "project_profile_id", "repository", "ref", "path", "provider_id",
                       "subject_id", "installation_id", "current_build_digest", "action_type",
                       "destination_id", "effect_digest", "reserved_spend_usd", "now"})
+    keys = keys | {"runtime_proof"}
     document = _strict_document(raw, version=ACTION_BOUNDARY_QUERY_VERSION, keys=keys)
     try:
         action = EntitlementActionType(_require_type(document["action_type"], str, "action_type"))
@@ -1310,6 +1403,11 @@ def parse_entitlement_action_boundary_query_v1(raw: bytes) -> EntitlementActionB
         destination_id=destination,
         effect_digest=_require_type(document["effect_digest"], str, "effect_digest"),
         reserved_spend_usd=_require_type(document["reserved_spend_usd"], (int, float), "reserved_spend_usd"),
+        runtime_proof=parse_runtime_evidence_proof_v1(
+            canonical_json_bytes(
+                _require_type(document["runtime_proof"], dict, "runtime_proof")
+            )
+        ),
         now=_parse_utc(document["now"], "now"),
     )
 
@@ -1326,6 +1424,35 @@ def parse_notice_route_proof_v1(raw: bytes) -> NoticeRouteProofV1:
         destination_id=_require_type(document["destination_id"], str, "destination_id"),
         outcome=_require_type(document["outcome"], str, "outcome"),
         evidence_digest=_require_type(document["evidence_digest"], str, "evidence_digest"),
+        verifier_principal=_require_type(document["verifier_principal"], str, "verifier_principal"),
+        issued_at=_parse_utc(document["issued_at"], "issued_at"),
+        expires_at=_parse_utc(document["expires_at"], "expires_at"),
+        nonce_digest=_require_type(document["nonce_digest"], str, "nonce_digest"),
+        verifier_signature_digest=_require_type(document["verifier_signature_digest"], str, "verifier_signature_digest"),
+    )
+
+
+def parse_runtime_evidence_proof_v1(raw: bytes) -> RuntimeEvidenceProofV1:
+    keys = frozenset({"schema_version", "installation_id", "build_digest", "source_commit_sha",
+                      "source_tree_sha", "action_type", "destination_id", "effect_digest",
+                      "verifier_principal", "issued_at", "expires_at", "nonce_digest",
+                      "verifier_signature_digest"})
+    document = _strict_document(raw, version=RUNTIME_EVIDENCE_PROOF_VERSION, keys=keys)
+    try:
+        action = EntitlementActionType(_require_type(document["action_type"], str, "action_type"))
+    except ValueError as exc:
+        raise EntitlementContractError("runtime action_type is unknown") from exc
+    destination = document["destination_id"]
+    if destination is not None:
+        _require_type(destination, str, "destination_id")
+    return RuntimeEvidenceProofV1(
+        installation_id=_require_type(document["installation_id"], str, "installation_id"),
+        build_digest=_require_type(document["build_digest"], str, "build_digest"),
+        source_commit_sha=_require_type(document["source_commit_sha"], str, "source_commit_sha"),
+        source_tree_sha=_require_type(document["source_tree_sha"], str, "source_tree_sha"),
+        action_type=action,
+        destination_id=destination,
+        effect_digest=_require_type(document["effect_digest"], str, "effect_digest"),
         verifier_principal=_require_type(document["verifier_principal"], str, "verifier_principal"),
         issued_at=_parse_utc(document["issued_at"], "issued_at"),
         expires_at=_parse_utc(document["expires_at"], "expires_at"),

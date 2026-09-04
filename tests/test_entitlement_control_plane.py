@@ -24,9 +24,11 @@ from director_orchestrator.entitlement_contracts import (
     InstallAttestationV1,
     ManifestEntryV1,
     NoticeRouteProofV1,
+    OwnerNoticeV1,
     OwnerNoticeDeliveryState,
     ProjectRegistrationV1,
     RepositoryScope,
+    RuntimeEvidenceProofV1,
     SignedEntitlementTemplateV1,
     SlackDestinationHealthProofV1,
     SubjectKind,
@@ -38,9 +40,11 @@ from director_orchestrator.entitlement_contracts import (
     parse_project_registration_v1,
     parse_signed_entitlement_template_v1,
     parse_entitlement_action_boundary_query_v1,
+    parse_owner_notice_v1,
     signing_bytes,
 )
 from director_orchestrator.entitlement_control_plane import (
+    EntitlementControlPlaneStore,
     EntitlementControlPlaneError,
     entitlement_store_from_handle,
     open_entitlement_control_plane,
@@ -82,6 +86,14 @@ def _verifier_signature(document: dict) -> str:
         principal=VERIFIER_PRINCIPAL,
         signing_payload=signing_bytes(document),
         secret=VERIFIER_SECRET,
+    )
+
+
+def _route_signature(document: dict) -> str:
+    return compute_signature(
+        principal=VERIFIER_PRINCIPAL,
+        signing_payload=signing_bytes(document),
+        secret=ROUTE_SECRET,
     )
 
 
@@ -177,7 +189,7 @@ def _slack_health_proof(destination_id: str = "slack-owner-dm") -> SlackDestinat
         issued_at=issued,
         expires_at=issued + timedelta(hours=1),
         nonce_digest=signing_doc["nonce_digest"],
-        verifier_signature_digest=_verifier_signature(signing_doc),
+        verifier_signature_digest=_route_signature(signing_doc),
     )
 
 
@@ -207,7 +219,7 @@ def _route_proof(notice, outcome: str) -> NoticeRouteProofV1:
         issued_at=issued,
         expires_at=issued + timedelta(minutes=5),
         nonce_digest=signing_doc["nonce_digest"],
-        verifier_signature_digest=_verifier_signature(signing_doc),
+        verifier_signature_digest=_route_signature(signing_doc),
     )
 
 
@@ -241,7 +253,7 @@ def _registration(
         "repository_scopes": [
             {
                 "repository": "edwardjones3976/director-orchestrator",
-                "refs": ["main"],
+                "refs": [COMMIT_A],
                 "paths": ["src/**"],
             }
         ],
@@ -262,7 +274,7 @@ def _registration(
         repository_scopes=(
             RepositoryScope(
                 repository="edwardjones3976/director-orchestrator",
-                refs=("main",),
+                refs=(COMMIT_A,),
                 paths=("src/**",),
             ),
         ),
@@ -290,7 +302,7 @@ def _boundary_query(
     payload = {
         "project_profile_id": "uppercut",
         "repository": "edwardjones3976/director-orchestrator",
-        "ref": "main",
+        "ref": COMMIT_A,
         "path": path,
         "provider_id": "antigravity",
         "subject_id": "antigravity",
@@ -303,6 +315,36 @@ def _boundary_query(
         "now": now or _utc_now(),
     }
     payload.update(overrides)
+    if "runtime_proof" not in payload:
+        issued = payload["now"]
+        signing_doc = {
+            "schema_version": "RuntimeEvidenceProof/v1",
+            "installation_id": payload["installation_id"],
+            "build_digest": payload["current_build_digest"],
+            "source_commit_sha": COMMIT_A,
+            "source_tree_sha": TREE_A,
+            "action_type": payload["action_type"].value,
+            "destination_id": payload["destination_id"],
+            "effect_digest": payload["effect_digest"],
+            "verifier_principal": VERIFIER_PRINCIPAL,
+            "issued_at": issued.isoformat(),
+            "expires_at": (issued + timedelta(hours=1)).isoformat(),
+            "nonce_digest": document_digest({"runtime": uuid.uuid4().hex}),
+        }
+        payload["runtime_proof"] = RuntimeEvidenceProofV1(
+            installation_id=payload["installation_id"],
+            build_digest=payload["current_build_digest"],
+            source_commit_sha=COMMIT_A,
+            source_tree_sha=TREE_A,
+            action_type=payload["action_type"],
+            destination_id=payload["destination_id"],
+            effect_digest=payload["effect_digest"],
+            verifier_principal=VERIFIER_PRINCIPAL,
+            issued_at=issued,
+            expires_at=issued + timedelta(hours=1),
+            nonce_digest=signing_doc["nonce_digest"],
+            verifier_signature_digest=_verifier_signature(signing_doc),
+        )
     return EntitlementActionBoundaryQuery(**payload)
 
 
@@ -415,6 +457,27 @@ class EntitlementContractUnitTests(unittest.TestCase):
             ).action_type,
             EntitlementActionType.REVIEW_EXACT_SHA,
         )
+        deep = b'{"schema_version":"ProjectRegistration/v1","x":' + b'[' * 5000 + b'0' + b']' * 5000 + b'}'
+        with self.assertRaisesRegex(EntitlementContractError, "valid JSON"):
+            parse_project_registration_v1(deep)
+
+    def test_owner_notice_acknowledgement_contract_round_trips(self) -> None:
+        notice = OwnerNoticeV1(
+            notice_id="notice-round-trip",
+            installation_id="install-round-trip",
+            entitlement_generation=1,
+            delivery_state=OwnerNoticeDeliveryState.ACKNOWLEDGED,
+            project_profile_id="uppercut",
+            subject_kind=SubjectKind.PROVIDER,
+            subject_id="antigravity",
+            template_id=PROFILE_TEMPLATE,
+            authority_bearing_capabilities=("review.exact_sha",),
+            build_digest=DIGEST_A,
+            pending_since=_utc_now(),
+            ack_proof_digest=DIGEST_B,
+        )
+        parsed = parse_owner_notice_v1(json.dumps(notice.to_document()).encode())
+        self.assertEqual(parsed.ack_proof_digest, DIGEST_B)
 
     def test_self_referential_attestation_signature_is_rejected(self) -> None:
         issued = _utc_now()
@@ -489,8 +552,9 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             raise RuntimeError(
                 "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN is required for this zero-skip suite"
             )
-        global VERIFIER_SECRET_FILE, OWNER_SECRET_FILE
+        global VERIFIER_SECRET_FILE, ROUTE_SECRET_FILE, OWNER_SECRET_FILE
         VERIFIER_SECRET_FILE = _write_secret(VERIFIER_SECRET.decode("utf-8"))
+        ROUTE_SECRET_FILE = _write_secret(ROUTE_SECRET.decode("utf-8"))
         OWNER_SECRET_FILE = _write_secret(OWNER_SECRET.decode("utf-8"))
     def setUp(self) -> None:
         self.schema = f"entitlement_it_{uuid.uuid4().hex[:8]}_v1"
@@ -498,6 +562,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             TEST_DSN,
             schema=self.schema,
             trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+            route_verifier_secret_file=ROUTE_SECRET_FILE,
             owner_authority_secret_file=OWNER_SECRET_FILE,
             allow_insecure_local_transport=True,
         )
@@ -528,7 +593,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        for path in (VERIFIER_SECRET_FILE, OWNER_SECRET_FILE):
+        for path in (VERIFIER_SECRET_FILE, ROUTE_SECRET_FILE, OWNER_SECRET_FILE):
             Path(path).unlink(missing_ok=True)
 
     def test_grant_requires_owner_template_and_slack_destination(self) -> None:
@@ -541,6 +606,30 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         self.assertIn("review.exact_sha", outcome.granted_capabilities)
         self.assertIn("integration.slack", outcome.granted_capabilities)
         self.assertEqual(outcome.notice.delivery_state, OwnerNoticeDeliveryState.PENDING)
+
+    def test_install_verifier_cannot_forge_route_health_proof(self) -> None:
+        proof = _slack_health_proof("slack-separated")
+        forged = replace(
+            proof,
+            verifier_signature_digest=compute_signature(
+                principal=proof.verifier_principal,
+                signing_payload=signing_bytes(proof.signing_document()),
+                secret=VERIFIER_SECRET,
+            ),
+        )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "signature invalid"):
+            self.store.register_verified_slack_destination(
+                destination_id="slack-separated",
+                owner_signature_principal=OWNER_PRINCIPAL,
+                owner_signature_digest=_owner_signature(
+                    {
+                        "schema_version": "OwnerSlackDestination/v1",
+                        "destination_id": "slack-separated",
+                        "owner_signature_principal": OWNER_PRINCIPAL,
+                    }
+                ),
+                health_proof=forged,
+            )
 
     def test_stale_and_future_attestations_are_refused(self) -> None:
         now = _utc_now()
@@ -624,7 +713,8 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.assertEqual(
             self.store.authoritative_capabilities(
-                installation_id, current_build_digest=DIGEST_A
+                installation_id,
+                runtime_proof=_boundary_query(installation_id=installation_id).runtime_proof,
             ),
             frozenset(),
         )
@@ -641,8 +731,17 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             idempotency_key_digest=document_digest({"grant": installation_id}),
         )
         deadline = issued + timedelta(seconds=NOTICE_SUSPENSION_SECONDS + 1)
-        denied = self.store.query_action_boundary(
-            _boundary_query(installation_id=installation_id, now=deadline)
+        deadline_store = EntitlementControlPlaneStore(
+            self.handle.pool,
+            schema=self.schema,
+            storage_identity=self.handle.storage_identity,
+            trusted_verifier_secret=VERIFIER_SECRET,
+            route_verifier_secret=ROUTE_SECRET,
+            owner_authority_secret=OWNER_SECRET,
+            clock=lambda: deadline,
+        )
+        denied = deadline_store.query_action_boundary(
+            _boundary_query(installation_id=installation_id, now=issued)
         )
         self.assertFalse(denied.permitted)
         self.store.evaluate_notice_suspensions(now=deadline)
@@ -653,8 +752,8 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                 route_proof=_route_proof(outcome.notice, "DELIVERED"),
             )
         self.assertFalse(
-            self.store.query_action_boundary(
-                _boundary_query(installation_id=installation_id, now=deadline)
+            deadline_store.query_action_boundary(
+                _boundary_query(installation_id=installation_id, now=issued)
             ).permitted
         )
 
@@ -663,6 +762,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             TEST_DSN,
             schema=self.schema,
             trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+            route_verifier_secret_file=ROUTE_SECRET_FILE,
             owner_authority_secret_file=OWNER_SECRET_FILE,
             allow_insecure_local_transport=True,
         )
@@ -683,6 +783,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                     TEST_DSN,
                     schema=self.schema,
                     trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+                    route_verifier_secret_file=ROUTE_SECRET_FILE,
                     owner_authority_secret_file=OWNER_SECRET_FILE,
                     allow_insecure_local_transport=True,
                 )
@@ -704,6 +805,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                 "postgresql://director_ci@203.0.113.10:5432/director_test?sslmode=disable",
                 schema=f"entitlement_remote_{uuid.uuid4().hex[:8]}_v1",
                 trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+                route_verifier_secret_file=ROUTE_SECRET_FILE,
                 owner_authority_secret_file=OWNER_SECRET_FILE,
                 allow_insecure_local_transport=True,
             )
@@ -804,6 +906,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             TEST_DSN,
             schema=schema,
             trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+            route_verifier_secret_file=ROUTE_SECRET_FILE,
             owner_authority_secret_file=OWNER_SECRET_FILE,
             allow_insecure_local_transport=True,
         )
@@ -834,6 +937,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             TEST_DSN,
             schema=schema,
             trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+            route_verifier_secret_file=ROUTE_SECRET_FILE,
             owner_authority_secret_file=OWNER_SECRET_FILE,
             allow_insecure_local_transport=True,
         )
@@ -908,7 +1012,8 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.assertEqual(
             self.store.authoritative_capabilities(
-                installation_id, current_build_digest=DIGEST_A
+                installation_id,
+                runtime_proof=_boundary_query(installation_id=installation_id).runtime_proof,
             ),
             frozenset(),
         )
@@ -937,12 +1042,18 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             owner_action=_install_action("revoke", install_a, 1),
         )
         self.assertEqual(
-            self.store.authoritative_capabilities(install_a, current_build_digest=DIGEST_A),
+            self.store.authoritative_capabilities(
+                install_a,
+                runtime_proof=_boundary_query(installation_id=install_a).runtime_proof,
+            ),
             frozenset(),
         )
         self.assertIn(
             "review.exact_sha",
-            self.store.authoritative_capabilities(install_b, current_build_digest=DIGEST_A),
+            self.store.authoritative_capabilities(
+                install_b,
+                runtime_proof=_boundary_query(installation_id=install_b).runtime_proof,
+            ),
         )
 
     def test_budget_boundary_denies_over_limit(self) -> None:
@@ -981,10 +1092,19 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             idempotency_key_digest=document_digest({"deliver": 1}),
             route_proof=_route_proof(outcome.notice, "DELIVERED"),
         )
-        allowed = self.store.query_action_boundary(
-            _boundary_query(installation_id=installation_id, now=issued)
-        )
+        allowed_query = _boundary_query(installation_id=installation_id, now=issued)
+        allowed = self.store.query_action_boundary(allowed_query)
         self.assertTrue(allowed.permitted)
+        self.assertEqual(
+            allowed.authorization_binding_digest,
+            allowed_query.runtime_proof.digest,
+        )
+        # A movable branch name can never satisfy exact-SHA review authority.
+        movable = self.store.query_action_boundary(
+            _boundary_query(installation_id=installation_id, ref="main", now=issued)
+        )
+        self.assertFalse(movable.permitted)
+        self.assertEqual(movable.denial_reason, "review ref is not the attested exact commit")
         outside = self.store.query_action_boundary(
             _boundary_query(
                 installation_id=installation_id,
@@ -1002,10 +1122,11 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.assertFalse(sibling_prefix.permitted)
         with self.assertRaisesRegex(EntitlementContractError, "traversal"):
+            proof = _boundary_query(installation_id=installation_id, now=issued).runtime_proof
             EntitlementActionBoundaryQuery(
                 project_profile_id="uppercut",
                 repository="edwardjones3976/director-orchestrator",
-                ref="main",
+                ref=COMMIT_A,
                 path="src/../secrets/key",
                 provider_id="antigravity",
                 subject_id="antigravity",
@@ -1015,6 +1136,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                 destination_id=None,
                 effect_digest=DIGEST_B,
                 reserved_spend_usd=0.0,
+                runtime_proof=proof,
                 now=issued,
             )
 
@@ -1175,7 +1297,8 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             )
         self.assertEqual(
             self.store.authoritative_capabilities(
-                installation_id, current_build_digest=DIGEST_A
+                installation_id,
+                runtime_proof=_boundary_query(installation_id=installation_id).runtime_proof,
             ),
             frozenset(),
         )
@@ -1250,7 +1373,8 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         self.assertEqual(denied.denial_reason, "grant authority drift detected")
         self.assertEqual(
             self.store.authoritative_capabilities(
-                installation_id, current_build_digest=DIGEST_A
+                installation_id,
+                runtime_proof=_boundary_query(installation_id=installation_id).runtime_proof,
             ),
             frozenset(),
         )
@@ -1288,6 +1412,9 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         action = _restore_action(attestation, first.entitlement_generation)
         restored = self.store.restore(attestation, owner_action=action)
+        replay = self.store.restore(attestation, owner_action=action)
+        self.assertTrue(replay.idempotent_replay)
+        self.assertEqual(replay.event_id, restored.event_id)
         with self.handle.pool.connection() as connection:
             row = connection.execute(
                 f"SELECT document, build_evidence_digest, test_evidence_digest "
@@ -1304,7 +1431,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                 "revoke", installation_id, restored.entitlement_generation
             ),
         )
-        with self.assertRaisesRegex(EntitlementControlPlaneError, "generation CAS"):
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "current lineage"):
             self.store.restore(attestation, owner_action=action)
 
     def test_restore_exactly_binds_subject_and_registration_lineage(self) -> None:
@@ -1336,15 +1463,15 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             idempotency_key_digest=document_digest({"deliver": installation_id}),
             route_proof=_route_proof(outcome.notice, "DELIVERED"),
         )
-        self.assertTrue(
-            self.store.query_action_boundary(
+        authorized = self.store.query_action_boundary(
                 _boundary_query(
                     installation_id=installation_id,
                     action_type=EntitlementActionType.SLACK_WRITE,
                     destination_id="slack-owner-dm",
                 )
-            ).permitted
         )
+        self.assertTrue(authorized.permitted)
+        self.assertIsNotNone(authorized.authorization_binding_digest)
         denied = self.store.query_action_boundary(
             _boundary_query(
                 installation_id=installation_id,
@@ -1354,6 +1481,28 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.assertFalse(denied.permitted)
         self.assertEqual(denied.denial_reason, "signed destination mismatch")
+        after_health_expiry = _utc_now() + timedelta(hours=1, seconds=1)
+        future_store = EntitlementControlPlaneStore(
+            self.handle.pool,
+            schema=self.schema,
+            storage_identity=self.handle.storage_identity,
+            trusted_verifier_secret=VERIFIER_SECRET,
+            route_verifier_secret=ROUTE_SECRET,
+            owner_authority_secret=OWNER_SECRET,
+            clock=lambda: after_health_expiry,
+        )
+        stale_health = future_store.query_action_boundary(
+            _boundary_query(
+                installation_id=installation_id,
+                action_type=EntitlementActionType.SLACK_WRITE,
+                destination_id="slack-owner-dm",
+                now=after_health_expiry,
+            )
+        )
+        self.assertFalse(stale_health.permitted)
+        self.assertEqual(
+            stale_health.denial_reason, "Slack destination health proof is stale"
+        )
 
     def test_owner_action_expiry_and_nonce_replay_are_rejected(self) -> None:
         installation_id = f"install-{uuid.uuid4().hex[:8]}"
@@ -1449,6 +1598,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                 TEST_DSN,
                 schema=self.schema,
                 trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+                route_verifier_secret_file=ROUTE_SECRET_FILE,
                 owner_authority_secret_file=OWNER_SECRET_FILE,
                 allow_insecure_local_transport=True,
             )
@@ -1459,11 +1609,47 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                     TEST_DSN,
                     schema=f"entitlement_secret_{uuid.uuid4().hex[:8]}_v1",
                     trusted_verifier_secret_file=same_secret,
+                    route_verifier_secret_file=ROUTE_SECRET_FILE,
                     owner_authority_secret_file=same_secret,
                     allow_insecure_local_transport=True,
                 )
         finally:
             Path(same_secret).unlink(missing_ok=True)
+
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "entropy"):
+            EntitlementControlPlaneStore(
+                object(),
+                schema="entitlement_direct_v1",
+                storage_identity=DIGEST_A,
+                trusted_verifier_secret=b"weak",
+                route_verifier_secret=ROUTE_SECRET,
+                owner_authority_secret=OWNER_SECRET,
+            )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "separated"):
+            EntitlementControlPlaneStore(
+                object(),
+                schema="entitlement_direct_v1",
+                storage_identity=DIGEST_A,
+                trusted_verifier_secret=VERIFIER_SECRET,
+                route_verifier_secret=VERIFIER_SECRET,
+                owner_authority_secret=OWNER_SECRET,
+            )
+
+    def test_schema_manifest_detects_dropped_critical_constraint(self) -> None:
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"ALTER TABLE {self.schema}.entitlement_install_attestation "
+                "DROP CONSTRAINT entitlement_install_attestation_nonce_digest_key"
+            )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "key constraint"):
+            open_entitlement_control_plane(
+                TEST_DSN,
+                schema=self.schema,
+                trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+                route_verifier_secret_file=ROUTE_SECRET_FILE,
+                owner_authority_secret_file=OWNER_SECRET_FILE,
+                allow_insecure_local_transport=True,
+            )
 
     def test_schema_manifest_does_not_hide_missing_control_plane_objects(self) -> None:
         with self.handle.pool.connection() as connection:
@@ -1477,6 +1663,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                 TEST_DSN,
                 schema=self.schema,
                 trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+                route_verifier_secret_file=ROUTE_SECRET_FILE,
                 owner_authority_secret_file=OWNER_SECRET_FILE,
                 allow_insecure_local_transport=True,
             )
@@ -1485,9 +1672,11 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         settings = Settings()
         self.assertTrue(hasattr(settings, "entitlement_postgres_dsn_file"))
         self.assertTrue(hasattr(settings, "entitlement_trusted_verifier_secret_file"))
+        self.assertTrue(hasattr(settings, "entitlement_route_verifier_secret_file"))
         self.assertTrue(hasattr(settings, "entitlement_owner_authority_secret_file"))
         self.assertFalse(hasattr(settings, "entitlement_postgres_dsn"))
         self.assertFalse(hasattr(settings, "entitlement_trusted_verifier_secret"))
+        self.assertFalse(hasattr(settings, "entitlement_route_verifier_secret"))
 
     def _latest_notice_id(self, installation_id: str) -> str:
         with self.handle.pool.connection() as connection:
@@ -1509,11 +1698,14 @@ class EntitlementConfigRegressionTests(unittest.TestCase):
         self.assertIn("entitlement_postgres_dsn_file", field_names)
         self.assertNotIn("entitlement_postgres_dsn", field_names)
         self.assertNotIn("entitlement_trusted_verifier_secret", field_names)
+        self.assertNotIn("entitlement_route_verifier_secret", field_names)
 
 
 VERIFIER_SECRET = b"0123456789abcdefABCDEF!@#$%^&*()_+-=verifier-key"
+ROUTE_SECRET = b"route-9876543210-ZYXWVUT!@#$%^&*()_+-=health-key"
 OWNER_SECRET = b"fedcba9876543210ZYXWVU!@#$%^&*()_+-=owner-key"
 VERIFIER_SECRET_FILE = ""
+ROUTE_SECRET_FILE = ""
 OWNER_SECRET_FILE = ""
 
 
