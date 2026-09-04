@@ -1,251 +1,209 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:55 UTC | BEGIN]] -->
 # Primary lane staging worksheet
 
 **Purpose:** bring `langgraph_primary.configuration_valid` from false to true on
-this deployment. Staging only. No activation switch is flipped, no provider is
-dispatched, and the legacy Director remains sole writer throughout.
+this deployment. This is configuration staging only. No activation switch is
+flipped, no provider is dispatched, and the legacy Director remains sole writer.
 
-**Status of this document:** the owner fills in the marked values, then the
-apply step in "Pass 2" runs. Nothing here is a secret except where noted, and no
-value in this file should be committed once filled.
+**Status of this document:** Pass 2 starts only after explicit owner approval.
+The owner-authorized operator supplies the deployment-specific snapshot path.
+Do not commit filled values, credentials, account metadata, or machine-specific
+user paths.
 
 ## What is actually missing
 
-Measured against the running deployment. Every other term in the
-`langgraph_primary` health block is already true.
+Measured against the running deployment on 2026-09-04. Recheck the sanitized
+`/health` response immediately before applying the change.
 
-| Term | Why false | Fix |
+| Term | Current state | Meaning for Pass 2 |
 | --- | --- | --- |
-| `authority_root_configured` | `REPOSITORY_SNAPSHOT_ROOT` absent from `.env` | Section 1 |
-| `provider_activation_bindings_configured` | `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON` parses to `{}`, so all nine lanes are missing | Section 2 |
+| `authority_root_configured` | false because `REPOSITORY_SNAPSHOT_ROOT` is absent | The only currently false input to `configuration_valid`; fix in Section 1. |
+| `provider_activation_bindings_configured` | false because the binding map is empty | Separate live-dispatch readiness signal; leave false during Pass 2. |
 
-Confirmed already correct, so no action: `ALLOW_PAID_RUNS` is a clean `false`,
-and `TRUSTED_PROVIDER_COST_RANKS` is genuinely populated. Neither startup trap
-(`config.py:932`, `primary_default.py:1889`) is reachable while paid runs stay
-off.
+`Settings.langgraph_primary_configuration_readiness()` computes
+`configuration_valid` without provider activation bindings. Exact bindings are
+enforced by `Settings.validate_langgraph_primary_configuration()` only when
+`LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=true`.
+
+Confirmed already correct, so no action: `ALLOW_PAID_RUNS=false`, the required
+provider roster is nonempty and unique, and every other input to
+`configuration_valid` is true. These observations are not authority to enable
+primary execution or paid dispatch.
 
 ---
 
 ## Section 1 — the snapshot root
 
-Two variables, not one. They are a pair and both are required.
+Two variables form the operational pair:
 
-```
+```dotenv
 REPOSITORY_SNAPSHOT_ROOT=/repository
 REPOSITORY_SNAPSHOT_HOST_PATH=<FILL IN: absolute Windows path to the snapshot>
 ```
 
-`REPOSITORY_SNAPSHOT_ROOT` is the path **inside the container** and must be
-`/repository`, because `docker-compose.yml` binds the snapshot to that target
-read-only. `REPOSITORY_SNAPSHOT_HOST_PATH` is the host directory bound to it.
+`REPOSITORY_SNAPSHOT_ROOT` is the path inside the container. It must be
+`/repository`, because `docker-compose.yml` binds the host snapshot to that
+target read-only. `REPOSITORY_SNAPSHOT_HOST_PATH` is the existing host directory
+bound to it.
 
-Config validation only checks non-emptiness (`config.py:1341`), but
-`primary_default.py:1000` calls `Path(...).resolve(strict=True)`, so the
-directory must genuinely exist inside the container or primary work will fail at
-use time rather than at startup. This is why the host path matters.
+`Settings.langgraph_primary_configuration_readiness()` checks that the
+container-side root is nonempty. At use time, the primary runtime resolves the
+path strictly, so the mounted directory must actually exist. Configuration
+readiness alone does not prove snapshot availability or authority.
 
 ### Creating the snapshot
 
-`scripts/windows-primary-snapshot.ps1 -Action Create` builds it, and refuses to
-overwrite an existing target.
+`scripts/windows-primary-snapshot.ps1 -Action Create` creates a clean snapshot
+and refuses to overwrite an existing target. Its parent directory must already
+exist, and the resulting snapshot must remain completely clean for verification.
 
-```
-scripts/windows-primary-snapshot.ps1 -Action Create `
-  -Source <a checkout whose origin is GitHub> `
-  -Target <FILL IN: the same path as REPOSITORY_SNAPSHOT_HOST_PATH> `
+```powershell
+.\scripts\windows-primary-snapshot.ps1 `
+  -Action Create `
+  -Source <GITHUB-ORIGIN-SOURCE> `
+  -Target <REPOSITORY_SNAPSHOT_HOST_PATH> `
   -ExpectedRepository edwardjones3976/director-orchestrator `
   -StartingRef main `
-  -ExpectedCommit <FILL IN: 40-hex commit> `
-  -ExpectedTree <FILL IN: 40-hex tree>
+  -ExpectedCommit <FILL IN: accepted 40-hex commit> `
+  -ExpectedTree <FILL IN: matching 40-hex tree>
 ```
 
-### Known blocker on this machine
+The source must have a GitHub URL as its `origin`. Many working checkouts on
+this machine use a Cursor mirror as `origin`. A dedicated GitHub-origin source
+clone exists, but its local `main` may be stale; it is not usable until the
+remote, clean state, exact local `main`, commit, and tree have all been verified
+and, when necessary, updated without rewriting unrelated work. Do not
+substitute a merely similar checkout.
 
-The script reads `git remote get-url origin` and normalises it by stripping only
-`git@github.com:`, `https://github.com/` and `.git`. On this machine every
-checkout uses the Cursor mirror as `origin`:
-
-```
-origin  https://origin.cursor.com/edward-jones/director-orchestrator.git
-github  https://github.com/edwardjones3976/director-orchestrator.git
-```
-
-So the normalised value stays `https://origin.cursor.com/edward-jones/director-orchestrator`,
-which does not equal `edwardjones3976/director-orchestrator`, and the script
-throws **"Snapshot source origin does not match the repository allowlist."**
-
-Choose one:
-
-- **Use a source clone whose `origin` is GitHub** — `git clone
-  https://github.com/edwardjones3976/director-orchestrator.git <path>` and pass
-  that as `-Source`. No code change, and it is arguably the more honest source
-  for an exact snapshot anyway.
-- **Teach the script the `github` remote** — a small reviewed change to accept a
-  configurable remote name. Preferable if this recurs, but it edits an
-  activation-path script and should be its own pull request.
+If GitHub-origin selection must work from a mirrored checkout in the future,
+add an explicit remote-name parameter to the snapshot script in a separate,
+reviewed activation-path change. Do not rewrite a working checkout's remote to
+bypass the current check.
 
 ---
 
-## Section 2 — provider activation bindings
+## Section 2 — deferred provider activation bindings
 
-Nine lanes, six fields each, 54 values. The binding key set must **exactly
-equal** the roster (`config.py:1360-1363`); a missing or extra lane fails the
-whole check.
+The configured roster currently has nine provider lanes. Each
+`ProviderActivationBinding` contains six required nonempty identifiers:
+`workspace_id`, `provider_version`, `app_version`,
+`runtime_adapter_version`, `workspace_version`, and `binding_version`.
+`Settings.primary_provider_activation_bindings()` validates the object, and
+`Settings.langgraph_primary_configuration_readiness()` reports the binding
+signal true only when its provider keys exactly equal the required roster.
 
-Current roster (`LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS`):
+This means the binding map is all-or-nothing for
+`provider_activation_bindings_configured`: a partial map or any empty field
+cannot make that signal true. It does **not** mean 54 values are required for
+`configuration_valid`, and it does not block this staging pass while live
+dispatch remains false.
 
-```
-openai, claude, cursor, grok, antigravity, perplexity, firecrawl,
-github-copilot, microsoft-365-copilot
-```
+Do not paste an empty skeleton or plausible values into `.env`. These fields are
+configuration identifiers, not attestations and not activation evidence. The
+identifier regex checks only shape and length; it cannot determine whether a
+matching string is a credential. Only independently sourced, nonsecret IDs and
+version metadata belong here. Credentials stay in the approved secret store.
 
-These are attestations about really-installed software. They are deliberately
-left blank rather than filled with plausible values, because a binding that
-records a version nobody verified is worse than an empty one — it looks like
-evidence.
-
-Paste as **one line** into `.env`:
-
-```json
-{"openai":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""},"claude":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""},"cursor":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""},"grok":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""},"antigravity":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""},"perplexity":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""},"firecrawl":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""},"github-copilot":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""},"microsoft-365-copilot":{"workspace_id":"","provider_version":"","app_version":"","runtime_adapter_version":"","workspace_version":"","binding_version":""}}
-```
-
-### All 54 values are required — verified
-
-`ProviderActivationBinding.__post_init__` validates every field against
-`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$` (`provider_activation.py:21,62`). Tested
-directly against that class:
-
-| Value | Result |
-| --- | --- |
-| `""` | **rejected** — "must be a bounded, non-secret identifier" |
-| `" "` | **rejected** |
-| `"1.2.3"` | accepted |
-| `"a/b"` | accepted |
-
-So the skeleton above will not load as-is, and there is **no partial-staging
-path**: `configuration_valid` cannot flip until all 54 fields carry real values.
-A field may contain letters, digits, and `. _ : / -`, must start alphanumeric,
-and is capped at 128 characters. Dots, colons and slashes are allowed, so
-ordinary version strings and namespaced workspace identifiers both fit.
-
-Note also that this validator is what rejects secrets by construction — the
-character class excludes most token punctuation. These fields are identities,
-not credentials, and nothing here should be a secret.
+Before a later live-dispatch gate, generate the complete map from a reviewed
+provider inventory and refuse unknown values. Actual activation remains a
+separate Postgres evidence chain for both the app and runtime-adapter surfaces:
+`INSTALLED`, `AUTHENTICATED`, `WORKSPACE_BOUND`, `DRY_RUN_OK`, then `LIVE_OK`.
+Configuration presence cannot advance any of those stages.
 
 ---
 
-## Section 3 — host provider bridge
+## Section 3 — deferred host provider bridge
 
-Three variables are absent. The endpoint and secret are already present.
+Host-bridge command, claim-store, and writer-fence configuration is not an input
+to `configuration_valid` while primary and live dispatch are disabled. Leave it
+unchanged during Pass 2.
 
-```
-DIRECTOR_HOST_PROVIDER_COMMANDS_JSON=<FILL IN: see below>
-DIRECTOR_HOST_PROVIDER_BRIDGE_STORE=<FILL IN: absolute path for the claim store>
-DIRECTOR_HOST_PROVIDER_POSTGRES_DSN=<FILL IN: DSN for the writer-fence check>
-```
+The bridge preflight resolves configured executables and invokes no provider.
+Run it later from the exact authorized repository root with the complete
+invocation:
 
-The bridge allowlists only four providers and explicitly refuses two
-(`scripts/windows-host-provider-bridge.ps1`):
-
-- Allowed: `claude`, `grok`, `antigravity`, `github-copilot`
-- Refused outright: `cursor`, `microsoft-365-copilot`
-
-So the command map covers at most those four. For Grok specifically the entry
-points at the host executable, which is what lets the Linux container reach a
-Windows binary at all:
-
-```json
-{"grok": ["C:\\Users\\edwar\\.grok\\bin\\grok.exe", "..."]}
+```powershell
+.\scripts\windows-host-provider-bridge.ps1 `
+  -Action Preflight `
+  -EnvironmentFile .\.env `
+  -Workspace . `
+  -Python (Join-Path (Get-Location) '.venv-win\Scripts\python.exe')
 ```
 
-Preflight resolves each command with `Get-Command` and throws if any is
-unavailable, so a wrong path fails loudly rather than at dispatch time.
+Executable paths in the future command map must be derived on the deployment
+host, for example with `(Get-Command claude -ErrorAction Stop).Source`; do not
+commit an owner's home-directory path or a literal placeholder argument.
+Preflight also fails closed on incomplete bridge settings, secret collisions,
+unsupported providers, and unresolvable executables. It still invokes no
+provider.
 
-### Lane authentication, and a gap preflight does not cover
+### Claude authentication status
 
-`host_provider_bridge.py:52-57` defines which auth variables the bridge forwards
-to each lane. Nothing outside this allowlist reaches the provider process:
+The supported command `claude auth status --json` returned exit code 0 and
+`loggedIn=true` on 2026-09-04. It returned the same result when launched with
+only the operating-system variables allowed by the bridge and without
+`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in that environment.
 
-| Lane | Variables forwarded |
-| --- | --- |
-| `claude` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` |
-| `grok` | `XAI_API_KEY` |
-| `antigravity` | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
-| `github-copilot` | `GH_TOKEN`, `GITHUB_TOKEN` |
+Therefore, zero-length fields observed in an internal credentials file are not
+an authoritative sign-out signal and do not block the Claude lane. Do not edit
+the credentials file or run interactive `/login` while the supported status
+command is green. Raw status output may contain account identifiers; record only
+the exit code and `loggedIn` boolean.
 
-`_SAFE_OS_ENV` additionally forwards `USERPROFILE`, `APPDATA` and
-`LOCALAPPDATA`, so a CLI that keeps its own credential store can still find it.
-
-**Preflight does not check any of this.** It resolves the executable with
-`Get-Command` and reports success. A lane whose CLI is installed but signed out
-therefore passes preflight cleanly and fails later, at dispatch, when it is far
-more expensive to diagnose. Verify each lane can actually authenticate before
-standing the bridge up.
-
-### The `claude` lane is unauthenticated on this host today
-
-Measured 2026-09-04. `C:\Users\edwar\.claude\.credentials.json` holds a
-`claudeAiOauth` record whose `accessToken` and `refreshToken` are both
-zero-length and whose `expiresAt` is `0`, while the surrounding metadata
-(`scopes`, `subscriptionType`, `refreshTokenExpiresAt` of 2026-09-15) is intact.
-`cmdkey /list` shows no Claude or Anthropic entry, so nothing is held in Windows
-Credential Manager either, and neither `ANTHROPIC_API_KEY` nor
-`CLAUDE_CODE_OAUTH_TOKEN` is set. `claude.exe` itself is present and on PATH.
-
-So the lane has no authentication path by either route. Fix before staging, by
-one of:
-
-- Sign the CLI back in from an interactive terminal (`claude`, then `/login`).
-  The refresh-token expiry is still in the future, so this is an ordinary
-  sign-in.
-- Set `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in the environment the
-  bridge process runs under, which satisfies the table above without touching
-  the CLI's own credential store.
-
-The same file shows all 14 `mcpOAuth` entries with empty tokens. Those are a
-separate concern, are not fixed by the sign-in above, and are not required for
-staging.
-
-`LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET` must be at least 32 characters
-(`config.py:1470`) and **pairwise distinct** from every other primary ingress
-secret (`config.py:1475-1487`) — the shared secret, Slack gateway secret,
-adapter callback, independent review evidence, CI evidence, security evidence
-and effect reconciliation secrets. The bridge script re-checks this itself and
-refuses to start on a collision.
+Claude authentication is not needed to make `configuration_valid` true and is
+not tested by the executable-only bridge preflight. Immediately before the
+first real Claude dispatch, rerun the supported status command under the exact
+Windows identity that will host the bridge. If that check is no longer green,
+stop for an owner-controlled credential action rather than guessing from files.
 
 ---
 
 ## Pass 2 — apply
 
-1. Back up `.env` to a timestamped copy. This is the entire rollback plan.
-2. Write Sections 1-3 into `.env`. Change nothing else. `LANGGRAPH_PRIMARY_ENABLED`,
-   `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` and `ALLOW_PAID_RUNS` all
-   stay `false`.
-3. `docker compose up -d orchestrator`.
-4. `scripts/windows-host-provider-bridge.ps1 -Action Preflight` — validates and
-   reports "no provider was invoked". Remember this proves only that each
-   configured executable resolves; it does not prove any lane can authenticate.
-   Confirm lane authentication separately, per Section 3.
+1. Capture the sanitized `langgraph_primary` health block. Build a rollback
+   payload containing only whether each snapshot variable existed and its prior
+   value, then protect that payload with Windows DPAPI for the deployment
+   identity. Never write an unprotected rollback payload or a plaintext copy of
+   the entire `.env` file. This is an operator-performed procedure: no committed
+   repository helper currently implements the required DPAPI payload.
+2. Create and verify the exact snapshot. Update the environment through a
+   same-directory temporary file and atomic replacement, changing only
+   `REPOSITORY_SNAPSHOT_ROOT` and `REPOSITORY_SNAPSHOT_HOST_PATH`. Preserve the
+   target file's access controls. Leave
+   `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON` and all bridge
+   variables unchanged. Do not use an in-place whole-file rewrite path for this
+   operation; no committed repository helper currently implements these atomic
+   update requirements.
+3. Keep `LANGGRAPH_PRIMARY_ENABLED`,
+   `LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED`,
+   `LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED`,
+   `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED`, and `ALLOW_PAID_RUNS`
+   false. Restart only the orchestrator service.
+4. Do not run a provider or advance activation evidence in this pass.
 
 ## Verification
 
-- Diff the `langgraph_primary` block of `/health` before and after. Expect
-  `authority_root_configured` and `provider_activation_bindings_configured` to
-  become true, and `configuration_valid` to follow.
-- Confirm what must **not** move: `paid_runs_enabled` false,
-  `langgraph_primary.enabled` false, `primary_runtime_active` false, and
-  `langgraph.legacy_sole_writer` still true. Staging changes readiness only,
-  never who holds the pen.
-- Container healthy, and `docker compose logs orchestrator` shows no startup
-  raise since the restart.
-- Rollback: restore the `.env` backup, `docker compose up -d orchestrator`,
-  confirm `/health` matches the before-capture.
+- Diff the sanitized `langgraph_primary` health block before and after. Expect
+  `authority_root_configured=true` and, if the other measured inputs remain
+  true, `configuration_valid=true`.
+- Expect `provider_activation_bindings_configured=false`; that is valid and
+  intentional for this pass.
+- Confirm `paid_runs_enabled=false`, `langgraph_primary.enabled=false`,
+  `live_provider_dispatch_requested=false`, `primary_runtime_active=false`, and
+  `langgraph.legacy_sole_writer=true`.
+- Confirm the container is healthy, the snapshot is mounted read-only, and no
+  provider invocation or activation-evidence write occurred.
+- To roll back, decrypt the DPAPI payload under the same deployment identity,
+  atomically restore or remove only the two snapshot variables according to
+  their recorded prior state, restart the orchestrator, and verify the sanitized
+  health block matches the before-capture.
 
 ## What this does not do
 
-Grok holds no review authority at the end of this. Staging makes the primary
-lane configuration-valid. Granting a verdict additionally requires the primary
-lane to be activated, which is gated behind the nine acceptance criteria in
-`docs/langgraph-primary-operations.md`, of which only Gate 0 is satisfied.
+This pass does not configure provider bindings, start the host bridge,
+authenticate providers, grant Grok or any other provider review authority,
+enable the primary lane, change the sole writer, or permit paid/external work.
+Those actions remain behind the separately accepted primary activation gates.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:50 UTC | END]] -->
