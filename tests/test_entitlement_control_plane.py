@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | BEGIN]]
@@ -461,7 +462,10 @@ class EntitlementContractUnitTests(unittest.TestCase):
             EntitlementActionType.REVIEW_EXACT_SHA,
         )
         deep = b'{"schema_version":"ProjectRegistration/v1","x":' + b'[' * 5000 + b'0' + b']' * 5000 + b'}'
-        with self.assertRaisesRegex(EntitlementContractError, "valid JSON"):
+        # Parser recursion thresholds vary by platform. Either a translated
+        # recursion failure or the later exact-key rejection is acceptable;
+        # a raw RecursionError must never escape this public contract.
+        with self.assertRaises(EntitlementContractError):
             parse_project_registration_v1(deep)
 
     def test_owner_notice_acknowledgement_contract_round_trips(self) -> None:
@@ -1997,3 +2001,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:50 UTC | END]]
