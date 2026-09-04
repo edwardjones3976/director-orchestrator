@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]]
 """Contract tests for the human-out-of-the-loop delegation framework.
 
@@ -161,6 +162,36 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         ):
             self.assertIn(required, section)
 
+    def test_review_gate_is_satisfied_by_a_provider_verdict_not_substituted(self) -> None:
+        section = self.section("How the existing gates are satisfied, not substituted")
+        self.assertIn("That sentence stays exactly as written", section)
+        self.assertIn("never consumed an owner verdict", section)
+        self.assertIn("least-recent eligible non-author", section)
+        self.assertIn("satisfied in its ordinary\nform", section)
+        self.assertIn("strictly higher review bar", section)
+        # The charter sentence it defers to must still exist verbatim.
+        self.assertIn(
+            "never substitutes for applicable deterministic\napproval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.",
+            self.charter,
+        )
+        self.assertIn("not an authorization substituting for that gate", self.charter)
+
+    def test_no_self_merge_bar_never_lifts_for_any_agent(self) -> None:
+        section = self.section("How the existing gates are satisfied, not substituted")
+        self.assertIn("That bar\nnever lifts", section)
+        self.assertIn("does not create an exception", section)
+        self.assertIn("Two agents are not one\nagent", section)
+        self.assertIn("permanently ineligible", section)
+        self.assertIn("no\ngrant can make it eligible", section)
+        # A single available agent must be unable to merge at all.
+        self.assertIn("cannot proceed at all", section)
+        rule_three = next(line for line in self.agents.splitlines() if line.startswith("3. "))
+        self.assertIn("merge your own pull request", rule_three)
+        self.assertIn("per acting identity", rule_three)
+        self.assertIn("that bar never lifts", rule_three)
+        self.assertIn("three distinct identities", rule_three)
+        self.assertIn("an author cannot become eligible by being delegated to", rule_three)
+
     def test_charter_points_at_the_framework_without_weakening_its_gates(self) -> None:
         self.assertIn("docs/human-out-of-the-loop-operation.md", self.charter)
         # The sentence the framework hangs from must survive unchanged.
@@ -179,3 +210,4 @@ if __name__ == "__main__":
 
 
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]]

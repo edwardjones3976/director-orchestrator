@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
@@ -565,6 +566,13 @@ provider, and requires the producer, reviewer, and acting agent to be three
 distinct identities. It does not alter what a review must contain, when evidence
 is invalidated, or which gates apply.
 
+The reviewer named above is a provider, not the owner, so a named provider's
+exact-SHA `ACCEPT` is how the independent review gate is satisfied in its
+ordinary form. It is not an authorization substituting for that gate, and the
+sentence forbidding such substitution is unaffected. A delegated merge requires
+two concurring verdicts from distinct providers where an attended merge requires
+one, so it clears a strictly higher review bar, never a lower one.
+
 ## GitHub Copilot Lite hygiene review
 
 GitHub Copilot Lite is an optional supplemental hygiene reviewer with no
@@ -714,3 +722,4 @@ establish participation, completion, readiness, or authorization.
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->

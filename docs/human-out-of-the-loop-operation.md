@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
 # Human-Out-Of-The-Loop Operation
 
@@ -171,6 +172,54 @@ before the action, not after it.
   the reviewer identity and a second concurring verdict; it does not alter what
   a review must contain or when evidence is invalidated.
 
+## How the existing gates are satisfied, not substituted
+
+Two objections have to be answered explicitly, because on a fast reading the
+existing rules look like they forbid this framework outright. They do not, and
+the reasons matter more than the conclusion.
+
+### The independent exact-SHA review gate
+
+The charter says owner authorization "never substitutes for applicable
+deterministic approval, exact-SHA review, security, CI, budget, allowlist, or
+rollback gates." That sentence stays exactly as written, and this framework does
+not weaken it. It governs what an authorization may *skip*, and the answer is
+nothing.
+
+It is not in tension with a delegated decision, because the exact-SHA review
+gate has never consumed an owner verdict. The charter's own review-to-merge
+handoff assigns review to "a rotating different-provider review assignment,
+choosing the least-recent eligible non-author," and that reviewer returns
+`ACCEPT`, `CHANGES_REQUIRED`, or `SERIOUS_SAFETY_STOP`. A named provider's
+exact-SHA `ACCEPT` is therefore the gate being **satisfied in its ordinary
+form**, not an authorization substituting for it.
+
+What delegation changes is narrower than it first appears. Previously the gate
+could be satisfied while the *merge decision that follows it* still waited for
+the owner. Under a live grant, that following decision may proceed, and only
+then, and only when every other item on the evidence bar also holds. The
+framework requires two concurring provider verdicts where the charter requires
+one, so a delegated decision clears a strictly higher review bar than an
+attended one, never a lower one.
+
+### Rule 3's no-self-merge bar
+
+AGENTS.md rule 3 forbids an agent from merging its own pull request. That bar
+never lifts, and this framework does not create an exception to it.
+
+"Your own" is a property of identity, not of species. Two agents are not one
+agent. Evidence-bar item 5 requires the producer, the reviewer, and the agent
+executing the decision to be three distinct identities, so a delegated merge is
+by construction never a self-merge. An agent that produced or materially
+authored a candidate is permanently ineligible to review or merge it, and no
+grant can make it eligible: delegation names who *may* act, and never widens
+*what* an ineligible actor may do.
+
+This has a consequence the owner should expect rather than be surprised by.
+When only one agent is available, a delegated merge cannot proceed at all,
+because three distinct identities cannot be found. That is the framework
+working, not failing. It is also the present condition of this repository.
+
 ## Implementation phases
 
 Each phase is separately built, reviewed, and accepted. No phase begins before
@@ -204,3 +253,4 @@ These are stated plainly because a framework that hides them is worse than none.
   to be checked rather than as settled policy.
 
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->
