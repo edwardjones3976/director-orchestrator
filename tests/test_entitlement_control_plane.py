@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:30 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 22:15 UTC | BEGIN]]
@@ -993,6 +994,117 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         self.assertFalse(denied.permitted)
         self.assertEqual(denied.denial_reason, "registration superseded")
 
+    def test_rotating_grant_and_supersede_use_one_deadlock_free_lock_order(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        self.store.grant_from_attestation(
+            _attestation(installation_id=installation_id),
+            idempotency_key_digest=document_digest({"grant": installation_id}),
+        )
+        rotating = _attestation(
+            installation_id=installation_id,
+            artifact_digest=DIGEST_B,
+            nonce_digest=document_digest({"rotate": installation_id}),
+        )
+        replacement = _registration(generation=2)
+        supersede_key = document_digest({"supersede-race": installation_id})
+        supersede_request = document_digest(
+            {
+                "operation": "supersede",
+                "project_profile_id": replacement.project_profile_id,
+                "prior_generation": 1,
+                "replacement_registration": replacement.to_document(),
+                "replacement_generation": 2,
+                "actor_id": OWNER_PRINCIPAL,
+                "idempotency_key_digest": supersede_key,
+            }
+        )
+        supersede_action = _owner_action(
+            "supersede_registration",
+            replacement.project_profile_id,
+            1,
+            supersede_key,
+            supersede_request,
+        )
+        barrier = threading.Barrier(2)
+        original_lock_project = self.store._lock_project
+        outcomes: list[str] = []
+        failures: list[str] = []
+        result_lock = threading.Lock()
+
+        def gated_lock_project(connection, project_profile_id: str) -> None:
+            barrier.wait(timeout=5)
+            original_lock_project(connection, project_profile_id)
+
+        def rotate_worker() -> None:
+            try:
+                self.store.grant_from_attestation(
+                    rotating,
+                    idempotency_key_digest=document_digest(
+                        {"rotate-grant": installation_id}
+                    ),
+                )
+                with result_lock:
+                    outcomes.append("grant")
+            except Exception as exc:  # captured for bounded cross-thread assertion
+                with result_lock:
+                    failures.append(f"grant:{type(exc).__name__}:{exc}")
+
+        def supersede_worker() -> None:
+            try:
+                self.store.supersede_registration(
+                    replacement,
+                    prior_generation=1,
+                    owner_action=supersede_action,
+                )
+                with result_lock:
+                    outcomes.append("supersede")
+            except Exception as exc:  # captured for bounded cross-thread assertion
+                with result_lock:
+                    failures.append(f"supersede:{type(exc).__name__}:{exc}")
+
+        self.store._lock_project = gated_lock_project
+        threads = [
+            threading.Thread(target=rotate_worker),
+            threading.Thread(target=supersede_worker),
+        ]
+        try:
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+        finally:
+            self.store._lock_project = original_lock_project
+        self.assertFalse(any(thread.is_alive() for thread in threads), failures)
+        self.assertIn("supersede", outcomes, failures)
+        self.assertFalse(
+            any("deadlock" in failure.lower() or "serialization" in failure.lower()
+                for failure in failures),
+            failures,
+        )
+        self.assertTrue(
+            not failures
+            or failures == [
+                "grant:EntitlementControlPlaneError:project registration is not active"
+            ],
+            failures,
+        )
+        with self.handle.pool.connection() as connection:
+            current = connection.execute(
+                f"SELECT lifecycle_status, entitlement_generation "
+                f"FROM {self.schema}.entitlement_current_generation "
+                "WHERE installation_id = %s",
+                (installation_id,),
+            ).fetchone()
+            active_registration = connection.execute(
+                f"SELECT registration_generation FROM {self.schema}.entitlement_project_registration "
+                "WHERE project_profile_id = 'uppercut' AND superseded_at IS NULL"
+            ).fetchone()
+        self.assertEqual(
+            current["lifecycle_status"], EntitlementLifecycleStatus.SUPERSEDED.value
+        )
+        self.assertIn(int(current["entitlement_generation"]), (1, 2))
+        self.assertEqual(int(active_registration["registration_generation"]), 2)
+
     def test_uninstall_removes_authority(self) -> None:
         installation_id = f"install-{uuid.uuid4().hex[:8]}"
         outcome = self.store.grant_from_attestation(
@@ -1504,6 +1616,71 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             stale_health.denial_reason, "Slack destination health proof is stale"
         )
 
+    def test_runtime_authorization_proof_is_atomically_single_use(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        outcome = self.store.grant_from_attestation(
+            _attestation(installation_id=installation_id),
+            idempotency_key_digest=document_digest({"grant": installation_id}),
+        )
+        self.store.mark_notice_delivered(
+            outcome.notice.notice_id,
+            idempotency_key_digest=document_digest({"deliver": installation_id}),
+            route_proof=_route_proof(outcome.notice, "DELIVERED"),
+        )
+        query = _boundary_query(installation_id=installation_id)
+        decisions = []
+        failures: list[str] = []
+        lock = threading.Lock()
+
+        def worker() -> None:
+            try:
+                decision = self.store.query_action_boundary(query)
+                with lock:
+                    decisions.append(decision)
+            except Exception as exc:  # captured for bounded cross-thread assertion
+                with lock:
+                    failures.append(f"{type(exc).__name__}:{exc}")
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertFalse(any(thread.is_alive() for thread in threads), failures)
+        self.assertEqual(failures, [])
+        self.assertEqual(sum(decision.permitted for decision in decisions), 1)
+        self.assertEqual(
+            {decision.authorization_binding_digest for decision in decisions},
+            {query.runtime_proof.digest},
+        )
+        self.assertEqual(
+            sum(decision.denial_reason == "runtime authorization already consumed"
+                for decision in decisions),
+            5,
+        )
+
+        changed = _boundary_query(
+            installation_id=installation_id,
+            effect_digest=DIGEST_B,
+        )
+        changed_proof = replace(
+            changed.runtime_proof,
+            nonce_digest=query.runtime_proof.nonce_digest,
+        )
+        changed_proof = replace(
+            changed_proof,
+            verifier_signature_digest=_verifier_signature(
+                changed_proof.signing_document()
+            ),
+        )
+        mismatched = self.store.query_action_boundary(
+            replace(changed, runtime_proof=changed_proof)
+        )
+        self.assertFalse(mismatched.permitted)
+        self.assertEqual(
+            mismatched.denial_reason, "runtime authorization nonce binding mismatch"
+        )
+
     def test_owner_action_expiry_and_nonce_replay_are_rejected(self) -> None:
         installation_id = f"install-{uuid.uuid4().hex[:8]}"
         stale_time = _utc_now() - timedelta(hours=1)
@@ -1714,3 +1891,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 22:15 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:30 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]

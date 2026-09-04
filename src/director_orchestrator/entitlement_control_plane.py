@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:25 UTC | BEGIN]]
@@ -292,6 +293,20 @@ def _entitlement_ddl(schema: str) -> tuple[str, ...]:
             recorded_at timestamptz NOT NULL DEFAULT now()
         )
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.entitlement_runtime_authorization_claim (
+            nonce_digest text PRIMARY KEY,
+            installation_id text NOT NULL,
+            action_type text NOT NULL,
+            destination_id text,
+            effect_digest text NOT NULL,
+            build_digest text NOT NULL,
+            source_commit_sha text NOT NULL,
+            source_tree_sha text NOT NULL,
+            authorization_binding_digest text NOT NULL,
+            claimed_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
         reject,
         f"""
         CREATE TRIGGER entitlement_event_immutable
@@ -316,6 +331,11 @@ def _entitlement_ddl(schema: str) -> tuple[str, ...]:
         f"""
         CREATE TRIGGER entitlement_route_proof_nonce_immutable
         BEFORE UPDATE OR DELETE ON {schema}.entitlement_route_proof_nonce
+        FOR EACH ROW EXECUTE FUNCTION {schema}.entitlement_reject_mutation()
+        """,
+        f"""
+        CREATE TRIGGER entitlement_runtime_authorization_claim_immutable
+        BEFORE UPDATE OR DELETE ON {schema}.entitlement_runtime_authorization_claim
         FOR EACH ROW EXECUTE FUNCTION {schema}.entitlement_reject_mutation()
         """,
     )
@@ -393,6 +413,7 @@ def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) ->
         "entitlement_preemptive_revocation",
         "entitlement_owner_action_nonce",
         "entitlement_route_proof_nonce",
+        "entitlement_runtime_authorization_claim",
     }
     actual_tables = {
         str(row["table_name"])
@@ -451,6 +472,7 @@ def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) ->
         ("entitlement_install_attestation_immutable", "entitlement_install_attestation", 27, "entitlement_reject_mutation"),
         ("entitlement_owner_action_nonce_immutable", "entitlement_owner_action_nonce", 27, "entitlement_reject_mutation"),
         ("entitlement_route_proof_nonce_immutable", "entitlement_route_proof_nonce", 27, "entitlement_reject_mutation"),
+        ("entitlement_runtime_authorization_claim_immutable", "entitlement_runtime_authorization_claim", 27, "entitlement_reject_mutation"),
     }
     actual_triggers = {
         (str(row["trigger_name"]), str(row["table_name"]), int(row["trigger_type"]), str(row["function_name"]))
@@ -496,6 +518,7 @@ def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) ->
         ("entitlement_preemptive_revocation", "p", ("installation_id",)),
         ("entitlement_owner_action_nonce", "p", ("nonce_digest",)),
         ("entitlement_route_proof_nonce", "p", ("nonce_digest",)),
+        ("entitlement_runtime_authorization_claim", "p", ("nonce_digest",)),
     }
     actual_key_constraints = {
         (str(row["table_name"]), str(row["constraint_type"]), tuple(row["columns"]))
@@ -1032,6 +1055,7 @@ class EntitlementControlPlaneStore:
         with self._pool.connection() as connection:
             connection.execute("BEGIN")
             try:
+                self._lock_project(connection, attestation.project_profile_id)
                 self._lock_installation(connection, attestation.installation_id)
                 cached = self._load_idempotent_outcome(
                     connection,
@@ -1079,9 +1103,6 @@ class EntitlementControlPlaneStore:
                     or current["provider_id"] != attestation.provider_id
                 ):
                     raise EntitlementControlPlaneError("installation identity cannot change")
-                # Serialize registration selection with supersession so a first grant
-                # cannot appear after the supersession scan has completed.
-                self._lock_project(connection, attestation.project_profile_id)
                 registration = connection.execute(
                     f"""
                     SELECT document, document_digest, profile_template_id, owner_policy_digest,
@@ -1513,6 +1534,7 @@ class EntitlementControlPlaneStore:
         with self._pool.connection() as connection:
             connection.execute("BEGIN")
             try:
+                self._lock_project(connection, attestation.project_profile_id)
                 self._lock_installation(connection, attestation.installation_id)
                 cached = self._load_idempotent_outcome(
                     connection,
@@ -1585,7 +1607,6 @@ class EntitlementControlPlaneStore:
                     idempotency_key_digest=owner_action.idempotency_key_digest,
                     request_digest=request_digest,
                 )
-                self._lock_project(connection, attestation.project_profile_id)
                 registration = connection.execute(
                     f"""
                     SELECT document, document_digest, profile_template_id, owner_policy_digest,
@@ -1970,6 +1991,22 @@ class EntitlementControlPlaneStore:
                     raise EntitlementControlPlaneError(
                         "owner-approved signed template is not registered"
                     )
+                # The project lock freezes the membership set against grant/restore.
+                # Take installation advisory locks in a stable order before any
+                # current-generation row lock/update, matching the global order
+                # project -> installation -> row used by grant and restore.
+                affected_installations = connection.execute(
+                    f"""
+                    SELECT installation_id
+                    FROM {self._schema}.entitlement_current_generation
+                    WHERE project_profile_id = %s
+                      AND registration_generation = %s
+                    ORDER BY installation_id
+                    """,
+                    (registration.project_profile_id, prior_generation),
+                ).fetchall()
+                for affected in affected_installations:
+                    self._lock_installation(connection, str(affected["installation_id"]))
                 superseded = connection.execute(
                     f"""
                     UPDATE {self._schema}.entitlement_project_registration
@@ -2735,6 +2772,80 @@ class EntitlementControlPlaneStore:
                     audit_event_ids=audit_ids,
                     denial_reason="repository scope mismatch",
                 )
+            binding_digest = proof.digest
+            claimed = connection.execute(
+                f"""
+                INSERT INTO {self._schema}.entitlement_runtime_authorization_claim (
+                    nonce_digest, installation_id, action_type, destination_id,
+                    effect_digest, build_digest, source_commit_sha, source_tree_sha,
+                    authorization_binding_digest
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (nonce_digest) DO NOTHING
+                RETURNING authorization_binding_digest
+                """,
+                (
+                    proof.nonce_digest,
+                    query.installation_id,
+                    query.action_type.value,
+                    query.destination_id,
+                    query.effect_digest,
+                    query.current_build_digest,
+                    proof.source_commit_sha,
+                    proof.source_tree_sha,
+                    binding_digest,
+                ),
+            ).fetchone()
+            if claimed is None:
+                prior_claim = connection.execute(
+                    f"""
+                    SELECT installation_id, action_type, destination_id, effect_digest,
+                           build_digest, source_commit_sha, source_tree_sha,
+                           authorization_binding_digest
+                    FROM {self._schema}.entitlement_runtime_authorization_claim
+                    WHERE nonce_digest = %s
+                    """,
+                    (proof.nonce_digest,),
+                ).fetchone()
+                expected_claim = (
+                    query.installation_id,
+                    query.action_type.value,
+                    query.destination_id,
+                    query.effect_digest,
+                    query.current_build_digest,
+                    proof.source_commit_sha,
+                    proof.source_tree_sha,
+                    binding_digest,
+                )
+                actual_claim = None if prior_claim is None else (
+                    str(prior_claim["installation_id"]),
+                    str(prior_claim["action_type"]),
+                    prior_claim["destination_id"],
+                    str(prior_claim["effect_digest"]),
+                    str(prior_claim["build_digest"]),
+                    str(prior_claim["source_commit_sha"]),
+                    str(prior_claim["source_tree_sha"]),
+                    str(prior_claim["authorization_binding_digest"]),
+                )
+                if actual_claim != expected_claim:
+                    return EntitlementActionBoundaryResult(
+                        permitted=False,
+                        entitlement_generation=int(row["entitlement_generation"]),
+                        lifecycle_status=lifecycle,
+                        notice_delivery_state=notice_state,
+                        audit_event_ids=audit_ids,
+                        denial_reason="runtime authorization nonce binding mismatch",
+                    )
+                return EntitlementActionBoundaryResult(
+                    permitted=False,
+                    entitlement_generation=int(row["entitlement_generation"]),
+                    lifecycle_status=lifecycle,
+                    notice_delivery_state=notice_state,
+                    audit_event_ids=audit_ids,
+                    denial_reason="runtime authorization already consumed",
+                    authorization_binding_digest=str(
+                        prior_claim["authorization_binding_digest"]
+                    ),
+                )
             return EntitlementActionBoundaryResult(
                 permitted=True,
                 entitlement_generation=int(row["entitlement_generation"]),
@@ -2742,7 +2853,7 @@ class EntitlementControlPlaneStore:
                 notice_delivery_state=notice_state,
                 audit_event_ids=audit_ids,
                 denial_reason=None,
-                authorization_binding_digest=proof.digest,
+                authorization_binding_digest=binding_digest,
             )
 
     def authoritative_capabilities(
@@ -3011,3 +3122,4 @@ def entitlement_store_from_handle(handle: EntitlementStoreHandle) -> Entitlement
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:25 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]
