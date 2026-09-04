@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
 """Contract tests for automatic rights provisioning.
 
@@ -9,6 +11,7 @@ revocation is not undone by rebuilding.
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -25,11 +28,28 @@ from director_orchestrator.rights_provisioning import (
     RIGHTS_VOCABULARY,
     SubjectKind,
     build_digest_for,
+    parse_active_build_digests,
 )
 
 
 DIGEST_A = "a" * 64
 DIGEST_B = "b" * 64
+
+
+def hermetic_env(**overrides: str):
+    """Pin every rights variable Settings reads.
+
+    Settings reads the live process environment, so an ambient
+    RIGHTS_LEDGER_PATH on a developer machine would otherwise decide what these
+    assertions see.
+    """
+    values = {"RIGHTS_LEDGER_PATH": "", "RIGHTS_ACTIVE_BUILD_DIGESTS_JSON": ""}
+    values.update(overrides)
+    return patch.dict(os.environ, values, clear=False)
+
+
+def active_builds(subject_id: str = "antigravity", digest: str = DIGEST_A) -> str:
+    return json.dumps({f"provider:{subject_id}": digest})
 
 
 def verification(
@@ -50,6 +70,12 @@ def verification(
 
 
 class InstallVerificationTests(unittest.TestCase):
+    def test_declared_rights_are_copied_and_frozen_before_validation(self) -> None:
+        declared = {"review_verdict"}
+        verified = verification(rights=declared)  # type: ignore[arg-type]
+        declared.add("become_owner")
+        self.assertEqual(verified.declared_rights, frozenset({"review_verdict"}))
+
     def test_a_right_outside_the_vocabulary_is_refused_whole(self) -> None:
         # Refused entirely rather than filtered down to the known subset: a
         # partially honoured declaration would grant something the caller did
@@ -114,6 +140,21 @@ class RightsLedgerTests(unittest.TestCase):
         self.assertEqual(pending[0].notice_id, outcome.notice.notice_id)
         self.assertIn("antigravity", pending[0].summary())
         self.assertIn("Revoke", pending[0].summary())
+
+    def test_split_same_second_grants_have_distinct_notices(self) -> None:
+        first = self.ledger.provision(
+            verification(rights=frozenset({"review_verdict"}))
+        )
+        second = self.ledger.provision(
+            verification(rights=frozenset({"debate_turn"}))
+        )
+        assert first.notice is not None
+        assert second.notice is not None
+        self.assertNotEqual(first.notice.notice_id, second.notice.notice_id)
+        self.assertEqual(
+            {notice.rights for notice in self.ledger.pending_notices()},
+            {("review_verdict",), ("debate_turn",)},
+        )
 
     def test_notice_is_acknowledged_once(self) -> None:
         outcome = self.ledger.provision(verification())
@@ -280,12 +321,43 @@ class RightsLedgerTests(unittest.TestCase):
             reopened.provision(verification()).withheld_revoked, ("review_verdict",)
         )
 
+    def test_held_rights_are_bound_to_the_callers_active_build(self) -> None:
+        self.ledger.provision(verification(digest=DIGEST_A))
+        self.assertEqual(
+            self.ledger.held_rights_for_build(
+                SubjectKind.PROVIDER, "antigravity", DIGEST_A
+            ),
+            frozenset({"review_verdict"}),
+        )
+        self.assertEqual(
+            self.ledger.held_rights_for_build(
+                SubjectKind.PROVIDER, "antigravity", DIGEST_B
+            ),
+            frozenset(),
+        )
+        with self.assertRaisesRegex(RightsProvisioningError, "exact sha256"):
+            self.ledger.held_rights_for_build(
+                SubjectKind.PROVIDER, "antigravity", "not-a-digest"
+            )
+
+    def test_build_bound_read_observes_revocation_immediately(self) -> None:
+        self.ledger.provision(verification())
+        self.ledger.revoke_right(
+            SubjectKind.PROVIDER, "antigravity", "review_verdict", revoked_by="owner"
+        )
+        self.assertEqual(
+            self.ledger.held_rights_for_build(
+                SubjectKind.PROVIDER, "antigravity", DIGEST_A
+            ),
+            frozenset(),
+        )
+
 
 class SettingsIntegrationTests(unittest.TestCase):
     """The ledger reaches Settings without changing a deployment that opted out."""
 
     def test_absent_ledger_path_grants_nothing(self) -> None:
-        with patch.dict(os.environ, {"RIGHTS_LEDGER_PATH": ""}, clear=False):
+        with hermetic_env():
             settings = Settings()
         self.assertEqual(settings.provisioned_provider_rights, {})
         self.assertEqual(settings.provisioned_project_rights, {})
@@ -297,8 +369,9 @@ class SettingsIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             corrupt = Path(directory) / "corrupt.sqlite3"
             corrupt.write_bytes(b"this is not a database")
-            with patch.dict(
-                os.environ, {"RIGHTS_LEDGER_PATH": str(corrupt)}, clear=False
+            with hermetic_env(
+                RIGHTS_LEDGER_PATH=str(corrupt),
+                RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(),
             ):
                 settings = Settings()
             self.assertEqual(settings.provisioned_provider_rights, {})
@@ -308,8 +381,9 @@ class SettingsIntegrationTests(unittest.TestCase):
             path = Path(directory) / "rights.sqlite3"
             ledger = RightsLedger(path)
             ledger.provision(verification())
-            with patch.dict(
-                os.environ, {"RIGHTS_LEDGER_PATH": str(path)}, clear=False
+            with hermetic_env(
+                RIGHTS_LEDGER_PATH=str(path),
+                RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(),
             ):
                 settings = Settings()
             self.assertEqual(
@@ -323,11 +397,48 @@ class SettingsIntegrationTests(unittest.TestCase):
                 "review_verdict",
                 revoked_by="owner",
             )
-            with patch.dict(
-                os.environ, {"RIGHTS_LEDGER_PATH": str(path)}, clear=False
+            # Settings is explicitly a startup snapshot. The privileged
+            # operation boundary must use held_rights_for_build instead.
+            self.assertEqual(
+                settings.provisioned_provider_rights.get("antigravity"),
+                frozenset({"review_verdict"}),
+            )
+            with hermetic_env(
+                RIGHTS_LEDGER_PATH=str(path),
+                RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(),
             ):
                 after = Settings()
             self.assertEqual(after.provisioned_provider_rights, {})
+
+    def test_settings_refuses_missing_or_mismatched_active_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rights.sqlite3"
+            RightsLedger(path).provision(verification(digest=DIGEST_A))
+            with hermetic_env(RIGHTS_LEDGER_PATH=str(path)):
+                missing = Settings()
+            with hermetic_env(
+                RIGHTS_LEDGER_PATH=str(path),
+                RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(digest=DIGEST_B),
+            ):
+                mismatched = Settings()
+            self.assertEqual(missing.provisioned_provider_rights, {})
+            self.assertEqual(mismatched.provisioned_provider_rights, {})
+
+    def test_expected_ledger_errors_fail_closed_but_programmer_errors_surface(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rights.sqlite3"
+            RightsLedger(path)
+            with hermetic_env(
+                RIGHTS_LEDGER_PATH=str(path),
+                RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(),
+            ), patch(
+                "director_orchestrator.rights_provisioning.RightsLedger.subject_ids",
+                side_effect=RuntimeError("programmer defect"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "programmer defect"):
+                    Settings()
 
     def test_antigravity_still_fails_closed_on_the_flag_alone(self) -> None:
         # The invariant that must survive this feature: requesting verdict
@@ -342,6 +453,24 @@ class SettingsIntegrationTests(unittest.TestCase):
         )
 
 
+class ActiveBuildConfigurationTests(unittest.TestCase):
+    def test_active_build_map_is_strict_and_canonical(self) -> None:
+        self.assertEqual(
+            parse_active_build_digests(active_builds()),
+            {(SubjectKind.PROVIDER, "antigravity"): DIGEST_A},
+        )
+        for raw in (
+            "not-json",
+            "[]",
+            '{"provider:../escape":"' + DIGEST_A + '"}',
+            '{"unknown:antigravity":"' + DIGEST_A + '"}',
+            '{"provider:antigravity":"not-a-digest"}',
+        ):
+            with self.subTest(raw=raw):
+                with self.assertRaises(RightsProvisioningError):
+                    parse_active_build_digests(raw)
+
+
 class BuildDigestTests(unittest.TestCase):
     def test_digest_is_content_bound_and_order_sensitive(self) -> None:
         self.assertEqual(build_digest_for([b"ab"]), build_digest_for([b"a", b"b"]))
@@ -352,3 +481,5 @@ class BuildDigestTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | END]]

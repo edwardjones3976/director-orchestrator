@@ -1,5 +1,13 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]] -->
 # Pending hunk: the readiness term this branch does not itself change
+
+> **Do not apply this hunk in isolation.** It is retained as historical design
+> context only. The `Settings` rights maps are startup snapshots, Antigravity's
+> admitted assignment kinds and wire contracts still exclude review verdicts,
+> and no privileged-operation boundary performs the required live,
+> build-bound authorization check. Those pieces require a separate owner-gated
+> design and change set.
 
 **For the reviewer with merge authority. This is the one change in the design
 that was deliberately not made by the model that built the rest of it.**
@@ -49,9 +57,10 @@ with:
             "primary_authority_disabled": not self.gemini_allow_primary_authority,
 ```
 
-Everything the hunk depends on is already on this branch:
-`provisioned_provider_rights` is a populated `Settings` field, and
-`rights_provisioning.py` supplies the ledger behind it.
+The mechanism types referenced by the hunk exist on this branch, but the full
+authorization path does not. `provisioned_provider_rights` is deliberately only
+a startup snapshot and therefore is not suitable as the final authority at a
+privileged operation boundary.
 
 ## What changes, precisely
 
@@ -88,3 +97,4 @@ present. Routing review work to Antigravity requires a separate, reviewed change
 to that table. That was left out of this branch on purpose: eligibility and
 admission are different decisions and should be reviewed separately.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | END]] -->

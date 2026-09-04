@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
@@ -34,6 +35,7 @@ import hmac
 import json
 import math
 import os
+import sqlite3
 from pathlib import Path
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 import re
@@ -198,28 +200,57 @@ def _pairwise_isolated(paths: tuple[str, ...]) -> bool:
 
 
 def _provisioned_rights(kind: str) -> dict[str, frozenset[str]]:
-    """Read the rights ledger once, at Settings construction.
+    """Snapshot the rights ledger once, at Settings construction.
 
     Reading here rather than inside a readiness method keeps /health free of
     database work and keeps every readiness map a pure function of this object.
 
+    Two independent things must agree before a right appears here: a grant
+    recorded in the ledger, and RIGHTS_ACTIVE_BUILD_DIGESTS_JSON naming the
+    build that is live for that subject. The grant's own digest is not consulted
+    as the active one — it records what was built when the right was granted,
+    not what is running now — so a grant against a superseded build reads as no
+    right at all. With no active build configured, nothing is held.
+
     Every failure path returns no rights. A ledger that is missing, corrupt or
     unreadable must not be indistinguishable from one that granted something,
-    so absence of evidence is refusal.
+    so absence of evidence is refusal. The caught set is deliberately narrow:
+    ledger availability (sqlite3.Error, OSError) and operator data
+    (RightsProvisioningError). A bad `kind`, a broken import or any other
+    programmer defect still raises, because silently returning {} for those
+    would hide the defect behind a plausible-looking empty result.
     """
+    from .rights_provisioning import (
+        RightsLedger,
+        RightsProvisioningError,
+        SubjectKind,
+        parse_active_build_digests,
+    )
+
+    subject_kind = SubjectKind(kind)
     path = os.getenv("RIGHTS_LEDGER_PATH", "").strip()
     if not path:
         return {}
     try:
-        from .rights_provisioning import RightsLedger, SubjectKind
-
+        active = parse_active_build_digests(
+            os.getenv("RIGHTS_ACTIVE_BUILD_DIGESTS_JSON", "")
+        )
+        if not active:
+            return {}
         ledger = RightsLedger(path)
-        subject_kind = SubjectKind(kind)
-        return {
-            subject_id: ledger.held_rights(subject_kind, subject_id)
-            for subject_id in ledger.subject_ids(subject_kind)
-        }
-    except Exception:
+        provisioned: dict[str, frozenset[str]] = {}
+        for subject_id in ledger.subject_ids(subject_kind):
+            digest = active.get((subject_kind, subject_id))
+            if digest is None:
+                continue
+            held = ledger.held_rights_for_build(subject_kind, subject_id, digest)
+            if held:
+                # An empty set is omitted rather than stored: a subject bound to
+                # a superseded build is not a subject, and an empty entry would
+                # read as "known subject, holds nothing".
+                provisioned[subject_id] = held
+        return provisioned
+    except (sqlite3.Error, OSError, RightsProvisioningError):
         return {}
 
 
@@ -523,8 +554,17 @@ class Settings:
     repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
     allowed_starting_refs: tuple[str, ...] = _csv_exact("ALLOWED_STARTING_REFS", "main")
     #: Rights provisioned automatically against a verified install, keyed by
-    #: subject id. Empty unless RIGHTS_LEDGER_PATH names a readable ledger, so
-    #: a deployment that has not opted in behaves exactly as it did before.
+    #: subject id. Empty unless RIGHTS_LEDGER_PATH names a readable ledger *and*
+    #: RIGHTS_ACTIVE_BUILD_DIGESTS_JSON names the live build for that subject,
+    #: so a deployment that has not opted in behaves exactly as it did before.
+    #:
+    #: This is a snapshot taken once at construction, not a live authorization
+    #: check: an owner revocation after this object was built is not reflected
+    #: here until a new Settings is constructed, which in main.py means a
+    #: restart. Nothing consults these maps today and nothing may start doing so
+    #: at a privileged boundary — such a boundary must read the ledger at the
+    #: moment of use via RightsLedger.held_rights_for_build, the way
+    #: providers.py digest-binds a CLI immediately before execution.
     #: See docs/rights-provisioning.md.
     provisioned_provider_rights: dict[str, frozenset[str]] = field(
         default_factory=lambda: _provisioned_rights("provider")
@@ -2009,3 +2049,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]

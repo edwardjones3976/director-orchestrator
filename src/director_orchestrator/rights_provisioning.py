@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
 """Deterministic rights provisioning for verified provider and project installs.
 
@@ -22,10 +23,18 @@ automatic, but it is not silent and it is not unbounded:
   re-grant does. This is what keeps "automatic" from meaning "unrevocable in
   practice".
 
+* A held right is not usable on its own. Reading rights back requires the
+  caller to supply the digest of the build that is *actually running*, from
+  configuration this module cannot write. A grant row records what was built
+  when the right was granted, so trusting it as the active digest would make
+  every stale grant look current. With no active build configured, every
+  subject reads as holding nothing.
+
 Nothing here dispatches, writes to a repository, or decides a verdict. It
 records which subject holds which right, on what evidence, and whether the owner
 has been told. The deterministic policy gates elsewhere remain the authority on
-what a held right permits.
+what a held right permits, and today no gate consults this module at all: it is
+mechanism with no runtime sink. See `docs/rights-provisioning.md`.
 """
 from __future__ import annotations
 
@@ -103,6 +112,12 @@ class InstallVerification:
     verified_at: int
 
     def __post_init__(self) -> None:
+        # Canonicalised before anything is checked, and copied rather than
+        # aliased: a caller may hand in a plain set, and validating the
+        # caller's own object would leave it free to gain a right after the
+        # vocabulary check passed. Freezing first makes validation apply to
+        # exactly the value this object will keep.
+        object.__setattr__(self, "declared_rights", frozenset(self.declared_rights))
         if not _SUBJECT_ID.fullmatch(self.subject_id):
             raise RightsProvisioningError("subject id is not a safe identifier")
         if not _DIGEST.fullmatch(self.build_digest):
@@ -161,9 +176,23 @@ def _now(explicit: int | None) -> int:
     return int(time.time()) if explicit is None else int(explicit)
 
 
-def _notice_id(kind: SubjectKind, subject_id: str, digest: str, raised_at: int) -> str:
+def _notice_id(
+    kind: SubjectKind,
+    subject_id: str,
+    digest: str,
+    raised_at: int,
+    granted: Iterable[str],
+) -> str:
+    """Identify a notice by everything that distinguishes it, rights included.
+
+    Without the granted rights in the payload, two grants split across separate
+    calls for the same subject and build within one second collide, and the
+    second notice takes the identity of the first. The rights are what actually
+    differ between them, so they belong in the identity.
+    """
     payload = json.dumps(
-        [kind.value, subject_id, digest, raised_at], separators=(",", ":")
+        [kind.value, subject_id, digest, raised_at, sorted(granted)],
+        separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -276,6 +305,7 @@ class RightsLedger:
                         verification.subject_id,
                         verification.build_digest,
                         raised_at,
+                        granted,
                     )
                     authority = tuple(
                         r for r in granted if r in AUTHORITY_BEARING_RIGHTS
@@ -291,9 +321,15 @@ class RightsLedger:
                     )
                     # The notice is written in the same transaction as the
                     # grants, so a granted right always has a notice behind it.
+                    # A plain INSERT, not INSERT OR REPLACE: overwriting on a
+                    # colliding id would leave the earlier grant's rows
+                    # pointing at a notice describing different rights, which
+                    # is the "granted, but nobody was told" state this module
+                    # is supposed to be unable to express. A collision instead
+                    # aborts the whole attempt.
                     connection.execute(
                         """
-                        INSERT OR REPLACE INTO owner_notice
+                        INSERT INTO owner_notice
                         (notice_id, subject_kind, subject_id, rights, authority,
                          build_digest, raised_at, acknowledged)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 0)
@@ -357,6 +393,38 @@ class RightsLedger:
                 WHERE subject_kind = ? AND subject_id = ? AND revoked_at IS NULL
                 """,
                 (kind.value, subject_id),
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
+
+    def held_rights_for_build(
+        self,
+        kind: SubjectKind,
+        subject_id: str,
+        active_build_digest: str,
+    ) -> frozenset[str]:
+        """Rights held *for the build that is actually running*.
+
+        The active digest comes from the caller, out of configuration this
+        module cannot write. The grant row's own digest cannot answer "is this
+        the build that is live" — it only records what was built at grant time
+        — so binding a right against it would make every stale grant look
+        current. A digest that is not an exact sha256 is refused rather than
+        treated as a wildcard.
+
+        This reads the ledger at the moment of the call, so a revocation is
+        visible immediately. `Settings` holds a snapshot instead; anything that
+        needs a current answer must call this rather than read the snapshot.
+        """
+        if not _DIGEST.fullmatch(active_build_digest):
+            raise RightsProvisioningError("active build digest must be an exact sha256")
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT right_name FROM provisioned_right
+                WHERE subject_kind = ? AND subject_id = ? AND revoked_at IS NULL
+                  AND build_digest = ?
+                """,
+                (kind.value, subject_id, active_build_digest),
             ).fetchall()
         return frozenset(row[0] for row in rows)
 
@@ -459,4 +527,52 @@ def build_digest_for(payload: Iterable[bytes]) -> str:
     for chunk in payload:
         digest.update(chunk)
     return digest.hexdigest()
+
+
+def parse_active_build_digests(raw: str) -> dict[tuple[SubjectKind, str], str]:
+    """Parse the operator's statement of which build is live, per subject.
+
+    Shape: `{"provider:antigravity": "<64 hex>"}`. This is deliberately
+    configuration rather than anything the ledger derives — it is the
+    independent half of the binding, and a subject cannot write it by
+    installing.
+
+    Malformed input is refused whole rather than partially honoured: a
+    half-parsed map would quietly activate whichever subjects happened to
+    parse. Callers that must not fail closed loudly should catch
+    `RightsProvisioningError` and treat it as "no subject holds anything".
+    """
+    text = raw.strip()
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RightsProvisioningError(
+            "active build digests must be valid JSON"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RightsProvisioningError("active build digests must be an object")
+    parsed: dict[tuple[SubjectKind, str], str] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise RightsProvisioningError("active build digest entry is malformed")
+        kind_name, separator, subject_id = key.partition(":")
+        if not separator:
+            raise RightsProvisioningError(
+                "active build digest key must be '<subject kind>:<subject id>'"
+            )
+        try:
+            kind = SubjectKind(kind_name)
+        except ValueError as exc:
+            raise RightsProvisioningError(
+                "unknown subject kind in active build digests: " + kind_name
+            ) from exc
+        if not _SUBJECT_ID.fullmatch(subject_id):
+            raise RightsProvisioningError("subject id is not a safe identifier")
+        if not _DIGEST.fullmatch(value):
+            raise RightsProvisioningError("active build digest must be an exact sha256")
+        parsed[(kind, subject_id)] = value
+    return parsed
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]

@@ -1,9 +1,12 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]] -->
 # Rights provisioning on verified install
 
-**Status:** Mechanism only. Default off. No subject holds a provisioned right
-until `RIGHTS_LEDGER_PATH` names a readable ledger and a verified install has
-been recorded into it. A deployment that has not opted in behaves exactly as it
+**Status:** Mechanism only. Default off. No runtime authorization gate consumes
+these rights. A subject appears in the `Settings` snapshot only when
+`RIGHTS_LEDGER_PATH` names a readable ledger, a verified install has been
+recorded, and `RIGHTS_ACTIVE_BUILD_DIGESTS_JSON` independently identifies the
+same build as active. A deployment that has not opted in behaves exactly as it
 did before this document existed.
 
 **Schema authority:** `src/director_orchestrator/rights_provisioning.py`.
@@ -34,8 +37,9 @@ reversible**.
 2. **Evidence, or refusal.** A grant requires an `InstallVerification` carrying
    an exact sha256 build digest. There is no default-open path. The digest binds
    the grant to what was actually built, so a right cannot silently outlive the
-   artifact it was granted for — a different build produces a different digest
-   and a fresh grant.
+   artifact it was granted for. A caller must separately supply the active build
+   digest when reading usable rights; the ledger never treats its own grant row
+   as proof of what is currently running.
 
 3. **The notice is not optional.** The owner notice is written in the same
    transaction as the grants it describes. "Granted, but nobody was told" is not
@@ -72,14 +76,22 @@ governing admitted work.
 | Variable | Meaning |
 | --- | --- |
 | `RIGHTS_LEDGER_PATH` | Absolute path to the SQLite ledger. Unset means no subject holds any provisioned right. |
+| `RIGHTS_ACTIVE_BUILD_DIGESTS_JSON` | Operator-supplied active builds keyed as `"<kind>:<subject>"`. Missing, malformed, or mismatched data means no provisioned right is exposed. |
 
 `Settings` reads the ledger once at construction into
 `provisioned_provider_rights` and `provisioned_project_rights`. Reading there
 rather than inside a readiness method keeps `/health` free of database work and
 keeps each readiness map a pure function of the settings object.
 
-Every failure path returns no rights. A ledger that is missing, corrupt or
-unreadable must not be indistinguishable from one that granted something.
+Those maps are startup snapshots, not live authorization answers. Revocation is
+visible immediately through `RightsLedger.held_rights_for_build(...)`, but an
+already-constructed `Settings` remains unchanged until restart. No privileged
+operation may rely on the snapshot. A future runtime consumer must check the
+ledger with the independently established active digest at the moment of use.
+
+Expected ledger availability and operator-data failures return no rights. A
+programming defect is allowed to surface rather than being hidden behind an
+empty, plausible-looking result.
 
 ## Operating the ledger
 
@@ -122,7 +134,9 @@ authority was governed by a single settings flag. After it, the flag is
 necessary but no longer sufficient: a provisioned grant recorded against a
 verified build is also required, and the owner is notified when one appears.
 
-Rule 10 reserves expanded access to an owner decision. The owner notice is that
-decision point, raised after the grant rather than before it, with revocation as
-the acting mechanism. That ordering was the owner's explicit choice.
+Rule 10 reserves expanded access to an owner decision. The ledger's owner notice
+does not itself satisfy that gate or activate a runtime capability. Applying a
+readiness change, widening admitted assignment kinds, or consuming a right at a
+privileged boundary remains a separate reviewed owner decision.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | END]] -->
