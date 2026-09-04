@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
@@ -13,8 +14,10 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -34,6 +37,10 @@ from director_orchestrator.rights_provisioning import (
 
 DIGEST_A = "a" * 64
 DIGEST_B = "b" * 64
+#: One fixed instant, passed explicitly wherever a test depends on two calls
+#: landing in the same second. Relying on the wall clock to stay inside one
+#: second is exactly the flake that hides the collision these tests are for.
+RAISED_AT = 1_760_000_000
 
 
 def hermetic_env(**overrides: str):
@@ -142,19 +149,54 @@ class RightsLedgerTests(unittest.TestCase):
         self.assertIn("Revoke", pending[0].summary())
 
     def test_split_same_second_grants_have_distinct_notices(self) -> None:
+        # Both calls are pinned to the identical instant, so "same second" is a
+        # property of the test rather than a hope about how fast it runs.
         first = self.ledger.provision(
-            verification(rights=frozenset({"review_verdict"}))
+            verification(rights=frozenset({"review_verdict"})), now=RAISED_AT
         )
         second = self.ledger.provision(
-            verification(rights=frozenset({"debate_turn"}))
+            verification(rights=frozenset({"debate_turn"})), now=RAISED_AT
         )
         assert first.notice is not None
         assert second.notice is not None
+        self.assertEqual(first.notice.raised_at, second.notice.raised_at)
         self.assertNotEqual(first.notice.notice_id, second.notice.notice_id)
         self.assertEqual(
             {notice.rights for notice in self.ledger.pending_notices()},
             {("review_verdict",), ("debate_turn",)},
         )
+
+    def test_a_forced_notice_collision_rolls_back_instead_of_overwriting(
+        self,
+    ) -> None:
+        # Deriving the id from the granted rights is what stops a collision
+        # arising on its own, so the failure mode has to be forced to be tested.
+        # What must not happen is the second grant landing while the first
+        # notice is overwritten to describe it: the first grant's rows would
+        # then point at a notice about different rights.
+        with patch(
+            "director_orchestrator.rights_provisioning._notice_id",
+            return_value="forced-collision",
+        ):
+            self.ledger.provision(
+                verification(rights=frozenset({"review_verdict"})), now=RAISED_AT
+            )
+            with self.assertRaises(sqlite3.IntegrityError):
+                self.ledger.provision(
+                    verification(rights=frozenset({"debate_turn"})), now=RAISED_AT
+                )
+        # The refused attempt left nothing behind.
+        self.assertFalse(
+            self.ledger.holds(SubjectKind.PROVIDER, "antigravity", "debate_turn")
+        )
+        # The first grant and its notice are untouched.
+        self.assertTrue(
+            self.ledger.holds(SubjectKind.PROVIDER, "antigravity", "review_verdict")
+        )
+        notices = self.ledger.pending_notices()
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(notices[0].notice_id, "forced-collision")
+        self.assertEqual(notices[0].rights, ("review_verdict",))
 
     def test_notice_is_acknowledged_once(self) -> None:
         outcome = self.ledger.provision(verification())
@@ -376,6 +418,78 @@ class SettingsIntegrationTests(unittest.TestCase):
                 settings = Settings()
             self.assertEqual(settings.provisioned_provider_rights, {})
 
+    def test_settings_never_creates_a_missing_ledger(self) -> None:
+        # Settings is constructed at import time from an operator-supplied path.
+        # If a wrong path could bring a ledger into existence, the fail-closed
+        # story would depend on nobody making a typo.
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "nested" / "rights.sqlite3"
+            with hermetic_env(
+                RIGHTS_LEDGER_PATH=str(missing),
+                RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(),
+            ):
+                settings = Settings()
+            self.assertEqual(settings.provisioned_provider_rights, {})
+            self.assertEqual(settings.provisioned_project_rights, {})
+            self.assertFalse(missing.exists())
+            self.assertFalse(missing.parent.exists())
+            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), [])
+
+    def test_settings_does_not_touch_an_unrelated_database(self) -> None:
+        # The realistic misconfiguration is RIGHTS_LEDGER_PATH aimed at
+        # SQLITE_PATH. That must be a refusal, not a silent schema migration of
+        # live product data.
+        with tempfile.TemporaryDirectory() as directory:
+            product = Path(directory) / "director.sqlite3"
+            with closing(sqlite3.connect(product)) as connection:
+                connection.execute("CREATE TABLE task (id TEXT PRIMARY KEY)")
+                connection.execute("INSERT INTO task (id) VALUES ('t-1')")
+                connection.commit()
+            before = product.read_bytes()
+            with hermetic_env(
+                RIGHTS_LEDGER_PATH=str(product),
+                RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=active_builds(),
+            ):
+                settings = Settings()
+            # Sampled before anything else reopens the file, so the comparison
+            # can only be attributing changes to Settings.
+            after = product.read_bytes()
+            self.assertEqual(settings.provisioned_provider_rights, {})
+            self.assertEqual(settings.provisioned_project_rights, {})
+            self.assertEqual(after, before)
+            self.assertFalse((Path(directory) / "director.sqlite3-wal").exists())
+            self.assertFalse((Path(directory) / "director.sqlite3-shm").exists())
+            with closing(sqlite3.connect(product)) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+            self.assertEqual(tables, {"task"})
+
+    def test_malformed_active_build_configuration_grants_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rights.sqlite3"
+            RightsLedger(path).provision(verification())
+            for raw in (
+                "not-json",
+                "[]",
+                '{"provider:antigravity":"too-short"}',
+                '{"antigravity":"' + DIGEST_A + '"}',
+                '{"provider:antigravity":42}',
+            ):
+                with self.subTest(raw=raw):
+                    with hermetic_env(
+                        RIGHTS_LEDGER_PATH=str(path),
+                        RIGHTS_ACTIVE_BUILD_DIGESTS_JSON=raw,
+                    ):
+                        settings = Settings()
+                    # A map that cannot be trusted is a map that grants nothing,
+                    # including the entries that happened to parse.
+                    self.assertEqual(settings.provisioned_provider_rights, {})
+                    self.assertEqual(settings.provisioned_project_rights, {})
+
     def test_a_provisioned_grant_reaches_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "rights.sqlite3"
@@ -483,3 +597,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]

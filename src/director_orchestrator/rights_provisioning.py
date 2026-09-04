@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
 """Deterministic rights provisioning for verified provider and project installs.
@@ -205,8 +206,22 @@ class RightsLedger:
     notice would then be re-raised on every boot until it was ignored.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
+        """Open the ledger. Writable by default, because provisioning writes.
+
+        `read_only=True` opens an *existing* ledger for inspection and nothing
+        else: it creates no directory, creates no file, and adds no table. That
+        distinction matters because the writable constructor will happily turn
+        whatever path it is handed into a rights ledger, and the reader is the
+        mode that runs from configuration at startup, where a mistyped path
+        should be a refusal rather than a schema change to somebody else's
+        database.
+        """
         self._path = Path(path)
+        self._read_only = read_only
+        if read_only:
+            self._require_existing_ledger()
+            return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection:
             connection.execute(
@@ -239,13 +254,55 @@ class RightsLedger:
                 """
             )
 
+    def _require_existing_ledger(self) -> None:
+        """Refuse a path that is not already a rights ledger.
+
+        Two separate refusals, because they are different mistakes. A missing
+        file is the ordinary opted-out case. A file that exists but carries
+        someone else's schema is a misconfiguration — `SQLITE_PATH`, a
+        checkpoint database — and reading it as an empty ledger would report
+        "this subject holds nothing" when the truth is "this is the wrong file".
+        """
+        if not self._path.is_file():
+            raise RightsProvisioningError("rights ledger file does not exist")
+        with closing(self._connect()) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+        missing = sorted({"provisioned_right", "owner_notice"} - tables)
+        if missing:
+            raise RightsProvisioningError(
+                "path is not a rights ledger, missing tables: " + ", ".join(missing)
+            )
+
     def _connect(self) -> sqlite3.Connection:
         """Autocommit connection. Callers wrap it in `closing`.
 
         sqlite3's own context manager ends the transaction but leaves the handle
         open, which on Windows keeps the database file locked against deletion.
         Every call site here closes explicitly for that reason.
+
+        A read-only ledger connects through a `mode=ro` URI and pins
+        `query_only`, so no statement reached through this handle can create the
+        file, add a table to it, or leave journal artifacts beside it. SQLite
+        refuses a read-only open of a database with an unrecovered WAL, which
+        surfaces as a `sqlite3.Error` and therefore as a refusal.
         """
+        if self._read_only:
+            connection = sqlite3.connect(
+                self._path.resolve().as_uri() + "?mode=ro",
+                uri=True,
+                isolation_level=None,
+            )
+            try:
+                connection.execute("PRAGMA query_only=ON")
+            except BaseException:
+                connection.close()
+                raise
+            return connection
         connection = sqlite3.connect(self._path, isolation_level=None)
         try:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -374,7 +431,15 @@ class RightsLedger:
         )
 
     def holds(self, kind: SubjectKind, subject_id: str, right: str) -> bool:
-        """Whether the subject currently holds the right. Unknown means no."""
+        """Introspection only: is there a live grant row, for any build.
+
+        This is not an authorization API and no privileged operation may call
+        it. It answers a question about the ledger's history — "was this granted
+        and not revoked" — not about the build that is running now, so it
+        returns True for a grant bound to a build that was superseded long ago.
+        `held_rights_for_build` is the only read that binds to an active build.
+        Unknown means no.
+        """
         with closing(self._connect()) as connection:
             row = connection.execute(
                 """
@@ -386,6 +451,11 @@ class RightsLedger:
         return row is not None and row[0] is None
 
     def held_rights(self, kind: SubjectKind, subject_id: str) -> frozenset[str]:
+        """Introspection only: every live grant, for any build.
+
+        Carries exactly the caveat `holds` carries. Use it to show an owner what
+        the ledger contains; never to decide whether something may proceed.
+        """
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
@@ -473,7 +543,16 @@ class RightsLedger:
         restored_by: str,
         now: int | None = None,
     ) -> bool:
-        """Explicit owner re-grant. The only way back from a revocation."""
+        """Explicit owner re-grant. The only way back from a revocation.
+
+        Restoration puts the row back as it was stored, build binding included:
+        the right returns bound to whichever digest it was granted against, not
+        to whatever is running now. If the subject has rebuilt since, that
+        binding is stale and `held_rights_for_build` keeps reporting nothing
+        until the subject is reprovisioned against the current build or the
+        active-build configuration is realigned with the stored digest. That is
+        deliberate — restoring a right says nothing about which build is live.
+        """
         if not restored_by.strip():
             raise RightsProvisioningError("restoration must name the restoring owner")
         with closing(self._connect()) as connection:
@@ -576,3 +655,4 @@ def parse_active_build_digests(raw: str) -> dict[tuple[SubjectKind, str], str]:
     return parsed
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]

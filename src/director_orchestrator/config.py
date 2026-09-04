@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -212,6 +213,12 @@ def _provisioned_rights(kind: str) -> dict[str, frozenset[str]]:
     not what is running now — so a grant against a superseded build reads as no
     right at all. With no active build configured, nothing is held.
 
+    The ledger is opened read-only. Constructing Settings must not create the
+    file, create its directory, or add a table to it: RIGHTS_LEDGER_PATH is
+    operator-supplied, and a typo that pointed it at SQLITE_PATH or a checkpoint
+    database would otherwise silently migrate live product data at import time.
+    A path that is not already a rights ledger is a refusal instead.
+
     Every failure path returns no rights. A ledger that is missing, corrupt or
     unreadable must not be indistinguishable from one that granted something,
     so absence of evidence is refusal. The caught set is deliberately narrow:
@@ -237,7 +244,7 @@ def _provisioned_rights(kind: str) -> dict[str, frozenset[str]]:
         )
         if not active:
             return {}
-        ledger = RightsLedger(path)
+        ledger = RightsLedger(path, read_only=True)
         provisioned: dict[str, frozenset[str]] = {}
         for subject_id in ledger.subject_ids(subject_kind):
             digest = active.get((subject_kind, subject_id))
@@ -2050,3 +2057,4 @@ class Settings:
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]

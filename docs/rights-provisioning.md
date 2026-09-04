@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]] -->
 # Rights provisioning on verified install
@@ -9,7 +10,19 @@ recorded, and `RIGHTS_ACTIVE_BUILD_DIGESTS_JSON` independently identifies the
 same build as active. A deployment that has not opted in behaves exactly as it
 did before this document existed.
 
+> **`RIGHTS_LEDGER_PATH` must name a dedicated file used for nothing but this
+> ledger.** Never set it to `SQLITE_PATH`, a completion-gate store, a LangGraph
+> checkpoint database, or any other product database. `Settings` opens the path
+> read-only and refuses one that does not already carry the ledger schema, so a
+> mistyped path fails closed instead of migrating live data — but the writable
+> `RightsLedger(...)` used for provisioning creates that schema wherever it is
+> aimed, so the provisioning side has no such safety net.
+
 **Schema authority:** `src/director_orchestrator/rights_provisioning.py`.
+
+**Runtime effect today: none.** Nothing reads these rights at a decision point.
+The readiness change that would give them one is written down but deliberately
+unapplied; see `rights-provisioning-pending-hunk.md`.
 
 ## Why this exists
 
@@ -66,22 +79,28 @@ whether the owner has been told. It dispatches nothing, writes to no repository,
 and decides no verdict. The deterministic policy gates remain the authority on
 what a held right permits, and a held right that no gate consults has no effect.
 
-In particular, holding `review_verdict` makes a lane *eligible* for verdict
-authority. It does not by itself widen which assignment kinds that lane admits;
-`CAPABILITY_BY_KIND` in `antigravity.py` remains the separate, stricter table
-governing admitted work.
+In particular, holding `review_verdict` grants a lane nothing today: no
+readiness expression, policy gate, or router consults it. Were the pending
+readiness change applied, the right would make a lane *eligible* for verdict
+authority and no more — it would still not widen which assignment kinds that
+lane admits, because `CAPABILITY_BY_KIND` in `antigravity.py` would remain the
+separate, stricter table governing admitted work.
 
 ## Configuration
 
 | Variable | Meaning |
 | --- | --- |
-| `RIGHTS_LEDGER_PATH` | Absolute path to the SQLite ledger. Unset means no subject holds any provisioned right. |
+| `RIGHTS_LEDGER_PATH` | Absolute path to a **dedicated** SQLite rights ledger — never a product database. Unset, missing, or carrying a foreign schema means no subject holds any provisioned right. |
 | `RIGHTS_ACTIVE_BUILD_DIGESTS_JSON` | Operator-supplied active builds keyed as `"<kind>:<subject>"`. Missing, malformed, or mismatched data means no provisioned right is exposed. |
 
 `Settings` reads the ledger once at construction into
 `provisioned_provider_rights` and `provisioned_project_rights`. Reading there
 rather than inside a readiness method keeps `/health` free of database work and
 keeps each readiness map a pure function of the settings object.
+
+That read is read-only in the strict sense: `Settings` opens the ledger through
+a `mode=ro` connection with `query_only` pinned, and creates no file, no
+directory, and no table. Constructing `Settings` cannot modify anything on disk.
 
 Those maps are startup snapshots, not live authorization answers. Revocation is
 visible immediately through `RightsLedger.held_rights_for_build(...)`, but an
@@ -123,16 +142,39 @@ ledger.revoke_right(
 ledger.provision(same_verification).withheld_revoked   # ("review_verdict",)
 ```
 
+`restore_right` puts the row back as it was stored, build binding included: the
+right returns bound to the digest it was originally granted against. If the
+subject has rebuilt since, that binding is stale, and `held_rights_for_build`
+keeps reporting nothing until the subject is reprovisioned against the current
+build or the active-build configuration is realigned with the stored digest.
+Restoring a right deliberately says nothing about which build is live.
+
+`holds()` and `held_rights()` are introspection only — they report live grant
+rows for any build, which is the right answer for showing an owner what the
+ledger contains and the wrong answer for deciding whether anything may proceed.
+`held_rights_for_build()` is the only build-bound read.
+
 Outstanding notices: `ledger.pending_notices()`, cleared with
 `acknowledge_notice(notice_id)`.
 
 ## Relationship to the agent operating rules
 
 `AGENTS.md` rule 4 states that model output may add approval requirements but
-may not remove them. This mechanism adds one. Before it, a lane's verdict
-authority was governed by a single settings flag. After it, the flag is
-necessary but no longer sufficient: a provisioned grant recorded against a
-verified build is also required, and the owner is notified when one appears.
+may not remove them. This mechanism is built to add one, and has not yet added
+it.
+
+Verdict authority is governed today exactly as it was before this branch: by
+`gemini_allow_review_verdict` alone, which cannot produce a ready lane at all —
+setting it makes the lane unready, and no configuration reaches verdict
+authority. No readiness expression consults a provisioned grant, because the
+hunk that would introduce that term is deliberately unapplied. It is written out
+in full, with its rationale, in `rights-provisioning-pending-hunk.md`.
+
+If the reviewer with merge authority applies that hunk, the flag *would become*
+necessary but not sufficient: a provisioned grant recorded against a verified
+build, matching the independently configured active build, *would* also be
+required, and the owner *would be* notified when one appeared. Until that
+happens, nothing about verdict authority has changed.
 
 Rule 10 reserves expanded access to an owner decision. The ledger's owner notice
 does not itself satisfy that gate or activate a runtime capability. Applying a
@@ -140,3 +182,4 @@ readiness change, widening admitted assignment kinds, or consuming a right at a
 privileged boundary remains a separate reviewed owner decision.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]] -->
