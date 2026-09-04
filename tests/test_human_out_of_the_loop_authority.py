@@ -79,6 +79,46 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("fails closed", tier_zero)
         self.assertIn("is tier 0 until", tier_zero)
 
+    def test_tier_one_is_a_closed_set_that_excludes_every_tier_zero_act(self) -> None:
+        # The tier-0 test below checks that certain phrases appear under tier 0.
+        # That cannot catch the failure mode this document exists to prevent:
+        # widening tier 1. This pins the delegable set exactly, so adding a class
+        # to it is a test failure rather than a silent policy change.
+        classes = self.section("Decision classes")
+        tier_one = classes.split("### Tier 1", 1)[1].split("### Tier 0", 1)[0]
+        bullets = [
+            " ".join(line.lstrip("- ").split())
+            for line in tier_one.splitlines()
+            if line.startswith("- ")
+        ]
+        self.assertEqual(
+            bullets,
+            [
+                "Executing an eligible merge of a pull request into a non-protected branch.",
+                "Marking a pull request ready for review.",
+                "Posting to the project's own designated Slack channel.",
+            ],
+        )
+        # Scope the remaining checks to the delegable acts themselves. The prose
+        # around them legitimately discusses what may not be delegated.
+        delegable = " ".join(bullets).lower()
+        # No residual or catch-all class may reappear.
+        for weasel in ("routine", "such as", "including", "for example", "other similar"):
+            self.assertNotIn(weasel, delegable)
+        # No tier-0 act may leak into the delegable set.
+        for forbidden in (
+            "deployment",
+            "publication",
+            "deletion",
+            "purchase",
+            "billing",
+            "credential",
+            "secret",
+            # "non-protected branch" is legitimate in bullet one, so match the act.
+            "into a protected branch",
+        ):
+            self.assertNotIn(forbidden, delegable)
+
     def test_evidence_bar_is_conjunctive_and_complete(self) -> None:
         bar = self.section("The evidence bar")
         self.assertIn("every", bar)

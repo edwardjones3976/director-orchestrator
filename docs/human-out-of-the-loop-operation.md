@@ -55,8 +55,11 @@ absent, invalid, expired, or unreadable. There is no path from `SUSPENDED` to
 - Executing an eligible merge of a pull request into a non-protected branch.
 - Marking a pull request ready for review.
 - Posting to the project's own designated Slack channel.
-- Continuing a bounded plan past a routine approval checkpoint that implicates
-  no other class in this document.
+
+Tier 1 is exhaustive and every entry names a specific act. There is no
+residual or catch-all delegable class, and none may be added by describing a
+decision as routine: a category whose membership is a judgement call is not a
+closed enumeration, and it would silently reopen the fail-closed rule below.
 
 ### Tier 0 - never delegable, under any configuration
 
