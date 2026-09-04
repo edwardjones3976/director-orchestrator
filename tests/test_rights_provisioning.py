@@ -232,6 +232,29 @@ class RightsLedgerTests(unittest.TestCase):
             self.ledger.holds(SubjectKind.PROJECT, "grok", "review_verdict")
         )
 
+    def test_subject_ids_lists_only_kinds_with_a_live_right(self) -> None:
+        # Settings enumerates subjects through this, so a subject whose last
+        # right was revoked must drop out of it entirely rather than surface
+        # with an empty right set.
+        self.assertEqual(self.ledger.subject_ids(SubjectKind.PROVIDER), ())
+        self.ledger.provision(verification(subject_id="antigravity"))
+        self.ledger.provision(verification(subject_id="grok"))
+        self.ledger.provision(
+            verification(
+                kind=SubjectKind.PROJECT,
+                subject_id="uppercut",
+                rights=frozenset({"intake"}),
+            )
+        )
+        self.assertEqual(
+            self.ledger.subject_ids(SubjectKind.PROVIDER), ("antigravity", "grok")
+        )
+        self.assertEqual(self.ledger.subject_ids(SubjectKind.PROJECT), ("uppercut",))
+        self.ledger.revoke_right(
+            SubjectKind.PROVIDER, "antigravity", "review_verdict", revoked_by="owner"
+        )
+        self.assertEqual(self.ledger.subject_ids(SubjectKind.PROVIDER), ("grok",))
+
     def test_a_declaration_with_no_rights_grants_nothing_and_notifies_nobody(
         self,
     ) -> None:
