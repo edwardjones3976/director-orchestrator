@@ -1,3 +1,4 @@
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-04 | 19:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
@@ -205,7 +206,7 @@ independence, safety, and deterministic gates always outrank cost.
   Antigravity against an exact verified build, and any such grant is not
   self-service: it requires the configuration flag, a recorded grant, an
   owner notice raised at the moment of grant, and is revocable at any time — a
-  revocation that no later rebuild undoes. See `docs/rights-provisioning.md`.
+  revocation that no later rebuild undoes. See `docs/entitlement-control-plane.md`.
   Today that mechanism has no runtime consumer: no authorization gate reads a
   granted `review_verdict` right, so no exception to the review restriction
   above is currently live. Any future exception requires a separate,
@@ -772,3 +773,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-04 | 19:20 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:32 UTC | END]] -->

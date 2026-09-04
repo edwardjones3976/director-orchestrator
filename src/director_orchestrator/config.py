@@ -1,3 +1,4 @@
+# [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
@@ -37,13 +38,9 @@ import hmac
 import json
 import math
 import os
-import sqlite3
-import threading
+import re
 import time
 from pathlib import Path
-# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
-import re
-# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 from dataclasses import dataclass, field
 
 
@@ -201,144 +198,6 @@ def _pairwise_isolated(paths: tuple[str, ...]) -> bool:
                 return False
     return True
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
-
-
-#: How long one ledger read may be reused before another read is required.
-#:
-#: This is the entire staleness budget for a rights change. A grant recorded now
-#: is visible to the next lookup after this many seconds, and a revocation stops
-#: being honoured within the same bound, without restarting anything. It is a
-#: constant rather than configuration because it is a safety bound: an operator
-#: raising it would be extending how long a revoked right keeps working, which
-#: is not a knob this module should offer.
-RIGHTS_SNAPSHOT_TTL_SECONDS = 5.0
-
-_RIGHTS_SNAPSHOT_LOCK = threading.Lock()
-#: kind -> (ledger path, active-build configuration, monotonic read time, rights)
-#:
-#: At most one entry per subject kind, replaced rather than accumulated when the
-#: configuration changes, so a long-lived process cannot grow this map.
-_RIGHTS_SNAPSHOTS: dict[str, tuple[str, str, float, dict[str, frozenset[str]]]] = {}
-
-
-def _read_provisioned_rights(
-    kind: str, path: str, active_raw: str
-) -> dict[str, frozenset[str]]:
-    """Read the ledger once. Every failure is no rights.
-
-    Two independent things must agree before a right appears here: a grant
-    recorded in the ledger, and RIGHTS_ACTIVE_BUILD_DIGESTS_JSON naming the
-    build that is live for that subject. The grant's own digest is not consulted
-    as the active one - it records what was built when the right was granted,
-    not what is running now - so a grant against a superseded build reads as no
-    right at all. With no active build configured, nothing is held.
-
-    The ledger is opened read-only. Reading must not create the file, create its
-    directory, or add a table to it: RIGHTS_LEDGER_PATH is operator-supplied,
-    and a typo that pointed it at SQLITE_PATH or a checkpoint database would
-    otherwise silently migrate live product data. A path that is not already a
-    rights ledger is a refusal instead.
-
-    A ledger that is missing, corrupt or unreadable must not be
-    indistinguishable from one that granted something, so absence of evidence is
-    refusal. The caught set is deliberately narrow: ledger availability
-    (sqlite3.Error, OSError) and operator data (RightsProvisioningError). A bad
-    `kind`, a broken import or any other programmer defect still raises, because
-    silently returning {} for those would hide the defect behind a
-    plausible-looking empty result.
-    """
-    from .rights_provisioning import (
-        RightsLedger,
-        RightsProvisioningError,
-        SubjectKind,
-        parse_active_build_digests,
-    )
-
-    subject_kind = SubjectKind(kind)
-    try:
-        active = parse_active_build_digests(active_raw)
-        if not active:
-            return {}
-        ledger = RightsLedger(path, read_only=True)
-        provisioned: dict[str, frozenset[str]] = {}
-        for subject_id in ledger.subject_ids(subject_kind):
-            digest = active.get((subject_kind, subject_id))
-            if digest is None:
-                continue
-            held = ledger.held_rights_for_build(subject_kind, subject_id, digest)
-            if held:
-                # An empty set is omitted rather than stored: a subject bound to
-                # a superseded build is not a subject, and an empty entry would
-                # read as "known subject, holds nothing".
-                provisioned[subject_id] = held
-        return provisioned
-    except (sqlite3.Error, OSError, RightsProvisioningError):
-        return {}
-
-
-def current_provisioned_rights(
-    kind: str, *, now: float | None = None
-) -> dict[str, frozenset[str]]:
-    """Rights the ledger shows now, re-read at a bounded rate.
-
-    A `Settings` object is a snapshot, and `main.py` builds exactly one of them
-    at module scope for the life of the process. Reading that snapshot at a
-    decision point would therefore mean a subject provisioned after boot stays
-    invisible until a restart, and - the direction that actually matters - a
-    revoked right keeps working until every process is restarted. Neither is an
-    acceptable meaning for "automatic" or for "revocable".
-
-    This is the lookup that does not have that property, and the one anything
-    build-bound should use in preference to the snapshot fields. It is still not
-    an authorization API on its own: a privileged boundary must bind the answer
-    to the build it is about to run, via `RightsLedger.held_rights_for_build`.
-
-    The refresh is bounded in both directions. Staleness is bounded by
-    `RIGHTS_SNAPSHOT_TTL_SECONDS`, and by an exact-match check on the
-    configuration the answer was derived from, so changing either environment
-    variable takes effect at the next call rather than after the TTL. Work is
-    bounded by doing the read under the lock: concurrent callers arriving during
-    one read wait for it and share its result instead of each opening the
-    database, so N simultaneous lookups cost one read rather than N. The read is
-    a read-only, `query_only` SQLite open of a small table, which is what makes
-    holding the lock across it the cheaper trade.
-
-    An opted-out deployment - no RIGHTS_LEDGER_PATH, or no active build
-    configured - does no I/O and stores no cache entry at all, so this stays
-    exactly as inert as the snapshot it replaces until an operator opts in.
-
-    `now` exists so a test can advance the clock deterministically rather than
-    sleeping. Elapsed time outside [0, TTL) forces a re-read, so an injected or
-    rewound clock can only ever produce a fresh answer, never a stale one.
-    """
-    path = os.getenv("RIGHTS_LEDGER_PATH", "").strip()
-    active_raw = os.getenv("RIGHTS_ACTIVE_BUILD_DIGESTS_JSON", "").strip()
-    if not path or not active_raw:
-        return {}
-    moment = time.monotonic() if now is None else now
-    with _RIGHTS_SNAPSHOT_LOCK:
-        cached = _RIGHTS_SNAPSHOTS.get(kind)
-        if (
-            cached is not None
-            and cached[0] == path
-            and cached[1] == active_raw
-            and 0.0 <= moment - cached[2] < RIGHTS_SNAPSHOT_TTL_SECONDS
-        ):
-            return dict(cached[3])
-        fresh = _read_provisioned_rights(kind, path, active_raw)
-        _RIGHTS_SNAPSHOTS[kind] = (path, active_raw, moment, fresh)
-        return dict(fresh)
-
-
-def invalidate_provisioned_rights_cache() -> None:
-    """Drop every cached ledger read, so the next lookup re-reads.
-
-    Provisioning and revocation normally happen in another process, where the
-    TTL is the only thing that can bound staleness. An in-process caller that
-    has just changed the ledger can use this to make the change visible at once.
-    """
-    with _RIGHTS_SNAPSHOT_LOCK:
-        _RIGHTS_SNAPSHOTS.clear()
 
 
 @dataclass(frozen=True)
@@ -640,28 +499,31 @@ class Settings:
     project_allowlist: tuple[str, ...] = _csv("PROJECT_ALLOWLIST", "")
     repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
     allowed_starting_refs: tuple[str, ...] = _csv_exact("ALLOWED_STARTING_REFS", "main")
-    #: Rights provisioned automatically against a verified install, keyed by
-    #: subject id. Empty unless RIGHTS_LEDGER_PATH names a readable ledger *and*
-    #: RIGHTS_ACTIVE_BUILD_DIGESTS_JSON names the live build for that subject,
-    #: so a deployment that has not opted in behaves exactly as it did before.
-    #:
-    #: This is a snapshot taken at construction, not a live authorization check:
-    #: an owner revocation after this object was built is not reflected here,
-    #: and in main.py exactly one Settings exists for the life of the process.
-    #: Readiness maps may read it precisely because it is frozen - /health stays
-    #: a pure function of this object and performs no database work.
-    #:
-    #: Nothing consults these maps today and nothing may start doing so at a
-    #: privileged boundary. Such a boundary must ask at the moment of use:
-    #: current_provisioned_rights() for a bounded-freshness answer, or
-    #: RightsLedger.held_rights_for_build to bind the answer to the exact build
-    #: about to run, the way providers.py digest-binds a CLI immediately before
-    #: execution. See docs/rights-provisioning.md.
-    provisioned_provider_rights: dict[str, frozenset[str]] = field(
-        default_factory=lambda: current_provisioned_rights("provider")
+    entitlement_control_plane_enabled: bool = field(
+        default_factory=lambda: _bool("ENTITLEMENT_CONTROL_PLANE_ENABLED", False)
     )
-    provisioned_project_rights: dict[str, frozenset[str]] = field(
-        default_factory=lambda: current_provisioned_rights("project")
+    entitlement_postgres_dsn_file: str = field(
+        default_factory=lambda: os.getenv("ENTITLEMENT_POSTGRES_DSN_FILE", "").strip()
+    )
+    entitlement_postgres_schema: str = field(
+        default_factory=lambda: os.getenv(
+            "ENTITLEMENT_POSTGRES_SCHEMA", "entitlement_control_plane_v1"
+        ).strip()
+    )
+    entitlement_trusted_verifier_secret_file: str = field(
+        default_factory=lambda: os.getenv(
+            "ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE", ""
+        ).strip()
+    )
+    entitlement_owner_authority_secret_file: str = field(
+        default_factory=lambda: os.getenv(
+            "ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE", ""
+        ).strip()
+    )
+    entitlement_allow_insecure_local_postgres: bool = field(
+        default_factory=lambda: _bool(
+            "ENTITLEMENT_ALLOW_INSECURE_LOCAL_POSTGRES", False
+        )
     )
 
     oracle_automerge_enabled: bool = _bool("ORACLE_AUTOMERGE_ENABLED", False)
@@ -2143,3 +2005,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:10 UTC | END]]
