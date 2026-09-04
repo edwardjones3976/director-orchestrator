@@ -1,4 +1,4 @@
-# [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]]
 """Contract tests for the human-out-of-the-loop delegation framework.
@@ -20,13 +20,11 @@ DOCUMENT = ROOT / "docs" / "human-out-of-the-loop-operation.md"
 
 class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
     def setUp(self) -> None:
-        # Normalize line endings: a Windows checkout with core.autocrlf=true stores
-        # these files with CRLF, and every multi-line assertion below would miss.
-        self.text = DOCUMENT.read_text(encoding="utf-8").replace("\r\n", "\n")
-        self.agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8").replace("\r\n", "\n")
-        self.charter = (
-            (ROOT / "docs" / "team-operating-charter.md").read_text(encoding="utf-8")
-        ).replace("\r\n", "\n")
+        # read_text opens in text mode with newline=None, so a CRLF checkout
+        # is already folded to LF before any assertion below sees it.
+        self.text = DOCUMENT.read_text(encoding="utf-8")
+        self.agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.charter = (ROOT / "docs" / "team-operating-charter.md").read_text(encoding="utf-8")
 
     def section(self, heading: str) -> str:
         return self.text.split(f"\n## {heading}", 1)[1].split("\n## ", 1)[0]
@@ -216,4 +214,4 @@ if __name__ == "__main__":
 
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]]
-# [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | END]]
