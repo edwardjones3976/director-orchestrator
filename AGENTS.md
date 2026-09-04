@@ -1,3 +1,4 @@
+<!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Agent Operating Rules
 
@@ -25,13 +26,35 @@ These rules apply to every AI coding agent working in this repository.
   binaries, exact queries, callback payloads, review artifacts, or other
   syntax-sensitive contracts. Attribute those through the enclosing commit,
   pull request, handoff, or Director relay.
-- Tags acknowledge contributions only. They never authenticate identity, grant
-  authority, replace Git provenance, or satisfy approval, exact-SHA review,
-  security, CI, merge, or deployment requirements.
+- Tags acknowledge actual contributions only and never imply inherited
+  authorship. They never authenticate identity, grant authority, replace Git
+  provenance, or satisfy approval, exact-SHA review, security, CI, merge, or
+  deployment requirements.
 - Before handoff, run `PYTHONPATH=src python scripts/check_contribution_tags.py
   --base <base-sha> --head <head-sha>`. See
   `docs/contribution-attribution-policy.md` for the canonical rules.
 11. Communicate concisely and accurately. Reuse fresh verified evidence; repeat a call or test only after state changes, an ambiguous result, or a named coverage gap. Before another paid or tool attempt, identify its expected information gain and stop, reshape, or escalate when that gain is low. Correct inaccuracies before dependent work. Brevity must not omit uncertainty, required evidence, safety gates, or unresolved risks.
+
+## Director and provider authorship
+
+- Work produced or materially authored by a provider stays attributed solely to
+  that provider or those providers. The Director/OpenAI does not inherit
+  authorship through delegation, routing, coordination, QA, review, acceptance,
+  relay, merge eligibility evaluation, or merge execution; those activities
+  create no code authorship.
+- The Director delegates the substantial majority of coding to capable
+  specialist providers. Its own responsibilities are decomposition, routing,
+  workload, budget, and safety enforcement, QA, independent-review
+  orchestration, exact-SHA evidence reconciliation, and eligible merge
+  execution.
+- Reviewing or merging a candidate never makes the Director one of its authors.
+  The Director still may not independently accept or merge code it actually
+  materially authored.
+- Provider output keeps its accurate identity and provenance. Never rewrite a
+  provider's identity into the Director's, and never record a contributor that
+  did not contribute.
+- This is an attribution rule only. It removes no deterministic gate and changes
+  no owner authority.
 
 ## Cursor Cloud specific instructions
 
@@ -56,3 +79,4 @@ Gate 0 was accepted by the owner on 2026-08-16 against the checkpoint recorded i
 
 During dual operation, exactly one engine may own provider dispatch and GitHub/Slack side effects for a task. Models cannot remove deterministic policy gates, approve their own work, or treat checkpoint rollback as reversal of an external action.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
