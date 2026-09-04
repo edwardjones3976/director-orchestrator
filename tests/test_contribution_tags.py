@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -542,6 +543,21 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             )
             self.assertEqual(checker._validate_github_event(event), [])
 
+    def test_pull_request_body_may_discuss_the_marker_token_as_plain_prose(self):
+        checker = self._checker("check_contribution_tags_marker_prose")
+        body = (
+            "**[[Cursor | Agent | 2026-09-04 | 10:12 UTC | BEGIN]]**\n"
+            "The validator rejects CURSOR_SUMMARY HTML markers.\n"
+            "**[[Cursor | Agent | 2026-09-04 | 10:12 UTC | END]]**"
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            event.write_text(
+                json.dumps({"action": "edited", "pull_request": {"body": body}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(checker._validate_github_event(event), [])
+
     def test_contribution_attribution_has_one_dedicated_workflow(self):
         root = Path(__file__).resolve().parents[1]
         workflows = {
@@ -560,12 +576,15 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("concurrency:", workflow)
-        self.assertIn(
-            "github.event.pull_request.head.ref || github.ref_name", workflow
+        concurrency_key = (
+            "github.event.pull_request.head.repo.full_name || github.repository"
         )
+        self.assertIn(concurrency_key, workflow)
+        self.assertIn("github.event.pull_request.head.ref || github.ref_name", workflow)
         self.assertNotIn("name: Contribution attribution", workflows["ci.yml"])
+        self.assertIn(concurrency_key, workflows["ci.yml"])
         self.assertIn(
-            "group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}",
+            "github.event.pull_request.head.ref || github.ref_name",
             workflows["ci.yml"],
         )
 
@@ -1285,3 +1304,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:12 UTC | END]]

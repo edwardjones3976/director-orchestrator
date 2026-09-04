@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | BEGIN]]
@@ -16,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -223,3 +224,4 @@ jobs:
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:12 UTC | END]]

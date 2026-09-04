@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | BEGIN]]
 name: Contribution attribution
 
@@ -14,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: contribution-attribution-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: contribution-attribution-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -37,3 +38,4 @@ jobs:
           --head "$HEAD_SHA"
           --github-event "$GITHUB_EVENT_PATH"
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:12 UTC | END]]

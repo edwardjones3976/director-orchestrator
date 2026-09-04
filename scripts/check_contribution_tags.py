@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
@@ -38,7 +39,9 @@ _SUPPORTED_TRAILER_KEYS = frozenset(
         "signed-off-by",
     }
 )
-_CURSOR_SUMMARY_MARKER = re.compile(r"CURSOR_SUMMARY", re.IGNORECASE)
+_CURSOR_SUMMARY_MARKER = re.compile(
+    r"<!--\s*/?\s*CURSOR_SUMMARY\s*-->", re.IGNORECASE
+)
 
 
 def _strict_tag(line: str):
@@ -420,3 +423,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 10:12 UTC | END]]
