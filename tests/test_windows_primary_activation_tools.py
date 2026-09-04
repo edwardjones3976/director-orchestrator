@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | BEGIN]]
@@ -19,20 +20,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _read(path: Path) -> str:
-    """Read a tracked file with line endings normalized.
-
-    A Windows checkout with core.autocrlf=true stores these files with CRLF.
-    The assertions below compare exact substrings and split on newline-prefixed
-    headings, so an unnormalized read makes a split miss and raise IndexError
-    rather than fail cleanly.
-    """
-    return path.read_text(encoding="utf-8").replace("\r\n", "\n")
-
-
 class WindowsPrimaryActivationToolTests(unittest.TestCase):
     def text(self, name: str) -> str:
-        return _read(ROOT / "scripts" / name)
+        # read_text opens in text mode with newline=None, so a CRLF checkout
+        # is already folded to LF before any assertion below sees it.
+        return (ROOT / "scripts" / name).read_text(encoding="utf-8")
 
     def test_snapshot_creation_is_exact_and_refuses_replacement(self) -> None:
         text = self.text("windows-primary-snapshot.ps1")
@@ -130,8 +122,8 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
 
     def test_postgres_test_lane_mirrors_ci_and_refuses_foreign_containers(self) -> None:
         text = self.text("windows-postgres-test-lane.ps1")
-        compose = _read(ROOT / "docker-compose.yml")
-        workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         for action in ('"Start"', '"Stop"', '"Status"', '"Dsn"', '"Test"'):
             self.assertIn(action, text)
         pattern = re.compile(r"postgres:17-alpine@sha256:[0-9a-f]{64}")
@@ -188,7 +180,7 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("if (-not $laneRemoved) { throw", test_section)
 
     def test_postgres_test_lane_is_documented(self) -> None:
-        readme = _read(ROOT / "README.md")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
         section = readme.split("\n## Local validation", 1)[1].split("\n## LangGraph transition planning", 1)[0]
         self.assertIn("windows-postgres-test-lane.ps1 -Action Start", section)
         self.assertIn("windows-postgres-test-lane.ps1 -Action Stop", section)
@@ -198,14 +190,14 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable", section)
         self.assertLess(section.index("-Action Start"), section.index("unittest discover"))
         self.assertLess(section.index("unittest discover"), section.index("-Action Stop"))
-        operations = _read(ROOT / "docs" / "langgraph-primary-operations.md")
+        operations = (ROOT / "docs" / "langgraph-primary-operations.md").read_text(encoding="utf-8")
         tooling = operations.split("## Windows Docker activation tooling", 1)[1]
         self.assertIn("scripts/windows-postgres-test-lane.ps1", tooling)
         self.assertIn("not the primary database", tooling)
         self.assertIn("activation evidence", tooling)
 
     def test_postgres_test_lane_skill_is_discoverable_and_complete(self) -> None:
-        skill = _read(ROOT / ".agents" / "skills" / "postgres-test-lane" / "SKILL.md")
+        skill = (ROOT / ".agents" / "skills" / "postgres-test-lane" / "SKILL.md").read_text(encoding="utf-8")
         frontmatter, body = skill.split("---", 2)[1:]
         self.assertIn("name: postgres-test-lane", frontmatter)
         description_line = next(line for line in frontmatter.splitlines() if line.startswith("description:"))
@@ -256,12 +248,12 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
             path.name
             for path in (ROOT / "tests").glob("test_*.py")
             if path.name != Path(__file__).name
-            and "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN" in _read(path)
+            and "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN" in path.read_text(encoding="utf-8")
         }
         self.assertEqual(set(re.findall(r"`tests/(test_[a-z_]+\.py)`", body)), postgres_suites)
 
     def test_agents_rules_route_every_agent_to_the_postgres_test_lane(self) -> None:
-        agents = _read(ROOT / "AGENTS.md")
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         heading = "\n## Postgres-backed unit tests"
         cloud_heading = "\n## Cursor Cloud specific instructions"
         self.assertLess(agents.index(heading), agents.index(cloud_heading))
@@ -289,7 +281,7 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertIn("report the gap", cloud)
 
     def test_claude_code_sessions_import_the_agent_operating_rules(self) -> None:
-        claude = _read(ROOT / "CLAUDE.md")
+        claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         visible = [line.strip() for line in claude.splitlines() if line.strip() and "[[" not in line]
         self.assertEqual(visible, ["@AGENTS.md"])
 
@@ -309,3 +301,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:50 UTC | END]]
