@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:40 UTC | BEGIN]]
@@ -1454,26 +1455,71 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             )
         )
 
-    def test_inner_contribution_tags_rejected_without_summary_delimiters(self):
-        checker = self._checker("check_contribution_tags_inner_guard")
-        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
-        bold_end = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]**"
-        forged_end = "**[[Forged | Tag | 2026-01-01 | 00:00 UTC | END]]**"
-        inner_tag_body = f"{bold_begin}\nbody\n{forged_end}\n{bold_end}"
+    def test_retained_inner_contribution_pair_is_accepted_for_markdown_envelopes(self):
+        checker = self._checker("check_contribution_tags_retained_inner_pair")
+        outer_begin = "**[[Claude | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]**"
+        outer_end = "**[[Claude | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]**"
+        inner_begin = "**[[Cursor | Composer 2.5 | 2026-09-04 | 18:42 UTC | BEGIN]]**"
+        inner_end = "**[[Cursor | Composer 2.5 | 2026-09-04 | 18:42 UTC | END]]**"
+        revised_body = "\n".join(
+            [
+                outer_begin,
+                "",
+                inner_begin,
+                "",
+                "## Summary",
+                "",
+                "retained prior submission text",
+                "",
+                inner_end,
+                "",
+                "Fallback correction notes.",
+                "",
+                outer_end,
+            ]
+        )
 
+        # Revising a tagged body requires retaining the earlier pair and adding
+        # a fresh outer pair, so the balanced retained inner pair is legitimate.
         self.assertEqual(
             checker._validate_submission_envelope(
-                inner_tag_body,
+                revised_body,
                 require_outer=True,
                 require_markdown_boundary=True,
             ),
-            ["submission envelope contains inner contribution tags"],
+            [],
         )
-        # Mutation guard: fail-closed summary handling must not replace the
-        # inner-tag guard for bodies that carry no summary delimiters.
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            event.write_text(
+                json.dumps({"pull_request": {"body": revised_body}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(checker._validate_github_event(event), [])
+
+        summary = (
+            "\n\n<!-- CURSOR_SUMMARY -->\n"
+            "Generated summary with untrusted prose.\n"
+            "<!-- /CURSOR_SUMMARY -->"
+        )
         self.assertEqual(
-            checker._prepare_markdown_envelope_text(inner_tag_body),
-            (inner_tag_body, []),
+            checker._validate_submission_envelope(
+                revised_body + summary,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+
+        # Retaining inner pairs does not weaken the outer boundary: an inner
+        # END that displaces the outer END is still rejected.
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                "\n".join([outer_begin, "", inner_begin, "", "body", "", inner_end]),
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            ["submission outer BEGIN and END contribution tags do not match"],
         )
 
 
@@ -1503,3 +1549,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:40 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]

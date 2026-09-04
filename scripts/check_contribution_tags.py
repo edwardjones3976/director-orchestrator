@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:38 UTC | BEGIN]]
@@ -376,10 +377,6 @@ def _validate_submission_envelope(
             visible_lines[0] not in candidate_lines or visible_lines[-1] not in candidate_lines
         ):
             return ["pull-request body must begin and end with bold contribution tags"]
-        if require_markdown_boundary and len(visible_lines) > 2:
-            for line in visible_lines[1:-1]:
-                if strict_tag(line) is not None:
-                    return ["submission envelope contains inner contribution tags"]
     return []
 
 
@@ -486,3 +483,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:38 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]
