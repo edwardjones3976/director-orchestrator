@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | BEGIN]]
@@ -690,6 +691,60 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                 )
 
 
+class DirectorAuthorshipBoundaryTests(unittest.TestCase):
+    """Director coordination never becomes material authorship of the work."""
+
+    @staticmethod
+    def _assignment(
+        sequence: int,
+        agent: ProviderName,
+        depends_on: tuple[int, ...] = (),
+    ) -> Assignment:
+        return Assignment(
+            sequence=sequence,
+            agent=agent,
+            task=f"Bounded assignment {sequence} within its recorded scope",
+            acceptance=["Recorded evidence is complete"],
+            depends_on=list(depends_on),
+        )
+
+    def test_director_and_owner_dependencies_are_not_material_authors(self) -> None:
+        """Delegation and coordination create no authorship the Director inherits.
+
+        The owner work order and the Director's routing are upstream of every
+        candidate. Counting them as material authors would attribute provider
+        code to the control plane and shrink the independent reviewer pool for
+        no evidentiary reason.
+        """
+
+        owner = self._assignment(1, ProviderName.OWNER)
+        director = self._assignment(2, ProviderName.OPENAI, depends_on=(1,))
+        producer = self._assignment(3, ProviderName.CLAUDE, depends_on=(2,))
+        reviewer = self._assignment(4, ProviderName.CURSOR, depends_on=(3,))
+        by_sequence = {
+            item.sequence: item for item in (owner, director, producer, reviewer)
+        }
+
+        authors = OrchestrationEngine._trusted_material_authors(reviewer, by_sequence)
+
+        self.assertEqual(authors, frozenset({Provider.CLAUDE}))
+        self.assertNotIn(Provider.OPENAI, authors)
+
+    def test_every_producing_provider_in_the_chain_stays_a_material_author(self) -> None:
+        """Excluding the control plane must not drop a real upstream producer."""
+
+        scaffold = self._assignment(1, ProviderName.GEMINI)
+        integration = self._assignment(2, ProviderName.CLAUDE, depends_on=(1,))
+        reviewer = self._assignment(3, ProviderName.GROK, depends_on=(2,))
+        by_sequence = {
+            item.sequence: item for item in (scaffold, integration, reviewer)
+        }
+
+        authors = OrchestrationEngine._trusted_material_authors(reviewer, by_sequence)
+
+        self.assertEqual(authors, frozenset({Provider.GEMINI, Provider.CLAUDE}))
+
+
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:39 UTC | END]]
@@ -698,3 +753,4 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:16 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]

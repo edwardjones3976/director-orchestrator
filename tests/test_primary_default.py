@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -915,6 +916,23 @@ class DefaultPrimaryPinnedAuthorityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "remote does not match"):
             resolve_default_primary_authority(
                 self.settings(repository_allowlist=("other/pinned",))
+            )
+
+        self.git(
+            "remote",
+            "set-url",
+            "origin",
+            "https://example.invalid/github.com/owner/pinned.git",
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "remote does not match"):
+                resolve_default_primary_authority(self.settings())
+        finally:
+            self.git(
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/owner/pinned.git",
             )
 
         (self.root / "untracked.txt").write_text("dirty\n", encoding="utf-8")
@@ -2374,3 +2392,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
