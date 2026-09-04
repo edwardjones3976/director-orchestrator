@@ -1,3 +1,6 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
@@ -39,6 +42,12 @@ an eligible merge, perform an approved deployment, or adjust repository access.
 That authority is limited to the exact action, repository, access level, and
 assignment named by the owner and never substitutes for applicable deterministic
 approval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.
+`docs/human-out-of-the-loop-operation.md` defines the bounded, revocable, and
+default-off form that authorization takes when the owner is not present to give
+it decision by decision. It enumerates which classes may be delegated, which are
+never delegable, and the conjunctive evidence bar a delegated decision must clear.
+It supplies a verdict where the owner would have given one; it never removes a
+gate named above.
 
 The Director's standing repository oversight is read-only: it may inspect the
 named repository, refs, worktrees, diffs, artifacts, checks, reviews, security
@@ -577,6 +586,20 @@ Codex Security and trusted CI for the unchanged exact SHA; deterministic code
 alone may execute an eligible merge. Any new commit invalidates all prior
 review, security, CI, and merge evidence and requires a new handoff.
 
+Where the owner has delegated merge under
+`docs/human-out-of-the-loop-operation.md`, the handoff is unchanged: delegation
+supplies the reviewer identity and a second concurring verdict from a different
+provider, and requires the producer, reviewer, and acting agent to be three
+distinct identities. It does not alter what a review must contain, when evidence
+is invalidated, or which gates apply.
+
+The reviewer named above is a provider, not the owner, so a named provider's
+exact-SHA `ACCEPT` is how the independent review gate is satisfied in its
+ordinary form. It is not an authorization substituting for that gate, and the
+sentence forbidding such substitution is unaffected. A delegated merge requires
+two concurring verdicts from distinct providers where an attended merge requires
+one, so it clears a strictly higher review bar, never a lower one.
+
 ## GitHub Copilot Lite hygiene review
 
 GitHub Copilot Lite is an optional supplemental hygiene reviewer with no
@@ -726,3 +749,6 @@ establish participation, completion, readiness, or authorization.
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
