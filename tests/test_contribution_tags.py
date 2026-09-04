@@ -560,7 +560,14 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("concurrency:", workflow)
+        self.assertIn(
+            "github.event.pull_request.head.ref || github.ref_name", workflow
+        )
         self.assertNotIn("name: Contribution attribution", workflows["ci.yml"])
+        self.assertIn(
+            "group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}",
+            workflows["ci.yml"],
+        )
 
     def test_submission_envelope_rejects_visible_content_outside_boundaries(self):
         root = Path(__file__).resolve().parents[1]
