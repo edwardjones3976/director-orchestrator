@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
@@ -57,6 +58,12 @@ from .store import TaskStore
 
 
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+_GITHUB_REMOTE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:)"
+    r"(?P<repository>[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]+?)"
+    r"(?:\.git)?/?$",
+    re.IGNORECASE,
+)
 _MAX_CANONICAL_HANDOFF_BYTES = 256 * 1024
 _SIDE_EFFECT_STATUSES = {"NOT_ATTEMPTED", "ATTEMPTED", "COMPLETED", "FAILED"}
 _SIDE_EFFECT_KEYS = {
@@ -85,6 +92,15 @@ _TERMINAL_FAILURE = {
     "ERROR", "CANCELLED", "EXPIRED", "failed", "cancelled", "incomplete",
     "requires_action", "budget_exceeded",
 }
+
+
+def canonical_github_remote_repository(remote: str) -> str | None:
+    """Return owner/repository only for an exact supported GitHub remote URL."""
+
+    match = _GITHUB_REMOTE.fullmatch(remote.strip())
+    if match is None:
+        return None
+    return match.group("repository").lower()
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,13 +410,8 @@ class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
         return completed.stdout
 
     @staticmethod
-    def _normalize_remote(remote: str) -> str:
-        value = remote.strip().removesuffix(".git")
-        if value.startswith("git@github.com:"):
-            value = value.removeprefix("git@github.com:")
-        elif "github.com/" in value:
-            value = value.split("github.com/", 1)[1]
-        return value.strip("/").lower()
+    def _normalize_remote(remote: str) -> str | None:
+        return canonical_github_remote_repository(remote)
 
     def resolve(self, record: Any, assignment: Assignment) -> list[dict[str, str]]:
         if (assignment.repository or "").lower().removesuffix(".git") != self.repository:
@@ -1196,3 +1207,4 @@ def build_primary_packet_adapters(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]

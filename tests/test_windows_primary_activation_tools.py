@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
@@ -6,6 +7,9 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:10 UTC | BEGIN]]
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -21,11 +25,176 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         text = self.text("windows-primary-snapshot.ps1")
         self.assertIn("Snapshot target already exists", text)
         self.assertIn("--no-hardlinks", text)
+        self.assertIn("SourceRemoteName", text)
+        self.assertIn("remote get-url $SourceRemoteName", text)
+        self.assertIn(
+            "git ls-remote --exit-code --refs -- $sourceRemoteUrl $remoteRef",
+            text,
+        )
+        self.assertIn(
+            "--single-branch -- $sourceRemoteUrl $targetPath",
+            text,
+        )
+        self.assertNotIn("--single-branch -- $sourcePath $targetPath", text)
+        self.assertNotIn("origin.cursor.com", text)
         self.assertIn("ExpectedCommit", text)
         self.assertIn("ExpectedTree", text)
         self.assertNotIn("reset --hard", text)
         self.assertNotIn("git clean", text)
         self.assertNotIn("Remove-Item", text)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_creation_binds_content_to_the_selected_remote(self) -> None:
+        commit = "a" * 40
+        tree = "b" * 40
+        github_url = "https://github.com/example/demo.git"
+        cursor_url = "https://origin.cursor.com/example/demo.git"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            target = root / "snapshot"
+            rejected_target = root / "rejected"
+            mismatched_target = root / "mismatched"
+            missing_target = root / "missing"
+            wrong_repository_target = root / "wrong-repository"
+            harness = r'''
+$ErrorActionPreference = "Stop"
+$global:gitCalls = [System.Collections.Generic.List[string]]::new()
+function global:git {
+    $arguments = @($args)
+    $global:gitCalls.Add(($arguments -join [char]31))
+    $global:LASTEXITCODE = 0
+    if ($arguments -contains "get-url") {
+        if ($arguments[-1] -eq "github") { Write-Output "__GITHUB_URL__"; return }
+        if ($arguments[-1] -eq "origin") {
+            if ([IO.Path]::GetFullPath($arguments[1]) -eq [IO.Path]::GetFullPath("__SOURCE__")) {
+                Write-Output "__CURSOR_URL__"
+            } else {
+                Write-Output "__GITHUB_URL__"
+            }
+            return
+        }
+        if ($arguments[-1] -eq "missing") { $global:LASTEXITCODE = 2; return }
+    }
+    if ($arguments[0] -eq "ls-remote") {
+        Write-Output "__COMMIT__`trefs/heads/main"
+        return
+    }
+    if ($arguments[0] -eq "clone") {
+        New-Item -ItemType Directory -Path (Join-Path $arguments[-1] ".git") -Force | Out-Null
+        return
+    }
+    if ($arguments -contains "set-url" -or $arguments -contains "status") { return }
+    if ($arguments -contains "rev-parse") {
+        if ($arguments[-1] -eq 'HEAD^{tree}') { Write-Output "__TREE__" } else { Write-Output "__COMMIT__" }
+        return
+    }
+    throw "Unexpected fake git invocation: $($arguments -join ' ')"
+}
+
+& "__SCRIPT__" -Action Create -Source "__SOURCE__" -SourceRemoteName github `
+    -Target "__TARGET__" -ExpectedRepository example/demo -StartingRef main `
+    -ExpectedCommit "__COMMIT__" -ExpectedTree "__TREE__"
+$rejected = $false
+try {
+    & "__SCRIPT__" -Action Create -Source "__SOURCE__" -Target "__REJECTED__" `
+        -ExpectedRepository example/demo -StartingRef main `
+        -ExpectedCommit "__COMMIT__" -ExpectedTree "__TREE__"
+} catch {
+    if ($_.Exception.Message -notmatch "does not match the repository allowlist") { throw }
+    $rejected = $true
+}
+if (-not $rejected) { throw "Cursor origin was not rejected." }
+if (Test-Path -LiteralPath "__REJECTED__") { throw "Rejected origin created a target." }
+$mismatched = $false
+try {
+    & "__SCRIPT__" -Action Create -Source "__SOURCE__" -SourceRemoteName github `
+        -Target "__MISMATCHED__" -ExpectedRepository example/demo -StartingRef main `
+        -ExpectedCommit "cccccccccccccccccccccccccccccccccccccccc" -ExpectedTree "__TREE__"
+} catch {
+    if ($_.Exception.Message -notmatch "does not match the frozen authority") { throw }
+    $mismatched = $true
+}
+if (-not $mismatched) { throw "A mismatched remote head was not rejected." }
+if (Test-Path -LiteralPath "__MISMATCHED__") { throw "A mismatched remote head created a target." }
+$missing = $false
+try {
+    & "__SCRIPT__" -Action Create -Source "__SOURCE__" -SourceRemoteName missing `
+        -Target "__MISSING__" -ExpectedRepository example/demo -StartingRef main `
+        -ExpectedCommit "__COMMIT__" -ExpectedTree "__TREE__"
+} catch {
+    if ($_.Exception.Message -notmatch "no verifiable selected remote") { throw }
+    $missing = $true
+}
+if (-not $missing) { throw "A missing selected remote was not rejected." }
+if (Test-Path -LiteralPath "__MISSING__") { throw "A missing remote created a target." }
+$wrongRepository = $false
+try {
+    & "__SCRIPT__" -Action Create -Source "__SOURCE__" -SourceRemoteName github `
+        -Target "__WRONG_REPOSITORY__" -ExpectedRepository example/other -StartingRef main `
+        -ExpectedCommit "__COMMIT__" -ExpectedTree "__TREE__"
+} catch {
+    if ($_.Exception.Message -notmatch "does not match the repository allowlist") { throw }
+    $wrongRepository = $true
+}
+if (-not $wrongRepository) { throw "A wrong repository was not rejected." }
+if (Test-Path -LiteralPath "__WRONG_REPOSITORY__") { throw "A wrong repository created a target." }
+$global:gitCalls | ForEach-Object { Write-Output $_ }
+'''
+            replacements = {
+                "__SCRIPT__": str(ROOT / "scripts" / "windows-primary-snapshot.ps1"),
+                "__SOURCE__": str(source),
+                "__TARGET__": str(target),
+                "__REJECTED__": str(rejected_target),
+                "__MISMATCHED__": str(mismatched_target),
+                "__MISSING__": str(missing_target),
+                "__WRONG_REPOSITORY__": str(wrong_repository_target),
+                "__GITHUB_URL__": github_url,
+                "__CURSOR_URL__": cursor_url,
+                "__COMMIT__": commit,
+                "__TREE__": tree,
+            }
+            for marker, value in replacements.items():
+                harness = harness.replace(marker, value.replace('"', '`"'))
+
+            completed = subprocess.run(
+                ("pwsh", "-NoProfile", "-NonInteractive", "-Command", harness),
+                shell=False,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertTrue((target / ".git").is_dir())
+            self.assertFalse(rejected_target.exists())
+            self.assertFalse(mismatched_target.exists())
+            self.assertFalse(missing_target.exists())
+            self.assertFalse(wrong_repository_target.exists())
+            calls = [
+                line.split(chr(31))
+                for line in completed.stdout.splitlines()
+                if chr(31) in line
+            ]
+            self.assertIn(
+                ["-C", str(source), "remote", "get-url", "github"],
+                calls,
+            )
+            self.assertIn(
+                [
+                    "ls-remote",
+                    "--exit-code",
+                    "--refs",
+                    github_url,
+                    "refs/heads/main",
+                ],
+                calls,
+            )
+            clone = next(arguments for arguments in calls if arguments[0] == "clone")
+            self.assertIn(github_url, clone)
+            self.assertNotIn(str(source), clone)
 
     def test_control_tool_has_separate_migration_backup_restore_and_fenced_rollback(self) -> None:
         text = self.text("windows-langgraph-primary-control.ps1")
@@ -122,3 +291,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]

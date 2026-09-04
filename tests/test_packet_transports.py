@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
@@ -196,6 +197,26 @@ def record_for(assignment: Assignment) -> TaskRecord:
 
 
 class LocalGitAuthoritySnapshotTests(unittest.TestCase):
+    def test_remote_normalization_requires_an_exact_github_host(self) -> None:
+        normalize = LocalGitAuthoritySnapshotResolver._normalize_remote
+
+        self.assertEqual(
+            "example/demo",
+            normalize("https://github.com/Example/Demo.git"),
+        )
+        self.assertEqual(
+            "example/demo",
+            normalize("git@github.com:Example/Demo.git"),
+        )
+        for untrusted in (
+            "https://example.invalid/github.com/example/demo.git",
+            "https://github.com.example.invalid/example/demo.git",
+            "ssh://git@github.com/example/demo.git",
+            "https://origin.cursor.com/example/demo.git",
+        ):
+            with self.subTest(remote=untrusted):
+                self.assertIsNone(normalize(untrusted))
+
     def test_snapshot_binds_the_requested_origin_ref_and_exact_tree(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             resolver = ScriptedSnapshotResolver(root)
@@ -1296,3 +1317,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
