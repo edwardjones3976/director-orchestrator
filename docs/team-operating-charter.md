@@ -1,7 +1,11 @@
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:32 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-04 | 19:20 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
@@ -198,6 +202,20 @@ independence, safety, and deterministic gates always outrank cost.
   review, final acceptance, deterministic merge, or define research-contract
   or methodology truth, and every work assignment must feed a later Claude,
   Cursor, or Grok assignment that independently verifies and integrates or rejects it.
+  A rights-ledger mechanism exists to record a `review_verdict` grant to
+  Antigravity against an exact verified build, and any such grant is not
+  self-service: it requires the configuration flag, a recorded grant, an
+  owner notice raised at the moment of grant, and is revocable at any time — a
+  revocation that no later rebuild undoes. See `docs/entitlement-control-plane.md`.
+  Today that mechanism has no runtime consumer: no authorization gate reads a
+  granted `review_verdict` right, so no exception to the review restriction
+  above is currently live. Any future exception requires a separate,
+  owner-gated implementation — including live build-bound rights checking and
+  whatever admission or wire changes that requires — not merely a ledger
+  entry. Final acceptance, exact-SHA review, and deterministic merge remain
+  outside what any ledger entry can widen, and a provisioned verdict does not
+  enlarge the work kinds above: `CAPABILITY_BY_KIND` still admits only the
+  four subordinate kinds.
   Antigravity may hold a debate seat, but only one the Director gave it: it
   cannot initiate, self-route, widen, or autonomously continue a conversation,
   and a seat grants it no review, acceptance, merge, deployment, publication,
@@ -748,7 +766,11 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-04 | 19:20 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:32 UTC | END]] -->

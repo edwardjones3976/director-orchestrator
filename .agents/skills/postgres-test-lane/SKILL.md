@@ -5,6 +5,7 @@ when_to_use: "Any request like: run the tests, run the full unit suite, run the 
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
 
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | BEGIN]] -->
 
 # postgres-test-lane - disposable PostgreSQL 17 for the local unit tests
@@ -21,6 +22,7 @@ This is local host tooling, not a shared provider workflow skill: the Director n
 
 These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than skip when it is absent:
 
+- `tests/test_entitlement_control_plane.py`
 - `tests/test_langgraph_postgres.py`
 - `tests/test_primary_authenticated_ingress_postgres.py`
 - `tests/test_primary_backup_restore.py`
@@ -64,3 +66,4 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 5. **The lane is disposable and loopback-only.** Never load real data into it and never reuse it as the primary database.
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:51 UTC | END]] -->

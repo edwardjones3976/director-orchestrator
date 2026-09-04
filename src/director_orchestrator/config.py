@@ -1,3 +1,9 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:05 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -33,10 +39,9 @@ import hmac
 import json
 import math
 import os
-from pathlib import Path
-# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
 import re
-# [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
+import time
+from pathlib import Path
 from dataclasses import dataclass, field
 
 
@@ -495,6 +500,37 @@ class Settings:
     project_allowlist: tuple[str, ...] = _csv("PROJECT_ALLOWLIST", "")
     repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
     allowed_starting_refs: tuple[str, ...] = _csv_exact("ALLOWED_STARTING_REFS", "main")
+    entitlement_control_plane_enabled: bool = field(
+        default_factory=lambda: _bool("ENTITLEMENT_CONTROL_PLANE_ENABLED", False)
+    )
+    entitlement_postgres_dsn_file: str = field(
+        default_factory=lambda: os.getenv("ENTITLEMENT_POSTGRES_DSN_FILE", "").strip()
+    )
+    entitlement_postgres_schema: str = field(
+        default_factory=lambda: os.getenv(
+            "ENTITLEMENT_POSTGRES_SCHEMA", "entitlement_control_plane_v1"
+        ).strip()
+    )
+    entitlement_trusted_verifier_secret_file: str = field(
+        default_factory=lambda: os.getenv(
+            "ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE", ""
+        ).strip()
+    )
+    entitlement_route_verifier_secret_file: str = field(
+        default_factory=lambda: os.getenv(
+            "ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", ""
+        ).strip()
+    )
+    entitlement_owner_authority_secret_file: str = field(
+        default_factory=lambda: os.getenv(
+            "ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE", ""
+        ).strip()
+    )
+    entitlement_allow_insecure_local_postgres: bool = field(
+        default_factory=lambda: _bool(
+            "ENTITLEMENT_ALLOW_INSECURE_LOCAL_POSTGRES", False
+        )
+    )
 
     oracle_automerge_enabled: bool = _bool("ORACLE_AUTOMERGE_ENABLED", False)
     oracle_automerge_kill_switch: bool = _bool("ORACLE_AUTOMERGE_KILL_SWITCH", True)
@@ -1971,3 +2007,9 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:58 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:05 UTC | END]]
