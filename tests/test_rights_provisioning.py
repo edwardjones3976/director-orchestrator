@@ -1,3 +1,4 @@
+# [[OpenAI | GPT-5.6 | 2026-09-04 | 11:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | BEGIN]]
@@ -568,7 +569,8 @@ class SettingsIntegrationTests(unittest.TestCase):
     def test_antigravity_still_fails_closed_on_the_flag_alone(self) -> None:
         # The invariant that must survive this feature: requesting verdict
         # authority without a provisioned grant is still refused.
-        base = replace(Settings(), gemini_api_key="test-gemini")
+        with hermetic_env():
+            base = replace(Settings(), gemini_api_key="test-gemini")
         self.assertTrue(base.readiness()["gemini"])
         self.assertFalse(
             replace(base, gemini_allow_review_verdict=True).readiness()["gemini"]
@@ -610,3 +612,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 10:56 UTC | END]]
+# [[OpenAI | GPT-5.6 | 2026-09-04 | 11:03 UTC | END]]
