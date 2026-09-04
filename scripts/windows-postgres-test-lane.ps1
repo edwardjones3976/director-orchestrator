@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]]
 [CmdletBinding()]
@@ -166,6 +167,7 @@ foreach ($name in @("PYTHONPATH", "SQLITE_PATH", $dsnVariable, $containerVariabl
 }
 Push-Location -LiteralPath $repoRoot
 $testExit = 1
+$laneRemoved = $false
 try {
     # Start inside the try so a refused, unreachable, or timed-out lane still
     # restores the caller's working directory and environment on the way out.
@@ -179,14 +181,20 @@ try {
     $testExit = $LASTEXITCODE
 }
 finally {
-    # A cleanup failure must not mask the error that ended the run.
-    try { Stop-Lane } catch { Write-Warning $_.Exception.Message }
+    # A cleanup failure must not mask the error that ended the run, and it must
+    # not be reported as a removal either: a surviving container keeps the
+    # published port, and the next -Action Start refuses a lane it does not own.
+    try { Stop-Lane; $laneRemoved = $true } catch { Write-Warning $_.Exception.Message }
     foreach ($entry in $originalProcessEnvironment.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
     }
     Pop-Location
 }
-if ($testExit -ne 0) { throw "Unit tests failed with exit code $testExit; the disposable PostgreSQL lane was removed." }
+if ($laneRemoved) { $laneOutcome = "the disposable PostgreSQL lane was removed" }
+else { $laneOutcome = "the disposable PostgreSQL lane could not be removed and may still be running; rerun -Action Stop" }
+if ($testExit -ne 0) { throw "Unit tests failed with exit code $testExit; $laneOutcome." }
+if (-not $laneRemoved) { throw "Unit tests passed but $laneOutcome." }
 Write-Host "Unit tests passed against the disposable PostgreSQL lane; the container was removed."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | END]]

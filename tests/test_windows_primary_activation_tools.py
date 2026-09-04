@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]]
@@ -165,6 +166,14 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertLess(try_index, start_index)
         self.assertLess(start_index, unittest_index)
         self.assertLess(test_section.index("Stop-Lane", unittest_index), test_section.index("Pop-Location", unittest_index))
+        # Stop-Lane can throw (a foreign container took the name, or docker rm
+        # failed). That is warned rather than raised so it cannot mask the test
+        # result, so the run must not then claim the lane was removed: it names
+        # the surviving lane and exits non-zero.
+        self.assertIn("$laneRemoved = $false", test_section)
+        self.assertIn("try { Stop-Lane; $laneRemoved = $true } catch", test_section)
+        self.assertIn("may still be running; rerun -Action Stop", test_section)
+        self.assertIn("if (-not $laneRemoved) { throw", test_section)
 
     def test_postgres_test_lane_is_documented(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -286,3 +295,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | END]]
