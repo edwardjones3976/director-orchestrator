@@ -162,6 +162,51 @@ Windows binary at all:
 Preflight resolves each command with `Get-Command` and throws if any is
 unavailable, so a wrong path fails loudly rather than at dispatch time.
 
+### Lane authentication, and a gap preflight does not cover
+
+`host_provider_bridge.py:52-57` defines which auth variables the bridge forwards
+to each lane. Nothing outside this allowlist reaches the provider process:
+
+| Lane | Variables forwarded |
+| --- | --- |
+| `claude` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` |
+| `grok` | `XAI_API_KEY` |
+| `antigravity` | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| `github-copilot` | `GH_TOKEN`, `GITHUB_TOKEN` |
+
+`_SAFE_OS_ENV` additionally forwards `USERPROFILE`, `APPDATA` and
+`LOCALAPPDATA`, so a CLI that keeps its own credential store can still find it.
+
+**Preflight does not check any of this.** It resolves the executable with
+`Get-Command` and reports success. A lane whose CLI is installed but signed out
+therefore passes preflight cleanly and fails later, at dispatch, when it is far
+more expensive to diagnose. Verify each lane can actually authenticate before
+standing the bridge up.
+
+### The `claude` lane is unauthenticated on this host today
+
+Measured 2026-09-04. `C:\Users\edwar\.claude\.credentials.json` holds a
+`claudeAiOauth` record whose `accessToken` and `refreshToken` are both
+zero-length and whose `expiresAt` is `0`, while the surrounding metadata
+(`scopes`, `subscriptionType`, `refreshTokenExpiresAt` of 2026-09-15) is intact.
+`cmdkey /list` shows no Claude or Anthropic entry, so nothing is held in Windows
+Credential Manager either, and neither `ANTHROPIC_API_KEY` nor
+`CLAUDE_CODE_OAUTH_TOKEN` is set. `claude.exe` itself is present and on PATH.
+
+So the lane has no authentication path by either route. Fix before staging, by
+one of:
+
+- Sign the CLI back in from an interactive terminal (`claude`, then `/login`).
+  The refresh-token expiry is still in the future, so this is an ordinary
+  sign-in.
+- Set `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in the environment the
+  bridge process runs under, which satisfies the table above without touching
+  the CLI's own credential store.
+
+The same file shows all 14 `mcpOAuth` entries with empty tokens. Those are a
+separate concern, are not fixed by the sign-in above, and are not required for
+staging.
+
 `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET` must be at least 32 characters
 (`config.py:1470`) and **pairwise distinct** from every other primary ingress
 secret (`config.py:1475-1487`) — the shared secret, Slack gateway secret,
@@ -179,7 +224,9 @@ refuses to start on a collision.
    stay `false`.
 3. `docker compose up -d orchestrator`.
 4. `scripts/windows-host-provider-bridge.ps1 -Action Preflight` — validates and
-   reports "no provider was invoked".
+   reports "no provider was invoked". Remember this proves only that each
+   configured executable resolves; it does not prove any lane can authenticate.
+   Confirm lane authentication separately, per Section 3.
 
 ## Verification
 
