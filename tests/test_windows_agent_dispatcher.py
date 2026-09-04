@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:55 UTC | BEGIN]]
 from __future__ import annotations
@@ -115,7 +116,9 @@ class WindowsAgentDispatcherExecutionTests(
             json.loads(self.capture.read_text(encoding="utf-8")),
             ["--literal", "two words", "snowman ☃", injection],
         )
-        self.assertNotIn("SHOULD_NOT_RUN\r\n", result.stdout)
+        # subprocess.run(text=True) is universal-newlines, so a literal carrying
+        # CRLF could never appear here and the guard passed unconditionally.
+        self.assertNotIn("SHOULD_NOT_RUN", result.stdout)
 
     def test_grok_dispatches_to_grok(self) -> None:
         result = self._run("--provider", "grok", "bounded")
@@ -194,3 +197,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | END]]

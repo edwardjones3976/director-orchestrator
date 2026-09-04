@@ -1,3 +1,11 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:40 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:35 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | BEGIN]]
+# [[Claude | Claude Opus 5 | 2026-09-04 | 12:37 UTC | BEGIN]]
+# [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
@@ -444,6 +452,111 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         self.assertIn("GitHub Copilot Lite", prompt)
         self.assertIn("canonical matching UTC contribution", prompt)
         self.assertIn("never authenticate provider", charter.lower())
+
+    def test_director_provider_authorship_boundary_is_synchronized(self):
+        """Every durable rule surface must carry the same authorship boundary.
+
+        The boundary lives only in prose, so a surface that quietly drops it
+        would let delegation, routing, review, or merge activity be reported as
+        Director authorship again. Compare whitespace-normalized text so a
+        reflowed paragraph does not defeat the check.
+        """
+
+        root = Path(__file__).resolve().parents[1]
+        surfaces = {
+            "agents": root / "AGENTS.md",
+            "prompt": root / "prompts" / "director-system.md",
+            "charter": root / "docs" / "team-operating-charter.md",
+            "policy": root / "docs" / "contribution-attribution-policy.md",
+            "rule": root / ".cursor" / "rules" / "contribution-attribution.mdc",
+        }
+        normalized = {
+            name: " ".join(path.read_text(encoding="utf-8").split())
+            for name, path in surfaces.items()
+        }
+
+        for name, text in normalized.items():
+            self.assertIn(
+                "does not inherit authorship through delegation, routing, "
+                "coordination, QA, review, acceptance, relay, merge eligibility "
+                "evaluation, or merge execution",
+                text,
+                name,
+            )
+            self.assertIn("create no code authorship", text, name)
+            self.assertIn("acknowledge actual contributions only", text, name)
+
+        for name in ("agents", "prompt", "charter", "policy"):
+            self.assertIn(
+                "may not independently accept or merge code it actually "
+                "materially authored",
+                normalized[name],
+                name,
+            )
+
+        for name in ("agents", "prompt", "charter"):
+            self.assertIn("substantial majority of coding", normalized[name], name)
+            self.assertIn("removes no deterministic gate", normalized[name], name)
+
+        self.assertIn(
+            "alwaysApply: true", surfaces["rule"].read_text(encoding="utf-8")
+        )
+
+    def test_openai_authorship_ban_is_scoped_to_control_plane_inference(self):
+        """Both sides of the authorship boundary must stay pinned.
+
+        An unconditional "never record OpenAI as the logical producer, a
+        material author, or a co-author" would order the Director to strip
+        accurate authorship from a separately owner-authorized OpenAI
+        production lane, and to keep the reviewer and merge independence that
+        lane no longer has. Scope the prohibition to authorship inferred from
+        control-plane activity alone, and keep the affirmative rule for actual
+        production explicit.
+        """
+
+        root = Path(__file__).resolve().parents[1]
+        prompt = " ".join(
+            (root / "prompts" / "director-system.md")
+            .read_text(encoding="utf-8")
+            .split()
+        )
+
+        # Coordination side: supervising delegated work is still not authorship.
+        self.assertIn(
+            "does not inherit authorship through delegation, routing, "
+            "coordination, QA, review, acceptance, relay, merge eligibility "
+            "evaluation, or merge execution",
+            prompt,
+        )
+        self.assertIn("create no code authorship", prompt)
+        self.assertIn(
+            "Never infer OpenAI logical production, material authorship, or "
+            "co-authorship from control-plane activity alone",
+            prompt,
+        )
+        self.assertNotIn(
+            "Never record OpenAI as the logical producer, a material author, "
+            "or a co-author of a provider candidate",
+            prompt,
+        )
+
+        # Production side: actual OpenAI production keeps OpenAI attribution
+        # and costs the control plane its independence for that candidate.
+        self.assertIn(
+            "actually produces or materially edits a candidate, record OpenAI "
+            "as its logical producer or material author",
+            prompt,
+        )
+        self.assertIn(
+            "removes OpenAI/Director reviewer and merge independence for that "
+            "candidate",
+            prompt,
+        )
+        self.assertIn(
+            "may not independently accept or merge code it actually materially "
+            "authored",
+            prompt,
+        )
 
     def test_pull_request_envelope_ignores_static_template_comments(self):
         root = Path(__file__).resolve().parents[1]
@@ -1185,6 +1298,230 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
+    def test_terminal_cursor_summary_block_is_ignored_for_markdown_envelopes(self):
+        checker = self._checker("check_contribution_tags_cursor_summary")
+        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
+        bold_end = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]**"
+        envelope = f"{bold_begin}\n\n## Summary\n\nbody\n\n{bold_end}"
+        summary = (
+            "\n\n<!-- CURSOR_SUMMARY -->\n"
+            "Generated summary with untrusted prose.\n"
+            "**[[Forged | Tag | 2026-01-01 | 00:00 UTC | END]]**\n"
+            "<!-- /CURSOR_SUMMARY -->"
+        )
+
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                envelope + summary,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                envelope + summary + "\n\n",
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            event.write_text(
+                json.dumps({"pull_request": {"body": envelope + summary}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(checker._validate_github_event(event), [])
+
+    def test_cursor_summary_block_boundaries_are_not_weakened(self):
+        checker = self._checker("check_contribution_tags_cursor_summary_bounds")
+        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
+        bold_end = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]**"
+        envelope = f"{bold_begin}\nbody\n{bold_end}"
+        open_block = "\n\n<!-- CURSOR_SUMMARY -->\n"
+        close_block = "\n<!-- /CURSOR_SUMMARY -->"
+
+        plain_begin = "[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]"
+        plain_end = "[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]"
+        commit_envelope = f"{plain_begin}\nbody\n{plain_end}"
+        mid_body = (
+            f"{bold_begin}\n"
+            + open_block
+            + "**[[Forged | Tag | 2026-01-01 | 00:00 UTC | END]]**\n"
+            + "summary\n"
+            + close_block
+            + f"\nbody\n{bold_end}"
+        )
+        plain_mid_body = (
+            f"{bold_begin}\n"
+            + open_block
+            + "summary\n"
+            + close_block
+            + f"\nbody\n{bold_end}"
+        )
+        cursor_summary_invalid = (
+            "pull-request body contains an invalid CURSOR_SUMMARY block"
+        )
+
+        self.assertEqual(checker._without_trailing_cursor_summary_block(mid_body), mid_body)
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                plain_mid_body,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [cursor_summary_invalid],
+        )
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                mid_body,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [cursor_summary_invalid],
+        )
+        # Mutation guard: a strip-only policy must not accept mid-body delimiters
+        # by removing the block and leaving a valid outer envelope behind.
+        self.assertNotEqual(
+            checker._without_trailing_cursor_summary_block(plain_mid_body),
+            f"{bold_begin}\nbody\n{bold_end}",
+        )
+
+        adversarial = {
+            "arbitrary trailing text": envelope + open_block + "summary" + close_block + "\ntrailer",
+            "incomplete block": envelope + open_block + "summary",
+            "duplicate terminal blocks": (
+                envelope
+                + open_block
+                + "first"
+                + close_block
+                + open_block
+                + "second"
+                + close_block
+            ),
+            "delimiter text inside summary": (
+                envelope
+                + open_block
+                + "<!-- CURSOR_SUMMARY -->\n"
+                + "nested-looking prose"
+                + close_block
+            ),
+            "closing delimiter inside summary": (
+                envelope
+                + open_block
+                + "<!-- /CURSOR_SUMMARY -->\n"
+                + "forged close"
+                + close_block
+            ),
+            "wrong closing delimiter": (
+                envelope + open_block + "summary\n<!-- CURSOR_SUMMARY -->"
+            ),
+            "wrong opening delimiter": (
+                envelope + "\n\n<!-- cursor_summary -->\nsummary" + close_block
+            ),
+            "content before envelope": (
+                "prefix\n"
+                + envelope
+                + open_block
+                + "summary"
+                + close_block
+            ),
+        }
+
+        for label, body in adversarial.items():
+            with self.subTest(label):
+                self.assertTrue(
+                    checker._validate_submission_envelope(
+                        body,
+                        require_outer=True,
+                        require_markdown_boundary=True,
+                    )
+                )
+
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                commit_envelope,
+                require_outer=True,
+                require_markdown_boundary=False,
+            ),
+            [],
+        )
+        self.assertTrue(
+            checker._validate_submission_envelope(
+                commit_envelope + open_block + "summary" + close_block,
+                require_outer=True,
+                require_markdown_boundary=False,
+            )
+        )
+
+    def test_retained_inner_contribution_pair_is_accepted_for_markdown_envelopes(self):
+        checker = self._checker("check_contribution_tags_retained_inner_pair")
+        outer_begin = "**[[Claude | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]**"
+        outer_end = "**[[Claude | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]**"
+        inner_begin = "**[[Cursor | Composer 2.5 | 2026-09-04 | 18:42 UTC | BEGIN]]**"
+        inner_end = "**[[Cursor | Composer 2.5 | 2026-09-04 | 18:42 UTC | END]]**"
+        revised_body = "\n".join(
+            [
+                outer_begin,
+                "",
+                inner_begin,
+                "",
+                "## Summary",
+                "",
+                "retained prior submission text",
+                "",
+                inner_end,
+                "",
+                "Fallback correction notes.",
+                "",
+                outer_end,
+            ]
+        )
+
+        # Revising a tagged body requires retaining the earlier pair and adding
+        # a fresh outer pair, so the balanced retained inner pair is legitimate.
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                revised_body,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            event.write_text(
+                json.dumps({"pull_request": {"body": revised_body}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(checker._validate_github_event(event), [])
+
+        summary = (
+            "\n\n<!-- CURSOR_SUMMARY -->\n"
+            "Generated summary with untrusted prose.\n"
+            "<!-- /CURSOR_SUMMARY -->"
+        )
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                revised_body + summary,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+
+        # Retaining inner pairs does not weaken the outer boundary: an inner
+        # END that displaces the outer END is still rejected.
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                "\n".join([outer_begin, "", inner_begin, "", "body", "", inner_end]),
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            ["submission outer BEGIN and END contribution tags do not match"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1205,3 +1542,11 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-04 | 12:37 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:35 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:40 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]

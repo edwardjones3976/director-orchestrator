@@ -1,3 +1,6 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]] -->
@@ -327,7 +330,10 @@ their mere presence:
 - `scripts/windows-primary-snapshot.ps1` creates a new snapshot only when its
   target does not exist, or verifies an existing clean snapshot against an exact
   repository, starting ref, commit, and tree. It never resets or replaces an
-  existing checkout.
+  existing checkout. When a source checkout has multiple remotes,
+  `-SourceRemoteName` selects one explicitly; creation requires that remote to
+  be an exact GitHub URL for the allowlisted repository and requires its live
+  starting-ref head to equal the pinned commit before creating the target.
 - `scripts/windows-host-provider-bridge.ps1 -Action Preflight` verifies the
   allowlisted Windows command map without invoking a provider. `-Action Run`
   starts the authenticated host bridge in the foreground for supervision.
@@ -335,6 +341,15 @@ their mere presence:
   `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`, and `Rollback`
   operations. Every invocation requires the exact environment-file path,
   Compose project, and host port; profile identity is never inferred.
+- `scripts/windows-postgres-test-lane.ps1` starts, inspects, exports, tests
+  against, and removes one disposable `postgres:17-alpine` container pinned to
+  the same digest as Compose and CI, bound to `127.0.0.1:55433` with trust auth
+  for the throwaway `director_ci` role, mirroring the CI Linux lane. It exists
+  only to satisfy `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and
+  `LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER` for the local unit-test run. It is
+  not the primary database, records no activation evidence, never reads an
+  environment file, never starts Compose services, and refuses to touch any
+  container it did not label.
 
 The Windows host bridge is an optional narrow transport for supported native
 CLIs. It uses a secret distinct from API, Slack, callback, reconciliation, and
@@ -555,3 +570,6 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]] -->
