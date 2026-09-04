@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -77,7 +78,10 @@ from .models import (
 )
 from .packet_contracts import document_digest, validate_packet
 from .packet_routing import DirectorPacketTaskRouter
-from .packet_transports import LocalGitAuthoritySnapshotResolver
+from .packet_transports import (
+    LocalGitAuthoritySnapshotResolver,
+    canonical_github_remote_repository,
+)
 from .policy import preview_plan
 from .primary_coordinator import PrimaryTaskCoordinator
 from .primary_effects import (
@@ -1016,12 +1020,8 @@ def resolve_default_primary_authority(settings: Settings) -> DefaultPrimaryAutho
     if git("status", "--porcelain=v2", "--untracked-files=all"):
         raise RuntimeError("Default primary repository authority must be clean")
     configured_repository = settings.repository_allowlist[0].removesuffix(".git").lower()
-    remote = git("remote", "get-url", "origin").removesuffix(".git")
-    if remote.startswith("git@github.com:"):
-        remote = remote.removeprefix("git@github.com:")
-    elif "github.com/" in remote:
-        remote = remote.split("github.com/", 1)[1]
-    if remote.strip("/").lower() != configured_repository:
+    remote = canonical_github_remote_repository(git("remote", "get-url", "origin"))
+    if remote != configured_repository:
         raise RuntimeError("Default primary repository remote does not match its allowlist")
     starting_ref = settings.allowed_starting_refs[0]
     starting_sha = git("rev-parse", "--verify", f"{starting_ref}^{{commit}}")
@@ -2563,3 +2563,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]

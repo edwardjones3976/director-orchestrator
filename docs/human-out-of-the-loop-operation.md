@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
@@ -176,6 +177,13 @@ before the action, not after it.
 - **The charter's review-to-merge handoff is unchanged.** Delegation supplies
   the reviewer identity and a second concurring verdict; it does not alter what
   a review must contain or when evidence is invalidated.
+- **The charter's Director and provider authorship boundary supplies the
+  identity terms used here.** "Producer" and "material author" mean whoever
+  actually produced or materially authored the candidate. Delegation, routing,
+  coordination, QA, review orchestration, relay, merge eligibility evaluation,
+  and merge execution create no authorship, so performing them neither makes an
+  identity the producer for evidence-bar items 3, 4, and 5 nor makes an actual
+  author eligible under them.
 
 ## How the existing gates are satisfied, not substituted
 
@@ -261,3 +269,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->

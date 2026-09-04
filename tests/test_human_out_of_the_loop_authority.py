@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]]
@@ -236,6 +237,42 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("three distinct identities", rule_three)
         self.assertIn("an author cannot become eligible by being delegated to", rule_three)
 
+    def test_identity_terms_follow_the_landed_authorship_boundary(self) -> None:
+        # The evidence bar turns on who the producer and material authors are.
+        # The charter's authorship boundary defines that, and it excludes
+        # control-plane work, so this framework must not be readable as turning
+        # a coordinator into an author or an author into an eligible actor.
+        relationship = " ".join(
+            self.section("Relationship to the existing rules").split()
+        )
+        self.assertIn("Director and provider authorship boundary", relationship)
+        self.assertIn(
+            "merge execution create no authorship, so performing them neither"
+            " makes an identity the producer for evidence-bar items 3, 4, and 5"
+            " nor makes an actual author eligible under them",
+            relationship,
+        )
+        boundary = " ".join(
+            self.charter.split("\n## Director and provider authorship boundary", 1)[1]
+            .split("\n## ", 1)[0]
+            .split()
+        )
+        self.assertIn(
+            "those control-plane activities create no code authorship", boundary
+        )
+        self.assertIn("removes no deterministic gate", boundary)
+        agents_boundary = " ".join(
+            self.agents.split("\n## Director and provider authorship", 1)[1]
+            .split("\n## ", 1)[0]
+            .split()
+        )
+        self.assertIn("does not inherit authorship through delegation", agents_boundary)
+        self.assertIn(
+            "may not independently accept or merge code it actually materially"
+            " authored",
+            agents_boundary,
+        )
+
     def test_charter_points_at_the_framework_without_weakening_its_gates(self) -> None:
         self.assertIn("docs/human-out-of-the-loop-operation.md", self.charter)
         # The sentence the framework hangs from must survive unchanged.
@@ -257,3 +294,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]]
