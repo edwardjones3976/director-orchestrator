@@ -1,3 +1,5 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
@@ -328,7 +330,10 @@ their mere presence:
 - `scripts/windows-primary-snapshot.ps1` creates a new snapshot only when its
   target does not exist, or verifies an existing clean snapshot against an exact
   repository, starting ref, commit, and tree. It never resets or replaces an
-  existing checkout.
+  existing checkout. When a source checkout has multiple remotes,
+  `-SourceRemoteName` selects one explicitly; creation requires that remote to
+  be an exact GitHub URL for the allowlisted repository and requires its live
+  starting-ref head to equal the pinned commit before creating the target.
 - `scripts/windows-host-provider-bridge.ps1 -Action Preflight` verifies the
   allowlisted Windows command map without invoking a provider. `-Action Run`
   starts the authenticated host bridge in the foreground for supervision.
@@ -566,3 +571,5 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]] -->
