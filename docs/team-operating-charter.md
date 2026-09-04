@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
@@ -188,6 +189,14 @@ independence, safety, and deterministic gates always outrank cost.
   review, final acceptance, deterministic merge, or define research-contract
   or methodology truth, and every work assignment must feed a later Claude,
   Cursor, or Grok assignment that independently verifies and integrates or rejects it.
+  One narrow exception exists and it is not self-service: a review verdict may be
+  provisioned to Antigravity through the rights ledger, which requires the
+  configuration flag *and* a grant recorded against an exact verified build, raises
+  an owner notice at the moment it is granted, and is revocable at any time — a
+  revocation that no later rebuild undoes. See `docs/rights-provisioning.md`. Final
+  acceptance, exact-SHA review, and deterministic merge remain outside what any
+  ledger entry can widen, and a provisioned verdict does not enlarge the work kinds
+  above: `CAPABILITY_BY_KIND` still admits only the four subordinate kinds.
   Antigravity may hold a debate seat, but only one the Director gave it: it
   cannot initiate, self-route, widen, or autonomously continue a conversation,
   and a seat grants it no review, acceptance, merge, deployment, publication,
@@ -699,3 +708,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]] -->

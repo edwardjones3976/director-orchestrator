@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -194,6 +195,32 @@ def _pairwise_isolated(paths: tuple[str, ...]) -> bool:
                 return False
     return True
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+
+
+def _provisioned_rights(kind: str) -> dict[str, frozenset[str]]:
+    """Read the rights ledger once, at Settings construction.
+
+    Reading here rather than inside a readiness method keeps /health free of
+    database work and keeps every readiness map a pure function of this object.
+
+    Every failure path returns no rights. A ledger that is missing, corrupt or
+    unreadable must not be indistinguishable from one that granted something,
+    so absence of evidence is refusal.
+    """
+    path = os.getenv("RIGHTS_LEDGER_PATH", "").strip()
+    if not path:
+        return {}
+    try:
+        from .rights_provisioning import RightsLedger, SubjectKind
+
+        ledger = RightsLedger(path)
+        subject_kind = SubjectKind(kind)
+        return {
+            subject_id: ledger.held_rights(subject_kind, subject_id)
+            for subject_id in ledger.subject_ids(subject_kind)
+        }
+    except Exception:
+        return {}
 
 
 @dataclass(frozen=True)
@@ -495,6 +522,16 @@ class Settings:
     project_allowlist: tuple[str, ...] = _csv("PROJECT_ALLOWLIST", "")
     repository_allowlist: tuple[str, ...] = _csv("REPOSITORY_ALLOWLIST", "")
     allowed_starting_refs: tuple[str, ...] = _csv_exact("ALLOWED_STARTING_REFS", "main")
+    #: Rights provisioned automatically against a verified install, keyed by
+    #: subject id. Empty unless RIGHTS_LEDGER_PATH names a readable ledger, so
+    #: a deployment that has not opted in behaves exactly as it did before.
+    #: See docs/rights-provisioning.md.
+    provisioned_provider_rights: dict[str, frozenset[str]] = field(
+        default_factory=lambda: _provisioned_rights("provider")
+    )
+    provisioned_project_rights: dict[str, frozenset[str]] = field(
+        default_factory=lambda: _provisioned_rights("project")
+    )
 
     oracle_automerge_enabled: bool = _bool("ORACLE_AUTOMERGE_ENABLED", False)
     oracle_automerge_kill_switch: bool = _bool("ORACLE_AUTOMERGE_KILL_SWITCH", True)
@@ -1971,3 +2008,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 07:46 UTC | END]]
