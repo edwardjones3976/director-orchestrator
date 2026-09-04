@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
@@ -53,10 +54,20 @@ if ($Action -eq "Create") {
     }
     $remoteRef = "refs/heads/$StartingRef"
     $remoteRows = @(& git ls-remote --exit-code --refs -- $sourceRemoteUrl $remoteRef)
-    if ($LASTEXITCODE -ne 0 -or $remoteRows.Count -ne 1) {
+    if ($LASTEXITCODE -ne 0) {
         throw "Snapshot source starting ref could not be verified on the selected remote."
     }
-    $remoteFields = @($remoteRows[0] -split '\s+')
+    # ls-remote tail-matches its pattern client-side, so a branch such as
+    # decoy/refs/heads/main also answers and sorts first. Select the exact ref
+    # instead of trusting the row count.
+    $matchingRows = @($remoteRows | Where-Object {
+        $fields = @([string]$_ -split '\s+')
+        $fields.Count -ge 2 -and $fields[1] -ceq $remoteRef
+    })
+    if ($matchingRows.Count -ne 1) {
+        throw "Snapshot source starting ref could not be verified on the selected remote."
+    }
+    $remoteFields = @($matchingRows[0] -split '\s+')
     if ($remoteFields.Count -lt 2 -or
         $remoteFields[0] -cne $ExpectedCommit -or
         $remoteFields[1] -cne $remoteRef) {
@@ -89,3 +100,4 @@ Write-Host "Snapshot verification passed at the exact requested commit and tree.
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | END]]

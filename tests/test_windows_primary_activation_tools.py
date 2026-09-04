@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
@@ -37,6 +38,9 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
             "--single-branch -- $sourceRemoteUrl $targetPath",
             text,
         )
+        # The remote lookup selects the exact ref rather than trusting a row count.
+        self.assertIn("$fields[1] -ceq $remoteRef", text)
+        self.assertNotIn("$remoteRows.Count -ne 1", text)
         self.assertNotIn("--single-branch -- $sourcePath $targetPath", text)
         self.assertNotIn("origin.cursor.com", text)
         self.assertIn("ExpectedCommit", text)
@@ -87,6 +91,9 @@ function global:git {
         }
     }
     if ($arguments[0] -eq "ls-remote") {
+        # ls-remote tail-matches: a decoy branch answers the same pattern and
+        # sorts before the real ref, so the script must select the exact ref.
+        Write-Output "__DECOY__`trefs/heads/decoy/refs/heads/main"
         Write-Output "__COMMIT__`trefs/heads/main"
         return
     }
@@ -329,3 +336,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | END]]
