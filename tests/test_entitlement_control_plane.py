@@ -5,27 +5,39 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import threading
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 from pathlib import Path
 
 from director_orchestrator.entitlement_contracts import (
     NOTICE_SUSPENSION_SECONDS,
     EntitlementActionBoundaryQuery,
+    EntitlementActionType,
     EntitlementContractError,
     EntitlementLifecycleStatus,
+    EntitlementOwnerActionV1,
     InstallAttestationV1,
+    ManifestEntryV1,
+    NoticeRouteProofV1,
     OwnerNoticeDeliveryState,
     ProjectRegistrationV1,
     RepositoryScope,
     SignedEntitlementTemplateV1,
+    SlackDestinationHealthProofV1,
     SubjectKind,
     composed_template_digest,
     compute_signature,
     document_digest,
+    manifest_digest,
+    parse_install_attestation_v1,
+    parse_project_registration_v1,
+    parse_signed_entitlement_template_v1,
+    parse_entitlement_action_boundary_query_v1,
     signing_bytes,
 )
 from director_orchestrator.entitlement_control_plane import (
@@ -73,21 +85,129 @@ def _verifier_signature(document: dict) -> str:
     )
 
 
-def _owner_action_signature(operation: str, request_digest: str) -> str:
-    return _owner_signature(
-        {
-            "schema_version": "EntitlementOwnerAction/v1",
-            "operation": operation,
-            "actor_id": OWNER_PRINCIPAL,
-            "request_digest": request_digest,
-        }
+def _owner_action(
+    operation: str,
+    installation_id: str,
+    expected_generation: int | None,
+    idempotency_key_digest: str,
+    request_digest: str,
+    *,
+    issued_at: datetime | None = None,
+    nonce_digest: str | None = None,
+) -> EntitlementOwnerActionV1:
+    issued = issued_at or _utc_now()
+    signing_doc = {
+        "schema_version": "EntitlementOwnerAction/v1",
+        "operation": operation,
+        "actor_id": OWNER_PRINCIPAL,
+        "installation_id": installation_id,
+        "expected_generation": expected_generation,
+        "idempotency_key_digest": idempotency_key_digest,
+        "request_digest": request_digest,
+        "nonce_digest": nonce_digest or document_digest({"owner-action": uuid.uuid4().hex}),
+        "issued_at": issued.isoformat(),
+        "expires_at": (issued + timedelta(minutes=5)).isoformat(),
+    }
+    return EntitlementOwnerActionV1(
+        operation=operation,
+        actor_id=OWNER_PRINCIPAL,
+        installation_id=installation_id,
+        expected_generation=expected_generation,
+        idempotency_key_digest=idempotency_key_digest,
+        request_digest=request_digest,
+        nonce_digest=signing_doc["nonce_digest"],
+        issued_at=issued,
+        expires_at=issued + timedelta(minutes=5),
+        owner_signature_digest=_owner_signature(signing_doc),
     )
 
 
-def _owner_install_action_signature(operation: str, installation_id: str) -> str:
-    return _owner_action_signature(
-        operation,
-        document_digest({"operation": operation, "installation_id": installation_id}),
+def _install_action(operation: str, installation_id: str, generation: int | None) -> EntitlementOwnerActionV1:
+    key = document_digest({"key": operation, "installation": installation_id, "nonce": uuid.uuid4().hex})
+    request = document_digest({"operation": operation, "installation_id": installation_id, "expected_generation": generation})
+    return _owner_action(operation, installation_id, generation, key, request)
+
+
+def _restore_action(
+    attestation: InstallAttestationV1,
+    expected_generation: int,
+    *,
+    key: str | None = None,
+) -> EntitlementOwnerActionV1:
+    idempotency = key or document_digest({"restore-key": uuid.uuid4().hex})
+    request = document_digest(
+        {
+            "operation": "restore",
+            "attestation": attestation.to_document(),
+            "expected_generation": expected_generation,
+        }
+    )
+    return _owner_action(
+        "restore",
+        attestation.installation_id,
+        expected_generation,
+        idempotency,
+        request,
+    )
+
+
+def _slack_health_proof(destination_id: str = "slack-owner-dm") -> SlackDestinationHealthProofV1:
+    issued = _utc_now()
+    signing_doc = {
+        "schema_version": "SlackDestinationHealthProof/v1",
+        "destination_id": destination_id,
+        "workspace_id": "workspace-primary",
+        "channel_id": "owner-dm",
+        "account_id": "director-bot",
+        "authenticated": True,
+        "delivery_probe_digest": DIGEST_B,
+        "verifier_principal": VERIFIER_PRINCIPAL,
+        "issued_at": issued.isoformat(),
+        "expires_at": (issued + timedelta(hours=1)).isoformat(),
+        "nonce_digest": document_digest({"slack-proof": uuid.uuid4().hex}),
+    }
+    return SlackDestinationHealthProofV1(
+        destination_id=destination_id,
+        workspace_id="workspace-primary",
+        channel_id="owner-dm",
+        account_id="director-bot",
+        authenticated=True,
+        delivery_probe_digest=DIGEST_B,
+        verifier_principal=VERIFIER_PRINCIPAL,
+        issued_at=issued,
+        expires_at=issued + timedelta(hours=1),
+        nonce_digest=signing_doc["nonce_digest"],
+        verifier_signature_digest=_verifier_signature(signing_doc),
+    )
+
+
+def _route_proof(notice, outcome: str) -> NoticeRouteProofV1:
+    issued = _utc_now()
+    signing_doc = {
+        "schema_version": "NoticeRouteProof/v1",
+        "notice_id": notice.notice_id,
+        "installation_id": notice.installation_id,
+        "entitlement_generation": notice.entitlement_generation,
+        "destination_id": "slack-owner-dm",
+        "outcome": outcome,
+        "evidence_digest": DIGEST_B,
+        "verifier_principal": VERIFIER_PRINCIPAL,
+        "issued_at": issued.isoformat(),
+        "expires_at": (issued + timedelta(minutes=5)).isoformat(),
+        "nonce_digest": document_digest({"route-proof": uuid.uuid4().hex}),
+    }
+    return NoticeRouteProofV1(
+        notice_id=notice.notice_id,
+        installation_id=notice.installation_id,
+        entitlement_generation=notice.entitlement_generation,
+        destination_id="slack-owner-dm",
+        outcome=outcome,
+        evidence_digest=DIGEST_B,
+        verifier_principal=VERIFIER_PRINCIPAL,
+        issued_at=issued,
+        expires_at=issued + timedelta(minutes=5),
+        nonce_digest=signing_doc["nonce_digest"],
+        verifier_signature_digest=_verifier_signature(signing_doc),
     )
 
 
@@ -112,6 +232,7 @@ def _registration(
     generation: int = 1,
     *,
     slack_destination_id: str = "slack-owner-dm",
+    notion_destination_id: str = "notion-root",
 ) -> ProjectRegistrationV1:
     base = {
         "schema_version": "ProjectRegistration/v1",
@@ -125,7 +246,7 @@ def _registration(
             }
         ],
         "slack_destination_id": slack_destination_id,
-        "notion_destination_id": "notion-root",
+        "notion_destination_id": notion_destination_id,
         "n8n_workflow_ids": ["workflow-intake"],
         "budget_task_usd": 1.0,
         "budget_daily_usd": 5.0,
@@ -146,7 +267,7 @@ def _registration(
             ),
         ),
         slack_destination_id=slack_destination_id,
-        notion_destination_id="notion-root",
+        notion_destination_id=notion_destination_id,
         n8n_workflow_ids=("workflow-intake",),
         budget_task_usd=1.0,
         budget_daily_usd=5.0,
@@ -163,7 +284,6 @@ def _boundary_query(
     *,
     installation_id: str,
     path: str = "src/director_orchestrator/config.py",
-    budget_task_usd: float = 0.5,
     now: datetime | None = None,
     **overrides: object,
 ) -> EntitlementActionBoundaryQuery:
@@ -175,10 +295,11 @@ def _boundary_query(
         "provider_id": "antigravity",
         "subject_id": "antigravity",
         "installation_id": installation_id,
-        "required_capability": "review.exact_sha",
         "current_build_digest": DIGEST_A,
-        "action": "review",
-        "budget_task_usd": budget_task_usd,
+        "action_type": EntitlementActionType.REVIEW_EXACT_SHA,
+        "destination_id": None,
+        "effect_digest": document_digest({"review": installation_id}),
+        "reserved_spend_usd": 0.0,
         "now": now or _utc_now(),
     }
     payload.update(overrides)
@@ -192,21 +313,36 @@ def _attestation(
     nonce_digest: str | None = None,
     issued_at: datetime | None = None,
     expires_at: datetime | None = None,
+    subject_id: str = "antigravity",
+    provider_id: str = "antigravity",
+    project_profile_id: str = "uppercut",
+    registration_generation: int = 1,
 ) -> InstallAttestationV1:
     issued = issued_at or _utc_now()
     expires = expires_at or (issued + timedelta(hours=2))
+    entries = (
+        ManifestEntryV1(
+            path="src/director_orchestrator/worker.py",
+            artifact_digest=artifact_digest,
+            size_bytes=128,
+        ),
+    )
+    canonical_manifest_digest = manifest_digest(entries)
     signing_doc = {
         "schema_version": "InstallAttestation/v1",
         "subject_kind": "provider",
-        "subject_id": "antigravity",
-        "provider_id": "antigravity",
-        "project_profile_id": "uppercut",
+        "subject_id": subject_id,
+        "provider_id": provider_id,
+        "project_profile_id": project_profile_id,
         "installation_id": installation_id,
         "source_commit_sha": COMMIT_A,
         "source_tree_sha": TREE_A,
-        "manifest_digest": DIGEST_A,
+        "manifest_entries": [entry.to_document() for entry in entries],
+        "manifest_digest": canonical_manifest_digest,
         "artifact_digest": artifact_digest,
-        "registration_generation": 1,
+        "build_evidence_digest": document_digest({"build": artifact_digest}),
+        "test_evidence_digest": document_digest({"tests": artifact_digest}),
+        "registration_generation": registration_generation,
         "template_digest": composed_template_digest(PROFILE_TEMPLATE),
         "owner_policy_digest": OWNER_POLICY,
         "verifier_principal": VERIFIER_PRINCIPAL,
@@ -217,15 +353,18 @@ def _attestation(
     }
     return InstallAttestationV1(
         subject_kind=SubjectKind.PROVIDER,
-        subject_id="antigravity",
-        provider_id="antigravity",
-        project_profile_id="uppercut",
+        subject_id=subject_id,
+        provider_id=provider_id,
+        project_profile_id=project_profile_id,
         installation_id=installation_id,
         source_commit_sha=COMMIT_A,
         source_tree_sha=TREE_A,
-        manifest_digest=DIGEST_A,
+        manifest_entries=entries,
+        manifest_digest=canonical_manifest_digest,
         artifact_digest=artifact_digest,
-        registration_generation=1,
+        build_evidence_digest=signing_doc["build_evidence_digest"],
+        test_evidence_digest=signing_doc["test_evidence_digest"],
+        registration_generation=registration_generation,
         template_digest=composed_template_digest(PROFILE_TEMPLATE),
         owner_policy_digest=OWNER_POLICY,
         verifier_principal=VERIFIER_PRINCIPAL,
@@ -238,9 +377,49 @@ def _attestation(
 
 
 class EntitlementContractUnitTests(unittest.TestCase):
+    def test_public_contract_parsers_are_strict_and_exact(self) -> None:
+        with self.assertRaisesRegex(EntitlementContractError, "valid JSON"):
+            parse_project_registration_v1(
+                b'{"schema_version":"ProjectRegistration/v1","schema_version":"ProjectRegistration/v1"}'
+            )
+        registration = _registration()
+        document = registration.to_document()
+        document["capabilities"] = ["subject.chosen"]
+        with self.assertRaisesRegex(EntitlementContractError, "unknown fields"):
+            parse_project_registration_v1(json.dumps(document).encode())
+        document = registration.to_document()
+        document["registration_generation"] = True
+        with self.assertRaisesRegex(EntitlementContractError, "wrong type"):
+            parse_project_registration_v1(json.dumps(document).encode())
+        attestation = _attestation(installation_id="parser-install")
+        attestation_document = attestation.to_document()
+        attestation_document["capabilities"] = ["deploy"]
+        with self.assertRaisesRegex(EntitlementContractError, "unknown fields"):
+            parse_install_attestation_v1(json.dumps(attestation_document).encode())
+        self.assertEqual(
+            parse_install_attestation_v1(
+                json.dumps(attestation.to_document()).encode()
+            ).digest,
+            attestation.digest,
+        )
+        self.assertEqual(
+            parse_signed_entitlement_template_v1(
+                json.dumps(_signed_template().to_document()).encode()
+            ).profile_template_id,
+            PROFILE_TEMPLATE,
+        )
+        query = _boundary_query(installation_id="parser-install")
+        self.assertEqual(
+            parse_entitlement_action_boundary_query_v1(
+                json.dumps(query.to_document()).encode()
+            ).action_type,
+            EntitlementActionType.REVIEW_EXACT_SHA,
+        )
+
     def test_self_referential_attestation_signature_is_rejected(self) -> None:
         issued = _utc_now()
         expires = issued + timedelta(hours=1)
+        entries = (ManifestEntryV1(path="src/app.py", artifact_digest=DIGEST_A, size_bytes=1),)
         signing_doc = {
             "schema_version": "InstallAttestation/v1",
             "subject_kind": "provider",
@@ -250,8 +429,11 @@ class EntitlementContractUnitTests(unittest.TestCase):
             "installation_id": "install-x",
             "source_commit_sha": COMMIT_A,
             "source_tree_sha": TREE_A,
-            "manifest_digest": DIGEST_A,
+            "manifest_entries": [entry.to_document() for entry in entries],
+            "manifest_digest": manifest_digest(entries),
             "artifact_digest": DIGEST_A,
+            "build_evidence_digest": DIGEST_A,
+            "test_evidence_digest": DIGEST_B,
             "registration_generation": 1,
             "template_digest": composed_template_digest(PROFILE_TEMPLATE),
             "owner_policy_digest": OWNER_POLICY,
@@ -270,8 +452,11 @@ class EntitlementContractUnitTests(unittest.TestCase):
             installation_id="install-x",
             source_commit_sha=COMMIT_A,
             source_tree_sha=TREE_A,
-            manifest_digest=DIGEST_A,
+            manifest_entries=entries,
+            manifest_digest=manifest_digest(entries),
             artifact_digest=DIGEST_A,
+            build_evidence_digest=DIGEST_A,
+            test_evidence_digest=DIGEST_B,
             registration_generation=1,
             template_digest=composed_template_digest(PROFILE_TEMPLATE),
             owner_policy_digest=OWNER_POLICY,
@@ -328,6 +513,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                     "owner_signature_principal": OWNER_PRINCIPAL,
                 }
             ),
+            health_proof=_slack_health_proof(),
         )
         self.store.register_project(_registration())
 
@@ -383,11 +569,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         installation_id = f"install-{uuid.uuid4().hex[:8]}"
         self.store.revoke(
             installation_id,
-            actor_id=OWNER_PRINCIPAL,
-            idempotency_key_digest=document_digest({"preemptive": installation_id}),
-            owner_signature_digest=_owner_install_action_signature(
-                "revoke", installation_id
-            ),
+            owner_action=_install_action("revoke", installation_id, None),
         )
         with self.assertRaisesRegex(EntitlementControlPlaneError, "preemptively revoked"):
             self.store.grant_from_attestation(
@@ -402,9 +584,10 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         ):
             self.store.revoke(
                 installation_id,
-                actor_id=OWNER_PRINCIPAL,
-                idempotency_key_digest=document_digest({"revoke": installation_id}),
-                owner_signature_digest="0" * 64,
+                owner_action=replace(
+                    _install_action("revoke", installation_id, None),
+                    owner_signature_digest="0" * 64,
+                ),
             )
         with self.handle.pool.connection() as connection:
             event_count = connection.execute(
@@ -437,6 +620,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         self.store.mark_notice_failed(
             outcome.notice.notice_id,
             idempotency_key_digest=document_digest({"fail": outcome.notice.notice_id}),
+            route_proof=_route_proof(outcome.notice, "FAILED"),
         )
         self.assertEqual(
             self.store.authoritative_capabilities(
@@ -456,45 +640,23 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             ),
             idempotency_key_digest=document_digest({"grant": installation_id}),
         )
+        deadline = issued + timedelta(seconds=NOTICE_SUSPENSION_SECONDS + 1)
         denied = self.store.query_action_boundary(
-            EntitlementActionBoundaryQuery(
-                project_profile_id="uppercut",
-                repository="edwardjones3976/director-orchestrator",
-                ref="main",
-                path="src/director_orchestrator/config.py",
-                provider_id="antigravity",
-                subject_id="antigravity",
-                installation_id=installation_id,
-                required_capability="review.exact_sha",
-                current_build_digest=DIGEST_A,
-                action="review",
-                budget_task_usd=0.5,
-                now=issued + timedelta(seconds=NOTICE_SUSPENSION_SECONDS + 1),
-            )
+            _boundary_query(installation_id=installation_id, now=deadline)
         )
         self.assertFalse(denied.permitted)
-        self.store.mark_notice_delivered(
-            outcome.notice.notice_id,
-            delivery_proof_digest=document_digest({"delivered": 1}),
-            idempotency_key_digest=document_digest({"deliver": outcome.notice.notice_id}),
-        )
-        allowed = self.store.query_action_boundary(
-            EntitlementActionBoundaryQuery(
-                project_profile_id="uppercut",
-                repository="edwardjones3976/director-orchestrator",
-                ref="main",
-                path="src/director_orchestrator/config.py",
-                provider_id="antigravity",
-                subject_id="antigravity",
-                installation_id=installation_id,
-                required_capability="review.exact_sha",
-                current_build_digest=DIGEST_A,
-                action="review",
-                budget_task_usd=0.5,
-                now=issued + timedelta(seconds=NOTICE_SUSPENSION_SECONDS + 1),
+        self.store.evaluate_notice_suspensions(now=deadline)
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "cannot reactivate"):
+            self.store.mark_notice_delivered(
+                outcome.notice.notice_id,
+                idempotency_key_digest=document_digest({"deliver": outcome.notice.notice_id}),
+                route_proof=_route_proof(outcome.notice, "DELIVERED"),
             )
+        self.assertFalse(
+            self.store.query_action_boundary(
+                _boundary_query(installation_id=installation_id, now=deadline)
+            ).permitted
         )
-        self.assertTrue(allowed.permitted)
 
     def test_schema_reopen_is_migration_safe(self) -> None:
         second = open_entitlement_control_plane(
@@ -554,10 +716,8 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.store.revoke(
             installation_id,
-            actor_id=OWNER_PRINCIPAL,
-            idempotency_key_digest=document_digest({"revoke": installation_id}),
-            owner_signature_digest=_owner_install_action_signature(
-                "revoke", installation_id
+            owner_action=_install_action(
+                "revoke", installation_id, first.entitlement_generation
             ),
         )
         restore_attestation = _attestation(
@@ -567,16 +727,8 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         restored = self.store.restore(
             restore_attestation,
-            owner_actor_id=OWNER_PRINCIPAL,
-            idempotency_key_digest=document_digest({"restore": installation_id}),
-            owner_signature_digest=_owner_action_signature(
-                "restore",
-                document_digest(
-                    {
-                        "operation": "restore",
-                        "attestation_digest": restore_attestation.digest,
-                    }
-                ),
+            owner_action=_restore_action(
+                restore_attestation, first.entitlement_generation
             ),
         )
         self.assertGreater(restored.entitlement_generation, first.entitlement_generation)
@@ -614,8 +766,11 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             installation_id=attestation.installation_id,
             source_commit_sha=attestation.source_commit_sha,
             source_tree_sha=attestation.source_tree_sha,
+            manifest_entries=attestation.manifest_entries,
             manifest_digest=attestation.manifest_digest,
             artifact_digest=attestation.artifact_digest,
+            build_evidence_digest=attestation.build_evidence_digest,
+            test_evidence_digest=attestation.test_evidence_digest,
             registration_generation=attestation.registration_generation,
             template_digest=attestation.template_digest,
             owner_policy_digest=attestation.owner_policy_digest,
@@ -662,8 +817,9 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                         "schema_version": "OwnerSlackDestination/v1",
                         "destination_id": "slack-owner-dm",
                         "owner_signature_principal": OWNER_PRINCIPAL,
-                    }
-                ),
+                        }
+                    ),
+                    health_proof=_slack_health_proof(),
             )
             with self.assertRaisesRegex(EntitlementControlPlaneError, "signed template"):
                 store.register_project(_registration())
@@ -694,21 +850,38 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
 
     def test_supersession_invalidates_old_registration_authority(self) -> None:
         installation_id = f"install-{uuid.uuid4().hex[:8]}"
-        self.store.grant_from_attestation(
+        outcome = self.store.grant_from_attestation(
             _attestation(installation_id=installation_id),
             idempotency_key_digest=document_digest({"grant": installation_id}),
         )
         self.store.mark_notice_delivered(
-            self._latest_notice_id(installation_id),
-            delivery_proof_digest=document_digest({"delivered": installation_id}),
+            outcome.notice.notice_id,
             idempotency_key_digest=document_digest({"deliver": installation_id}),
+            route_proof=_route_proof(outcome.notice, "DELIVERED"),
         )
         reg2 = _registration(generation=2)
+        supersede_key = document_digest({"supersede": 2})
+        supersede_request = document_digest(
+            {
+                "operation": "supersede",
+                "project_profile_id": reg2.project_profile_id,
+                "prior_generation": 1,
+                "replacement_registration": reg2.to_document(),
+                "replacement_generation": 2,
+                "actor_id": OWNER_PRINCIPAL,
+                "idempotency_key_digest": supersede_key,
+            }
+        )
         self.store.supersede_registration(
             reg2,
-            actor_id=OWNER_PRINCIPAL,
-            idempotency_key_digest=document_digest({"supersede": 2}),
             prior_generation=1,
+            owner_action=_owner_action(
+                "supersede_registration",
+                reg2.project_profile_id,
+                1,
+                supersede_key,
+                supersede_request,
+            ),
         )
         denied = self.store.query_action_boundary(
             _boundary_query(installation_id=installation_id)
@@ -724,16 +897,13 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.store.mark_notice_delivered(
             outcome.notice.notice_id,
-            delivery_proof_digest=document_digest({"delivered": 1}),
             idempotency_key_digest=document_digest({"deliver": 1}),
+            route_proof=_route_proof(outcome.notice, "DELIVERED"),
         )
         self.store.uninstall(
             installation_id,
-            actor_id=OWNER_PRINCIPAL,
-            idempotency_key_digest=document_digest({"uninstall": installation_id}),
-            expected_generation=outcome.entitlement_generation,
-            owner_signature_digest=_owner_install_action_signature(
-                "uninstall", installation_id
+            owner_action=_install_action(
+                "uninstall", installation_id, outcome.entitlement_generation
             ),
         )
         self.assertEqual(
@@ -764,9 +934,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.store.revoke(
             install_a,
-            actor_id=OWNER_PRINCIPAL,
-            idempotency_key_digest=document_digest({"revoke": install_a}),
-            owner_signature_digest=_owner_install_action_signature("revoke", install_a),
+            owner_action=_install_action("revoke", install_a, 1),
         )
         self.assertEqual(
             self.store.authoritative_capabilities(install_a, current_build_digest=DIGEST_A),
@@ -786,27 +954,20 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.store.mark_notice_delivered(
             outcome.notice.notice_id,
-            delivery_proof_digest=document_digest({"delivered": 1}),
             idempotency_key_digest=document_digest({"deliver": 1}),
+            route_proof=_route_proof(outcome.notice, "DELIVERED"),
         )
         denied = self.store.query_action_boundary(
-            EntitlementActionBoundaryQuery(
-                project_profile_id="uppercut",
-                repository="edwardjones3976/director-orchestrator",
-                ref="main",
-                path="src/director_orchestrator/config.py",
-                provider_id="antigravity",
-                subject_id="antigravity",
+            _boundary_query(
                 installation_id=installation_id,
-                required_capability="review.exact_sha",
-                current_build_digest=DIGEST_A,
-                action="review",
-                budget_task_usd=2.0,
+                action_type=EntitlementActionType.PROVIDER_DISPATCH,
+                destination_id="uppercut",
+                reserved_spend_usd=2.0,
                 now=issued,
             )
         )
         self.assertFalse(denied.permitted)
-        self.assertEqual(denied.denial_reason, "task budget exceeded")
+        self.assertEqual(denied.denial_reason, "shared budget ledger unavailable")
 
     def test_path_scope_and_traversal_denials(self) -> None:
         installation_id = f"install-{uuid.uuid4().hex[:8]}"
@@ -817,39 +978,17 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.store.mark_notice_delivered(
             outcome.notice.notice_id,
-            delivery_proof_digest=document_digest({"delivered": 1}),
             idempotency_key_digest=document_digest({"deliver": 1}),
+            route_proof=_route_proof(outcome.notice, "DELIVERED"),
         )
         allowed = self.store.query_action_boundary(
-            EntitlementActionBoundaryQuery(
-                project_profile_id="uppercut",
-                repository="edwardjones3976/director-orchestrator",
-                ref="main",
-                path="src/director_orchestrator/config.py",
-                provider_id="antigravity",
-                subject_id="antigravity",
-                installation_id=installation_id,
-                required_capability="review.exact_sha",
-                current_build_digest=DIGEST_A,
-                action="review",
-                budget_task_usd=0.5,
-                now=issued,
-            )
+            _boundary_query(installation_id=installation_id, now=issued)
         )
         self.assertTrue(allowed.permitted)
         outside = self.store.query_action_boundary(
-            EntitlementActionBoundaryQuery(
-                project_profile_id="uppercut",
-                repository="edwardjones3976/director-orchestrator",
-                ref="main",
-                path="docs/readme.md",
-                provider_id="antigravity",
-                subject_id="antigravity",
+            _boundary_query(
                 installation_id=installation_id,
-                required_capability="review.exact_sha",
-                current_build_digest=DIGEST_A,
-                action="review",
-                budget_task_usd=0.5,
+                path="docs/readme.md",
                 now=issued,
             )
         )
@@ -871,10 +1010,11 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                 provider_id="antigravity",
                 subject_id="antigravity",
                 installation_id=installation_id,
-                required_capability="review.exact_sha",
                 current_build_digest=DIGEST_A,
-                action="review",
-                budget_task_usd=0.5,
+                action_type=EntitlementActionType.REVIEW_EXACT_SHA,
+                destination_id=None,
+                effect_digest=DIGEST_B,
+                reserved_spend_usd=0.0,
                 now=issued,
             )
 
@@ -885,11 +1025,16 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             idempotency_key_digest=document_digest({"grant": installation_id}),
         )
         fail_key = document_digest({"fail": outcome.notice.notice_id})
+        proof = _route_proof(outcome.notice, "FAILED")
         first = self.store.mark_notice_failed(
-            outcome.notice.notice_id, idempotency_key_digest=fail_key
+            outcome.notice.notice_id,
+            idempotency_key_digest=fail_key,
+            route_proof=proof,
         )
         second = self.store.mark_notice_failed(
-            outcome.notice.notice_id, idempotency_key_digest=fail_key
+            outcome.notice.notice_id,
+            idempotency_key_digest=fail_key,
+            route_proof=proof,
         )
         self.assertEqual(first, second)
 
@@ -923,17 +1068,17 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             idempotency_key_digest=document_digest({"grant": installation_id}),
         )
         key = document_digest({"revoke": installation_id})
+        request = document_digest(
+            {"operation": "revoke", "installation_id": installation_id, "expected_generation": 1}
+        )
+        action = _owner_action("revoke", installation_id, 1, key, request)
         results: list[str] = []
         lock = threading.Lock()
 
         def worker() -> None:
             event_id = self.store.revoke(
                 installation_id,
-                actor_id=OWNER_PRINCIPAL,
-                idempotency_key_digest=key,
-                owner_signature_digest=_owner_install_action_signature(
-                    "revoke", installation_id
-                ),
+                owner_action=action,
             )
             with lock:
                 results.append(event_id)
@@ -955,10 +1100,18 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         ):
             self.store.revoke(
                 installation_id,
-                actor_id=OWNER_PRINCIPAL,
-                idempotency_key_digest=key,
-                owner_signature_digest=_owner_install_action_signature(
-                    "revoke", installation_id
+                owner_action=_owner_action(
+                    "revoke",
+                    installation_id,
+                    1,
+                    key,
+                    document_digest(
+                        {
+                            "operation": "revoke",
+                            "installation_id": installation_id,
+                            "expected_generation": 1,
+                        }
+                    ),
                 ),
             )
 
@@ -1010,17 +1163,16 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         )
         self.store.revoke(
             installation_id,
-            actor_id=OWNER_PRINCIPAL,
-            idempotency_key_digest=document_digest({"revoke": installation_id}),
-            owner_signature_digest=_owner_install_action_signature(
-                "revoke", installation_id
+            owner_action=_install_action(
+                "revoke", installation_id, outcome.entitlement_generation
             ),
         )
-        self.store.mark_notice_delivered(
-            outcome.notice.notice_id,
-            delivery_proof_digest=document_digest({"delivered": installation_id}),
-            idempotency_key_digest=document_digest({"delivery": installation_id}),
-        )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "cannot reactivate"):
+            self.store.mark_notice_delivered(
+                outcome.notice.notice_id,
+                idempotency_key_digest=document_digest({"delivery": installation_id}),
+                route_proof=_route_proof(outcome.notice, "DELIVERED"),
+            )
         self.assertEqual(
             self.store.authoritative_capabilities(
                 installation_id, current_build_digest=DIGEST_A
@@ -1074,6 +1226,245 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertIn("unchanged build", failures[0])
 
+    def test_grant_bound_capabilities_fail_closed_on_template_drift(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        outcome = self.store.grant_from_attestation(
+            _attestation(installation_id=installation_id),
+            idempotency_key_digest=document_digest({"grant": installation_id}),
+        )
+        self.store.mark_notice_delivered(
+            outcome.notice.notice_id,
+            idempotency_key_digest=document_digest({"deliver": installation_id}),
+            route_proof=_route_proof(outcome.notice, "DELIVERED"),
+        )
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.entitlement_signed_template "
+                "SET capabilities = %s::jsonb WHERE profile_template_id = %s",
+                (json.dumps(["review.exact_sha"]), PROFILE_TEMPLATE),
+            )
+        denied = self.store.query_action_boundary(
+            _boundary_query(installation_id=installation_id)
+        )
+        self.assertFalse(denied.permitted)
+        self.assertEqual(denied.denial_reason, "grant authority drift detected")
+        self.assertEqual(
+            self.store.authoritative_capabilities(
+                installation_id, current_build_digest=DIGEST_A
+            ),
+            frozenset(),
+        )
+
+    def test_suspended_generation_cannot_be_regranted(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        issued = _utc_now()
+        self.store.grant_from_attestation(
+            _attestation(installation_id=installation_id, issued_at=issued),
+            idempotency_key_digest=document_digest({"grant": installation_id}),
+        )
+        self.store.evaluate_notice_suspensions(
+            now=issued + timedelta(seconds=NOTICE_SUSPENSION_SECONDS + 1)
+        )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "suspended"):
+            self.store.grant_from_attestation(
+                _attestation(installation_id=installation_id, artifact_digest=DIGEST_B),
+                idempotency_key_digest=document_digest({"regrant": installation_id}),
+            )
+
+    def test_restore_nonce_evidence_and_stale_replay_are_fail_closed(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        first = self.store.grant_from_attestation(
+            _attestation(installation_id=installation_id),
+            idempotency_key_digest=document_digest({"grant": installation_id}),
+        )
+        self.store.revoke(
+            installation_id,
+            owner_action=_install_action("revoke", installation_id, 1),
+        )
+        attestation = _attestation(
+            installation_id=installation_id,
+            artifact_digest=DIGEST_B,
+            nonce_digest=document_digest({"restore-nonce": installation_id}),
+        )
+        action = _restore_action(attestation, first.entitlement_generation)
+        restored = self.store.restore(attestation, owner_action=action)
+        with self.handle.pool.connection() as connection:
+            row = connection.execute(
+                f"SELECT document, build_evidence_digest, test_evidence_digest "
+                f"FROM {self.schema}.entitlement_install_attestation "
+                "WHERE attestation_id = %s",
+                (attestation.attestation_id,),
+            ).fetchone()
+        self.assertEqual(row["document"]["manifest_digest"], attestation.manifest_digest)
+        self.assertEqual(row["build_evidence_digest"], attestation.build_evidence_digest)
+        self.assertEqual(row["test_evidence_digest"], attestation.test_evidence_digest)
+        self.store.revoke(
+            installation_id,
+            owner_action=_install_action(
+                "revoke", installation_id, restored.entitlement_generation
+            ),
+        )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "generation CAS"):
+            self.store.restore(attestation, owner_action=action)
+
+    def test_restore_exactly_binds_subject_and_registration_lineage(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        self.store.grant_from_attestation(
+            _attestation(installation_id=installation_id),
+            idempotency_key_digest=document_digest({"grant": installation_id}),
+        )
+        self.store.revoke(
+            installation_id,
+            owner_action=_install_action("revoke", installation_id, 1),
+        )
+        wrong = _attestation(
+            installation_id=installation_id,
+            artifact_digest=DIGEST_B,
+            provider_id="grok",
+        )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "lineage"):
+            self.store.restore(wrong, owner_action=_restore_action(wrong, 1))
+
+    def test_typed_actions_bind_signed_destinations_and_effects(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        outcome = self.store.grant_from_attestation(
+            _attestation(installation_id=installation_id),
+            idempotency_key_digest=document_digest({"grant": installation_id}),
+        )
+        self.store.mark_notice_delivered(
+            outcome.notice.notice_id,
+            idempotency_key_digest=document_digest({"deliver": installation_id}),
+            route_proof=_route_proof(outcome.notice, "DELIVERED"),
+        )
+        self.assertTrue(
+            self.store.query_action_boundary(
+                _boundary_query(
+                    installation_id=installation_id,
+                    action_type=EntitlementActionType.SLACK_WRITE,
+                    destination_id="slack-owner-dm",
+                )
+            ).permitted
+        )
+        denied = self.store.query_action_boundary(
+            _boundary_query(
+                installation_id=installation_id,
+                action_type=EntitlementActionType.SLACK_WRITE,
+                destination_id="slack-other",
+            )
+        )
+        self.assertFalse(denied.permitted)
+        self.assertEqual(denied.denial_reason, "signed destination mismatch")
+
+    def test_owner_action_expiry_and_nonce_replay_are_rejected(self) -> None:
+        installation_id = f"install-{uuid.uuid4().hex[:8]}"
+        stale_time = _utc_now() - timedelta(hours=1)
+        stale_key = document_digest({"stale": installation_id})
+        stale_request = document_digest(
+            {"operation": "revoke", "installation_id": installation_id, "expected_generation": None}
+        )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "not currently valid"):
+            self.store.revoke(
+                installation_id,
+                owner_action=_owner_action(
+                    "revoke", installation_id, None, stale_key, stale_request,
+                    issued_at=stale_time,
+                ),
+            )
+        shared_nonce = document_digest({"shared-owner-nonce": uuid.uuid4().hex})
+        first = _install_action("revoke", installation_id, None)
+        self.store.revoke(
+            installation_id,
+            owner_action=_owner_action(
+                "revoke", installation_id, None, first.idempotency_key_digest,
+                first.request_digest, nonce_digest=shared_nonce,
+            ),
+        )
+        second_installation = f"install-{uuid.uuid4().hex[:8]}"
+        second_key = document_digest({"second": second_installation})
+        second_request = document_digest(
+            {"operation": "revoke", "installation_id": second_installation, "expected_generation": None}
+        )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "nonce replayed"):
+            self.store.revoke(
+                second_installation,
+                owner_action=_owner_action(
+                    "revoke", second_installation, None, second_key, second_request,
+                    nonce_digest=shared_nonce,
+                ),
+            )
+
+    def test_supersede_action_binds_complete_replacement_registration(self) -> None:
+        original = _registration(generation=2)
+        key = document_digest({"supersede-binding": 2})
+        request = document_digest(
+            {
+                "operation": "supersede",
+                "project_profile_id": original.project_profile_id,
+                "prior_generation": 1,
+                "replacement_registration": original.to_document(),
+                "replacement_generation": 2,
+                "actor_id": OWNER_PRINCIPAL,
+                "idempotency_key_digest": key,
+            }
+        )
+        changed = _registration(generation=2, notion_destination_id="notion-other")
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "exact request"):
+            self.store.supersede_registration(
+                changed,
+                prior_generation=1,
+                owner_action=_owner_action(
+                    "supersede_registration", "uppercut", 1, key, request
+                ),
+            )
+
+    def test_slack_health_proof_and_active_registration_are_fail_closed(self) -> None:
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "not fresh"):
+            self.store.register_verified_slack_destination(
+                destination_id="slack-stale",
+                owner_signature_principal=OWNER_PRINCIPAL,
+                owner_signature_digest=_owner_signature(
+                    {
+                        "schema_version": "OwnerSlackDestination/v1",
+                        "destination_id": "slack-stale",
+                        "owner_signature_principal": OWNER_PRINCIPAL,
+                    }
+                ),
+                health_proof=replace(
+                    _slack_health_proof("slack-stale"),
+                    issued_at=_utc_now() - timedelta(hours=2),
+                    expires_at=_utc_now() - timedelta(hours=1),
+                ),
+            )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "superseded atomically"):
+            self.store.register_project(_registration(generation=2))
+
+    def test_schema_trigger_and_secret_separation_are_enforced(self) -> None:
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"DROP TRIGGER entitlement_install_attestation_immutable "
+                f"ON {self.schema}.entitlement_install_attestation"
+            )
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "trigger contract"):
+            open_entitlement_control_plane(
+                TEST_DSN,
+                schema=self.schema,
+                trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+                owner_authority_secret_file=OWNER_SECRET_FILE,
+                allow_insecure_local_transport=True,
+            )
+        same_secret = _write_secret(OWNER_SECRET.decode())
+        try:
+            with self.assertRaisesRegex(EntitlementControlPlaneError, "separated"):
+                open_entitlement_control_plane(
+                    TEST_DSN,
+                    schema=f"entitlement_secret_{uuid.uuid4().hex[:8]}_v1",
+                    trusted_verifier_secret_file=same_secret,
+                    owner_authority_secret_file=same_secret,
+                    allow_insecure_local_transport=True,
+                )
+        finally:
+            Path(same_secret).unlink(missing_ok=True)
+
     def test_schema_manifest_does_not_hide_missing_control_plane_objects(self) -> None:
         with self.handle.pool.connection() as connection:
             connection.execute(
@@ -1120,8 +1511,8 @@ class EntitlementConfigRegressionTests(unittest.TestCase):
         self.assertNotIn("entitlement_trusted_verifier_secret", field_names)
 
 
-VERIFIER_SECRET = b"entitlement-test-verifier-secret"
-OWNER_SECRET = b"entitlement-test-owner-secret"
+VERIFIER_SECRET = b"0123456789abcdefABCDEF!@#$%^&*()_+-=verifier-key"
+OWNER_SECRET = b"fedcba9876543210ZYXWVU!@#$%^&*()_+-=owner-key"
 VERIFIER_SECRET_FILE = ""
 OWNER_SECRET_FILE = ""
 

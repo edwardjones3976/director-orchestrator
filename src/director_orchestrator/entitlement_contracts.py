@@ -13,6 +13,7 @@ import hmac
 import json
 import math
 import re
+import struct
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -23,6 +24,10 @@ INSTALL_ATTESTATION_VERSION = "InstallAttestation/v1"
 ENTITLEMENT_EVENT_VERSION = "EntitlementEvent/v1"
 OWNER_NOTICE_VERSION = "OwnerNotice/v1"
 SIGNED_TEMPLATE_VERSION = "SignedEntitlementTemplate/v1"
+OWNER_ACTION_VERSION = "EntitlementOwnerAction/v1"
+SLACK_DESTINATION_PROOF_VERSION = "SlackDestinationHealthProof/v1"
+ACTION_BOUNDARY_QUERY_VERSION = "EntitlementActionBoundaryQuery/v1"
+NOTICE_ROUTE_PROOF_VERSION = "NoticeRouteProof/v1"
 
 SHARED_INTEGRATIONS_TEMPLATE_ID = "shared-integrations/v1"
 
@@ -71,6 +76,27 @@ class EntitlementLifecycleStatus(StrEnum):
 class SubjectKind(StrEnum):
     PROVIDER = "provider"
     PROJECT = "project"
+
+
+class EntitlementActionType(StrEnum):
+    REVIEW_EXACT_SHA = "review.exact_sha"
+    REPOSITORY_WRITE = "repository.write"
+    SLACK_WRITE = "slack.write"
+    NOTION_WRITE = "notion.write"
+    N8N_WRITE = "n8n.write"
+    PROVIDER_DISPATCH = "provider.dispatch"
+
+
+ACTION_CAPABILITY: Mapping[EntitlementActionType, str] = {
+    EntitlementActionType.REVIEW_EXACT_SHA: "review.exact_sha",
+    EntitlementActionType.REPOSITORY_WRITE: "repository.write.non_protected",
+    EntitlementActionType.SLACK_WRITE: "integration.slack.write",
+    EntitlementActionType.NOTION_WRITE: "integration.notion.write",
+    EntitlementActionType.N8N_WRITE: "integration.n8n.write",
+    EntitlementActionType.PROVIDER_DISPATCH: "dispatch.scoped",
+}
+
+SPEND_BEARING_ACTIONS = frozenset({EntitlementActionType.PROVIDER_DISPATCH})
 
 
 PROFILE_TEMPLATE_CAPABILITIES: Mapping[str, frozenset[str]] = {
@@ -274,6 +300,35 @@ def normalize_posix_path(path: str) -> str:
     return "/".join(parts)
 
 
+def _require_document_keys(
+    document: Mapping[str, Any], required: frozenset[str], label: str
+) -> None:
+    _require_exact_keys(document, required, label)
+    missing = required - set(document)
+    if missing:
+        raise EntitlementContractError(
+            f"{label} is missing fields: " + ", ".join(sorted(missing))
+        )
+
+
+def _require_type(value: Any, expected: type | tuple[type, ...], name: str) -> Any:
+    if isinstance(value, bool) and expected in ((int, float), int, float):
+        raise EntitlementContractError(f"{name} has the wrong type")
+    if not isinstance(value, expected):
+        raise EntitlementContractError(f"{name} has the wrong type")
+    return value
+
+
+def _parse_utc(value: Any, name: str) -> datetime:
+    _require_type(value, str, name)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise EntitlementContractError(f"{name} is not ISO-8601") from exc
+    _require_utc(parsed, name)
+    return parsed
+
+
 def path_matches_pattern(pattern: str, candidate_path: str) -> bool:
     if not pattern:
         raise EntitlementContractError("path pattern must not be empty")
@@ -474,6 +529,59 @@ class SignedEntitlementTemplateV1:
             secret=owner_authority_secret,
         )
 
+    def to_document(self) -> dict[str, Any]:
+        document = self.signing_document()
+        document["owner_signature_digest"] = self.owner_signature_digest
+        return document
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestEntryV1:
+    path: str
+    artifact_digest: str
+    size_bytes: int
+
+    def __post_init__(self) -> None:
+        normalize_posix_path(self.path)
+        if not _SHA256.fullmatch(self.artifact_digest):
+            raise EntitlementContractError("manifest artifact_digest must be sha256")
+        if isinstance(self.size_bytes, bool) or not isinstance(self.size_bytes, int):
+            raise EntitlementContractError("manifest size_bytes must be an integer")
+        if self.size_bytes < 0:
+            raise EntitlementContractError("manifest size_bytes must not be negative")
+
+    def to_document(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "artifact_digest": self.artifact_digest,
+            "size_bytes": self.size_bytes,
+        }
+
+
+def canonical_manifest_bytes(entries: tuple[ManifestEntryV1, ...]) -> bytes:
+    if not entries:
+        raise EntitlementContractError("manifest entries must not be empty")
+    if tuple(sorted(entry.path for entry in entries)) != tuple(
+        entry.path for entry in entries
+    ):
+        raise EntitlementContractError("manifest entries must be sorted by path")
+    if len({entry.path for entry in entries}) != len(entries):
+        raise EntitlementContractError("manifest paths must be unique")
+    framed = bytearray(b"EntitlementManifest/v1\0")
+    for entry in entries:
+        for value in (
+            entry.path.encode("utf-8"),
+            entry.artifact_digest.encode("ascii"),
+            str(entry.size_bytes).encode("ascii"),
+        ):
+            framed.extend(struct.pack(">Q", len(value)))
+            framed.extend(value)
+    return bytes(framed)
+
+
+def manifest_digest(entries: tuple[ManifestEntryV1, ...]) -> str:
+    return hashlib.sha256(canonical_manifest_bytes(entries)).hexdigest()
+
 
 @dataclass(frozen=True, slots=True)
 class InstallAttestationV1:
@@ -484,8 +592,11 @@ class InstallAttestationV1:
     installation_id: str
     source_commit_sha: str
     source_tree_sha: str
+    manifest_entries: tuple[ManifestEntryV1, ...]
     manifest_digest: str
     artifact_digest: str
+    build_evidence_digest: str
+    test_evidence_digest: str
     registration_generation: int
     template_digest: str
     owner_policy_digest: str
@@ -507,12 +618,16 @@ class InstallAttestationV1:
         for digest_name in (
             "manifest_digest",
             "artifact_digest",
+            "build_evidence_digest",
+            "test_evidence_digest",
             "template_digest",
             "owner_policy_digest",
             "nonce_digest",
         ):
             if not _SHA256.fullmatch(getattr(self, digest_name)):
                 raise EntitlementContractError(f"{digest_name} must be sha256")
+        if self.manifest_digest != manifest_digest(self.manifest_entries):
+            raise EntitlementContractError("manifest_digest does not match canonical manifest")
         if not _IDENTIFIER.fullmatch(self.verifier_principal):
             raise EntitlementContractError("verifier_principal is malformed")
         if not _SHA256.fullmatch(self.verifier_signature_digest):
@@ -536,8 +651,11 @@ class InstallAttestationV1:
             "installation_id": self.installation_id,
             "source_commit_sha": self.source_commit_sha,
             "source_tree_sha": self.source_tree_sha,
+            "manifest_entries": [entry.to_document() for entry in self.manifest_entries],
             "manifest_digest": self.manifest_digest,
             "artifact_digest": self.artifact_digest,
+            "build_evidence_digest": self.build_evidence_digest,
+            "test_evidence_digest": self.test_evidence_digest,
             "registration_generation": self.registration_generation,
             "template_digest": self.template_digest,
             "owner_policy_digest": self.owner_policy_digest,
@@ -669,6 +787,197 @@ class OwnerNoticeV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SlackDestinationHealthProofV1:
+    destination_id: str
+    workspace_id: str
+    channel_id: str
+    account_id: str
+    authenticated: bool
+    delivery_probe_digest: str
+    verifier_principal: str
+    issued_at: datetime
+    expires_at: datetime
+    nonce_digest: str
+    verifier_signature_digest: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "destination_id",
+            "workspace_id",
+            "channel_id",
+            "account_id",
+            "verifier_principal",
+        ):
+            if not _IDENTIFIER.fullmatch(getattr(self, name)):
+                raise EntitlementContractError(f"{name} is malformed")
+        if self.authenticated is not True:
+            raise EntitlementContractError("Slack health proof must be authenticated")
+        for name in ("delivery_probe_digest", "nonce_digest", "verifier_signature_digest"):
+            if not _SHA256.fullmatch(getattr(self, name)):
+                raise EntitlementContractError(f"{name} must be sha256")
+        _require_utc(self.issued_at, "issued_at")
+        _require_utc(self.expires_at, "expires_at")
+        if self.expires_at <= self.issued_at:
+            raise EntitlementContractError("Slack health proof expiry must follow issuance")
+
+    def signing_document(self) -> dict[str, Any]:
+        return {
+            "schema_version": SLACK_DESTINATION_PROOF_VERSION,
+            "destination_id": self.destination_id,
+            "workspace_id": self.workspace_id,
+            "channel_id": self.channel_id,
+            "account_id": self.account_id,
+            "authenticated": self.authenticated,
+            "delivery_probe_digest": self.delivery_probe_digest,
+            "verifier_principal": self.verifier_principal,
+            "issued_at": self.issued_at.isoformat(),
+            "expires_at": self.expires_at.isoformat(),
+            "nonce_digest": self.nonce_digest,
+        }
+
+    def to_document(self) -> dict[str, Any]:
+        document = self.signing_document()
+        document["verifier_signature_digest"] = self.verifier_signature_digest
+        return document
+
+    @property
+    def digest(self) -> str:
+        return document_digest(self.signing_document())
+
+    def verify_signature(self, *, trusted_verifier_secret: bytes) -> None:
+        verify_signature(
+            principal=self.verifier_principal,
+            signature_digest=self.verifier_signature_digest,
+            signing_payload=signing_bytes(self.signing_document()),
+            secret=trusted_verifier_secret,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EntitlementOwnerActionV1:
+    operation: str
+    actor_id: str
+    installation_id: str
+    expected_generation: int | None
+    idempotency_key_digest: str
+    request_digest: str
+    nonce_digest: str
+    issued_at: datetime
+    expires_at: datetime
+    owner_signature_digest: str
+
+    def __post_init__(self) -> None:
+        for name in ("operation", "actor_id", "installation_id"):
+            if not _IDENTIFIER.fullmatch(getattr(self, name)):
+                raise EntitlementContractError(f"{name} is malformed")
+        if self.expected_generation is not None and self.expected_generation < 0:
+            raise EntitlementContractError("expected_generation must not be negative")
+        for name in (
+            "idempotency_key_digest",
+            "request_digest",
+            "nonce_digest",
+            "owner_signature_digest",
+        ):
+            if not _SHA256.fullmatch(getattr(self, name)):
+                raise EntitlementContractError(f"{name} must be sha256")
+        _require_utc(self.issued_at, "issued_at")
+        _require_utc(self.expires_at, "expires_at")
+        if self.expires_at <= self.issued_at:
+            raise EntitlementContractError("owner action expiry must follow issuance")
+
+    def signing_document(self) -> dict[str, Any]:
+        return {
+            "schema_version": OWNER_ACTION_VERSION,
+            "operation": self.operation,
+            "actor_id": self.actor_id,
+            "installation_id": self.installation_id,
+            "expected_generation": self.expected_generation,
+            "idempotency_key_digest": self.idempotency_key_digest,
+            "request_digest": self.request_digest,
+            "nonce_digest": self.nonce_digest,
+            "issued_at": self.issued_at.isoformat(),
+            "expires_at": self.expires_at.isoformat(),
+        }
+
+    def to_document(self) -> dict[str, Any]:
+        document = self.signing_document()
+        document["owner_signature_digest"] = self.owner_signature_digest
+        return document
+
+    def verify_signature(self, *, owner_authority_secret: bytes) -> None:
+        verify_signature(
+            principal=self.actor_id,
+            signature_digest=self.owner_signature_digest,
+            signing_payload=signing_bytes(self.signing_document()),
+            secret=owner_authority_secret,
+        )
+
+    def to_document(self) -> dict[str, Any]:
+        document = self.signing_document()
+        document["owner_signature_digest"] = self.owner_signature_digest
+        return document
+
+
+@dataclass(frozen=True, slots=True)
+class NoticeRouteProofV1:
+    notice_id: str
+    installation_id: str
+    entitlement_generation: int
+    destination_id: str
+    outcome: str
+    evidence_digest: str
+    verifier_principal: str
+    issued_at: datetime
+    expires_at: datetime
+    nonce_digest: str
+    verifier_signature_digest: str
+
+    def __post_init__(self) -> None:
+        for name in ("notice_id", "installation_id", "destination_id", "verifier_principal"):
+            if not _IDENTIFIER.fullmatch(getattr(self, name)):
+                raise EntitlementContractError(f"{name} is malformed")
+        if self.entitlement_generation < 1:
+            raise EntitlementContractError("entitlement_generation must be positive")
+        if self.outcome not in {"DELIVERED", "FAILED"}:
+            raise EntitlementContractError("notice route outcome is unknown")
+        for name in ("evidence_digest", "nonce_digest", "verifier_signature_digest"):
+            if not _SHA256.fullmatch(getattr(self, name)):
+                raise EntitlementContractError(f"{name} must be sha256")
+        _require_utc(self.issued_at, "issued_at")
+        _require_utc(self.expires_at, "expires_at")
+        if self.expires_at <= self.issued_at:
+            raise EntitlementContractError("notice route proof expiry must follow issuance")
+
+    def signing_document(self) -> dict[str, Any]:
+        return {
+            "schema_version": NOTICE_ROUTE_PROOF_VERSION,
+            "notice_id": self.notice_id,
+            "installation_id": self.installation_id,
+            "entitlement_generation": self.entitlement_generation,
+            "destination_id": self.destination_id,
+            "outcome": self.outcome,
+            "evidence_digest": self.evidence_digest,
+            "verifier_principal": self.verifier_principal,
+            "issued_at": self.issued_at.isoformat(),
+            "expires_at": self.expires_at.isoformat(),
+            "nonce_digest": self.nonce_digest,
+        }
+
+    def to_document(self) -> dict[str, Any]:
+        document = self.signing_document()
+        document["verifier_signature_digest"] = self.verifier_signature_digest
+        return document
+
+    def verify_signature(self, *, trusted_verifier_secret: bytes) -> None:
+        verify_signature(
+            principal=self.verifier_principal,
+            signature_digest=self.verifier_signature_digest,
+            signing_payload=signing_bytes(self.signing_document()),
+            secret=trusted_verifier_secret,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class EntitlementActionBoundaryQuery:
     project_profile_id: str
     repository: str
@@ -677,10 +986,11 @@ class EntitlementActionBoundaryQuery:
     provider_id: str
     subject_id: str
     installation_id: str
-    required_capability: str
     current_build_digest: str
-    action: str
-    budget_task_usd: float
+    action_type: EntitlementActionType
+    destination_id: str | None
+    effect_digest: str
+    reserved_spend_usd: float
     now: datetime
 
     def __post_init__(self) -> None:
@@ -689,7 +999,6 @@ class EntitlementActionBoundaryQuery:
             "provider_id",
             "subject_id",
             "installation_id",
-            "action",
         ):
             if not _IDENTIFIER.fullmatch(getattr(self, name)):
                 raise EntitlementContractError(f"{name} is malformed")
@@ -698,12 +1007,48 @@ class EntitlementActionBoundaryQuery:
         if not _SAFE_REF.fullmatch(self.ref):
             raise EntitlementContractError("ref is malformed")
         normalize_posix_path(self.path)
-        if not _CAPABILITY.fullmatch(self.required_capability):
-            raise EntitlementContractError("required_capability is malformed")
+        if not isinstance(self.action_type, EntitlementActionType):
+            raise EntitlementContractError("action_type must be a known typed action")
+        if self.destination_id is not None and not _IDENTIFIER.fullmatch(self.destination_id):
+            raise EntitlementContractError("destination_id is malformed")
+        if self.action_type in (
+            EntitlementActionType.SLACK_WRITE,
+            EntitlementActionType.NOTION_WRITE,
+            EntitlementActionType.N8N_WRITE,
+            EntitlementActionType.PROVIDER_DISPATCH,
+        ) and self.destination_id is None:
+            raise EntitlementContractError("destination_id is required for integration actions")
+        if not _SHA256.fullmatch(self.effect_digest):
+            raise EntitlementContractError("effect_digest must be sha256")
         if not _SHA256.fullmatch(self.current_build_digest):
             raise EntitlementContractError("current_build_digest must be sha256")
-        _require_finite_positive(self.budget_task_usd, "budget_task_usd")
+        if isinstance(self.reserved_spend_usd, bool) or not isinstance(
+            self.reserved_spend_usd, (int, float)
+        ) or not math.isfinite(float(self.reserved_spend_usd)) or self.reserved_spend_usd < 0:
+            raise EntitlementContractError("reserved_spend_usd must be a finite non-negative number")
+        if self.action_type in SPEND_BEARING_ACTIONS and self.reserved_spend_usd <= 0:
+            raise EntitlementContractError("spend-bearing action requires an actual reservation")
+        if self.action_type not in SPEND_BEARING_ACTIONS and self.reserved_spend_usd != 0:
+            raise EntitlementContractError("non-spend action cannot carry a spend reservation")
         _require_utc(self.now, "now")
+
+    def to_document(self) -> dict[str, Any]:
+        return {
+            "schema_version": ACTION_BOUNDARY_QUERY_VERSION,
+            "project_profile_id": self.project_profile_id,
+            "repository": self.repository,
+            "ref": self.ref,
+            "path": self.path,
+            "provider_id": self.provider_id,
+            "subject_id": self.subject_id,
+            "installation_id": self.installation_id,
+            "current_build_digest": self.current_build_digest,
+            "action_type": self.action_type.value,
+            "destination_id": self.destination_id,
+            "effect_digest": self.effect_digest,
+            "reserved_spend_usd": self.reserved_spend_usd,
+            "now": self.now.isoformat(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -714,6 +1059,279 @@ class EntitlementActionBoundaryResult:
     notice_delivery_state: OwnerNoticeDeliveryState | None
     audit_event_ids: tuple[str, ...]
     denial_reason: str | None
+
+
+def _strict_document(raw: bytes, *, version: str, keys: frozenset[str]) -> dict[str, Any]:
+    document = _decode_strict_json(raw, source=version)
+    _require_document_keys(document, keys, version)
+    if document.get("schema_version") != version:
+        raise EntitlementContractError(f"{version} schema_version mismatch")
+    return document
+
+
+def _string_tuple(value: Any, name: str) -> tuple[str, ...]:
+    _require_type(value, list, name)
+    if not all(isinstance(item, str) for item in value):
+        raise EntitlementContractError(f"{name} must contain strings")
+    return tuple(value)
+
+
+def parse_project_registration_v1(raw: bytes) -> ProjectRegistrationV1:
+    keys = frozenset(
+        {
+            "schema_version", "project_profile_id", "entitlement_template_id",
+            "repository_scopes", "slack_destination_id", "notion_destination_id",
+            "n8n_workflow_ids", "budget_task_usd", "budget_daily_usd",
+            "state_namespace", "managed_private_source", "owner_policy_digest",
+            "registration_generation", "owner_signature_principal",
+            "owner_signature_digest",
+        }
+    )
+    document = _strict_document(raw, version=PROJECT_REGISTRATION_VERSION, keys=keys)
+    _require_type(document["repository_scopes"], list, "repository_scopes")
+    scopes: list[RepositoryScope] = []
+    for raw_scope in document["repository_scopes"]:
+        _require_type(raw_scope, dict, "repository_scope")
+        _require_document_keys(
+            raw_scope, frozenset({"repository", "refs", "paths"}), "RepositoryScope"
+        )
+        scopes.append(
+            RepositoryScope(
+                repository=_require_type(raw_scope["repository"], str, "repository"),
+                refs=_string_tuple(raw_scope["refs"], "refs"),
+                paths=_string_tuple(raw_scope["paths"], "paths"),
+            )
+        )
+    return ProjectRegistrationV1(
+        project_profile_id=_require_type(document["project_profile_id"], str, "project_profile_id"),
+        entitlement_template_id=_require_type(document["entitlement_template_id"], str, "entitlement_template_id"),
+        repository_scopes=tuple(scopes),
+        slack_destination_id=_require_type(document["slack_destination_id"], str, "slack_destination_id"),
+        notion_destination_id=_require_type(document["notion_destination_id"], str, "notion_destination_id"),
+        n8n_workflow_ids=_string_tuple(document["n8n_workflow_ids"], "n8n_workflow_ids"),
+        budget_task_usd=_require_type(document["budget_task_usd"], (int, float), "budget_task_usd"),
+        budget_daily_usd=_require_type(document["budget_daily_usd"], (int, float), "budget_daily_usd"),
+        state_namespace=_require_type(document["state_namespace"], str, "state_namespace"),
+        managed_private_source=_require_type(document["managed_private_source"], bool, "managed_private_source"),
+        owner_policy_digest=_require_type(document["owner_policy_digest"], str, "owner_policy_digest"),
+        registration_generation=_require_type(document["registration_generation"], int, "registration_generation"),
+        owner_signature_principal=_require_type(document["owner_signature_principal"], str, "owner_signature_principal"),
+        owner_signature_digest=_require_type(document["owner_signature_digest"], str, "owner_signature_digest"),
+    )
+
+
+def parse_signed_entitlement_template_v1(raw: bytes) -> SignedEntitlementTemplateV1:
+    keys = frozenset(
+        {"schema_version", "shared_template_id", "profile_template_id", "template_digest",
+         "owner_policy_digest", "owner_signature_principal", "owner_signature_digest"}
+    )
+    document = _strict_document(raw, version=SIGNED_TEMPLATE_VERSION, keys=keys)
+    profile = _require_type(document["profile_template_id"], str, "profile_template_id")
+    if document["shared_template_id"] != SHARED_INTEGRATIONS_TEMPLATE_ID:
+        raise EntitlementContractError("shared_template_id mismatch")
+    if document["template_digest"] != composed_template_digest(profile):
+        raise EntitlementContractError("template_digest mismatch")
+    return SignedEntitlementTemplateV1(
+        profile_template_id=profile,
+        owner_policy_digest=_require_type(document["owner_policy_digest"], str, "owner_policy_digest"),
+        owner_signature_principal=_require_type(document["owner_signature_principal"], str, "owner_signature_principal"),
+        owner_signature_digest=_require_type(document["owner_signature_digest"], str, "owner_signature_digest"),
+    )
+
+
+def parse_install_attestation_v1(raw: bytes) -> InstallAttestationV1:
+    keys = frozenset(
+        {"schema_version", "subject_kind", "subject_id", "provider_id", "project_profile_id",
+         "installation_id", "source_commit_sha", "source_tree_sha", "manifest_entries",
+         "manifest_digest", "artifact_digest", "build_evidence_digest", "test_evidence_digest",
+         "registration_generation", "template_digest", "owner_policy_digest", "verifier_principal",
+         "verifier_signature_digest", "issued_at", "expires_at", "nonce_digest", "attestation_id"}
+    )
+    document = _strict_document(raw, version=INSTALL_ATTESTATION_VERSION, keys=keys)
+    _require_type(document["manifest_entries"], list, "manifest_entries")
+    entries: list[ManifestEntryV1] = []
+    for raw_entry in document["manifest_entries"]:
+        _require_type(raw_entry, dict, "manifest_entry")
+        _require_document_keys(
+            raw_entry, frozenset({"path", "artifact_digest", "size_bytes"}), "ManifestEntryV1"
+        )
+        entries.append(ManifestEntryV1(
+            path=_require_type(raw_entry["path"], str, "path"),
+            artifact_digest=_require_type(raw_entry["artifact_digest"], str, "artifact_digest"),
+            size_bytes=_require_type(raw_entry["size_bytes"], int, "size_bytes"),
+        ))
+    try:
+        subject_kind = SubjectKind(_require_type(document["subject_kind"], str, "subject_kind"))
+    except ValueError as exc:
+        raise EntitlementContractError("subject_kind is unknown") from exc
+    return InstallAttestationV1(
+        subject_kind=subject_kind,
+        subject_id=_require_type(document["subject_id"], str, "subject_id"),
+        provider_id=_require_type(document["provider_id"], str, "provider_id"),
+        project_profile_id=_require_type(document["project_profile_id"], str, "project_profile_id"),
+        installation_id=_require_type(document["installation_id"], str, "installation_id"),
+        source_commit_sha=_require_type(document["source_commit_sha"], str, "source_commit_sha"),
+        source_tree_sha=_require_type(document["source_tree_sha"], str, "source_tree_sha"),
+        manifest_entries=tuple(entries),
+        manifest_digest=_require_type(document["manifest_digest"], str, "manifest_digest"),
+        artifact_digest=_require_type(document["artifact_digest"], str, "artifact_digest"),
+        build_evidence_digest=_require_type(document["build_evidence_digest"], str, "build_evidence_digest"),
+        test_evidence_digest=_require_type(document["test_evidence_digest"], str, "test_evidence_digest"),
+        registration_generation=_require_type(document["registration_generation"], int, "registration_generation"),
+        template_digest=_require_type(document["template_digest"], str, "template_digest"),
+        owner_policy_digest=_require_type(document["owner_policy_digest"], str, "owner_policy_digest"),
+        verifier_principal=_require_type(document["verifier_principal"], str, "verifier_principal"),
+        verifier_signature_digest=_require_type(document["verifier_signature_digest"], str, "verifier_signature_digest"),
+        issued_at=_parse_utc(document["issued_at"], "issued_at"),
+        expires_at=_parse_utc(document["expires_at"], "expires_at"),
+        nonce_digest=_require_type(document["nonce_digest"], str, "nonce_digest"),
+        attestation_id=_require_type(document["attestation_id"], str, "attestation_id"),
+    )
+
+
+def parse_entitlement_event_v1(raw: bytes) -> EntitlementEventV1:
+    keys = frozenset({"schema_version", "event_type", "installation_id", "entitlement_generation",
+                      "expected_generation", "actor_id", "idempotency_key_digest", "scope_digest",
+                      "evidence_binding_digest", "event_id"})
+    document = _strict_document(raw, version=ENTITLEMENT_EVENT_VERSION, keys=keys)
+    try:
+        event_type = EntitlementEventType(_require_type(document["event_type"], str, "event_type"))
+    except ValueError as exc:
+        raise EntitlementContractError("event_type is unknown") from exc
+    expected = document["expected_generation"]
+    if expected is not None:
+        _require_type(expected, int, "expected_generation")
+    return EntitlementEventV1(
+        event_type=event_type,
+        installation_id=_require_type(document["installation_id"], str, "installation_id"),
+        entitlement_generation=_require_type(document["entitlement_generation"], int, "entitlement_generation"),
+        expected_generation=expected,
+        actor_id=_require_type(document["actor_id"], str, "actor_id"),
+        idempotency_key_digest=_require_type(document["idempotency_key_digest"], str, "idempotency_key_digest"),
+        scope_digest=_require_type(document["scope_digest"], str, "scope_digest"),
+        evidence_binding_digest=_require_type(document["evidence_binding_digest"], str, "evidence_binding_digest"),
+        event_id=_require_type(document["event_id"], str, "event_id"),
+    )
+
+
+def parse_owner_notice_v1(raw: bytes) -> OwnerNoticeV1:
+    keys = frozenset({"schema_version", "notice_id", "installation_id", "entitlement_generation",
+                      "delivery_state", "project_profile_id", "subject_kind", "subject_id", "template_id",
+                      "authority_bearing_capabilities", "build_digest", "pending_since", "delivery_proof_digest"})
+    document = _strict_document(raw, version=OWNER_NOTICE_VERSION, keys=keys)
+    try:
+        delivery = OwnerNoticeDeliveryState(_require_type(document["delivery_state"], str, "delivery_state"))
+        subject = SubjectKind(_require_type(document["subject_kind"], str, "subject_kind"))
+    except ValueError as exc:
+        raise EntitlementContractError("notice enum value is unknown") from exc
+    proof = document["delivery_proof_digest"]
+    if proof is not None:
+        _require_type(proof, str, "delivery_proof_digest")
+    return OwnerNoticeV1(
+        notice_id=_require_type(document["notice_id"], str, "notice_id"),
+        installation_id=_require_type(document["installation_id"], str, "installation_id"),
+        entitlement_generation=_require_type(document["entitlement_generation"], int, "entitlement_generation"),
+        delivery_state=delivery,
+        project_profile_id=_require_type(document["project_profile_id"], str, "project_profile_id"),
+        subject_kind=subject,
+        subject_id=_require_type(document["subject_id"], str, "subject_id"),
+        template_id=_require_type(document["template_id"], str, "template_id"),
+        authority_bearing_capabilities=_string_tuple(document["authority_bearing_capabilities"], "authority_bearing_capabilities"),
+        build_digest=_require_type(document["build_digest"], str, "build_digest"),
+        pending_since=_parse_utc(document["pending_since"], "pending_since"),
+        delivery_proof_digest=proof,
+    )
+
+
+def parse_slack_destination_health_proof_v1(raw: bytes) -> SlackDestinationHealthProofV1:
+    keys = frozenset({"schema_version", "destination_id", "workspace_id", "channel_id", "account_id",
+                      "authenticated", "delivery_probe_digest", "verifier_principal", "issued_at",
+                      "expires_at", "nonce_digest", "verifier_signature_digest"})
+    document = _strict_document(raw, version=SLACK_DESTINATION_PROOF_VERSION, keys=keys)
+    return SlackDestinationHealthProofV1(
+        destination_id=_require_type(document["destination_id"], str, "destination_id"),
+        workspace_id=_require_type(document["workspace_id"], str, "workspace_id"),
+        channel_id=_require_type(document["channel_id"], str, "channel_id"),
+        account_id=_require_type(document["account_id"], str, "account_id"),
+        authenticated=_require_type(document["authenticated"], bool, "authenticated"),
+        delivery_probe_digest=_require_type(document["delivery_probe_digest"], str, "delivery_probe_digest"),
+        verifier_principal=_require_type(document["verifier_principal"], str, "verifier_principal"),
+        issued_at=_parse_utc(document["issued_at"], "issued_at"),
+        expires_at=_parse_utc(document["expires_at"], "expires_at"),
+        nonce_digest=_require_type(document["nonce_digest"], str, "nonce_digest"),
+        verifier_signature_digest=_require_type(document["verifier_signature_digest"], str, "verifier_signature_digest"),
+    )
+
+
+def parse_entitlement_owner_action_v1(raw: bytes) -> EntitlementOwnerActionV1:
+    keys = frozenset({"schema_version", "operation", "actor_id", "installation_id",
+                      "expected_generation", "idempotency_key_digest", "request_digest", "nonce_digest",
+                      "issued_at", "expires_at", "owner_signature_digest"})
+    document = _strict_document(raw, version=OWNER_ACTION_VERSION, keys=keys)
+    expected = document["expected_generation"]
+    if expected is not None:
+        _require_type(expected, int, "expected_generation")
+    return EntitlementOwnerActionV1(
+        operation=_require_type(document["operation"], str, "operation"),
+        actor_id=_require_type(document["actor_id"], str, "actor_id"),
+        installation_id=_require_type(document["installation_id"], str, "installation_id"),
+        expected_generation=expected,
+        idempotency_key_digest=_require_type(document["idempotency_key_digest"], str, "idempotency_key_digest"),
+        request_digest=_require_type(document["request_digest"], str, "request_digest"),
+        nonce_digest=_require_type(document["nonce_digest"], str, "nonce_digest"),
+        issued_at=_parse_utc(document["issued_at"], "issued_at"),
+        expires_at=_parse_utc(document["expires_at"], "expires_at"),
+        owner_signature_digest=_require_type(document["owner_signature_digest"], str, "owner_signature_digest"),
+    )
+
+
+def parse_entitlement_action_boundary_query_v1(raw: bytes) -> EntitlementActionBoundaryQuery:
+    keys = frozenset({"schema_version", "project_profile_id", "repository", "ref", "path", "provider_id",
+                      "subject_id", "installation_id", "current_build_digest", "action_type",
+                      "destination_id", "effect_digest", "reserved_spend_usd", "now"})
+    document = _strict_document(raw, version=ACTION_BOUNDARY_QUERY_VERSION, keys=keys)
+    try:
+        action = EntitlementActionType(_require_type(document["action_type"], str, "action_type"))
+    except ValueError as exc:
+        raise EntitlementContractError("action_type is unknown") from exc
+    destination = document["destination_id"]
+    if destination is not None:
+        _require_type(destination, str, "destination_id")
+    return EntitlementActionBoundaryQuery(
+        project_profile_id=_require_type(document["project_profile_id"], str, "project_profile_id"),
+        repository=_require_type(document["repository"], str, "repository"),
+        ref=_require_type(document["ref"], str, "ref"),
+        path=_require_type(document["path"], str, "path"),
+        provider_id=_require_type(document["provider_id"], str, "provider_id"),
+        subject_id=_require_type(document["subject_id"], str, "subject_id"),
+        installation_id=_require_type(document["installation_id"], str, "installation_id"),
+        current_build_digest=_require_type(document["current_build_digest"], str, "current_build_digest"),
+        action_type=action,
+        destination_id=destination,
+        effect_digest=_require_type(document["effect_digest"], str, "effect_digest"),
+        reserved_spend_usd=_require_type(document["reserved_spend_usd"], (int, float), "reserved_spend_usd"),
+        now=_parse_utc(document["now"], "now"),
+    )
+
+
+def parse_notice_route_proof_v1(raw: bytes) -> NoticeRouteProofV1:
+    keys = frozenset({"schema_version", "notice_id", "installation_id", "entitlement_generation",
+                      "destination_id", "outcome", "evidence_digest", "verifier_principal",
+                      "issued_at", "expires_at", "nonce_digest", "verifier_signature_digest"})
+    document = _strict_document(raw, version=NOTICE_ROUTE_PROOF_VERSION, keys=keys)
+    return NoticeRouteProofV1(
+        notice_id=_require_type(document["notice_id"], str, "notice_id"),
+        installation_id=_require_type(document["installation_id"], str, "installation_id"),
+        entitlement_generation=_require_type(document["entitlement_generation"], int, "entitlement_generation"),
+        destination_id=_require_type(document["destination_id"], str, "destination_id"),
+        outcome=_require_type(document["outcome"], str, "outcome"),
+        evidence_digest=_require_type(document["evidence_digest"], str, "evidence_digest"),
+        verifier_principal=_require_type(document["verifier_principal"], str, "verifier_principal"),
+        issued_at=_parse_utc(document["issued_at"], "issued_at"),
+        expires_at=_parse_utc(document["expires_at"], "expires_at"),
+        nonce_digest=_require_type(document["nonce_digest"], str, "nonce_digest"),
+        verifier_signature_digest=_require_type(document["verifier_signature_digest"], str, "verifier_signature_digest"),
+    )
 
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:20 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:00 UTC | END]]
