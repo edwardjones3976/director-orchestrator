@@ -1,6 +1,7 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
-# Human-Out-Of-The-Loop Operation
+# Human-out-of-the-loop operation
 
 **Status:** Documented authority only. Default off. No delegated decision is
 executable until the implementation phases below are separately built, gated,
@@ -254,3 +255,4 @@ These are stated plainly because a framework that hides them is worse than none.
 
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]] -->
