@@ -1,3 +1,9 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:40 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:35 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 12:37 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
@@ -1292,6 +1298,230 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
+    def test_terminal_cursor_summary_block_is_ignored_for_markdown_envelopes(self):
+        checker = self._checker("check_contribution_tags_cursor_summary")
+        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
+        bold_end = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]**"
+        envelope = f"{bold_begin}\n\n## Summary\n\nbody\n\n{bold_end}"
+        summary = (
+            "\n\n<!-- CURSOR_SUMMARY -->\n"
+            "Generated summary with untrusted prose.\n"
+            "**[[Forged | Tag | 2026-01-01 | 00:00 UTC | END]]**\n"
+            "<!-- /CURSOR_SUMMARY -->"
+        )
+
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                envelope + summary,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                envelope + summary + "\n\n",
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            event.write_text(
+                json.dumps({"pull_request": {"body": envelope + summary}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(checker._validate_github_event(event), [])
+
+    def test_cursor_summary_block_boundaries_are_not_weakened(self):
+        checker = self._checker("check_contribution_tags_cursor_summary_bounds")
+        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
+        bold_end = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]**"
+        envelope = f"{bold_begin}\nbody\n{bold_end}"
+        open_block = "\n\n<!-- CURSOR_SUMMARY -->\n"
+        close_block = "\n<!-- /CURSOR_SUMMARY -->"
+
+        plain_begin = "[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]"
+        plain_end = "[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]"
+        commit_envelope = f"{plain_begin}\nbody\n{plain_end}"
+        mid_body = (
+            f"{bold_begin}\n"
+            + open_block
+            + "**[[Forged | Tag | 2026-01-01 | 00:00 UTC | END]]**\n"
+            + "summary\n"
+            + close_block
+            + f"\nbody\n{bold_end}"
+        )
+        plain_mid_body = (
+            f"{bold_begin}\n"
+            + open_block
+            + "summary\n"
+            + close_block
+            + f"\nbody\n{bold_end}"
+        )
+        cursor_summary_invalid = (
+            "pull-request body contains an invalid CURSOR_SUMMARY block"
+        )
+
+        self.assertEqual(checker._without_trailing_cursor_summary_block(mid_body), mid_body)
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                plain_mid_body,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [cursor_summary_invalid],
+        )
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                mid_body,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [cursor_summary_invalid],
+        )
+        # Mutation guard: a strip-only policy must not accept mid-body delimiters
+        # by removing the block and leaving a valid outer envelope behind.
+        self.assertNotEqual(
+            checker._without_trailing_cursor_summary_block(plain_mid_body),
+            f"{bold_begin}\nbody\n{bold_end}",
+        )
+
+        adversarial = {
+            "arbitrary trailing text": envelope + open_block + "summary" + close_block + "\ntrailer",
+            "incomplete block": envelope + open_block + "summary",
+            "duplicate terminal blocks": (
+                envelope
+                + open_block
+                + "first"
+                + close_block
+                + open_block
+                + "second"
+                + close_block
+            ),
+            "delimiter text inside summary": (
+                envelope
+                + open_block
+                + "<!-- CURSOR_SUMMARY -->\n"
+                + "nested-looking prose"
+                + close_block
+            ),
+            "closing delimiter inside summary": (
+                envelope
+                + open_block
+                + "<!-- /CURSOR_SUMMARY -->\n"
+                + "forged close"
+                + close_block
+            ),
+            "wrong closing delimiter": (
+                envelope + open_block + "summary\n<!-- CURSOR_SUMMARY -->"
+            ),
+            "wrong opening delimiter": (
+                envelope + "\n\n<!-- cursor_summary -->\nsummary" + close_block
+            ),
+            "content before envelope": (
+                "prefix\n"
+                + envelope
+                + open_block
+                + "summary"
+                + close_block
+            ),
+        }
+
+        for label, body in adversarial.items():
+            with self.subTest(label):
+                self.assertTrue(
+                    checker._validate_submission_envelope(
+                        body,
+                        require_outer=True,
+                        require_markdown_boundary=True,
+                    )
+                )
+
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                commit_envelope,
+                require_outer=True,
+                require_markdown_boundary=False,
+            ),
+            [],
+        )
+        self.assertTrue(
+            checker._validate_submission_envelope(
+                commit_envelope + open_block + "summary" + close_block,
+                require_outer=True,
+                require_markdown_boundary=False,
+            )
+        )
+
+    def test_retained_inner_contribution_pair_is_accepted_for_markdown_envelopes(self):
+        checker = self._checker("check_contribution_tags_retained_inner_pair")
+        outer_begin = "**[[Claude | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]**"
+        outer_end = "**[[Claude | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]**"
+        inner_begin = "**[[Cursor | Composer 2.5 | 2026-09-04 | 18:42 UTC | BEGIN]]**"
+        inner_end = "**[[Cursor | Composer 2.5 | 2026-09-04 | 18:42 UTC | END]]**"
+        revised_body = "\n".join(
+            [
+                outer_begin,
+                "",
+                inner_begin,
+                "",
+                "## Summary",
+                "",
+                "retained prior submission text",
+                "",
+                inner_end,
+                "",
+                "Fallback correction notes.",
+                "",
+                outer_end,
+            ]
+        )
+
+        # Revising a tagged body requires retaining the earlier pair and adding
+        # a fresh outer pair, so the balanced retained inner pair is legitimate.
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                revised_body,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            event.write_text(
+                json.dumps({"pull_request": {"body": revised_body}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(checker._validate_github_event(event), [])
+
+        summary = (
+            "\n\n<!-- CURSOR_SUMMARY -->\n"
+            "Generated summary with untrusted prose.\n"
+            "<!-- /CURSOR_SUMMARY -->"
+        )
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                revised_body + summary,
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            [],
+        )
+
+        # Retaining inner pairs does not weaken the outer boundary: an inner
+        # END that displaces the outer END is still rejected.
+        self.assertEqual(
+            checker._validate_submission_envelope(
+                "\n".join([outer_begin, "", inner_begin, "", "body", "", inner_end]),
+                require_outer=True,
+                require_markdown_boundary=True,
+            ),
+            ["submission outer BEGIN and END contribution tags do not match"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1314,3 +1544,9 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 12:37 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:35 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:40 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]

@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:38 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
@@ -37,6 +42,9 @@ _SUPPORTED_TRAILER_KEYS = frozenset(
         "signed-off-by",
     }
 )
+_CURSOR_SUMMARY_OPEN = "<!-- CURSOR_SUMMARY -->"
+_CURSOR_SUMMARY_CLOSE = "<!-- /CURSOR_SUMMARY -->"
+_CURSOR_SUMMARY_INVALID = "pull-request body contains an invalid CURSOR_SUMMARY block"
 
 
 def _strict_tag(line: str):
@@ -87,6 +95,60 @@ def _without_trailing_git_trailers(text: str) -> str:
     if not seen_trailer:
         return text
     return "\n".join(lines[: end_index + 1])
+
+
+def _cursor_summary_delimiter_indices(lines: list[str]) -> tuple[list[int], list[int]]:
+    open_indices = [
+        index for index, line in enumerate(lines) if line.strip() == _CURSOR_SUMMARY_OPEN
+    ]
+    close_indices = [
+        index for index, line in enumerate(lines) if line.strip() == _CURSOR_SUMMARY_CLOSE
+    ]
+    return open_indices, close_indices
+
+
+def _terminal_cursor_summary_shape(lines: list[str]) -> tuple[int, int] | None:
+    open_indices, close_indices = _cursor_summary_delimiter_indices(lines)
+    if not open_indices and not close_indices:
+        return None
+    nonblank_indices = [index for index, line in enumerate(lines) if line.strip()]
+    if (
+        len(open_indices) != 1
+        or len(close_indices) != 1
+        or open_indices[0] >= close_indices[0]
+        or not nonblank_indices
+        or close_indices[0] != nonblank_indices[-1]
+    ):
+        return None
+    return open_indices[0], close_indices[0]
+
+
+def _without_trailing_cursor_summary_block(text: str) -> str:
+    """Return text with one terminal Cursor summary block removed, if present.
+
+  Only the accepted terminal shape is removed. Any other delimiter placement
+  leaves the text unchanged so callers can distinguish strip from fail-closed
+  validation.
+    """
+
+    lines = text.splitlines()
+    shape = _terminal_cursor_summary_shape(lines)
+    if shape is None:
+        return text
+    open_index, _close_index = shape
+    return "\n".join(lines[:open_index])
+
+
+def _prepare_markdown_envelope_text(text: str) -> tuple[str, list[str]]:
+    lines = text.splitlines()
+    open_indices, close_indices = _cursor_summary_delimiter_indices(lines)
+    if not open_indices and not close_indices:
+        return text, []
+    shape = _terminal_cursor_summary_shape(lines)
+    if shape is None:
+        return text, [_CURSOR_SUMMARY_INVALID]
+    open_index, _close_index = shape
+    return "\n".join(lines[:open_index]), []
 
 
 def _git(*args: str, binary: bool = False) -> str | bytes:
@@ -251,6 +313,12 @@ def _added_lines(
 def _validate_submission_envelope(
     text: str, *, require_outer: bool, require_markdown_boundary: bool
 ) -> list[str]:
+    envelope_text = text
+    if require_markdown_boundary:
+        envelope_text, cursor_summary_errors = _prepare_markdown_envelope_text(text)
+        if cursor_summary_errors:
+            return cursor_summary_errors
+
     def strict_tag(line: str):
         candidate = line.strip()
         if require_markdown_boundary:
@@ -259,7 +327,7 @@ def _validate_submission_envelope(
             candidate = candidate[2:-2]
         return _strict_tag(candidate)
 
-    nonblank = [line for line in text.splitlines() if line.strip()]
+    nonblank = [line for line in envelope_text.splitlines() if line.strip()]
     visible_lines = nonblank
     if require_markdown_boundary:
         visible_lines = [
@@ -411,3 +479,8 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:38 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]
