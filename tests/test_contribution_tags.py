@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-04 | 12:37 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -493,6 +494,62 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
 
         self.assertIn(
             "alwaysApply: true", surfaces["rule"].read_text(encoding="utf-8")
+        )
+
+    def test_openai_authorship_ban_is_scoped_to_control_plane_inference(self):
+        """Both sides of the authorship boundary must stay pinned.
+
+        An unconditional "never record OpenAI as the logical producer, a
+        material author, or a co-author" would order the Director to strip
+        accurate authorship from a separately owner-authorized OpenAI
+        production lane, and to keep the reviewer and merge independence that
+        lane no longer has. Scope the prohibition to authorship inferred from
+        control-plane activity alone, and keep the affirmative rule for actual
+        production explicit.
+        """
+
+        root = Path(__file__).resolve().parents[1]
+        prompt = " ".join(
+            (root / "prompts" / "director-system.md")
+            .read_text(encoding="utf-8")
+            .split()
+        )
+
+        # Coordination side: supervising delegated work is still not authorship.
+        self.assertIn(
+            "does not inherit authorship through delegation, routing, "
+            "coordination, QA, review, acceptance, relay, merge eligibility "
+            "evaluation, or merge execution",
+            prompt,
+        )
+        self.assertIn("create no code authorship", prompt)
+        self.assertIn(
+            "Never infer OpenAI logical production, material authorship, or "
+            "co-authorship from control-plane activity alone",
+            prompt,
+        )
+        self.assertNotIn(
+            "Never record OpenAI as the logical producer, a material author, "
+            "or a co-author of a provider candidate",
+            prompt,
+        )
+
+        # Production side: actual OpenAI production keeps OpenAI attribution
+        # and costs the control plane its independence for that candidate.
+        self.assertIn(
+            "actually produces or materially edits a candidate, record OpenAI "
+            "as its logical producer or material author",
+            prompt,
+        )
+        self.assertIn(
+            "removes OpenAI/Director reviewer and merge independence for that "
+            "candidate",
+            prompt,
+        )
+        self.assertIn(
+            "may not independently accept or merge code it actually materially "
+            "authored",
+            prompt,
         )
 
     def test_pull_request_envelope_ignores_static_template_comments(self):
@@ -1256,3 +1313,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-04 | 12:37 UTC | END]]
