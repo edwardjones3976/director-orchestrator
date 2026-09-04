@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
@@ -155,6 +156,15 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         unittest_index = test_section.index("-m unittest")
         self.assertLess(unittest_index, test_section.index("Stop-Lane", unittest_index))
         self.assertIn("$originalProcessEnvironment", test_section)
+        # Start-Lane runs inside the try, so a refused or unreachable lane still
+        # restores the caller's working directory and environment.
+        push_index = test_section.index("Push-Location")
+        try_index = test_section.index("try {", push_index)
+        start_index = test_section.index("Start-Lane", try_index)
+        self.assertLess(push_index, try_index)
+        self.assertLess(try_index, start_index)
+        self.assertLess(start_index, unittest_index)
+        self.assertLess(test_section.index("Stop-Lane", unittest_index), test_section.index("Pop-Location", unittest_index))
 
     def test_postgres_test_lane_is_documented(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -275,3 +285,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | END]]
