@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]] -->
@@ -324,11 +325,37 @@ local audit CLI rather than a public merge API. See
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 $env:PYTHONPATH = "src"
+.\scripts\windows-postgres-test-lane.ps1 -Action Start
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\scripts\windows-postgres-test-lane.ps1 -Action Stop
 .\.venv\Scripts\python.exe -m json.tool n8n\workflows\director-intake.json > $null
 $env:DIRECTOR_ENV_FILE = ".env.example"
 docker compose --env-file .env.example config --quiet
 ```
+
+The Postgres-backed suites (`tests/test_langgraph_postgres.py` and the
+`tests/test_primary_*` modules) require `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN`
+and fail rather than skip when it is absent. `-Action Start` runs the same
+disposable container CI uses: `postgres:17-alpine` pinned by digest, published
+only on `127.0.0.1:55433`, trust auth for the throwaway `director_ci` role, no
+volume, and a bounded `pg_isready` wait. It sets
+`LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable`
+and `LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=director-primary-test-pg` in the
+current shell, so `tests/test_primary_backup_restore.py` runs `pg_dump` and
+`pg_restore` inside the container and no host PostgreSQL install is needed. Run
+it from the shell that runs the tests. `windows-postgres-test-lane.ps1 -Action Test` starts the lane, runs the
+suite (narrow it with `-TestNames tests.test_langgraph_postgres`), and removes
+the container even when tests fail. `-Action Stop` removes the container;
+`-Action Status` and `-Action Dsn` inspect it or re-export the variables in a
+new shell.
+
+The script labels every container it creates and refuses to stop, replace, or
+reuse any container it did not create, including one already holding port
+55433. It never reads `.env`, never starts Compose services, and never touches
+the primary database service or its volume. Trust auth is loopback-only and the
+database is disposable: never load real data into it and never point the lane at
+any other database. The script runs under PowerShell 7 and Windows PowerShell
+5.1.
 
 ## LangGraph transition planning
 
@@ -358,3 +385,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]] -->
