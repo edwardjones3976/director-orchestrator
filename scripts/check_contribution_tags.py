@@ -1,3 +1,5 @@
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:38 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | BEGIN]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | BEGIN]]
@@ -37,6 +39,8 @@ _SUPPORTED_TRAILER_KEYS = frozenset(
         "signed-off-by",
     }
 )
+_CURSOR_SUMMARY_OPEN = "<!-- CURSOR_SUMMARY -->"
+_CURSOR_SUMMARY_CLOSE = "<!-- /CURSOR_SUMMARY -->"
 
 
 def _strict_tag(line: str):
@@ -87,6 +91,35 @@ def _without_trailing_git_trailers(text: str) -> str:
     if not seen_trailer:
         return text
     return "\n".join(lines[: end_index + 1])
+
+
+def _without_trailing_cursor_summary_block(text: str) -> str:
+    """Ignore one terminal Cursor summary block in Markdown envelopes only.
+
+    The block is removed only when the opening and closing delimiters each
+    appear exactly once, the closing delimiter is the last nonblank line, and
+    the opening delimiter precedes it. Summary contents are not parsed beyond
+    line boundaries; any other placement or duplication leaves the text intact.
+    """
+
+    lines = text.splitlines()
+    nonblank_indices = [index for index, line in enumerate(lines) if line.strip()]
+    if not nonblank_indices:
+        return text
+    if lines[nonblank_indices[-1]].strip() != _CURSOR_SUMMARY_CLOSE:
+        return text
+    open_indices = [
+        index for index, line in enumerate(lines) if line.strip() == _CURSOR_SUMMARY_OPEN
+    ]
+    close_indices = [
+        index for index, line in enumerate(lines) if line.strip() == _CURSOR_SUMMARY_CLOSE
+    ]
+    if len(open_indices) != 1 or len(close_indices) != 1:
+        return text
+    open_index, close_index = open_indices[0], close_indices[0]
+    if open_index >= close_index or close_index != nonblank_indices[-1]:
+        return text
+    return "\n".join(lines[:open_index])
 
 
 def _git(*args: str, binary: bool = False) -> str | bytes:
@@ -251,6 +284,10 @@ def _added_lines(
 def _validate_submission_envelope(
     text: str, *, require_outer: bool, require_markdown_boundary: bool
 ) -> list[str]:
+    envelope_text = text
+    if require_markdown_boundary:
+        envelope_text = _without_trailing_cursor_summary_block(text)
+
     def strict_tag(line: str):
         candidate = line.strip()
         if require_markdown_boundary:
@@ -259,7 +296,7 @@ def _validate_submission_envelope(
             candidate = candidate[2:-2]
         return _strict_tag(candidate)
 
-    nonblank = [line for line in text.splitlines() if line.strip()]
+    nonblank = [line for line in envelope_text.splitlines() if line.strip()]
     visible_lines = nonblank
     if require_markdown_boundary:
         visible_lines = [
@@ -309,6 +346,10 @@ def _validate_submission_envelope(
             visible_lines[0] not in candidate_lines or visible_lines[-1] not in candidate_lines
         ):
             return ["pull-request body must begin and end with bold contribution tags"]
+        if require_markdown_boundary and len(visible_lines) > 2:
+            for line in visible_lines[1:-1]:
+                if strict_tag(line) is not None:
+                    return ["submission envelope contains inner contribution tags"]
     return []
 
 
@@ -411,3 +452,5 @@ if __name__ == "__main__":
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:35 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:44 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:22 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-04 | 18:38 UTC | END]]
