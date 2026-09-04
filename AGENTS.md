@@ -1,5 +1,7 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Agent Operating Rules
 
@@ -43,6 +45,12 @@ These rules apply to every AI coding agent working in this repository.
 - Deployment, publication, deletion, history rewrite, purchases, billing, credential or access changes, merges into a protected branch, and edits to the framework itself are never delegable under any configuration. A decision that is not plainly an enumerated delegable class is treated as non-delegable.
 - Rule 3 is unaffected: no agent merges its own pull request. A delegated merge requires the producer, the reviewer, and the acting agent to be three distinct identities, plus two concurring exact-SHA `ACCEPT` verdicts from different providers, neither of them a material author.
 - Absence of evidence is never consent. A provider that is out of quota, unauthenticated, silent, or absent has not approved anything, and its silence may not be counted, inferred, or waited out.
+## Postgres-backed unit tests
+
+- `tests/test_langgraph_postgres.py` and the `tests/test_primary_*` modules listed in `.agents/skills/postgres-test-lane/SKILL.md` read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than skip without it.
+- On a Windows host with Docker Desktop, provide that database only through `scripts/windows-postgres-test-lane.ps1 -Action Start` (run the tests, then `-Action Stop`) or `-Action Test`; read that skill first. Never hand-start a database for the tests: no `docker run ... postgres`, no unpinned image tag, no ad-hoc container name, no copy of the CI workflow's disposable PostgreSQL step, no host PostgreSQL install, and never point the variable at the primary or any other database.
+- The script labels its container and refuses to stop, replace, or reuse any container it did not label, including one already publishing `127.0.0.1:55433`. If `-Action Start` reports the port as already published, remove the container you started yourself or pass `-HostPort`; do not work around the refusal.
+- Where Docker is unavailable (Cursor Cloud, or any Linux or WSL host without a daemon), do not improvise a database or install PostgreSQL. Run the remaining suites, name the Postgres-backed modules that did not run, state that `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` was unset, and report the gap as a coverage limitation. CI runs those suites on every pull request.
 
 ## Cursor Cloud specific instructions
 
@@ -57,6 +65,7 @@ This repo is a single Python 3.12 product: the **Director Orchestrator** FastAPI
 - The Slack gateway (`slack_bot.py`), n8n, and paid providers are external/optional and require real credentials; they are not needed for local development or core testing.
 - Windows Docker `.env` credentials are **not** visible to Cloud Agents. Live provider probes from this environment need the same secret names injected as Cursor Cloud secrets (or a new agent session after they are added). Do not copy secret values into chat, commits, or AGENTS.md.
 - There is no configured linter/formatter (no ruff/flake8/mypy config). Treat `PYTHONPATH=src .venv/bin/python -m compileall -q src tests` as the syntax sanity check, and `.venv/bin/python -m json.tool n8n/workflows/director-intake.json` to validate the n8n workflow JSON.
+- The Postgres-backed suites cannot run here (no Docker). Follow "Postgres-backed unit tests" above: do not start or install a database; report the gap.
 
 
 ## LangGraph transition work
@@ -67,5 +76,7 @@ Gate 0 was accepted by the owner on 2026-08-16 against the checkpoint recorded i
 
 During dual operation, exactly one engine may own provider dispatch and GitHub/Slack side effects for a task. Models cannot remove deterministic policy gates, approve their own work, or treat checkpoint rollback as reversal of an external action.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
