@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
@@ -140,7 +141,10 @@ def authorize_provider_retry(
             else "provider_retry_not_authorized"
         )
         return False, code
-    if decision.advisories:
+    # Browser priority ranks transport preference; it does not invalidate
+    # otherwise sufficient retry evidence. Every other advisory stays closed.
+    if any(advisory != "browser_transport_enabled_at_lowest_priority"
+           for advisory in decision.advisories):
         return False, PROVIDER_RETRY_EVIDENCE_INSUFFICIENT
     return True, "provider_retry_authorized"
 
@@ -1392,3 +1396,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:55 UTC | END]]

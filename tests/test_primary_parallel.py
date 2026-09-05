@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
@@ -9,6 +10,8 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from director_orchestrator.primary_parallel import (
     authorize_provider_retry,
@@ -181,6 +184,39 @@ class ParallelPlanValidationTests(unittest.TestCase):
 
 
 class ProviderRetryAuthorizationTests(unittest.TestCase):
+    def test_browser_priority_does_not_block_supported_transport_change(self) -> None:
+        for ordinal in (2, 3):
+            with self.subTest(ordinal=ordinal):
+                allowed, reason = authorize_provider_retry(
+                    attempt_number=ordinal, previous_failure=FailureKind.TRANSIENT,
+                    previous_transport_id="api", transport_id="browser")
+                self.assertTrue(allowed)
+                self.assertEqual(reason, "provider_retry_authorized")
+
+    def test_browser_priority_does_not_supply_missing_evidence(self) -> None:
+        for ordinal in (2, 3):
+            for previous, failure, expected in (
+                ("browser", FailureKind.TRANSIENT, "provider_retry_evidence_insufficient"),
+                ("api", FailureKind.AMBIGUOUS_PAID_DISPATCH,
+                 "ambiguous_paid_dispatch_must_not_be_repeated"),
+            ):
+                with self.subTest(ordinal=ordinal, failure=failure):
+                    allowed, reason = authorize_provider_retry(
+                        attempt_number=ordinal, previous_failure=failure,
+                        previous_transport_id=previous, transport_id="browser")
+                    self.assertFalse(allowed)
+                    self.assertEqual(reason, expected)
+
+    def test_unknown_retry_advisory_remains_blocking(self) -> None:
+        with patch("director_orchestrator.primary_parallel.evaluate_retry",
+                   return_value=SimpleNamespace(allowed=True, violations=(), advisories=(
+                       "browser_transport_enabled_at_lowest_priority", "unknown_advisory"))):
+            allowed, reason = authorize_provider_retry(
+                attempt_number=3, previous_failure=FailureKind.TRANSIENT,
+                previous_transport_id="api", transport_id="browser")
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "provider_retry_evidence_insufficient")
+
     def test_transient_failure_with_changed_transport_authorizes_recovery(self) -> None:
         allowed, reason = authorize_provider_retry(
             attempt_number=2,
@@ -300,3 +336,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:55 UTC | END]]
