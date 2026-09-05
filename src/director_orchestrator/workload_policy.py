@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -845,6 +846,12 @@ def evaluate_assignment(
     Total-effort history is a separate prospective routing preference;
     it cannot create accepted-production credit or override a direct cap. The
     accepted-production ledger remains independently enforced.
+
+    ``trusted_required_model_label`` is a caller extension point, not a wired
+    production owner-constraint service. The caller must authenticate its source;
+    model-authored fields are not trusted requirements. Existing assignments keep
+    their supplied labels, but this function does not establish end-to-end model
+    requirement enforcement.
     """
 
     if not isinstance(mode, EnforcementMode):
@@ -1393,3 +1400,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]

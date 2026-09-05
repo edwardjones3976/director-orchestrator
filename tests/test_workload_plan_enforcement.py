@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -9,7 +10,11 @@
 from __future__ import annotations
 
 import unittest
+import sqlite3
+import tempfile
+from contextlib import closing
 from dataclasses import replace
+from pathlib import Path
 
 from director_orchestrator import policy as policy_module
 from director_orchestrator.config import Settings
@@ -24,7 +29,10 @@ from director_orchestrator.models import (
 )
 from director_orchestrator.policy import enforce_plan, execution_policy_errors
 from director_orchestrator.policy import preview_plan
-from director_orchestrator.workload_policy import FABLE_MODEL_FLOOR, WorkKind, WorkSize
+from director_orchestrator.store import TaskStore
+from director_orchestrator.workload_policy import (
+    FABLE_MODEL_FLOOR, WorkKind, WorkSize, Provider, PRIMARY_PROVIDERS, EnforcementMode,
+)
 
 
 class WorkloadPlanEnforcementTests(unittest.TestCase):
@@ -257,7 +265,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             update={
                 "workload_size": WorkSize.SHORT,
                 "effort_points": 1,
-                "model_label": "lower-than-required",
+                "model_label": "explicit-model-choice",
             }
         )
         plan.assignments[1] = plan.assignments[1].model_copy(
@@ -268,12 +276,46 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
 
         self.assertEqual(guarded.assignments[0].workload_size, WorkSize.MEDIUM)
         self.assertEqual(guarded.assignments[0].effort_points, 5)
-        self.assertEqual(guarded.assignments[0].model_label, FABLE_MODEL_FLOOR)
+        self.assertEqual(guarded.assignments[0].model_label, "explicit-model-choice")
         self.assertEqual(guarded.assignments[1].workload_size, WorkSize.SHORT)
         self.assertEqual(guarded.assignments[1].effort_points, 2)
         self.assertEqual(execution_policy_errors(guarded, self.settings), [])
 
-    def test_explicit_larger_size_remains_and_derives_effort_and_fable_floor(self) -> None:
+    def test_valid_plan_reaches_atomic_admission_without_fabricating_history(self) -> None:
+        guarded = enforce_plan(self._valid_plan(), "bounded implementation", self.settings)
+        self.assertEqual(execution_policy_errors(guarded, self.settings), [])
+        assignment = guarded.assignments[0]
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "ledger.sqlite")
+            store = TaskStore(path)
+            def reserve(key):
+                return store.reserve_workload_assignment(
+                    reservation_key=key, task_id=key, assignment_id=f"{key}:1",
+                    phase="dispatch", provider=Provider(assignment.agent.value),
+                    effort_units=assignment.effort_points, kind=WorkKind.IMPLEMENTATION,
+                    size=assignment.workload_size, model_label=assignment.model_label,
+                    available_primary_providers=PRIMARY_PROVIDERS,
+                    mode=EnforcementMode.ENFORCED, shadow_assignment_limit=5)
+            empty = reserve("empty")
+            self.assertFalse(empty.decision.allowed)
+            self.assertIn("direct_production_history_insufficient_requires_owner_decision",
+                          empty.decision.violations)
+            # Isolated historical accepted-credit fixture, never a live seeding path.
+            with closing(sqlite3.connect(path)) as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM direct_production_credits").fetchone()[0], 0)
+                for index, provider in enumerate(["cursor"]*14 + ["claude"]*5):
+                    connection.execute("""INSERT INTO direct_production_credits(
+                        credit_key, task_id, plan_generation, assignment_sequence, assignment_id,
+                        provider, effort_units, provider_event_digest, provider_result_digest,
+                        review_event_digest, review_result_digest, recorded_at)
+                        VALUES (?, ?, 1, 1, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                        (str(index), "history", str(index), provider, "a"*64, "b"*64,
+                         "c"*64, "d"*64, "2026-09-05T00:00:00Z"))
+                connection.commit()
+            mature = reserve("mature")
+            self.assertTrue(mature.decision.allowed, mature.decision.violations)
+
+    def test_explicit_larger_size_remains_and_derives_effort_without_model_rewrite(self) -> None:
         plan = self._valid_plan()
         plan.assignments[0] = plan.assignments[0].model_copy(
             update={
@@ -288,7 +330,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
 
         self.assertEqual(guarded.assignments[0].workload_size, WorkSize.LONG)
         self.assertEqual(guarded.assignments[0].effort_points, 8)
-        self.assertEqual(guarded.assignments[0].model_label, FABLE_MODEL_FLOOR)
+        self.assertIsNone(guarded.assignments[0].model_label)
         self.assertEqual(execution_policy_errors(guarded, self.settings), [])
 
     def test_underclassified_nonclaude_implementation_keeps_provider(self) -> None:
@@ -654,3 +696,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]

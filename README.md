@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
@@ -23,7 +24,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=98b9d155991e0867d55d48400ebb62ce390bfde533044e062c7932da6b97c63c -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=273c970ea024cf3adebbbf9f28bcee7bf4b4da64e04bc30667cdef82e2f165f4 -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -386,3 +387,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
