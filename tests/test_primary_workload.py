@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 """Disposable fixture history is test data, never activation/bootstrap evidence."""
@@ -8,13 +9,15 @@ import unittest
 import uuid
 from unittest.mock import Mock, patch
 
-from director_orchestrator.langgraph_postgres import open_postgres_control_plane
+from director_orchestrator.langgraph_postgres import (
+    PostgresCheckpointConfigurationError, open_postgres_control_plane,
+)
 from director_orchestrator.primary_parallel import (
     ParallelAssignment, ParallelAssignmentStatus, ParallelDispatchError,
     ParallelDispatchPolicy, PostgresParallelDispatch,
 )
 from director_orchestrator.primary_workload import (
-    POLICY_DIGEST, POLICY_VERSION, WorkloadAdmissionHold, admission_reason,
+    POLICY_DIGEST, POLICY_VERSION, WorkloadAdmissionHold, admission_reason, admit_assignment,
 )
 from director_orchestrator.langgraph_primary import PrimaryWorkflowRuntime
 
@@ -31,6 +34,17 @@ class AdmissionPolicyTests(unittest.TestCase):
         for lane in ("firecrawl", "github-copilot", "microsoft-365-copilot"):
             self.assertEqual(admission_reason(lane, HISTORY),
                              "workload_unsupported_allocation_lane")
+
+    def test_admission_rejects_noncanonical_schema_before_database_access(self):
+        for schema in ("public", "director", "director_v", "director_v1234567",
+                       "a" * 42 + "_v1", "director_v1;DROP TABLE x", None):
+            with self.subTest(schema=schema):
+                connection = Mock()
+                with self.assertRaises(PostgresCheckpointConfigurationError):
+                    admit_assignment(connection, schema=schema, task_id="task",
+                        assignment_id="assignment", provider="openai",
+                        reservation_digest=DIGEST, fencing_generation=1)
+                connection.cursor.assert_not_called()
 
     def test_exact_ceiling_and_rollover(self):
         self.assertIsNone(admission_reason("openai", HISTORY))
@@ -262,3 +276,4 @@ class PostgresAdmissionTests(unittest.TestCase):
         self.assertEqual(self.count("director_primary_workload_assignment"), 19)
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]
