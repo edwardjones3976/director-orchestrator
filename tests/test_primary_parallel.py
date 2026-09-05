@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -18,10 +19,11 @@ from director_orchestrator.primary_parallel import (
     ProviderTransientDispatchError,
     deterministic_format_roster,
     format_for_attempt,
+    provider_transport_kind,
     validate_assignment_dag,
     write_surfaces_overlap,
 )
-from director_orchestrator.workload_policy import FailureKind
+from director_orchestrator.workload_policy import FailureKind, Transport
 
 
 DIGEST = "sha256:" + "a" * 64
@@ -235,6 +237,39 @@ class ProviderRetryAuthorizationTests(unittest.TestCase):
                     self.assertFalse(allowed)
                     self.assertEqual("provider_retry_transport_unknown", reason)
 
+    def test_live_transport_kinds_use_underlying_execution_categories(self) -> None:
+        for name, expected in (
+            ("responses-api", Transport.PROVIDER_API),
+            ("work-iq-rest-production", Transport.PROVIDER_API),
+            ("native-cli", Transport.LOCAL_CLI),
+            ("public-search-cli", Transport.LOCAL_CLI),
+            ("authenticated-windows-host-bridge", Transport.LOCAL_CLI),
+        ):
+            with self.subTest(name=name):
+                self.assertIs(provider_transport_kind(name), expected)
+        for ordinal in (2, 3):
+            allowed, reason = authorize_provider_retry(
+                attempt_number=ordinal, previous_failure=FailureKind.TRANSIENT,
+                previous_transport_id="responses-api", transport_id="native-cli")
+            self.assertTrue(allowed)
+            self.assertEqual(reason, "provider_retry_authorized")
+
+    def test_live_aliases_and_bridge_wrappers_do_not_supply_new_evidence(self) -> None:
+        for aliases in (
+            ("api", "responses-api", "work-iq-rest-production"),
+            ("cli", "native-cli", "public-search-cli", "authenticated-windows-host-bridge"),
+        ):
+            for previous in aliases:
+                for current in aliases:
+                    for ordinal in (2, 3):
+                        with self.subTest(previous=previous, current=current, ordinal=ordinal):
+                            allowed, reason = authorize_provider_retry(
+                                attempt_number=ordinal,
+                                previous_failure=FailureKind.TRANSIENT,
+                                previous_transport_id=previous, transport_id=current)
+                            self.assertFalse(allowed)
+                            self.assertEqual(reason, "provider_retry_evidence_insufficient")
+
     def test_third_attempt_accepts_distinct_supported_transport_only(self) -> None:
         allowed, reason = authorize_provider_retry(
             attempt_number=3,
@@ -264,3 +299,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | END]]

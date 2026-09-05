@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
@@ -55,7 +56,14 @@ PROVIDER_ATTEMPT_BUDGET_EXHAUSTED = "provider_attempt_budget_exhausted"
 
 _TRANSPORT_BY_ID = {
     "api": Transport.PROVIDER_API,
+    "responses-api": Transport.PROVIDER_API,
+    "work-iq-rest-production": Transport.PROVIDER_API,
     "cli": Transport.LOCAL_CLI,
+    "native-cli": Transport.LOCAL_CLI,
+    "public-search-cli": Transport.LOCAL_CLI,
+    # The authenticated bridge executes the same configured Windows command.
+    # Its HTTP envelope is not a different underlying provider execution mode.
+    "authenticated-windows-host-bridge": Transport.LOCAL_CLI,
     "browser": Transport.BROWSER,
     "packet-boundary-adapter": Transport.DIRECTOR_ADAPTER,
 }
@@ -134,8 +142,6 @@ def authorize_provider_retry(
         return False, code
     if decision.advisories:
         return False, PROVIDER_RETRY_EVIDENCE_INSUFFICIENT
-    if attempt_number == 3 and not transport_changed:
-        return False, "third_attempt_requires_new_information_or_transport"
     return True, "provider_retry_authorized"
 
 
@@ -1385,3 +1391,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | END]]

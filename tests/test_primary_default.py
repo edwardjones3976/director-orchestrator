@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
@@ -197,7 +198,7 @@ class ProviderAttemptRosterTests(unittest.TestCase):
         self.assertEqual(PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE, reason)
 
     def test_transient_recovery_uses_the_next_configured_transport_once(self) -> None:
-        roster = (("json", "api"), ("text", "cli"))
+        roster = (("json", "responses-api"), ("text", "native-cli"))
         invoked: list[tuple[str, str]] = []
         settled: list[tuple[int, ParallelAssignmentStatus, str]] = []
 
@@ -1140,11 +1141,11 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         first = self.coordinator.reserve_provider_attempt(
             reservation=reservation,
             attempt_ordinal=1,
-            format_roster=(("json", "api"), ("text", "cli")),
+            format_roster=(("json", "responses-api"), ("text", "native-cli")),
             idempotency_key_digest=digest("attempt-1-key"),
             budget_evidence_digest=digest("budget"),
         )
-        self.assertEqual(("json", "api"), (first.format_id, first.transport_id))
+        self.assertEqual(("json", "responses-api"), (first.format_id, first.transport_id))
         self.coordinator.record_provider_attempt(
             attempt=first,
             status=ParallelAssignmentStatus.FAILED,
@@ -1159,17 +1160,17 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             reservation=reservation,
             writer=writer,
             attempt_ordinal=2,
-            format_roster=(("json", "api"), ("text", "cli")),
+            format_roster=(("json", "responses-api"), ("text", "native-cli")),
             idempotency_key_digest=digest("attempt-2-key"),
             budget_evidence_digest=digest("budget"),
         )
-        self.assertEqual(("text", "cli"), (second.format_id, second.transport_id))
+        self.assertEqual(("text", "native-cli"), (second.format_id, second.transport_id))
         with self.assertRaisesRegex(ParallelDispatchError, "reconciliation required"):
             restarted.reserve_provider_attempt(
                 reservation=reservation,
                 writer=writer,
                 attempt_ordinal=2,
-                format_roster=(("json", "api"), ("text", "cli")),
+                format_roster=(("json", "responses-api"), ("text", "native-cli")),
                 idempotency_key_digest=digest("attempt-2-key"),
                 budget_evidence_digest=digest("budget"),
             )
@@ -1185,7 +1186,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 reservation=reservation,
                 writer=writer,
                 attempt_ordinal=3,
-                format_roster=(("json", "api"), ("text", "cli")),
+                format_roster=(("json", "responses-api"), ("text", "native-cli")),
                 idempotency_key_digest=digest("attempt-3-key"),
                 budget_evidence_digest=digest("budget"),
             )
@@ -2612,3 +2613,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | END]]
