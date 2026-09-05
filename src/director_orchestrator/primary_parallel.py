@@ -1,6 +1,7 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -1377,12 +1378,21 @@ class PostgresParallelDispatch:
             raise ParallelDispatchError("parallel plan is unavailable")
         statuses = {str(row["assignment_id"]): str(row["status"]) for row in rows}
         projected = dict(statuses)
-        for row in rows:
-            if projected[str(row["assignment_id"])] == "PENDING" and any(
-                projected.get(item) in {"FAILED", "OWNER_DECISION_REQUIRED", "BLOCKED"}
-                for item in row["dependencies"]
-            ):
-                projected[str(row["assignment_id"])] = "BLOCKED"
+        # Sequence is presentation order, not dependency order. The registered
+        # DAG has at most len(rows)-1 edges on any path, so this fixed point is
+        # bounded even when descendants precede their prerequisites in SQL.
+        for _ in range(len(rows)):
+            changed = False
+            for row in rows:
+                assignment_id = str(row["assignment_id"])
+                if projected[assignment_id] == "PENDING" and any(
+                    projected.get(item) in {"FAILED", "OWNER_DECISION_REQUIRED", "BLOCKED"}
+                    for item in row["dependencies"]
+                ):
+                    projected[assignment_id] = "BLOCKED"
+                    changed = True
+            if not changed:
+                break
         results = {
             str(row["assignment_id"]): str(row["result_digest"])
             for row in rows
@@ -1425,5 +1435,6 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]
