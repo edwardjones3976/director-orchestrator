@@ -1,3 +1,4 @@
+# [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
@@ -120,8 +121,15 @@ from .primary_parallel import (
     ParallelReservation,
     PostgresParallelDispatch,
     ProviderAttemptReservation,
+    PROVIDER_ATTEMPT_BUDGET_EXHAUSTED,
+    PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE,
+    PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
+    authorize_provider_retry,
+    classify_provider_dispatch_exception,
+    classify_provider_result_failure,
     deterministic_format_roster,
 )
+from .workload_policy import FailureKind
 from .primary_transports import (
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
@@ -151,13 +159,13 @@ def _execute_three_attempt_roster(
     ],
     dispatch_attempt: Callable[[ProviderAttemptReservation], Mapping[str, Any]],
 ) -> tuple[ParallelAssignmentStatus, Mapping[str, Any] | None, str | None, str]:
-    """Run the exact three-slot policy and exhaust configured formats before reuse."""
+    """Run up to three bounded slots; stop after authenticated success."""
 
     if not 1 <= len(format_roster) <= 3:
         raise RuntimeError("provider format roster must contain one to three entries")
-    successful_result: Mapping[str, Any] | None = None
-    successful_digest: str | None = None
     last_digest: str | None = None
+    previous_failure = FailureKind.NONE
+    previous_transport_id: str | None = None
     for attempt_ordinal in range(1, 4):
         attempt = reserve_attempt(attempt_ordinal)
         expected = format_roster[(attempt_ordinal - 1) % len(format_roster)]
@@ -165,23 +173,45 @@ def _execute_three_attempt_roster(
             raise RuntimeError("reserved provider format order changed")
         try:
             result = dispatch_attempt(attempt)
-        except BaseException:
-            # The ambiguous slot is durably terminal and is never redispatched.
-            # An already-authenticated earlier success is still the assignment
-            # result: discarding it would strand or re-bill completed paid work.
+        except BaseException as exc:
+            failure_kind = classify_provider_dispatch_exception(exc)
+            if failure_kind is FailureKind.TRANSIENT:
+                record_attempt(
+                    attempt,
+                    ParallelAssignmentStatus.FAILED,
+                    None,
+                    PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
+                )
+                if attempt_ordinal >= 3:
+                    return (
+                        ParallelAssignmentStatus.FAILED,
+                        None,
+                        last_digest,
+                        PROVIDER_ATTEMPT_BUDGET_EXHAUSTED,
+                    )
+                next_transport_id = format_roster[attempt_ordinal % len(format_roster)][1]
+                authorized, stop_reason = authorize_provider_retry(
+                    attempt_number=attempt_ordinal + 1,
+                    previous_failure=failure_kind,
+                    transport_id=next_transport_id,
+                    previous_transport_id=attempt.transport_id,
+                )
+                if not authorized:
+                    return (
+                        ParallelAssignmentStatus.FAILED,
+                        None,
+                        last_digest,
+                        stop_reason,
+                    )
+                previous_failure = failure_kind
+                previous_transport_id = attempt.transport_id
+                continue
             record_attempt(
                 attempt,
                 ParallelAssignmentStatus.AMBIGUOUS,
                 None,
                 "provider_outcome_unknown",
             )
-            if successful_result is not None:
-                return (
-                    ParallelAssignmentStatus.SUCCEEDED,
-                    successful_result,
-                    successful_digest,
-                    "provider_result_authenticated",
-                )
             return (
                 ParallelAssignmentStatus.AMBIGUOUS,
                 None,
@@ -196,28 +226,54 @@ def _execute_three_attempt_roster(
                 last_digest,
                 "provider_result_authenticated",
             )
-            if successful_result is None:
-                successful_result = result
-                successful_digest = last_digest
-        else:
-            record_attempt(
-                attempt,
-                ParallelAssignmentStatus.FAILED,
+            return (
+                ParallelAssignmentStatus.SUCCEEDED,
+                result,
                 last_digest,
-                "provider_reported_non_success",
+                "provider_result_authenticated",
             )
-    if successful_result is not None:
-        return (
-            ParallelAssignmentStatus.SUCCEEDED,
-            successful_result,
-            successful_digest,
-            "provider_result_authenticated",
+        failure_kind = classify_provider_result_failure(result)
+        record_attempt(
+            attempt,
+            ParallelAssignmentStatus.FAILED,
+            last_digest,
+            "provider_reported_non_success",
         )
+        if attempt_ordinal >= 3:
+            return (
+                ParallelAssignmentStatus.FAILED,
+                None,
+                last_digest,
+                PROVIDER_ATTEMPT_BUDGET_EXHAUSTED,
+            )
+        if failure_kind is not FailureKind.TRANSIENT:
+            return (
+                ParallelAssignmentStatus.FAILED,
+                None,
+                last_digest,
+                PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE,
+            )
+        next_transport_id = format_roster[attempt_ordinal % len(format_roster)][1]
+        authorized, stop_reason = authorize_provider_retry(
+            attempt_number=attempt_ordinal + 1,
+            previous_failure=failure_kind,
+            transport_id=next_transport_id,
+            previous_transport_id=attempt.transport_id,
+        )
+        if not authorized:
+            return (
+                ParallelAssignmentStatus.FAILED,
+                None,
+                last_digest,
+                stop_reason,
+            )
+        previous_failure = failure_kind
+        previous_transport_id = attempt.transport_id
     return (
         ParallelAssignmentStatus.FAILED,
         None,
         last_digest,
-        "provider_attempt_budget_exhausted",
+        PROVIDER_ATTEMPT_BUDGET_EXHAUSTED,
     )
 
 
@@ -2564,3 +2620,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]

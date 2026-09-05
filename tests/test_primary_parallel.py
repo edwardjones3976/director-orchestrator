@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | BEGIN]]
@@ -8,15 +10,18 @@ from __future__ import annotations
 import unittest
 
 from director_orchestrator.primary_parallel import (
+    authorize_provider_retry,
     canonical_write_surface,
     ParallelAssignment,
     ParallelDispatchError,
     ParallelDispatchPolicy,
+    ProviderTransientDispatchError,
     deterministic_format_roster,
     format_for_attempt,
     validate_assignment_dag,
     write_surfaces_overlap,
 )
+from director_orchestrator.workload_policy import FailureKind
 
 
 DIGEST = "sha256:" + "a" * 64
@@ -173,6 +178,80 @@ class ParallelPlanValidationTests(unittest.TestCase):
         self.assertEqual(assignments, validate_assignment_dag(assignments))
 
 
+class ProviderRetryAuthorizationTests(unittest.TestCase):
+    def test_transient_failure_with_changed_transport_authorizes_recovery(self) -> None:
+        allowed, reason = authorize_provider_retry(
+            attempt_number=2,
+            previous_failure=FailureKind.TRANSIENT,
+            transport_id="cli",
+            previous_transport_id="api",
+        )
+        self.assertTrue(allowed)
+        self.assertEqual("provider_retry_authorized", reason)
+
+    def test_terminal_failure_and_ambiguity_never_authorize_retry(self) -> None:
+        for failure in (FailureKind.TERMINAL, FailureKind.AMBIGUOUS_PAID_DISPATCH):
+            with self.subTest(failure=failure):
+                allowed, reason = authorize_provider_retry(
+                    attempt_number=2,
+                    previous_failure=failure,
+                    transport_id="cli",
+                    previous_transport_id="api",
+                )
+                self.assertFalse(allowed)
+                if failure is FailureKind.AMBIGUOUS_PAID_DISPATCH:
+                    self.assertEqual(
+                        "ambiguous_paid_dispatch_must_not_be_repeated", reason
+                    )
+                else:
+                    self.assertEqual(
+                        "provider_retry_requires_transient_failure", reason
+                    )
+
+    def test_third_attempt_requires_transport_change(self) -> None:
+        allowed, reason = authorize_provider_retry(
+            attempt_number=3,
+            previous_failure=FailureKind.TRANSIENT,
+            transport_id="api",
+            previous_transport_id="api",
+        )
+        self.assertFalse(allowed)
+        self.assertEqual("provider_retry_evidence_insufficient", reason)
+
+    def test_unknown_transport_ids_never_authorize_recovery(self) -> None:
+        for ordinal in (2, 3):
+            for previous, current in (
+                ("unknown-a", "unknown-b"),
+                ("api", "unknown-b"),
+                ("unknown-a", "cli"),
+            ):
+                with self.subTest(ordinal=ordinal, previous=previous, current=current):
+                    allowed, reason = authorize_provider_retry(
+                        attempt_number=ordinal,
+                        previous_failure=FailureKind.TRANSIENT,
+                        transport_id=current,
+                        previous_transport_id=previous,
+                    )
+                    self.assertFalse(allowed)
+                    self.assertEqual("provider_retry_transport_unknown", reason)
+
+    def test_third_attempt_accepts_distinct_supported_transport_only(self) -> None:
+        allowed, reason = authorize_provider_retry(
+            attempt_number=3,
+            previous_failure=FailureKind.TRANSIENT,
+            transport_id="cli",
+            previous_transport_id="api",
+        )
+        self.assertTrue(allowed)
+        self.assertEqual("provider_retry_authorized", reason)
+
+    def test_transient_dispatch_error_is_a_typed_recovery_signal(self) -> None:
+        self.assertIsInstance(
+            ProviderTransientDispatchError("temporary outage"),
+            ProviderTransientDispatchError,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -182,4 +261,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]

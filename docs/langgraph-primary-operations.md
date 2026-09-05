@@ -1,4 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]] -->
@@ -527,13 +529,22 @@ packet adapter.
 Each wave concurrently consumes every dependency-ready assignment allowed by
 the configured task, provider, deployment, and write-surface caps. A dependent
 packet is built only after all named upstream result packets are durably accepted.
-Provider exceptions are ambiguous and are never resent. Restart recovery may
+Unclassified provider exceptions are ambiguous and are never resent. Restart recovery may
 consume still-pending rows but does not redispatch a reserved or settled row.
-For a definitive outcome, each assignment invokes and records exactly three
-attempts. Every configured format/transport pair is used once before deterministic
-reuse. An ambiguous paid dispatch consumes its current attempt and stops the
-assignment immediately for reconciliation; the exact-three rule never authorizes
-a blind resend of an unknown external outcome.
+Each assignment reserves at most three child attempt slots. The primary roster
+runs one primary attempt and stops immediately after authenticated success. One
+recovery is allowed only when typed transport evidence establishes a transient
+failure; a third slot requires a distinct supported configured transport
+category. Unknown transport IDs fail closed, and renaming a transport never
+counts as new information. No live adapter currently raises the trusted
+`ProviderTransientDispatchError`, so recovery remains unavailable in live
+adapter paths; test fixtures exercise that typed extension point. There is no
+independent new-information evidence input in this helper. Authenticated provider non-success, missing retry
+evidence, and ambiguous paid dispatch never authorize blind resend. Three failed
+or blocked slots exhaust the route. Every configured format/transport pair is
+used once before deterministic reuse when recovery is authorized. An ambiguous
+paid dispatch consumes its current attempt and stops the assignment immediately
+for reconciliation.
 The graph task is successful only when the deterministic aggregate proves every
 assignment succeeded; a pending, active, ambiguous, failed, or dependency-blocked
 member cannot be reported as successful completion.
@@ -572,4 +583,6 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]] -->
