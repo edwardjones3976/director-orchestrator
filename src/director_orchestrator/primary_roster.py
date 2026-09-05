@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 """Trusted capability selection over actual primary admission history.
@@ -74,3 +75,4 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
     raise PrimaryRosterHold("primary_independent_review_allocation_unavailable")
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
