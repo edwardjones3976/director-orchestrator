@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 """Disposable fixture history is test data, never activation/bootstrap evidence."""
 from concurrent.futures import ThreadPoolExecutor
@@ -5,7 +6,7 @@ from dataclasses import replace
 import os
 import unittest
 import uuid
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from director_orchestrator.langgraph_postgres import open_postgres_control_plane
 from director_orchestrator.primary_parallel import (
@@ -169,6 +170,50 @@ class PostgresAdmissionTests(unittest.TestCase):
         self.assertEqual(self.count("director_primary_provider_attempt"), 1)
         self.assertEqual(self.count("director_primary_workload_assignment"), 20)
 
+    def test_reverse_sequence_hold_propagates_to_real_graph(self):
+        from tests.test_primary_default import DefaultPrimaryApplicationIntegrationTests
+        from director_orchestrator.primary_default import IntakeAuthentication
+        fixture = DefaultPrimaryApplicationIntegrationTests(methodName="runTest")
+        fixture.setUp()
+        try:
+            assignments = (
+                ParallelAssignment("leaf", 1, "cursor", "test", ("middle",)),
+                ParallelAssignment("middle", 2, "claude", "test", ("root",)),
+                ParallelAssignment("root", 3, "openai", "test"),
+            )
+            with patch.object(fixture.application, "_parallel_assignments",
+                              return_value=assignments), patch.object(
+                    fixture.application, "_parallel_policy", return_value=self.policy):
+                record = fixture.application.create_intake(fixture.intake(),
+                    intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+                attempted = []
+                def dispatcher(reservation):
+                    attempted.append(reservation.assignment_id)
+                    fixture.coordinator.reserve_provider_attempt(
+                        reservation=reservation, attempt_ordinal=1,
+                        format_roster=(("json", "api"),),
+                        idempotency_key_digest=DIGEST, budget_evidence_digest=DIGEST)
+                    self.fail("provider must not be invoked")
+                fixture.application._parallel_dispatcher = dispatcher
+                aggregate = fixture.application._drive_parallel_lifecycle(record)
+                self.assertEqual(attempted, ["root"])
+                self.assertEqual(aggregate.statuses, {
+                    "leaf": "BLOCKED", "middle": "BLOCKED",
+                    "root": "OWNER_DECISION_REQUIRED",
+                })
+                self.assertTrue(aggregate.terminal)
+                self.assertFalse(aggregate.succeeded)
+                self.assertEqual(aggregate.ambiguous_slot_count, 0)
+                projection = fixture.coordinator.get_projection(record.task_id)
+                self.assertEqual(projection.projection["terminal_classification"],
+                                 "OWNER_DECISION_REQUIRED")
+                self.assertIsNone(projection.projection.get("provider_result_digest"))
+                with fixture.handle.claim_store._pool.connection() as connection:
+                    row = connection.execute(f"SELECT count(*) AS n FROM {fixture.schema}.director_primary_provider_attempt").fetchone()
+                    self.assertEqual(row["n"], 0)
+        finally:
+            fixture.tearDown()
+
     def test_retry_restart_keeps_single_assignment_and_ambiguity_blocks(self):
         self.seed_test_history()
         task = self.task()
@@ -216,3 +261,4 @@ class PostgresAdmissionTests(unittest.TestCase):
                 connection.execute(f"DELETE FROM {self.schema}.director_primary_workload_assignment")
         self.assertEqual(self.count("director_primary_workload_assignment"), 19)
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | END]]
