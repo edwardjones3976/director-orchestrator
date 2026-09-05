@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:36 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:42 UTC | BEGIN]]
@@ -10,8 +11,10 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -41,10 +44,40 @@ from director_orchestrator.workload_policy import (
     Provider,
     WorkKind,
     WorkSize,
+    WorkloadPolicyError,
 )
 
 
 class WorkloadPolicyActivationTests(unittest.TestCase):
+    @staticmethod
+    def _seed_mature_selector_history(path: Path) -> None:
+        """Persist isolated historical-credit fixtures through the real ledger.
+
+        Authentication of credit creation is covered by workload-ledger tests;
+        these fixtures isolate selection/cost/readiness from the startup hold.
+        No production seeding or bypass is provided by this test helper.
+        """
+        providers = (
+            [DirectProductionProvider.CLAUDE] * 4
+            + [DirectProductionProvider.CURSOR] * 3
+            + [DirectProductionProvider.GROK] * 2
+            + [DirectProductionProvider.PERPLEXITY]
+            + [DirectProductionProvider.EXTERNAL_OPENAI] * 9
+        )
+        with closing(sqlite3.connect(path)) as connection:
+            for index, provider in enumerate(providers):
+                identity = f"accepted-selector-history-{index}"
+                connection.execute(
+                    """INSERT INTO direct_production_credits(
+                        credit_key, task_id, plan_generation, assignment_sequence,
+                        assignment_id, provider, effort_units, provider_event_digest,
+                        provider_result_digest, review_event_digest, review_result_digest,
+                        recorded_at) VALUES (?, ?, 1, 1, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                    (identity, "selector-history-fixture", identity, provider.value,
+                     "a"*64, "b"*64, "c"*64, "d"*64, "2026-09-05T00:00:00Z"),
+                )
+            connection.commit()
+
     def test_runtime_uses_the_same_trusted_work_kind_as_plan_enforcement(self) -> None:
         assignment = Assignment(
             sequence=1,
@@ -425,6 +458,11 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                 ),
             )
 
+            before = plan.model_dump(mode="json")
+            with self.assertRaisesRegex(WorkloadPolicyError, "no trusted capable"):
+                engine._apply_trusted_provider_selection(record, plan)
+            self.assertEqual(plan.model_dump(mode="json"), before)
+            self._seed_mature_selector_history(path)
             with patch.object(
                 store,
                 "list_recent_direct_production",
@@ -485,6 +523,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                 ),
             )
 
+            self._seed_mature_selector_history(path)
             selected = engine._apply_trusted_provider_selection(record, plan)
 
             self.assertEqual(
@@ -614,6 +653,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                 unavailable_providers=[ProviderName.CURSOR],
             )
 
+            self._seed_mature_selector_history(path)
             selected = engine._apply_trusted_provider_selection(record, plan)
 
             self.assertEqual(
@@ -754,3 +794,4 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:36 UTC | END]]
