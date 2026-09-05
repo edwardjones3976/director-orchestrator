@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 """Count-window and existing atomic reservation regression coverage."""
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +14,7 @@ from director_orchestrator.store import TaskStore
 from director_orchestrator.workload_policy import (
     AssignmentRequest, DirectProductionProvider as D, DirectProductionRecord,
     EnforcementMode, PRIMARY_PROVIDERS, Provider, TrustedProviderProfile,
-    WorkKind, WorkSize, WorkloadPolicyError, evaluate_assignment,
+    WorkKind, WorkSize, WorkloadPolicyError, WorkloadSelectionHold, evaluate_assignment,
     select_cheapest_capable_provider,
 )
 
@@ -71,14 +72,21 @@ class HardCapacityTests(unittest.TestCase):
                          in_scope_providers=providers, reviewer_independent_providers=providers)
         self.assertEqual(select_cheapest_capable_provider(**arguments,
                          direct_production_history=history(6)), Provider.GROK)
-        with self.assertRaises(WorkloadPolicyError):
+        with self.assertRaises(WorkloadSelectionHold) as held:
             select_cheapest_capable_provider(**arguments, direct_production_history=history(6),
                                             explicit_required_provider=Provider.CLAUDE)
-        with self.assertRaises(WorkloadPolicyError):
+        self.assertEqual(held.exception.reasons, ("direct_production_hard_cap_exceeded:claude:30",))
+        with self.assertRaises(WorkloadSelectionHold) as held:
             select_cheapest_capable_provider(**arguments)
+        self.assertEqual(held.exception.reasons,
+                         ("direct_production_history_insufficient_requires_owner_decision",))
         arguments["ready_providers"] = frozenset({Provider.CLAUDE, Provider.CURSOR})
-        with self.assertRaises(WorkloadPolicyError):
+        with self.assertRaises(WorkloadSelectionHold):
             select_cheapest_capable_provider(**arguments, direct_production_history=history(6))
+        arguments["ready_providers"] = frozenset()
+        with self.assertRaises(WorkloadPolicyError) as invalid:
+            select_cheapest_capable_provider(**arguments, direct_production_history=history(6))
+        self.assertNotIsInstance(invalid.exception, WorkloadSelectionHold)
 
     def test_existing_atomic_store_reserves_only_one_remaining_slot(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -114,3 +122,4 @@ class HardCapacityTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]

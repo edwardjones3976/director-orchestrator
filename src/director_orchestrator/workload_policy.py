@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -47,10 +48,21 @@ from typing import Any, Sequence
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 FABLE_MODEL_FLOOR = "FABLE 5 ULTRA/MAX"
 COPILOT_LITE_NORMAL_BAND = (0, 4)
+DIRECT_PRODUCTION_HARD_TOLERANCE_PERCENTAGE_POINTS = 5
 
 
 class WorkloadPolicyError(ValueError):
     """Raised when owner policy or evidence is structurally invalid."""
+
+
+class WorkloadSelectionHold(WorkloadPolicyError):
+    """Valid selection cannot proceed under the current allocation ledger."""
+
+    code = "workload_selection_owner_decision_required"
+
+    def __init__(self, reasons: Sequence[str]):
+        self.reasons = tuple(dict.fromkeys(reasons))
+        super().__init__("no trusted capable allocation-eligible provider: " + "; ".join(self.reasons))
 
 
 class Provider(str, Enum):
@@ -610,7 +622,7 @@ def direct_assignment_capacity_violation(
     if len(prior) < policy.rolling_window_size - 1:
         return "direct_production_history_insufficient_requires_owner_decision"
     provider_count = 1 + sum(record.provider is provider for record in prior)
-    ceiling = policy.direct_production_target(provider) + 5
+    ceiling = policy.direct_production_target(provider) + DIRECT_PRODUCTION_HARD_TOLERANCE_PERCENTAGE_POINTS
     if provider_count * 100 > ceiling * policy.rolling_window_size:
         return f"direct_production_hard_cap_exceeded:{provider.value}:{ceiling}"
     return None
@@ -771,6 +783,7 @@ def select_cheapest_capable_provider(
             "overall-effort history must contain only WorkloadRecord values"
         )
     ranked: list[tuple[int, int, int, str, Provider]] = []
+    allocation_holds: dict[Provider, str] = {}
     for profile in profiles:
         provider = profile.provider
         if kind not in profile.supported_work_kinds:
@@ -796,6 +809,11 @@ def select_cheapest_capable_provider(
             policy=policy,
         )
         if direct_rank is None:
+            direct_provider = direct_production_provider(provider)
+            if direct_provider is not None:
+                reason = direct_assignment_capacity_violation(direct_provider, direct_history, policy=policy)
+                if reason is not None:
+                    allocation_holds[provider] = reason
             continue
         total_effort_rank = _total_effort_candidate_routing_rank(
             assignment_id=assignment_id,
@@ -820,10 +838,14 @@ def select_cheapest_capable_provider(
         for _total_rank, _direct_rank, _cost_rank, _provider_id, provider in ranked:
             if provider is explicit_required_provider:
                 return provider
+        if explicit_required_provider in allocation_holds:
+            raise WorkloadSelectionHold((allocation_holds[explicit_required_provider],))
         raise WorkloadPolicyError(
             "trusted explicit provider requirement is not eligible for this assignment"
         )
     if not ranked:
+        if allocation_holds:
+            raise WorkloadSelectionHold(tuple(allocation_holds.values()))
         raise WorkloadPolicyError(
             "no trusted capable, ready, in-scope, independent, allocation-eligible provider"
         )
@@ -1401,3 +1423,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
