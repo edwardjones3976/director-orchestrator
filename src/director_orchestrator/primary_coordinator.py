@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
@@ -667,6 +668,13 @@ class PrimaryTaskCoordinator:
             raise PrimaryCoordinatorError("parallel aggregate changed before graph resume")
         if not aggregate.terminal or aggregate.ambiguous_slot_count:
             raise PrimaryCoordinatorError("parallel aggregate is not resumable")
+        if aggregate.workload_hold_reasons:
+            return self._persist_outcome(
+                self._runtime.record_parallel_workload_hold(
+                    task_id, aggregate_digest=aggregate.aggregate_digest,
+                    reason_code=aggregate.workload_hold_reasons[0],
+                ), writer,
+            )
         return self._persist_outcome(
             self._runtime.resume_parallel_aggregate(
                 task_id,
@@ -885,3 +893,4 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]

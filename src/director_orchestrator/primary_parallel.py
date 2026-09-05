@@ -1,6 +1,7 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
@@ -25,6 +26,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Iterable, Mapping, Sequence
+
+from .primary_workload import WorkloadAdmissionHold, admit_assignment
 
 from .langgraph_postgres import (
     PostgresConditionalClaimStore,
@@ -145,6 +148,7 @@ class ParallelAssignmentStatus(StrEnum):
     AMBIGUOUS = "AMBIGUOUS"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    OWNER_DECISION_REQUIRED = "OWNER_DECISION_REQUIRED"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -306,6 +310,7 @@ class ParallelAggregate:
     terminal: bool
     succeeded: bool
     ambiguous_slot_count: int
+    workload_hold_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -797,6 +802,26 @@ class PostgresParallelDispatch:
                         raise ParallelDispatchError(reason)
                 elif attempt_ordinal != 1:
                     raise ParallelDispatchError("first provider attempt ordinal must be one")
+                binding = self._row(
+                    connection,
+                    f"""SELECT provider_id, reservation_digest, status
+                    FROM {schema}.director_primary_parallel_assignment
+                    WHERE task_id = %(task_id)s AND assignment_id = %(assignment_id)s
+                    FOR UPDATE""",
+                    {"task_id": reservation.task_id,
+                     "assignment_id": reservation.assignment_id},
+                )
+                if (binding is None or binding["status"] != "ACTIVE"
+                        or binding["provider_id"] != reservation.provider_id
+                        or binding["reservation_digest"] != reservation.reservation_digest):
+                    raise ParallelDispatchError("workload parallel reservation binding changed")
+                admit_assignment(
+                    connection, schema=schema, task_id=reservation.task_id,
+                    assignment_id=reservation.assignment_id,
+                    provider=reservation.provider_id,
+                    reservation_digest=reservation.reservation_digest,
+                    fencing_generation=writer.fencing_generation,
+                )
                 row = self._row(
                     connection,
                     f"""
@@ -930,6 +955,7 @@ class PostgresParallelDispatch:
         """Settle any reservation order; ambiguous outcomes keep their slot."""
 
         if status not in {
+            ParallelAssignmentStatus.OWNER_DECISION_REQUIRED,
             ParallelAssignmentStatus.AMBIGUOUS,
             ParallelAssignmentStatus.SUCCEEDED,
             ParallelAssignmentStatus.FAILED,
@@ -968,7 +994,7 @@ class PostgresParallelDispatch:
                 ):
                     raise ParallelDispatchError("parallel result binding mismatch")
                 current = str(held["status"])
-                if current in {"SUCCEEDED", "FAILED"}:
+                if current in {"SUCCEEDED", "FAILED", "OWNER_DECISION_REQUIRED"}:
                     if (
                         current != status.value
                         or (held["result_digest"] or None) != result_digest
@@ -986,7 +1012,7 @@ class PostgresParallelDispatch:
                     UPDATE {self._schema}.director_primary_parallel_assignment
                     SET status = %(status)s, result_digest = %(result_digest)s,
                         reason_code = %(reason_code)s,
-                        completed_at = CASE WHEN %(status)s IN ('SUCCEEDED', 'FAILED')
+                        completed_at = CASE WHEN %(status)s IN ('SUCCEEDED', 'FAILED', 'OWNER_DECISION_REQUIRED')
                                             THEN now() ELSE NULL END
                     WHERE task_id = %(task_id)s
                       AND assignment_id = %(assignment_id)s
@@ -1290,6 +1316,12 @@ class PostgresParallelDispatch:
                 outcome = dispatcher(reservation)
                 if not isinstance(outcome, ParallelDispatchOutcome):
                     raise TypeError("dispatcher returned the wrong result type")
+            except WorkloadAdmissionHold as hold:
+                outcome = ParallelDispatchOutcome(
+                    status=ParallelAssignmentStatus.OWNER_DECISION_REQUIRED,
+                    result_digest=None,
+                    reason_code=hold.reason_code,
+                )
             except BaseException:
                 outcome = ParallelDispatchOutcome(
                     status=ParallelAssignmentStatus.AMBIGUOUS,
@@ -1318,7 +1350,7 @@ class PostgresParallelDispatch:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT assignment_id, dependencies, status, result_digest
+                    SELECT assignment_id, dependencies, status, result_digest, reason_code
                     FROM {self._schema}.director_primary_parallel_assignment
                     WHERE task_id = %(task_id)s
                     ORDER BY sequence, assignment_id
@@ -1347,7 +1379,8 @@ class PostgresParallelDispatch:
         projected = dict(statuses)
         for row in rows:
             if projected[str(row["assignment_id"])] == "PENDING" and any(
-                statuses.get(item) == "FAILED" for item in row["dependencies"]
+                projected.get(item) in {"FAILED", "OWNER_DECISION_REQUIRED", "BLOCKED"}
+                for item in row["dependencies"]
             ):
                 projected[str(row["assignment_id"])] = "BLOCKED"
         results = {
@@ -1361,9 +1394,13 @@ class PostgresParallelDispatch:
                 "statuses": sorted(projected.items()),
                 "results": sorted(results.items()),
                 "attempt_events": attempt_rows,
+                **({"workload_holds": sorted(
+                    (str(row["assignment_id"]), str(row["reason_code"]))
+                    for row in rows if row["status"] == "OWNER_DECISION_REQUIRED"
+                )} if any(row["status"] == "OWNER_DECISION_REQUIRED" for row in rows) else {}),
             }
         )
-        terminal = all(value in {"SUCCEEDED", "FAILED", "BLOCKED"} for value in projected.values())
+        terminal = all(value in {"SUCCEEDED", "FAILED", "BLOCKED", "OWNER_DECISION_REQUIRED"} for value in projected.values())
         return ParallelAggregate(
             task_id=task_id,
             statuses=projected,
@@ -1372,6 +1409,10 @@ class PostgresParallelDispatch:
             terminal=terminal,
             succeeded=terminal and all(value == "SUCCEEDED" for value in projected.values()),
             ambiguous_slot_count=sum(value == "AMBIGUOUS" for value in projected.values()),
+            workload_hold_reasons=tuple(sorted({
+                str(row["reason_code"]) for row in rows
+                if row["status"] == "OWNER_DECISION_REQUIRED"
+            })),
         )
 
 
@@ -1383,5 +1424,6 @@ class PostgresParallelDispatch:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]

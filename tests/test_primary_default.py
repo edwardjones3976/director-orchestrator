@@ -1,6 +1,7 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -1129,6 +1130,17 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(readiness.legacy_new_intake_disabled)
 
     def test_provider_attempt_ledger_orders_formats_and_restart_blocks_ambiguity(self):
+        # Disposable fixture history only; this does not initialize production.
+        from tests.test_primary_workload import HISTORY
+        from director_orchestrator.primary_workload import POLICY_DIGEST, POLICY_VERSION
+        with self.handle.claim_store._pool.connection() as connection:
+            for index, provider in enumerate(HISTORY):
+                connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                    (task_id, assignment_id, provider_lane, reservation_digest,
+                     fencing_generation, policy_version, policy_digest)
+                    VALUES (%s,%s,%s,%s,1,%s,%s)""",
+                    ("test-workload-fixture", str(index), provider, digest("fixture"),
+                     POLICY_VERSION, POLICY_DIGEST))
         record = self.application.create_intake(
             self.intake().model_copy(update={"source_event_id": "attempt-ledger"}),
             intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
@@ -2020,6 +2032,17 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         )
 
     def test_callback_settles_only_exact_assignment_attempt_not_graph_edge(self):
+        # Disposable fixture history only; this does not initialize production.
+        from tests.test_primary_workload import HISTORY
+        from director_orchestrator.primary_workload import POLICY_DIGEST, POLICY_VERSION
+        with self.handle.claim_store._pool.connection() as connection:
+            for index, provider in enumerate(HISTORY):
+                connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                    (task_id, assignment_id, provider_lane, reservation_digest,
+                     fencing_generation, policy_version, policy_digest)
+                    VALUES (%s,%s,%s,%s,1,%s,%s)""",
+                    ("test-workload-fixture", str(index), provider, digest("fixture"),
+                     POLICY_VERSION, POLICY_DIGEST))
         with patch(
             "director_orchestrator.primary_default.preview_plan",
             return_value=self.parallel_plan(),
@@ -2609,6 +2632,7 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]
