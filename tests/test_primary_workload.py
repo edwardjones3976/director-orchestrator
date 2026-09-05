@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:39 UTC | BEGIN]]
@@ -131,6 +132,44 @@ class PostgresAdmissionTests(unittest.TestCase):
     def count(self, table):
         with self.handle.claim_store._pool.connection() as connection:
             return connection.execute(f"SELECT count(*) AS n FROM {self.schema}.{table}").fetchone()["n"]
+
+    def test_reopened_v1_schema_holds_before_any_attempt_and_preserves_history(self):
+        for populated in (False, True):
+            with self.subTest(populated=populated):
+                if not populated:
+                    with self.handle.pool.connection() as connection:
+                        connection.execute(f"ALTER TABLE {self.schema}.director_primary_workload_assignment DROP CONSTRAINT director_primary_workload_assignment_policy_version_check")
+                        connection.execute(f"ALTER TABLE {self.schema}.director_primary_workload_assignment ADD CONSTRAINT director_primary_workload_assignment_policy_version_check CHECK (policy_version = 'primary-assignment-count-v1')")
+                else:
+                    with self.handle.pool.connection() as connection:
+                        connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                            (task_id, assignment_id, provider_lane, reservation_digest,
+                             fencing_generation, policy_version, policy_digest)
+                            VALUES ('v1-task','v1-assignment','claude',%s,1,'primary-assignment-count-v1',%s)""", (DIGEST, DIGEST))
+                self.handle.close()
+                self.handle = open_postgres_control_plane(self.dsn, schema=self.schema,
+                    allow_insecure_local_transport=True)
+                self.parallel = PostgresParallelDispatch(self.handle.claim_store)
+                task = self.task()
+                from director_orchestrator.primary_workload import read_admission_history
+                with self.assertRaisesRegex(WorkloadAdmissionHold, "workload_schema_policy_incompatible"):
+                    with self.handle.pool.connection() as connection:
+                        read_admission_history(connection, schema=self.schema)
+                def dispatcher(reservation):
+                    self.attempt(reservation, task[1])
+                    self.fail("incompatible schema must never reach provider I/O")
+                self.parallel.execute_ready(task_id=task[0], writer=task[1],
+                                            policy=self.policy, dispatcher=dispatcher)
+                aggregate = self.parallel.aggregate(task[0])
+                self.assertEqual(aggregate.workload_hold_reasons,
+                                 ("workload_schema_policy_incompatible",))
+                self.assertEqual(aggregate.ambiguous_slot_count, 0)
+                self.assertEqual(self.count("director_primary_provider_attempt"), 0)
+                self.assertEqual(self.count("director_primary_workload_assignment"), int(populated))
+                if populated:
+                    with self.handle.pool.connection() as connection:
+                        row = connection.execute(f"SELECT policy_version, policy_digest FROM {self.schema}.director_primary_workload_assignment").fetchone()
+                    self.assertEqual(row, {"policy_version": "primary-assignment-count-v1", "policy_digest": DIGEST})
 
     def test_startup_admits_one_real_assignment_without_synthetic_history(self):
         task = self.task()
@@ -277,3 +316,4 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:39 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]

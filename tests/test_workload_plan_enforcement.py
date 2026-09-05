@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
@@ -297,9 +298,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
                     available_primary_providers=PRIMARY_PROVIDERS,
                     mode=EnforcementMode.ENFORCED, shadow_assignment_limit=5)
             empty = reserve("empty")
-            self.assertFalse(empty.decision.allowed)
-            self.assertIn("direct_production_history_insufficient_requires_owner_decision",
-                          empty.decision.violations)
+            self.assertTrue(empty.decision.allowed, empty.decision.violations)
             # Isolated historical accepted-credit fixture, never a live seeding path.
             with closing(sqlite3.connect(path)) as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM direct_production_credits").fetchone()[0], 0)
@@ -313,7 +312,12 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
                          "c"*64, "d"*64, "2026-09-05T00:00:00Z"))
                 connection.commit()
             mature = reserve("mature")
-            self.assertTrue(mature.decision.allowed, mature.decision.violations)
+            # The real startup reservation still occupies capacity alongside the
+            # five accepted Claude fixtures; a seventh Claude is correctly held.
+            self.assertFalse(mature.decision.allowed)
+            self.assertIn("direct_production_hard_cap_exceeded:claude:30", mature.decision.violations)
+            with closing(sqlite3.connect(path)) as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM direct_production_credits").fetchone()[0], 19)
 
     def test_explicit_larger_size_remains_and_derives_effort_without_model_rewrite(self) -> None:
         plan = self._valid_plan()
@@ -697,3 +701,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]] -->
@@ -519,7 +520,9 @@ capable of implementation and independent review. OpenAI is excluded from implic
 production/review spillover. The planner freezes one implementation provider and a
 different reviewer before the existing exact-plan execution approval. Eligible
 providers satisfy the prospective hard cap; the normal band guides preference,
-then operator-configured comparable cost ranks break ties. Missing cost authority
+then operator-configured comparable cost ranks break ties. Pair selection projects
+research (when requested), production, then review in dependency order so rollover
+can unlock an independent reviewer; these projections never create ledger rows. Missing cost authority
 holds selection. Dispatch rechecks admission atomically; it never substitutes a
 new provider after approval. Concurrency remains the configured initial bound,
 independent of the inventory size.
@@ -536,7 +539,11 @@ Startup uses the owner-approved full twenty-slot denominator with only real
 assignments. Primary allocation counts durable ADMITTED assignments; legacy direct
 production counts ACCEPTED productive assignments. Neither ledger fabricates rows.
 The primary policy version/digest changes with this rule; old incompatible history
-fails closed and is not silently migrated. Mature windows still assess last
+fails closed and is not silently migrated. An existing empty v1 table also
+requires explicit schema remediation: its old policy CHECK remains after reopen,
+and both planning and admission return `workload_schema_policy_incompatible`
+before any provider attempt. No old rows or constraints are rewritten automatically.
+Mature windows still assess last
 nineteen plus the prospective assignment at target+5 percentage points.
 The original targets permit at most six Claude, five Cursor, and three Grok
 admissions in twenty slots. Core-only work therefore stops before twenty real
@@ -613,3 +620,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]] -->
