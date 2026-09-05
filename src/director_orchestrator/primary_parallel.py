@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -737,7 +738,7 @@ class PostgresParallelDispatch:
                 held = self._row(
                     connection,
                     f"""
-                    SELECT provider_id, status, attempt_digest
+                    SELECT provider_id, status, attempt_digest, reason_code, transport_id
                     FROM {schema}.director_primary_provider_attempt
                     WHERE task_id = %(task_id)s
                       AND assignment_id = %(assignment_id)s
@@ -780,6 +781,20 @@ class PostgresParallelDispatch:
                         maximum = int(cursor.fetchone()["ordinal"])
                     if attempt_ordinal != maximum + 1:
                         raise ParallelDispatchError("provider attempt ordinal is not next")
+                    previous_failure = (
+                        FailureKind.TRANSIENT
+                        if str(held["status"]) == "FAILED"
+                        and str(held["reason_code"]) == PROVIDER_TRANSIENT_TRANSPORT_FAILURE
+                        else FailureKind.TERMINAL
+                    )
+                    authorized, reason = authorize_provider_retry(
+                        attempt_number=attempt_ordinal,
+                        previous_failure=previous_failure,
+                        transport_id=transport_id,
+                        previous_transport_id=str(held["transport_id"]),
+                    )
+                    if not authorized:
+                        raise ParallelDispatchError(reason)
                 elif attempt_ordinal != 1:
                     raise ParallelDispatchError("first provider attempt ordinal must be one")
                 row = self._row(
@@ -1369,3 +1384,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]
