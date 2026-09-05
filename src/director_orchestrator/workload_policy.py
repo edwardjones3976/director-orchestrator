@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
@@ -717,6 +718,7 @@ def select_cheapest_capable_provider(
     overall_effort_history: Sequence[WorkloadRecord] = (),
     explicit_required_provider: Provider | None = None,
     policy: WorkloadPolicy = DEFAULT_POLICY,
+    mode: EnforcementMode = EnforcementMode.ENFORCED,
 ) -> Provider:
     """Select deterministically from trusted facts without rewriting an assignment.
 
@@ -782,6 +784,8 @@ def select_cheapest_capable_provider(
         raise WorkloadPolicyError(
             "overall-effort history must contain only WorkloadRecord values"
         )
+    if not isinstance(mode, EnforcementMode):
+        raise WorkloadPolicyError("mode must be an EnforcementMode")
     ranked: list[tuple[int, int, int, str, Provider]] = []
     allocation_holds: dict[Provider, str] = {}
     for profile in profiles:
@@ -808,6 +812,8 @@ def select_cheapest_capable_provider(
             history=direct_history,
             policy=policy,
         )
+        if mode is EnforcementMode.SHADOW:
+            direct_rank = 1
         if direct_rank is None:
             direct_provider = direct_production_provider(provider)
             if direct_provider is not None:
@@ -822,6 +828,8 @@ def select_cheapest_capable_provider(
             history=overall_history,
             policy=policy,
         )
+        if mode is EnforcementMode.SHADOW:
+            total_effort_rank = 1
         if total_effort_rank is None:
             continue
         ranked.append(
@@ -1424,3 +1432,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]

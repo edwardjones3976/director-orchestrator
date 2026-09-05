@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -753,6 +754,22 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             {Provider.CURSOR, Provider.CLAUDE, Provider.GROK, Provider.PERPLEXITY}
         )
 
+    def test_shadow_selector_observes_caps_without_changing_trusted_routing(self):
+        history = tuple(DirectProductionRecord(f"shadow-{i}",
+            DirectProductionProvider.CURSOR) for i in range(19))
+        common = dict(assignment_id="SHADOW-CAPPED", kind=WorkKind.IMPLEMENTATION,
+            effort_units=1, trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(), in_scope_providers=self._eligible(),
+            reviewer_independent_providers=self._eligible(),
+            direct_production_history=history, explicit_required_provider=Provider.CURSOR)
+        with self.assertRaises(WorkloadPolicyError):
+            select_cheapest_capable_provider(**common)
+        self.assertIs(select_cheapest_capable_provider(**common, mode=EnforcementMode.SHADOW),
+                      Provider.CURSOR)
+        common["ready_providers"] = frozenset({Provider.CURSOR})
+        with self.assertRaises(WorkloadPolicyError):
+            select_cheapest_capable_provider(**common, mode=EnforcementMode.SHADOW)
+
     def test_cheapest_capable_provider_wins_after_trusted_filters(self):
         selected = select_cheapest_capable_provider(
             direct_production_history=tuple(
@@ -1333,3 +1350,4 @@ class InputValidationTests(unittest.TestCase):
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]

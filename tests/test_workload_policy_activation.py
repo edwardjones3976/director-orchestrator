@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:36 UTC | BEGIN]]
@@ -557,6 +558,14 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkloadPolicyError, "no trusted capable"):
                 engine._apply_trusted_provider_selection(record, plan)
             self.assertEqual(plan.model_dump(mode="json"), before)
+            # Observation mode must reach trusted cost selection even with no
+            # production history; it still requires a distinct capable reviewer.
+            engine.settings = replace(settings, workload_policy_mode="shadow")
+            shadow = engine._apply_trusted_provider_selection(record, plan)
+            self.assertEqual([item.agent for item in shadow.assignments],
+                             [ProviderName.CURSOR, ProviderName.CLAUDE])
+            self.assertEqual(store.list_recent_direct_production(limit=20), [])
+            engine.settings = settings
             self._seed_mature_selector_history(path)
             with patch.object(
                 store,
@@ -892,3 +901,4 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:36 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
