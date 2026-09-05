@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
@@ -357,7 +358,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             directive["copilot_lite_hygiene_review"]["attempts"],
-            "three_each_configured_format_before_reuse",
+            "one_primary_then_conditional_recovery_maximum_three",
         )
         self.assertTrue(
             directive["pre_staging"]["required_before_provider_dispatch"]
@@ -1255,3 +1256,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
@@ -183,7 +184,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "workload_enforcement": {
             "enforced_measure": "accepted_assignment_count",
             "normal_tolerance_percentage_points": 3,
-            "insufficient_history_action": "OWNER_DECISION_REQUIRED",
+            "startup_denominator": "twenty_slots_real_assignments_only",
             "evaluate": [
                 "prospective_last20_assignment_count",
             ],
@@ -249,7 +250,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "provider_or_committee_member": False,
             "workload_percentage": None,
             "trigger": "request_after_checks_green_and_exact_candidate_freeze",
-            "attempts": "three_each_configured_format_before_reuse",
+            "attempts": "one_primary_then_conditional_recovery_maximum_three",
             "automatic_every_push": False,
             "gating": False,
             "authority_granted": [],
@@ -410,7 +411,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         },
         "availability": {
             "attempts": "exactly_three_per_assignment",
-            "format_roster": "each_configured_format_transport_once_before_reuse_maximum_three",
+            "format_roster": "conditional_configured_recovery_maximum_three",
             "attempt_ledger": "append_only_postgres_child_events",
             "additional_attempt_requires": [
                 "classified_failure",
@@ -511,7 +512,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "nonresponse_attempt_limit": 3,
         "requirements": [
             "Every assignment has exactly three authorized attempt slots.",
-            "Invoke every configured provider format and transport once before reuse; fail closed above three.",
+            "One primary; conditional configured recovery only; stop on success or ambiguity; maximum three.",
             "Never duplicate an ambiguous paid dispatch.",
             "Ambiguous reconciliation binds IDs only; results need provider authentication, and owner recovery text cannot authorize exact-SHA review or merge.",
         ],
@@ -829,3 +830,4 @@ def tally_advisory_votes(
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

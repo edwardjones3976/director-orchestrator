@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:36 UTC | BEGIN]]
@@ -56,7 +57,7 @@ from director_orchestrator.workload_policy import (
 
 class WorkloadPolicyActivationTests(unittest.TestCase):
     @staticmethod
-    def _seed_mature_selector_history(path: Path) -> None:
+    def _seed_mature_selector_history(path: Path, *, capped: bool = False) -> None:
         """Persist isolated historical-credit fixtures through the real ledger.
 
         Authentication of credit creation is covered by workload-ledger tests;
@@ -70,9 +71,11 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             + [DirectProductionProvider.PERPLEXITY]
             + [DirectProductionProvider.EXTERNAL_OPENAI] * 9
         )
+        if capped:
+            providers = [DirectProductionProvider.CLAUDE] * 6 + [DirectProductionProvider.CURSOR] * 5 + [DirectProductionProvider.GROK] * 3 + [DirectProductionProvider.EXTERNAL_OPENAI] * 5
         with closing(sqlite3.connect(path)) as connection:
             for index, provider in enumerate(providers):
-                identity = f"accepted-selector-history-{index}"
+                identity = f"accepted-selector-history-{capped}-{index}"
                 connection.execute(
                     """INSERT INTO direct_production_credits(
                         credit_key, task_id, plan_generation, assignment_sequence,
@@ -442,13 +445,13 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                 intake=SlackIntake(source_event_id="selection-hold", channel_id="C1",
                     thread_ts="1.1", user_id="U1", text="Implement and independently review the bounded change"))
             store.create(record)
+            self._seed_mature_selector_history(path, capped=True)
             asyncio.run(engine.run(record.task_id))
             held = store.get(record.task_id)
             self.assertEqual(held.status, TaskStatus.OWNER_DECISION_REQUIRED, held.error)
             self.assertEqual(held.message, WorkloadSelectionHold.code)
-            self.assertEqual(held.workload_selection_hold_reasons,
-                ["direct_production_history_insufficient_requires_owner_decision"])
-            self.assertEqual(store.list_recent_direct_production(limit=20), [])
+            self.assertTrue(all(reason.startswith("direct_production_hard_cap_exceeded:") for reason in held.workload_selection_hold_reasons))
+            self.assertEqual(len(store.list_recent_direct_production(limit=50)), 19)
             self.assertEqual(held.provider_runs, [])
             self.assertEqual([event.kind for event in held.task_effect_ledger],
                              ["director_intent", "director_observation"])
@@ -488,7 +491,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             asyncio.run(engine.run(record.task_id))
             held = store.get(record.task_id)
             self.assertEqual(held.message, WorkloadSelectionHold.code)
-            self.assertEqual(store.list_recent_direct_production(limit=20), [])
+            self.assertEqual(len(store.list_recent_direct_production(limit=50)), 19)
             self.assertEqual(engine.director.plan.await_count, 2)
             # Mature TEST credits permit a separately bound clarification to
             # reach normal selected-plan approval; written input never waives caps.
@@ -502,7 +505,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             self.assertEqual(installed.workload_selection_hold_reasons, [])
             self.assertEqual(current_owner_decision(installed).kind, "plan_approval", installed.error)
             self.assertEqual(installed.plan.assignments[0].agent, ProviderName.CURSOR)
-            self.assertEqual(len(store.list_recent_direct_production(limit=20)), 19)
+            self.assertEqual(len(store.list_recent_direct_production(limit=50)), 38)
             self.assertEqual(engine.director.plan.await_count, 3)
             for provider in providers.values():
                 self.assertEqual(provider.mock_calls, [])
@@ -554,8 +557,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             )
 
             before = plan.model_dump(mode="json")
-            with self.assertRaisesRegex(WorkloadPolicyError, "no trusted capable"):
-                engine._apply_trusted_provider_selection(record, plan)
+            engine._apply_trusted_provider_selection(record, plan)
             self.assertEqual(plan.model_dump(mode="json"), before)
             self._seed_mature_selector_history(path)
             with patch.object(
@@ -892,3 +894,4 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:36 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

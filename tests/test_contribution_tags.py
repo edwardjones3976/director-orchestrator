@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
@@ -449,7 +450,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             self.assertIn(expected, charter)
         self.assertIn("Enforce two prospective workload controls", prompt)
         self.assertIn("blocks above target plus 5 percentage points", prompt)
-        self.assertIn("insufficient qualifying history requires an owner decision", prompt)
+        self.assertIn("startup uses the full 20-slot denominator with real assignments only", prompt)
         self.assertIn("cheapest capable trusted model first", prompt)
         self.assertIn("GitHub Copilot Lite", prompt)
         self.assertIn("canonical matching UTC contribution", prompt)
@@ -1553,3 +1554,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

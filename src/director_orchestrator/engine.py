@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -570,6 +571,7 @@ class OrchestrationEngine:
                 reviewer_independent_providers=frozenset(reviewer_independent),
                 direct_production_history=history,
                 overall_effort_history=overall_history,
+                mode=WorkloadEnforcementMode(self.settings.workload_policy_mode),
             )
             provider_name = ProviderName(provider.value)
             selected[assignment.sequence] = provider_name
@@ -6860,3 +6862,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

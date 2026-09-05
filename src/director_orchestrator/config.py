@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]]
@@ -1351,15 +1352,16 @@ class Settings:
             and not isinstance(self.langgraph_primary_snapshot_max_files, bool)
             and 1 <= self.langgraph_primary_snapshot_max_files <= 4096
         )
-        required_providers_valid = bool(self.langgraph_primary_required_providers) and (
-            len(set(self.langgraph_primary_required_providers))
-            == len(self.langgraph_primary_required_providers)
+        from .primary_roster import KNOWN_LANES, core_inventory_ready
+        configured_pool = set(self.langgraph_primary_required_providers)
+        required_providers_valid = (
+            len(configured_pool) == len(self.langgraph_primary_required_providers)
+            and configured_pool.issubset(KNOWN_LANES)
+            and core_inventory_ready(tuple(configured_pool))
         )
         try:
-            activation_bindings_configured = (
-                set(self.primary_provider_activation_bindings())
-                == set(self.langgraph_primary_required_providers)
-            )
+            bound_pool = set(self.primary_provider_activation_bindings())
+            activation_bindings_configured = bound_pool.issubset(configured_pool) and core_inventory_ready(tuple(bound_pool))
         except ValueError:
             activation_bindings_configured = False
         configuration_valid = (
@@ -1459,7 +1461,7 @@ class Settings:
                 problems.append(
                     "live provider dispatch requires exact provider activation bindings"
                 )
-            if "microsoft-365-copilot" in self.langgraph_primary_required_providers:
+            if readiness["provider_activation_bindings_configured"] and "microsoft-365-copilot" in self.primary_provider_activation_bindings():
                 if not self.microsoft_365_copilot_delegated_token_file:
                     problems.append(
                         "Microsoft 365 Copilot requires a protected delegated token file"
@@ -2013,3 +2015,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
@@ -662,7 +663,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertTrue(enforcement["automatic_drift_correction"])
         self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
         self.assertEqual(enforcement["share_pressure_action"], "block_above_direct_target_plus_five")
-        self.assertEqual(enforcement["insufficient_history_action"], "OWNER_DECISION_REQUIRED")
+        self.assertEqual(enforcement["startup_denominator"], "twenty_slots_real_assignments_only")
 
     def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
         coding = self.directive["coding_routing"]
@@ -758,7 +759,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         )
         self.assertEqual(
             copilot["attempts"],
-            "three_each_configured_format_before_reuse",
+            "one_primary_then_conditional_recovery_maximum_three",
         )
         self.assertFalse(copilot["automatic_every_push"])
         self.assertFalse(copilot["gating"])
@@ -2136,3 +2137,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

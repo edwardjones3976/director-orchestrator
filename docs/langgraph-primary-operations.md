@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]] -->
@@ -511,13 +512,38 @@ exception is not production TLS evidence.
 
 ## Default parallel assignment lifecycle
 
-For live Default intake, the deterministic primary planner expands the normalized
-plan into exactly one independent first-wave assignment for every configured
-required provider lane. The first wave has no dependency edges. One bounded
-review/synthesis assignment depends on the complete first wave, so it cannot run
-until every provider result has settled durably. The exact provider roster is also
-the concurrency bound: concurrency above three is valid only when it is backed by
-that unique roster and every lane has exactly one active slot.
+For live Default intake, the configured provider list is an available pool, not a
+requirement to dispatch every provider. Current authenticated app and adapter
+readiness must cover OpenAI orchestration and at least two other primary providers
+capable of implementation and independent review. OpenAI is excluded from implicit
+production/review spillover. The planner freezes one implementation provider and a
+different reviewer before the existing exact-plan execution approval. Eligible
+providers satisfy the prospective hard cap; the normal band guides preference,
+then operator-configured comparable cost ranks break ties. Missing cost authority
+holds selection. Dispatch rechecks admission atomically; it never substitutes a
+new provider after approval. Concurrency remains the configured initial bound,
+independent of the inventory size.
+
+Structured `primary_required_capabilities` on authenticated intake can request
+`public_research` or `enterprise_context`; private task prose never grants either.
+Public research requires `primary_public_research_query`, selects Perplexity only,
+and precedes implementation. Its outbound task contains only that explicit public
+query. Enterprise context currently stops with an accounting-authority hold:
+enterprise providers have no direct production targets and are never aliased into
+another provider's allocation. Missing requested scope/readiness similarly holds.
+
+Startup uses the owner-approved full twenty-slot denominator with only real
+assignments. Primary allocation counts durable ADMITTED assignments; legacy direct
+production counts ACCEPTED productive assignments. Neither ledger fabricates rows.
+The primary policy version/digest changes with this rule; old incompatible history
+fails closed and is not silently migrated. Mature windows still assess last
+nineteen plus the prospective assignment at target+5 percentage points.
+The original targets permit at most six Claude, five Cursor, and three Grok
+admissions in twenty slots. Core-only work therefore stops before twenty real
+assignments can accumulate (and can stop earlier when fewer than two independent
+lanes remain eligible). This bounded startup is not sustainable core-only rollover.
+It does not renormalize targets, generate filler work, or grant OpenAI production
+spillover; continued throughput requires a separate explicit owner policy decision.
 
 The Default primary application registers this complete assignment DAG in the
 Postgres parallel ledger before an execution approval can cross the provider
@@ -541,8 +567,8 @@ counts as new information. No live adapter currently raises the trusted
 adapter paths; test fixtures exercise that typed extension point. There is no
 independent new-information evidence input in this helper. Authenticated provider non-success, missing retry
 evidence, and ambiguous paid dispatch never authorize blind resend. Three failed
-or blocked slots exhaust the route. Every configured format/transport pair is
-used once before deterministic reuse when recovery is authorized. An ambiguous
+or blocked slots exhaust the route. Configured format/transport order applies only when recovery is authorized;
+success, terminal failure, or ambiguity never requires exhausting the roster. An ambiguous
 paid dispatch consumes its current attempt and stops the assignment immediately
 for reconciliation.
 The graph task is successful only when the deterministic aggregate proves every
@@ -586,3 +612,4 @@ identity cannot authorize successful completion.
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
