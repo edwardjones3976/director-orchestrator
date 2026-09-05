@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -164,8 +165,6 @@ def _execute_three_attempt_roster(
     if not 1 <= len(format_roster) <= 3:
         raise RuntimeError("provider format roster must contain one to three entries")
     last_digest: str | None = None
-    previous_failure = FailureKind.NONE
-    previous_transport_id: str | None = None
     for attempt_ordinal in range(1, 4):
         attempt = reserve_attempt(attempt_ordinal)
         expected = format_roster[(attempt_ordinal - 1) % len(format_roster)]
@@ -203,8 +202,6 @@ def _execute_three_attempt_roster(
                         last_digest,
                         stop_reason,
                     )
-                previous_failure = failure_kind
-                previous_transport_id = attempt.transport_id
                 continue
             record_attempt(
                 attempt,
@@ -267,8 +264,6 @@ def _execute_three_attempt_roster(
                 last_digest,
                 stop_reason,
             )
-        previous_failure = failure_kind
-        previous_transport_id = attempt.transport_id
     return (
         ParallelAssignmentStatus.FAILED,
         None,
@@ -2621,3 +2616,4 @@ class DefaultPrimaryActivation:
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:45 UTC | END]]
