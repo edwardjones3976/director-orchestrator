@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-04 | 19:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | BEGIN]] -->
@@ -103,8 +104,8 @@ Claude 36%, Cursor 20%, Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, and
 Perplexity 5%. Both ledgers are prospective controls: total effort may prefer
 an under-target provider as a soft preference, but it cannot block solely on share or
 relax a direct threshold or create accepted-productive-work credit. Both ledgers
-use immutable pre-staged effort points and report the active assignment plus the
-rolling 20 completed assignments.
+retain immutable pre-staged effort points for reporting. Direct allocation uses
+assignment counts in the prospective rolling 20; total effort remains weighted.
 
 OpenAI's 25% direct-production lane remains separately owner-authorized external
 Codex/OpenAI work; the Director must never emit OpenAI as an assignment target.
@@ -120,19 +121,25 @@ create filler work. Automatic routing applies only to accepted productive work,
 using a normal tolerance of plus or minus 3 percentage points and a
 plus-or-minus three-point soft preference band:
 
-| Provider | Accepted-productive-work target |
-| --- | ---: |
-| OpenAI/Codex external production | 30% |
-| Claude | 30% |
-| Cursor | 25% |
-| Gemini/Antigravity | 20% |
-| Grok | 16% |
-| Perplexity.ai | 9% |
+| Provider | Accepted-productive-work target | Hard ceiling |
+| --- | ---: | ---: |
+| OpenAI/Codex external production | 25% | 30% |
+| Claude | 25% | 30% |
+| Cursor | 20% | 25% |
+| Gemini/Antigravity | 15% | 20% |
+| Grok | 11% | 16% |
+| Perplexity.ai | 4% | 9% |
 
 Route the next eligible work toward an under-target provider when capability,
 scope, independence, cost, and safety are otherwise equivalent. All percentage
-thresholds are accounting and soft-preference evidence; they do not block a
-safe candidate route. There is no automatic spillover to external OpenAI.
+hard ceilings block a candidate above target plus five percentage points in
+the prospective last nineteen assignments plus the candidate. This allocation
+window counts assignments, independently of immutable effort-point reporting.
+Pending production reservations are conservatively projected without creating
+accepted credit. Fewer than nineteen qualifying prior assignments requires an
+owner decision; no startup denominator exception or synthetic history is
+authorized. The plus-or-minus-three-point band remains a soft preference.
+There is no automatic spillover to external OpenAI.
 
 The total-effort normal bands are soft drift signals only:
 
@@ -145,13 +152,13 @@ The total-effort normal bands are soft drift signals only:
 | OpenAI | 5–11% |
 | Perplexity.ai | 1–7% |
 
-Provider share is advisory and never blocks dispatch.
+Total-effort share is advisory and never blocks dispatch by itself.
 
 Selection is cheap-capable-model-first, not cheapest-at-any-cost. First establish
 exact scope and allowlists, a usable transport, readiness, task capability,
 required tools and context, risk, and reviewer independence. Then apply
-total-effort eligibility and corrective under-band preference before
-direct-production rank, compare only trusted cost evidence, and apply a
+direct-production hard eligibility and corrective under-band preference before
+total-effort rank, compare only trusted cost evidence, and apply a
 deterministic tie-breaker. Unknown cost is not
 zero and cannot silently make a model cheapest. Paid routing accepts only the
 operator's `TRUSTED_PROVIDER_COST_RANKS` JSON object, which must cover every
@@ -774,3 +781,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 19:08 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-04 | 19:20 UTC | END]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]] -->
