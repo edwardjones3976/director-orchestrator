@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -441,6 +442,7 @@ def _search_path_option(schema: str) -> str:
 
 
 _APPEND_ONLY_TABLES = (
+    "director_primary_workload_assignment",
     "director_primary_intake_auth_claim",
     "director_primary_intake_dedup",
     "director_primary_command_receipt",
@@ -976,6 +978,34 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
         f"""
         CREATE INDEX IF NOT EXISTS director_primary_parallel_status
         ON {schema}.director_primary_parallel_assignment (task_id, status, sequence)
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_parallel_assignment
+        DROP CONSTRAINT IF EXISTS director_primary_parallel_assignment_status_check
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_parallel_assignment
+        ADD CONSTRAINT director_primary_parallel_assignment_status_check
+        CHECK (status IN ('PENDING', 'ACTIVE', 'AMBIGUOUS', 'SUCCEEDED', 'FAILED',
+                          'OWNER_DECISION_REQUIRED'))
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_workload_assignment (
+            ledger_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            task_id text NOT NULL,
+            assignment_id text NOT NULL,
+            provider_lane text NOT NULL CHECK (provider_lane IN
+                ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity')),
+            reservation_digest text NOT NULL CHECK
+                (reservation_digest ~ '^sha256:[0-9a-f]{{64}}$'),
+            fencing_generation bigint NOT NULL CHECK (fencing_generation >= 0),
+            policy_version text NOT NULL CHECK
+                (policy_version = 'primary-assignment-count-v1'),
+            policy_digest text NOT NULL CHECK
+                (policy_digest ~ '^sha256:[0-9a-f]{{64}}$'),
+            recorded_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (task_id, assignment_id)
+        )
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_provider_attempt (
@@ -4831,3 +4861,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]

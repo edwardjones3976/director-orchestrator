@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
@@ -210,8 +212,11 @@ class ActivationEvidenceStore:
             required = int(facts_dict.get("required_control_plane_tables", 0))
             checkpoint = int(facts_dict.get("checkpoint_tables", 0))
             schema_rows = int(facts_dict.get("schema_evidence_rows", 0))
-            if required < 1 or checkpoint < 1 or schema_rows < 1:
-                raise ActivationEvidenceError("restore proof lacks required nonzero schema evidence")
+            if required < 17 or checkpoint != 4 or schema_rows < 1:
+                raise ActivationEvidenceError(
+                    "restore proof requires at least 17 control-plane tables, exactly 4 "
+                    "checkpoint tables, and nonzero schema evidence"
+                )
         stages.append(
             {
                 "stage": stage.value,
@@ -734,3 +739,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]

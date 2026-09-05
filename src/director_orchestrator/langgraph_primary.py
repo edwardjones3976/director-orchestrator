@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
@@ -2438,6 +2439,35 @@ class PrimaryWorkflowRuntime:
         )
         return self._outcome(task_id)
 
+    def record_parallel_workload_hold(
+        self, task_id: str, *, aggregate_digest: str, reason_code: str
+    ) -> PrimaryOutcome:
+        """Classify trusted pre-I/O ledger denial without a provider result."""
+        _require_digest(aggregate_digest, "parallel_aggregate_digest")
+        if reason_code not in {
+            "workload_unsupported_allocation_lane", "workload_history_invalid",
+            "workload_bootstrap_authority_required", "workload_assignment_hard_limit",
+            "workload_admission_identity_changed",
+        }:
+            raise ValueError("unknown workload hold reason")
+        state = self._snapshot(task_id).values
+        if (not state or not _secure_equal(
+                str(state.get("parallel_aggregate_digest") or ""), aggregate_digest)
+                or not state.get("parallel_terminal")
+                or state.get("parallel_succeeded")
+                or state.get("parallel_ambiguous_slot_count")):
+            raise ValueError("workload hold requires a bound non-ambiguous aggregate")
+        if state.get("terminal_classification") is not None:
+            if (state["terminal_classification"] != "OWNER_DECISION_REQUIRED"
+                    or state.get("transition_reason_code") != reason_code):
+                raise ValueError("workload hold cannot replace terminal evidence")
+            return self._outcome(task_id)
+        self._graph.update_state(self._config(task_id), {
+            "terminal_classification": TerminalClassification.OWNER_DECISION_REQUIRED.value,
+            "transition_reason_code": reason_code,
+        })
+        return self._outcome(task_id)
+
     def resume_parallel_aggregate(
         self,
         task_id: str,
@@ -3153,3 +3183,4 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
