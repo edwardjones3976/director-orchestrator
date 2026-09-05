@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]]
@@ -218,7 +219,7 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
             ActivationStage.RESTORE_PROVED,
             {
                 "backup_digest": digest,
-                "required_control_plane_tables": 12,
+                "required_control_plane_tables": 17,
                 "checkpoint_tables": 4,
                 "schema_evidence_rows": 1,
             },
@@ -242,7 +243,7 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
             ActivationStage.RESTORE_PROVED,
             {
                 "backup_digest": backup_digest,
-                "required_control_plane_tables": 12,
+                "required_control_plane_tables": 17,
                 "checkpoint_tables": 4,
                 "schema_evidence_rows": 1,
             },
@@ -446,3 +447,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]

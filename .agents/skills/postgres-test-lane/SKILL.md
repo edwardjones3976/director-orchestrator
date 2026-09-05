@@ -5,6 +5,7 @@ when_to_use: "Any request like: run the tests, run the full unit suite, run the 
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
 
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | BEGIN]] -->
 
@@ -30,6 +31,7 @@ These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than ski
 - `tests/test_primary_default.py`
 - `tests/test_primary_effect_gateways.py`
 - `tests/test_primary_effects.py`
+- `tests/test_primary_workload.py`
 
 `tests/test_primary_backup_restore.py` also runs `pg_dump` and `pg_restore` inside the container named by `LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER`, so no host PostgreSQL install is needed.
 
@@ -67,3 +69,4 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:13 UTC | END]] -->
