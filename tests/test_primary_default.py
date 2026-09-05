@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -64,6 +66,10 @@ from director_orchestrator.primary_parallel import (
     ParallelDispatchOutcome,
     PostgresParallelDispatch,
     ProviderAttemptReservation,
+    ProviderTransientDispatchError,
+    PROVIDER_ATTEMPT_BUDGET_EXHAUSTED,
+    PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE,
+    PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
 )
 from director_orchestrator.primary_default import (
     DefaultDryRunServices,
@@ -109,15 +115,10 @@ def packet_router(settings: Settings) -> DirectorPacketTaskRouter:
 
 
 class ProviderAttemptRosterTests(unittest.TestCase):
-    def test_first_format_success_still_invokes_every_distinct_adapter(self) -> None:
+    def test_success_stops_without_exercising_remaining_roster_slots(self) -> None:
         roster = (("json", "api"), ("text", "cli"))
         invoked: list[tuple[str, str]] = []
         settled: list[tuple[int, ParallelAssignmentStatus]] = []
-        adapters = {
-            roster[0]: lambda ordinal: {"status": "SUCCEEDED", "attempt": ordinal},
-            roster[1]: lambda ordinal: {"status": "FAILED", "attempt": ordinal},
-        }
-        self.assertIsNot(adapters[roster[0]], adapters[roster[1]])
 
         def reserve(ordinal: int) -> ProviderAttemptReservation:
             format_id, transport_id = roster[(ordinal - 1) % len(roster)]
@@ -127,61 +128,157 @@ class ProviderAttemptRosterTests(unittest.TestCase):
                 digest("budget"),
             )
 
-        def record(attempt, status, _result_digest, _reason) -> None:
-            settled.append((attempt.attempt_ordinal, status))
-
-        def dispatch(attempt) -> dict[str, object]:
-            identity = (attempt.format_id, attempt.transport_id)
-            invoked.append(identity)
-            return adapters[identity](attempt.attempt_ordinal)
-
         status, result, _result_digest, reason = _execute_three_attempt_roster(
             format_roster=roster,
             reserve_attempt=reserve,
-            record_attempt=record,
-            dispatch_attempt=dispatch,
+            record_attempt=lambda attempt, attempt_status, *_args: settled.append(
+                (attempt.attempt_ordinal, attempt_status)
+            ),
+            dispatch_attempt=lambda attempt: (
+                invoked.append((attempt.format_id, attempt.transport_id))
+                or {"status": "SUCCEEDED", "attempt": attempt.attempt_ordinal}
+            ),
         )
 
-        self.assertEqual([roster[0], roster[1], roster[0]], invoked)
-        self.assertEqual(
-            [(1, ParallelAssignmentStatus.SUCCEEDED),
-             (2, ParallelAssignmentStatus.FAILED),
-             (3, ParallelAssignmentStatus.SUCCEEDED)],
-            settled,
-        )
+        self.assertEqual([roster[0]], invoked)
+        self.assertEqual([(1, ParallelAssignmentStatus.SUCCEEDED)], settled)
         self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, status)
         assert result is not None
         self.assertEqual(1, result["attempt"])
         self.assertEqual("provider_result_authenticated", reason)
 
-    def test_one_format_success_is_still_invoked_exactly_three_times(self) -> None:
+    def test_one_format_success_invokes_only_the_primary_attempt(self) -> None:
         invoked: list[int] = []
-        settled: list[int] = []
-
-        def reserve(ordinal: int) -> ProviderAttemptReservation:
-            return ProviderAttemptReservation(
-                "task", "assignment", ordinal, "openai", "json", "api",
-                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
-            )
 
         status, result, _result_digest, reason = _execute_three_attempt_roster(
             format_roster=(("json", "api"),),
-            reserve_attempt=reserve,
-            record_attempt=lambda attempt, *_args: settled.append(
-                attempt.attempt_ordinal
+            reserve_attempt=lambda ordinal: ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai", "json", "api",
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
             ),
+            record_attempt=lambda *_args: None,
             dispatch_attempt=lambda attempt: (
                 invoked.append(attempt.attempt_ordinal)
                 or {"status": "SUCCEEDED", "attempt": attempt.attempt_ordinal}
             ),
         )
 
-        self.assertEqual([1, 2, 3], invoked)
-        self.assertEqual([1, 2, 3], settled)
+        self.assertEqual([1], invoked)
         self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, status)
         assert result is not None
         self.assertEqual(1, result["attempt"])
         self.assertEqual("provider_result_authenticated", reason)
+
+    def test_terminal_failure_does_not_retry_without_transient_evidence(self) -> None:
+        invoked: list[int] = []
+        settled: list[tuple[int, ParallelAssignmentStatus]] = []
+
+        status, result, _result_digest, reason = _execute_three_attempt_roster(
+            format_roster=(("json", "api"), ("text", "cli")),
+            reserve_attempt=lambda ordinal: ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai",
+                *(("json", "api") if ordinal == 1 else ("text", "cli")),
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            ),
+            record_attempt=lambda attempt, attempt_status, *_args: settled.append(
+                (attempt.attempt_ordinal, attempt_status)
+            ),
+            dispatch_attempt=lambda attempt: (
+                invoked.append(attempt.attempt_ordinal)
+                or {"status": "FAILED", "attempt": attempt.attempt_ordinal}
+            ),
+        )
+
+        self.assertEqual([1], invoked)
+        self.assertEqual([(1, ParallelAssignmentStatus.FAILED)], settled)
+        self.assertEqual(ParallelAssignmentStatus.FAILED, status)
+        self.assertIsNone(result)
+        self.assertEqual(PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE, reason)
+
+    def test_transient_recovery_uses_the_next_configured_transport_once(self) -> None:
+        roster = (("json", "api"), ("text", "cli"))
+        invoked: list[tuple[str, str]] = []
+        settled: list[tuple[int, ParallelAssignmentStatus, str]] = []
+
+        def dispatch(attempt: ProviderAttemptReservation) -> dict[str, object]:
+            invoked.append((attempt.format_id, attempt.transport_id))
+            if attempt.attempt_ordinal == 1:
+                raise ProviderTransientDispatchError("temporary transport outage")
+            return {"status": "SUCCEEDED", "attempt": attempt.attempt_ordinal}
+
+        status, result, _result_digest, reason = _execute_three_attempt_roster(
+            format_roster=roster,
+            reserve_attempt=lambda ordinal: ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai",
+                *roster[(ordinal - 1) % len(roster)],
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            ),
+            record_attempt=lambda attempt, attempt_status, _digest, reason_code: settled.append(
+                (attempt.attempt_ordinal, attempt_status, reason_code)
+            ),
+            dispatch_attempt=dispatch,
+        )
+
+        self.assertEqual([roster[0], roster[1]], invoked)
+        self.assertEqual(
+            [
+                (1, ParallelAssignmentStatus.FAILED, PROVIDER_TRANSIENT_TRANSPORT_FAILURE),
+                (2, ParallelAssignmentStatus.SUCCEEDED, "provider_result_authenticated"),
+            ],
+            settled,
+        )
+        self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, status)
+        assert result is not None
+        self.assertEqual(2, result["attempt"])
+        self.assertEqual("provider_result_authenticated", reason)
+
+    def test_third_attempt_requires_a_different_transport_on_single_format_roster(
+        self,
+    ) -> None:
+        invoked: list[int] = []
+
+        def dispatch(attempt: ProviderAttemptReservation) -> dict[str, object]:
+            invoked.append(attempt.attempt_ordinal)
+            raise ProviderTransientDispatchError("temporary transport outage")
+
+        status, result, _result_digest, reason = _execute_three_attempt_roster(
+            format_roster=(("json", "api"),),
+            reserve_attempt=lambda ordinal: ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai", "json", "api",
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            ),
+            record_attempt=lambda *_args: None,
+            dispatch_attempt=dispatch,
+        )
+
+        self.assertEqual([1], invoked)
+        self.assertEqual(ParallelAssignmentStatus.FAILED, status)
+        self.assertIsNone(result)
+        self.assertEqual("provider_retry_evidence_insufficient", reason)
+
+    def test_three_transient_failures_exhaust_the_route(self) -> None:
+        roster = (("json", "api"), ("text", "cli"))
+        invoked: list[int] = []
+
+        def dispatch(attempt: ProviderAttemptReservation) -> dict[str, object]:
+            invoked.append(attempt.attempt_ordinal)
+            raise ProviderTransientDispatchError("temporary transport outage")
+
+        status, result, _result_digest, reason = _execute_three_attempt_roster(
+            format_roster=roster,
+            reserve_attempt=lambda ordinal: ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai",
+                *roster[(ordinal - 1) % len(roster)],
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            ),
+            record_attempt=lambda *_args: None,
+            dispatch_attempt=dispatch,
+        )
+
+        self.assertEqual([1, 2, 3], invoked)
+        self.assertEqual(ParallelAssignmentStatus.FAILED, status)
+        self.assertIsNone(result)
+        self.assertEqual(PROVIDER_ATTEMPT_BUDGET_EXHAUSTED, reason)
 
     def test_ambiguous_attempt_consumes_one_slot_and_never_redispatches(self) -> None:
         invoked: list[int] = []
@@ -213,41 +310,29 @@ class ProviderAttemptRosterTests(unittest.TestCase):
         self.assertIsNone(result_digest)
         self.assertEqual("provider_outcome_unknown", reason)
 
-    def test_later_ambiguous_attempt_keeps_the_prior_authenticated_success(self) -> None:
+    def test_later_ambiguous_attempt_does_not_run_after_authenticated_success(
+        self,
+    ) -> None:
         invoked: list[int] = []
         settled: list[tuple[int, ParallelAssignmentStatus]] = []
 
-        def reserve(ordinal: int) -> ProviderAttemptReservation:
-            return ProviderAttemptReservation(
-                "task", "assignment", ordinal, "openai", "json", "api",
-                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
-            )
-
-        def dispatch(attempt: ProviderAttemptReservation) -> dict[str, object]:
-            invoked.append(attempt.attempt_ordinal)
-            if attempt.attempt_ordinal == 1:
-                return {"status": "SUCCEEDED", "attempt": 1}
-            raise RuntimeError("outcome unknown")
-
         status, result, result_digest, reason = _execute_three_attempt_roster(
             format_roster=(("json", "api"),),
-            reserve_attempt=reserve,
+            reserve_attempt=lambda ordinal: ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai", "json", "api",
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            ),
             record_attempt=lambda attempt, attempt_status, *_args: settled.append(
                 (attempt.attempt_ordinal, attempt_status)
             ),
-            dispatch_attempt=dispatch,
+            dispatch_attempt=lambda attempt: (
+                invoked.append(attempt.attempt_ordinal)
+                or {"status": "SUCCEEDED", "attempt": 1}
+            ),
         )
 
-        # The ambiguous slot is durably terminal and consumes its attempt, but
-        # the already-authenticated first result remains the assignment result.
-        self.assertEqual([1, 2], invoked)
-        self.assertEqual(
-            [
-                (1, ParallelAssignmentStatus.SUCCEEDED),
-                (2, ParallelAssignmentStatus.AMBIGUOUS),
-            ],
-            settled,
-        )
+        self.assertEqual([1], invoked)
+        self.assertEqual([(1, ParallelAssignmentStatus.SUCCEEDED)], settled)
         self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, status)
         assert result is not None
         self.assertEqual(1, result["attempt"])
@@ -1115,6 +1200,60 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual([1, 1, 2, 2], [row["attempt_ordinal"] for row in rows])
         self.assertTrue(rows[1]["outcome_evidence_digest"])
         self.assertTrue(rows[3]["outcome_evidence_digest"])
+
+    def test_authenticated_success_blocks_all_later_reservations_after_restart(self):
+        record = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "success-ledger"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        reservation = self.coordinator.reserve_parallel_ready(
+            task_id=record.task_id,
+            policy=self.application._parallel_policy(),
+        )[0]
+        roster = (("json", "api"), ("text", "cli"))
+        first = self.coordinator.reserve_provider_attempt(
+            reservation=reservation,
+            attempt_ordinal=1,
+            format_roster=roster,
+            idempotency_key_digest=digest("success-key"),
+            budget_evidence_digest=digest("budget"),
+        )
+        self.coordinator.record_provider_attempt(
+            attempt=first,
+            status=ParallelAssignmentStatus.SUCCEEDED,
+            result_digest=digest("authenticated-success"),
+            reason_code="provider_result_authenticated",
+        )
+        # A fresh connection pool and dispatch store cannot forget durable success.
+        with open_postgres_control_plane(
+            TEST_DSN, schema=self.schema, allow_insecure_local_transport=True,
+        ) as restarted_handle:
+            restarted = PostgresParallelDispatch(restarted_handle.claim_store)
+            writer = restarted_handle.claim_store.current_task_writer(record.task_id)
+            assert writer is not None
+            for ordinal in (1, 2, 3):
+                with self.subTest(ordinal=ordinal):
+                    with self.assertRaisesRegex(
+                        ParallelDispatchError, "successful provider attempt must not be repeated"
+                    ):
+                        restarted.reserve_provider_attempt(
+                            reservation=reservation,
+                            writer=writer,
+                            attempt_ordinal=ordinal,
+                            format_roster=roster,
+                            idempotency_key_digest=digest(f"later-key-{ordinal}"),
+                            budget_evidence_digest=digest("budget"),
+                        )
+        with self.handle.pool.connection() as connection:
+            rows = connection.execute(
+                f"SELECT attempt_ordinal, status FROM "
+                f"{self.schema}.director_primary_provider_attempt "
+                "WHERE task_id = %s ORDER BY event_sequence", (record.task_id,),
+            ).fetchall()
+        self.assertEqual(
+            [(1, "STARTED"), (1, "SUCCEEDED")],
+            [(row["attempt_ordinal"], row["status"]) for row in rows],
+        )
 
     def test_repository_free_research_is_approval_bound_and_restart_stable(self):
         intake = self.intake().model_copy(
@@ -2393,3 +2532,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
@@ -28,6 +30,7 @@ from .langgraph_postgres import (
     PostgresControlPlaneError,
     TaskWriterLease,
 )
+from .workload_policy import FailureKind, RetryRequest, Transport, evaluate_retry
 
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -38,6 +41,101 @@ _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 
 class ParallelDispatchError(RuntimeError):
     """The plan or durable dispatch state failed closed."""
+
+
+class ProviderTransientDispatchError(RuntimeError):
+    """Typed transport failure that may authorize one bounded recovery attempt."""
+
+
+PROVIDER_TRANSIENT_TRANSPORT_FAILURE = "provider_transient_transport_failure"
+PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE = "provider_retry_requires_transient_failure"
+PROVIDER_RETRY_EVIDENCE_INSUFFICIENT = "provider_retry_evidence_insufficient"
+PROVIDER_ATTEMPT_BUDGET_EXHAUSTED = "provider_attempt_budget_exhausted"
+
+_TRANSPORT_BY_ID = {
+    "api": Transport.PROVIDER_API,
+    "cli": Transport.LOCAL_CLI,
+    "browser": Transport.BROWSER,
+    "packet-boundary-adapter": Transport.DIRECTOR_ADAPTER,
+}
+
+
+def provider_transport_kind(transport_id: str) -> Transport:
+    """Map a roster transport id to the shared workload transport vocabulary."""
+
+    try:
+        return _TRANSPORT_BY_ID[transport_id]
+    except KeyError as exc:
+        raise ParallelDispatchError("provider_retry_transport_unknown") from exc
+
+
+def classify_provider_dispatch_exception(exc: BaseException) -> FailureKind:
+    """Classify dispatch exceptions without treating provider prose as authority."""
+
+    if isinstance(exc, ProviderTransientDispatchError):
+        return FailureKind.TRANSIENT
+    return FailureKind.AMBIGUOUS_PAID_DISPATCH
+
+
+def classify_provider_result_failure(result: Mapping[str, Any]) -> FailureKind:
+    """Classify authenticated packet results; non-success is terminal."""
+
+    if result.get("status") == "SUCCEEDED":
+        return FailureKind.NONE
+    return FailureKind.TERMINAL
+
+
+def authorize_provider_retry(
+    *,
+    attempt_number: int,
+    previous_failure: FailureKind,
+    transport_id: str,
+    previous_transport_id: str | None,
+) -> tuple[bool, str]:
+    """Fail closed unless typed evidence authorizes the next roster slot."""
+
+    if attempt_number <= 1:
+        return False, "primary_attempt_has_no_recovery_predecessor"
+    if previous_failure is FailureKind.AMBIGUOUS_PAID_DISPATCH:
+        return False, "ambiguous_paid_dispatch_must_not_be_repeated"
+    if previous_failure is not FailureKind.TRANSIENT:
+        return False, PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE
+    try:
+        transport = provider_transport_kind(transport_id)
+        previous_transport = (
+            provider_transport_kind(previous_transport_id)
+            if previous_transport_id is not None
+            else None
+        )
+    except ParallelDispatchError:
+        return False, "provider_retry_transport_unknown"
+    transport_changed = (
+        previous_transport is not None and transport != previous_transport
+    )
+    decision = evaluate_retry(
+        RetryRequest(
+            attempt_number=attempt_number,
+            retry_limit=3,
+            previous_failure=previous_failure,
+            transport=transport,
+            previous_transport=previous_transport,
+            materially_new_information=False,
+            corrected_approach=False,
+            positive_expected_information_gain=transport_changed,
+        )
+    )
+    if not decision.allowed:
+        code = (
+            decision.violations[0]
+            if decision.violations
+            else "provider_retry_not_authorized"
+        )
+        return False, code
+    if decision.advisories:
+        return False, PROVIDER_RETRY_EVIDENCE_INSUFFICIENT
+    if attempt_number == 3 and not transport_changed:
+        return False, "third_attempt_requires_new_information_or_transport"
+    return True, "provider_retry_authorized"
 
 
 class ParallelAssignmentStatus(StrEnum):
@@ -654,6 +752,10 @@ class PostgresParallelDispatch:
                 if held is not None:
                     if str(held["provider_id"]) != reservation.provider_id:
                         raise ParallelDispatchError("provider attempt identity changed")
+                    if str(held["status"]) == "SUCCEEDED":
+                        raise ParallelDispatchError(
+                            "successful provider attempt must not be repeated"
+                        )
                     if str(held["status"]) == "STARTED":
                         raise ParallelDispatchError(
                             "provider attempt reconciliation required before redispatch"
@@ -1258,6 +1360,7 @@ class PostgresParallelDispatch:
         )
 
 
+# [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | END]]
@@ -1265,3 +1368,4 @@ class PostgresParallelDispatch:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
