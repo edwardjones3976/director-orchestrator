@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
@@ -50,7 +51,6 @@ from .models import (
 )
 from .workload_policy import (
     AssignmentRequest,
-    DirectProductionRecord,
     EnforcementMode,
     PrestagePacket,
     Provider,
@@ -59,9 +59,7 @@ from .workload_policy import (
     WorkloadRecord,
     WorkloadPolicy,
     WorkloadPolicyError,
-    direct_production_provider,
     evaluate_assignment,
-    is_accepted_productive_kind,
 )
 
 
@@ -468,13 +466,18 @@ def _independent_review_binding_errors(plan: DirectorPlan) -> set[str]:
 
 
 def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
-    """Validate v1 routing without manufacturing accepted production credit."""
+    """Validate plan structure; durable allocation admission runs before I/O.
+
+    Proposed assignments are not accepted credits. The trusted selector reads
+    actual history and the store atomically checks it again at reservation time.
+    This structural check has no ledger and must not reject every new plan for
+    lacking a history that only those runtime boundaries can supply.
+    """
 
     if plan.workload_policy_version != "v1":
         return set()
 
     errors: set[str] = set()
-    direct_history: list[DirectProductionRecord] = []
     overall_history: list[WorkloadRecord] = []
     for assignment in sorted(plan.assignments, key=lambda item: item.sequence):
         try:
@@ -493,12 +496,14 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         decision = evaluate_assignment(
             request,
             history=overall_history,
-            direct_production_history=direct_history,
             mode=EnforcementMode.ENFORCED,
         )
         errors.update(
             f"assignment {assignment.sequence}: workload policy {violation}"
             for violation in decision.violations
+            # Only the absence of this structural caller's ledger is deferred.
+            # No model field or runtime switch can opt out of store admission.
+            if violation != "direct_production_history_insufficient_requires_owner_decision"
         )
         # Total effort is prospective and assignment ordered. Every proposed
         # assignment, including non-productive work, becomes history for the
@@ -510,17 +515,6 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
                 effort_units=assignment.effort_points,
             )
         )
-        direct_provider = direct_production_provider(provider)
-        if direct_provider is not None and is_accepted_productive_kind(
-            provider, request.kind
-        ):
-            direct_history.append(
-                DirectProductionRecord(
-                    assignment_id=request.assignment_id,
-                    provider=direct_provider,
-                    effort_units=assignment.effort_points,
-                )
-            )
 
     # A genuinely simple request that needs no external opinion may stay local.
     # Every short, medium, or long provider plan is team work.
@@ -1447,3 +1441,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]

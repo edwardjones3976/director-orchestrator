@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
@@ -72,12 +73,16 @@ allocation_and_selection:
     perplexity: [1, 7]
   total_effort_status: "prospective_soft_routing_preference"
   normal_tolerance_percentage_points: 3
+  hard_ceiling_above_target_percentage_points: 5
+  allocation_unit: "assignment_count"
+  prospective_window_assignments: 20
+  insufficient_history_action: "OWNER_DECISION_REQUIRED"
   selection_policy: "cheap_capable_model_first"
   selection_order:
     - "exact scope, allowlists, transport, and readiness"
     - "task capability, tools, context, risk, and reviewer independence"
-    - "total-effort eligibility and corrective under-band preference"
     - "accepted-productive-work allocation compliance and under-target preference"
+    - "total-effort eligibility and corrective under-band preference"
     - "lowest trusted comparable estimated cost"
     - "deterministic tie-breaker"
   missing_cost_rule: "Unknown cost is never treated as zero or automatically cheapest."
@@ -353,3 +358,4 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]

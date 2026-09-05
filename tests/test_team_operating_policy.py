@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
@@ -649,19 +650,19 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         )
 
         enforcement = self.directive["workload_enforcement"]
-        self.assertEqual(enforcement["enforced_measure"], "accepted_productive_work")
+        self.assertEqual(enforcement["enforced_measure"], "accepted_assignment_count")
         self.assertEqual(enforcement["normal_tolerance_percentage_points"], 3)
         self.assertEqual(
             enforcement["evaluate"],
             [
-                "assignment_projected_accepted_productive_work",
-                "rolling_20_projected_accepted_productive_work",
+                "prospective_last20_assignment_count",
             ],
         )
         self.assertFalse(enforcement["overall_effort_can_block_or_route"])
         self.assertTrue(enforcement["automatic_drift_correction"])
         self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
-        self.assertEqual(enforcement["share_pressure_action"], "soft_preference_only")
+        self.assertEqual(enforcement["share_pressure_action"], "block_above_direct_target_plus_five")
+        self.assertEqual(enforcement["insufficient_history_action"], "OWNER_DECISION_REQUIRED")
 
     def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
         coding = self.directive["coding_routing"]
@@ -671,8 +672,8 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             [
                 "exact_scope_allowlists_transport_and_readiness",
                 "task_capability_tools_context_risk_and_independence",
-                "total_effort_eligibility_and_corrective_under_band_preference",
                 "direct_allocation_compliance_and_under_target_preference",
+                "total_effort_eligibility_and_corrective_under_band_preference",
                 "lowest_trusted_estimated_cost",
                 "deterministic_tie_breaker",
             ],
@@ -2134,3 +2135,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]

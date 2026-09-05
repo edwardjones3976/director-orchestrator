@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
@@ -70,7 +71,7 @@ overwrite the final assignment result artifact.
 
 Practical operating patterns:
 
-1. **Cheap-capable implementation lane:** select Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, and independence; apply total-effort eligibility and corrective under-band preference before direct-production rank, then trusted cost and deterministic tie-break; retain the assigned provider's transport and authority limits.
+1. **Cheap-capable implementation lane:** select Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, and independence; apply direct-production hard eligibility and under-target preference before total-effort rank, then trusted cost and deterministic tie-break; retain the assigned provider's transport and authority limits.
 2. **Exact-requirement lane:** when a trusted work order explicitly requires Claude or a named model profile, honor it; otherwise do not infer a provider requirement from task length.
 3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate artifacts. A primary model independently verifies and integrates or rejects their evidence.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
@@ -404,3 +405,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->

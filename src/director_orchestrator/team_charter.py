@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -180,14 +181,14 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "usage_guard_ledger": "overall_effort",
         },
         "workload_enforcement": {
-            "enforced_measure": "accepted_productive_work",
+            "enforced_measure": "accepted_assignment_count",
             "normal_tolerance_percentage_points": 3,
+            "insufficient_history_action": "OWNER_DECISION_REQUIRED",
             "evaluate": [
-                "assignment_projected_accepted_productive_work",
-                "rolling_20_projected_accepted_productive_work",
+                "prospective_last20_assignment_count",
             ],
             "soft_action": "route_next_eligible_work_to_an_under_target_provider",
-            "share_pressure_action": "soft_preference_only",
+            "share_pressure_action": "block_above_direct_target_plus_five",
             "automatic_drift_correction": True,
             "automatic_enforcement_after_shadow": True,
             "overall_effort_can_block_or_route": False,
@@ -204,8 +205,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "selection_order": [
                 "exact_scope_allowlists_transport_and_readiness",
                 "task_capability_tools_context_risk_and_independence",
-                "total_effort_eligibility_and_corrective_under_band_preference",
                 "direct_allocation_compliance_and_under_target_preference",
+                "total_effort_eligibility_and_corrective_under_band_preference",
                 "lowest_trusted_estimated_cost",
                 "deterministic_tie_breaker",
             ],
@@ -827,3 +828,4 @@ def tally_advisory_votes(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
