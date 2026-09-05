@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:23 UTC | BEGIN]]
@@ -51,7 +52,6 @@ from .workload_policy import (
     AssignmentRequest,
     DirectProductionRecord,
     EnforcementMode,
-    FABLE_MODEL_FLOOR,
     PrestagePacket,
     Provider,
     WorkKind,
@@ -362,11 +362,6 @@ def _trusted_v1_assignment(assignment: Assignment) -> Assignment:
         # Effort is a deterministic consequence of trusted size, never model input.
         "effort_points": _WORK_SIZE_EFFORT_POINTS[effective_size],
     }
-    if assignment.agent == ProviderName.CLAUDE and effective_size in {
-        WorkSize.MEDIUM,
-        WorkSize.LONG,
-    }:
-        updates["model_label"] = FABLE_MODEL_FLOOR
     return assignment.model_copy(update=updates)
 
 
@@ -1329,12 +1324,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         kind=assignment_kind,
         workload_size=workload_size,
         effort_points=5 if workload_size == WorkSize.MEDIUM else 2,
-        model_label=(
-            FABLE_MODEL_FLOOR
-            if provider == ProviderName.CLAUDE
-            and workload_size == WorkSize.MEDIUM
-            else None
-        ),
+        model_label=None,
         task=text.strip(),
         acceptance=["Owner-defined outcome is demonstrably satisfied", "Evidence and unresolved risks are reported"],
         public_research_query=public_research_query,
@@ -1456,3 +1446,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]

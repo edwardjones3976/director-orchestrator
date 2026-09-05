@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:18 UTC | BEGIN]]
@@ -55,6 +56,7 @@ from director_orchestrator.store import (
     WorkloadReservationConflict,
 )
 from director_orchestrator.workload_policy import (
+    DirectProductionProvider,
     EnforcementMode,
     PRIMARY_PROVIDERS,
     Provider,
@@ -360,7 +362,11 @@ class WorkloadLedgerTests(unittest.TestCase):
             size=assignment.workload_size,
             model_label=assignment.model_label,
             available_primary_providers=PRIMARY_PROVIDERS,
-            mode=EnforcementMode.ENFORCED,
+            # Historical accepted-result fixtures predate the hard cap; use
+            # explicit shadow authority to exercise authentication separately
+            # from startup/cap enforcement. Never seed production this way.
+            mode=EnforcementMode.SHADOW,
+            shadow_assignment_limit=10000,
         )
         self.assertTrue(reservation.decision.allowed)
         self.store.finalize_workload_reservation(
@@ -832,7 +838,8 @@ class WorkloadLedgerTests(unittest.TestCase):
             Provider.PERPLEXITY,
             kind=WorkKind.RESEARCH,
         )
-        self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
+        self.assertFalse(candidate.decision.allowed)
+        self.assertIn("direct_production_history_insufficient_requires_owner_decision", candidate.decision.violations)
         self.assertIn(
             "direct_production_window_warming_up:2/20",
             candidate.decision.advisories,
@@ -969,62 +976,21 @@ class WorkloadLedgerTests(unittest.TestCase):
         self.assertEqual(self.store.list_recent_direct_production(), [])
 
     def test_direct_window_blocks_while_accepted_credit_is_unresolved(self) -> None:
-        direct_seeds = (
-            [(Provider.CLAUDE, 6)] * 5
-            + [(Provider.CURSOR, 6)] * 4
-            + [(Provider.GROK, 6), (Provider.GROK, 5), (Provider.GROK, 5)]
-            + [(Provider.GEMINI, 5)] * 4
-            + [(Provider.PERPLEXITY, 3)] * 3
-        )
-        self.assertEqual(len(direct_seeds), 19)
-        for index, (provider, effort_units) in enumerate(direct_seeds):
-            record = self.accepted_record(
-                f"DIR-DIRECT-SEED-{index}",
-                ProviderName(provider.value),
-                effort_points=effort_units,
-            )
-            self.authorize_accepted_record(record)
-            self.store.create(record)
+        # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*5 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*7
+        for index, provider in enumerate(providers):
+            task_id = f"mature-{index}"
+            self.store.create(self._minimal_done_task(task_id))
+            self._insert_raw_direct_credit(task_id=task_id, assignment_id=f"{task_id}:1:1",
+                provider=provider, effort_units=100 if provider is Provider.CURSOR else 1,
+                recorded_at="2026-08-01T00:00:00+00:00")
+        pending = self.reserve("pending", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertTrue(pending.decision.allowed, pending.decision.violations)
+        sibling = self.reserve("sibling", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertFalse(sibling.decision.allowed)
+        self.assertIn("direct_production_rollover_pending_unresolved", sibling.decision.violations)
+        self.assertEqual(len(self.store.list_recent_direct_production()), 19)
 
-        # Keep the overall-effort ledger safely below Claude's cap so this
-        # regression isolates the accepted-production rollover boundary.
-        overall_controls = (
-            [(Provider.CLAUDE, 6)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CURSOR, 5)] * 4
-            + [(Provider.GROK, 5)] * 4
-            + [(Provider.OPENAI, 8)]
-            + [(Provider.GEMINI, 6), (Provider.GEMINI, 5)]
-            + [(Provider.PERPLEXITY, 5)]
-        )
-        self.assertEqual(len(overall_controls), 19)
-        for index, (provider, effort_units) in enumerate(overall_controls):
-            control = self.reserve(
-                f"direct-overall-control-{index}",
-                provider,
-                mode=EnforcementMode.SHADOW,
-                shadow_assignment_limit=100,
-                effort_units=effort_units,
-            )
-            self.store.finalize_workload_reservation(
-                control.reservation_key, WorkloadAttemptOutcome.INVOKED
-            )
-
-        pending = self.reserve(
-            "direct-pending",
-            Provider.CURSOR,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-        self.assertTrue(pending.decision.allowed)
-        candidate = self.reserve(
-            "direct-candidate",
-            Provider.CLAUDE,
-            effort_units=6,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-
-        self.assertTrue(candidate.decision.allowed)
 
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
     _SIBLING_SEEDS = (
@@ -1084,61 +1050,22 @@ class WorkloadLedgerTests(unittest.TestCase):
             "workload_rollover_pending_unresolved", candidate.decision.violations
         )
 
-    def test_direct_unresolved_rollover_still_blocks_unsafe_sibling(
-        self,
-    ) -> None:
-        direct_seeds = (
-            [(Provider.GEMINI, 1)]
-            + [(Provider.CLAUDE, 6)] * 5
-            + [(Provider.CURSOR, 5)] * 5
-            + [(Provider.GROK, 6), (Provider.GROK, 5), (Provider.GROK, 5)]
-            + [(Provider.GEMINI, 6)] * 3
-            + [(Provider.PERPLEXITY, 5), (Provider.PERPLEXITY, 4)]
-        )
-        self.assertEqual(len(direct_seeds), 19)
-        for index, (provider, effort_units) in enumerate(direct_seeds):
-            record = self.accepted_record(
-                f"DIR-DIRECT-SIBLING-{index}",
-                ProviderName(provider.value),
-                effort_points=effort_units,
-            )
-            self.authorize_accepted_record(record)
-            self.store.create(record)
-        overall_controls = (
-            [(Provider.CLAUDE, 6)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CURSOR, 5)] * 4
-            + [(Provider.GROK, 5)] * 4
-            + [(Provider.OPENAI, 8)]
-            + [(Provider.GEMINI, 6), (Provider.GEMINI, 5)]
-            + [(Provider.PERPLEXITY, 5)]
-        )
-        for index, (provider, effort_units) in enumerate(overall_controls):
-            control = self.reserve(
-                f"direct-sibling-control-{index}",
-                provider,
-                mode=EnforcementMode.SHADOW,
-                shadow_assignment_limit=100,
-                effort_units=effort_units,
-            )
-            self.store.finalize_workload_reservation(
-                control.reservation_key, WorkloadAttemptOutcome.INVOKED
-            )
-
-        pending = self.reserve(
-            "direct-sibling-pending",
-            Provider.GEMINI,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-        )
+    def test_direct_unresolved_rollover_still_blocks_unsafe_sibling(self) -> None:
+        # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*5 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*7
+        for index, provider in enumerate(providers):
+            task_id = f"mature-{index}"
+            self.store.create(self._minimal_done_task(task_id))
+            self._insert_raw_direct_credit(task_id=task_id, assignment_id=f"{task_id}:1:1",
+                provider=provider, effort_units=100 if provider is Provider.CURSOR else 1,
+                recorded_at="2026-08-01T00:00:00+00:00")
+        pending = self.reserve("pending", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertTrue(pending.decision.allowed, pending.decision.violations)
-        sibling = self.reserve(
-            "direct-sibling-candidate",
-            Provider.GEMINI,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-        self.assertTrue(sibling.decision.allowed)
+        sibling = self.reserve("sibling", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertFalse(sibling.decision.allowed)
+        self.assertIn("direct_production_rollover_pending_unresolved", sibling.decision.violations)
+        self.assertEqual(len(self.store.list_recent_direct_production()), 19)
+
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
 
     @staticmethod
@@ -1211,139 +1138,40 @@ class WorkloadLedgerTests(unittest.TestCase):
             connection.commit()
 
     def test_direct_window_projects_invoked_terminal_task_awaiting_credit(self) -> None:
-        direct_seeds = (
-            [(Provider.CLAUDE, 6)] * 5
-            + [(Provider.CURSOR, 6)] * 4
-            + [(Provider.GROK, 6), (Provider.GROK, 5), (Provider.GROK, 5)]
-            + [(Provider.GEMINI, 5)] * 4
-            + [(Provider.PERPLEXITY, 3)] * 3
-        )
-        self.assertEqual(len(direct_seeds), 19)
-        for index, (provider, effort_units) in enumerate(direct_seeds):
-            record = self.accepted_record(
-                f"DIR-DIRECT-SEED-{index}",
-                ProviderName(provider.value),
-                effort_points=effort_units,
-            )
-            self.authorize_accepted_record(record)
-            self.store.create(record)
+        # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*5 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*7
+        for index, provider in enumerate(providers):
+            task_id = f"mature-{index}"
+            self.store.create(self._minimal_done_task(task_id))
+            self._insert_raw_direct_credit(task_id=task_id, assignment_id=f"{task_id}:1:1",
+                provider=provider, effort_units=100 if provider is Provider.CURSOR else 1,
+                recorded_at="2026-08-01T00:00:00+00:00")
+        self.store.create(self._minimal_done_task("DIR-invoked"))
+        invoked = self.reserve("invoked", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertTrue(invoked.decision.allowed, invoked.decision.violations)
+        self.store.finalize_workload_reservation(invoked.reservation_key, WorkloadAttemptOutcome.INVOKED)
+        candidate = self.reserve("next", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertFalse(candidate.decision.allowed)
+        self.assertIn("direct_production_rollover_pending_unresolved", candidate.decision.violations)
+        self.assertEqual(len(self.store.list_recent_direct_production()), 19)
 
-        overall_controls = (
-            [(Provider.CLAUDE, 6)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CURSOR, 5)] * 4
-            + [(Provider.GROK, 5)] * 4
-            + [(Provider.OPENAI, 8)]
-            + [(Provider.GEMINI, 6), (Provider.GEMINI, 5)]
-            + [(Provider.PERPLEXITY, 5)]
-        )
-        for index, (provider, effort_units) in enumerate(overall_controls):
-            control = self.reserve(
-                f"direct-overall-control-{index}",
-                provider,
-                mode=EnforcementMode.SHADOW,
-                shadow_assignment_limit=100,
-                effort_units=effort_units,
-            )
-            self.store.finalize_workload_reservation(
-                control.reservation_key, WorkloadAttemptOutcome.INVOKED
-            )
-
-        delayed = self._minimal_done_task("DIR-DIRECT-DELAYED")
-        self.store.create(delayed)
-        invoked = self.store.reserve_workload_assignment(
-            reservation_key="delayed-dispatch",
-            task_id=delayed.task_id,
-            assignment_id=f"{delayed.task_id}:1:1",
-            phase="dispatch",
-            provider=Provider.CURSOR,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-            size=WorkSize.SIMPLE,
-            model_label=None,
-            available_primary_providers=PRIMARY_PROVIDERS,
-            mode=EnforcementMode.ENFORCED,
-        )
-        self.assertTrue(invoked.decision.allowed)
-        self.store.finalize_workload_reservation(
-            invoked.reservation_key, WorkloadAttemptOutcome.INVOKED
-        )
-
-        candidate = self.reserve(
-            "direct-candidate",
-            Provider.CLAUDE,
-            effort_units=6,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-
-        self.assertTrue(candidate.decision.allowed)
 
     def test_direct_rollover_window_uses_credit_id_not_recorded_at(self) -> None:
-        old_recorded_at = "2026-08-01T00:00:00+00:00"
-        new_recorded_at = "2026-08-29T12:00:00+00:00"
-
-        pending_task = self._minimal_done_task("DIR-CREDIT-PENDING")
-        self.store.create(pending_task)
-        pending = self.store.reserve_workload_assignment(
-            reservation_key="credit-order-pending",
-            task_id=pending_task.task_id,
-            assignment_id=f"{pending_task.task_id}:1:1",
-            phase="dispatch",
-            provider=Provider.CURSOR,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-            size=WorkSize.SIMPLE,
-            model_label=None,
-            available_primary_providers=PRIMARY_PROVIDERS,
-            mode=EnforcementMode.ENFORCED,
-        )
-        self.assertTrue(pending.decision.allowed)
-        self.store.finalize_workload_reservation(
-            pending.reservation_key, WorkloadAttemptOutcome.INVOKED
-        )
-
-        canonical_tail = (
-            [(Provider.CLAUDE, 6)] * 4
-            + [(Provider.CLAUDE, 5)]
-            + [(Provider.CURSOR, 6)] * 4
-            + [(Provider.GROK, 8)] * 2
-            + [(Provider.GEMINI, 5)] * 4
-            + [(Provider.PERPLEXITY, 3)] * 3
-        )
-        self.assertEqual(len(canonical_tail), 18)
-        for index in range(20):
-            task_id = f"DIR-CREDIT-ORDER-{index}"
+        self.store.create(self._minimal_done_task("old-credit"))
+        self._insert_raw_direct_credit(task_id="old-credit", assignment_id="old-credit:1:1",
+            provider=Provider.CLAUDE, effort_units=1, recorded_at="2026-09-01T00:00:00+00:00")
+        # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*5 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*7
+        for index, provider in enumerate(providers):
+            task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
-            if index == 0:
-                provider = Provider.CLAUDE
-                effort_units = 8
-                recorded_at = new_recorded_at
-            elif index == 1:
-                # Match the unresolved Cursor unit so either projection keeps
-                # the exact 30/25/16/20/9 direct-production boundary.
-                provider = Provider.CURSOR
-                effort_units = 1
-                recorded_at = old_recorded_at
-            else:
-                provider, effort_units = canonical_tail[index - 2]
-                recorded_at = old_recorded_at
-            self._insert_raw_direct_credit(
-                task_id=task_id,
-                assignment_id=f"{task_id}:1:1",
-                provider=provider,
-                effort_units=effort_units,
-                recorded_at=recorded_at,
-            )
-
-        candidate = self.reserve(
-            "credit-order-candidate",
-            Provider.CLAUDE,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-
+            self._insert_raw_direct_credit(task_id=task_id, assignment_id=f"{task_id}:1:1",
+                provider=provider, effort_units=100 if provider is Provider.CURSOR else 1,
+                recorded_at="2026-08-01T00:00:00+00:00")
+        candidate = self.reserve("ordered", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
-        self.assertEqual(candidate.decision.violations, ())
+        self.assertIn("prospective_direct_production_share:claude:6/20", candidate.decision.advisories)
+
 
     def test_sqlite_cas_allows_one_cross_process_creator(self) -> None:
         context = multiprocessing.get_context("spawn")
@@ -1384,3 +1212,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
