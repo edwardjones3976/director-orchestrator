@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 """Disposable fixture history is test data, never activation/bootstrap evidence."""
@@ -12,6 +13,7 @@ from director_orchestrator.langgraph_postgres import open_postgres_control_plane
 from director_orchestrator.primary_parallel import (
     ParallelAssignment, ParallelAssignmentStatus, ParallelDispatchError,
     ParallelDispatchPolicy, PostgresParallelDispatch,
+    PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
 )
 from director_orchestrator.primary_workload import (
     POLICY_DIGEST, POLICY_VERSION, WorkloadAdmissionHold, admission_reason,
@@ -104,9 +106,9 @@ class PostgresAdmissionTests(unittest.TestCase):
         return self.parallel.reserve_ready(task_id=task_id, writer=writer,
                                            policy=self.policy)[0]
 
-    def attempt(self, reservation, writer, ordinal=1):
+    def attempt(self, reservation, writer, ordinal=1, *, format_roster=(("json", "api"),)):
         return self.parallel.reserve_provider_attempt(reservation=reservation,
-            writer=writer, attempt_ordinal=ordinal, format_roster=(("json", "api"),),
+            writer=writer, attempt_ordinal=ordinal, format_roster=format_roster,
             idempotency_key_digest="sha256:" + str(ordinal) * 64,
             budget_evidence_digest=DIGEST)
 
@@ -218,18 +220,19 @@ class PostgresAdmissionTests(unittest.TestCase):
         self.seed_test_history()
         task = self.task()
         reservation = self.ready(task)
-        first = self.attempt(reservation, task[1])
+        roster = (("json", "api"), ("json", "cli"))
+        first = self.attempt(reservation, task[1], format_roster=roster)
         self.parallel.record_provider_attempt(attempt=first, writer=task[1],
             status=ParallelAssignmentStatus.FAILED, result_digest=DIGEST,
-            reason_code="authenticated_failure")
+            reason_code=PROVIDER_TRANSIENT_TRANSPORT_FAILURE)
         self.parallel = PostgresParallelDispatch(self.handle.claim_store)
-        second = self.attempt(reservation, task[1], 2)
+        second = self.attempt(reservation, task[1], 2, format_roster=roster)
         self.assertEqual(self.count("director_primary_workload_assignment"), 20)
         self.parallel.record_provider_attempt(attempt=second, writer=task[1],
             status=ParallelAssignmentStatus.AMBIGUOUS, result_digest=None,
             reason_code="provider_outcome_unknown")
         with self.assertRaisesRegex(ParallelDispatchError, "reconcile"):
-            self.attempt(reservation, task[1], 3)
+            self.attempt(reservation, task[1], 3, format_roster=roster)
 
     def test_stale_fence_and_binding_cannot_admit(self):
         self.seed_test_history()
@@ -262,3 +265,4 @@ class PostgresAdmissionTests(unittest.TestCase):
         self.assertEqual(self.count("director_primary_workload_assignment"), 19)
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:39 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
@@ -1214,6 +1215,21 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(rows[1]["outcome_evidence_digest"])
         self.assertTrue(rows[3]["outcome_evidence_digest"])
 
+    def _seed_retry_admission_history(self):
+        # Mature disposable admission fixtures isolate retry authorization;
+        # they are not accepted-production credits or activation evidence.
+        from tests.test_primary_workload import HISTORY
+        from director_orchestrator.primary_workload import POLICY_DIGEST, POLICY_VERSION
+        fixture_id = "retry-fixture-" + uuid.uuid4().hex
+        with self.handle.claim_store._pool.connection() as connection:
+            for index, provider in enumerate(HISTORY):
+                connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                    (task_id, assignment_id, provider_lane, reservation_digest,
+                     fencing_generation, policy_version, policy_digest)
+                    VALUES (%s,%s,%s,%s,1,%s,%s)""",
+                    (fixture_id, str(index), provider, digest("fixture"),
+                     POLICY_VERSION, POLICY_DIGEST))
+
     def test_durable_retry_gate_uses_stored_failure_and_transport_after_restart(self):
         cases = (
             ("terminal", "api", "cli", None, "authenticated_failure",
@@ -1229,6 +1245,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         )
         for label, primary, recovery, third, reason, expected_error in cases:
             with self.subTest(case=label):
+                self._seed_retry_admission_history()
                 record = self.application.create_intake(
                     self.intake().model_copy(update={"source_event_id": f"durable-{label}"}),
                     intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
@@ -1291,6 +1308,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                     self.assertEqual(expected, [row["attempt_ordinal"] for row in rows])
 
     def test_authenticated_success_blocks_all_later_reservations_after_restart(self):
+        self._seed_retry_admission_history()
         record = self.application.create_intake(
             self.intake().model_copy(update={"source_event_id": "success-ledger"}),
             intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
@@ -2636,3 +2654,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:39 UTC | END]]
