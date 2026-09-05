@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -839,7 +841,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             kind=WorkKind.RESEARCH,
         )
         self.assertFalse(candidate.decision.allowed)
-        self.assertIn("direct_production_history_insufficient_requires_owner_decision", candidate.decision.violations)
+        self.assertIn("direct_production_hard_cap_exceeded:perplexity:9", candidate.decision.violations)
         self.assertIn(
             "direct_production_window_warming_up:2/20",
             candidate.decision.advisories,
@@ -1213,3 +1215,5 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]

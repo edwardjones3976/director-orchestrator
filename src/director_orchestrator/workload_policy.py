@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
@@ -616,12 +617,10 @@ def direct_assignment_capacity_violation(
     """Check last nineteen accepted/prospectively reserved assignments plus one.
 
     Effort points remain reporting evidence, not votes in this count window.
-    No bootstrap exception is authorized: incomplete history needs an owner
-    decision rather than an invented denominator or accepted-production credit.
+    Startup uses the owner-approved full twenty-slot denominator, counting only
+    real accepted/prospectively reserved assignments; no credits are invented.
     """
     prior = tuple(history)[-(policy.rolling_window_size - 1):]
-    if len(prior) < policy.rolling_window_size - 1:
-        return "direct_production_history_insufficient_requires_owner_decision"
     provider_count = 1 + sum(record.provider is provider for record in prior)
     ceiling = policy.direct_production_target(provider) + DIRECT_PRODUCTION_HARD_TOLERANCE_PERCENTAGE_POINTS
     if provider_count * 100 > ceiling * policy.rolling_window_size:
@@ -659,7 +658,7 @@ def _direct_candidate_routing_rank(
             effort_units=effort_units,
         ),
     )
-    total_units = len(window)
+    total_units = policy.rolling_window_size
     provider_units = sum(
         1
         for record in window
@@ -1433,3 +1432,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]

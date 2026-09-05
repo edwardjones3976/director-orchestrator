@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
@@ -376,8 +378,12 @@ $requiredProviders = @(
     "firecrawl", "github-copilot", "microsoft-365-copilot"
 )
 $configuredProviders = @(([string]$values["LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS"]).Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-if (@(Compare-Object ($requiredProviders | Sort-Object) ($configuredProviders | Sort-Object)).Count -ne 0) {
-    throw "Primary required-provider configuration must contain the exact nine provider lanes."
+$coreProviders = @("openai", "claude", "cursor", "grok")
+if ($configuredProviders.Count -ne @($configuredProviders | Sort-Object -Unique).Count -or
+    @($configuredProviders | Where-Object { $_ -notin $requiredProviders }).Count -gt 0 -or
+    "openai" -notin $configuredProviders -or
+    @($configuredProviders | Where-Object { $_ -in $coreProviders }).Count -lt 3) {
+    throw "Primary configured pool must cover orchestration and independent implementation/review with at least three primary providers."
 }
 foreach ($secret in @(
     "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "LANGGRAPH_PRIMARY_OWNER_TOKEN",
@@ -433,7 +439,7 @@ $databaseInstanceId = [string]$databaseBinding[1]
 
 if ($Action -eq "Preflight") {
     Invoke-Evidence -Command record -Stage PREFLIGHT -FactsJson '{"compose_config_valid":true,"snapshot_exact":true}'
-    Write-Host "Primary preflight passed; no service or provider was started."
+    Write-Host "Primary preflight passed; the profile database was started; no provider was called."
     return
 }
 if ($Action -eq "Accept") {
@@ -579,3 +585,5 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]

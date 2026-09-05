@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 """Count-window and existing atomic reservation regression coverage."""
@@ -44,11 +46,11 @@ class HardCapacityTests(unittest.TestCase):
         prior = (DirectProductionRecord("old", D.CLAUDE),) + history()
         self.assertTrue(evaluate_assignment(request(), direct_production_history=prior).allowed)
 
-    def test_bootstrap_requires_owner_decision(self):
+    def test_bootstrap_uses_twenty_slots_without_fabricated_credit(self):
         for prior in ((), history()[:18]):
             result = evaluate_assignment(request(), direct_production_history=prior)
-            self.assertFalse(result.allowed)
-            self.assertIn("direct_production_history_insufficient_requires_owner_decision", result.violations)
+            self.assertTrue(result.allowed)
+        self.assertFalse(evaluate_assignment(request(), direct_production_history=history(6)[-6:]).allowed)
 
     def test_size_does_not_require_model_but_explicit_requirement_does(self):
         self.assertTrue(evaluate_assignment(request(), direct_production_history=history()).allowed)
@@ -76,10 +78,8 @@ class HardCapacityTests(unittest.TestCase):
             select_cheapest_capable_provider(**arguments, direct_production_history=history(6),
                                             explicit_required_provider=Provider.CLAUDE)
         self.assertEqual(held.exception.reasons, ("direct_production_hard_cap_exceeded:claude:30",))
-        with self.assertRaises(WorkloadSelectionHold) as held:
-            select_cheapest_capable_provider(**arguments)
-        self.assertEqual(held.exception.reasons,
-                         ("direct_production_history_insufficient_requires_owner_decision",))
+        self.assertEqual(select_cheapest_capable_provider(**arguments), Provider.CLAUDE)
+        self.assertEqual(select_cheapest_capable_provider(**arguments, direct_production_history=history(6), mode=EnforcementMode.SHADOW), Provider.CLAUDE)
         arguments["ready_providers"] = frozenset({Provider.CLAUDE, Provider.CURSOR})
         with self.assertRaises(WorkloadSelectionHold):
             select_cheapest_capable_provider(**arguments, direct_production_history=history(6))
@@ -123,3 +123,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]

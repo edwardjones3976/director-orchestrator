@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
@@ -183,7 +185,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "workload_enforcement": {
             "enforced_measure": "accepted_assignment_count",
             "normal_tolerance_percentage_points": 3,
-            "insufficient_history_action": "OWNER_DECISION_REQUIRED",
+            "startup_denominator": "twenty_slots_real_assignments_only",
             "evaluate": [
                 "prospective_last20_assignment_count",
             ],
@@ -829,3 +831,5 @@ def tally_advisory_votes(
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]

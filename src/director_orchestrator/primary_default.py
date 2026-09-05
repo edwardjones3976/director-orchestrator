@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
@@ -82,7 +83,7 @@ from .packet_transports import (
     LocalGitAuthoritySnapshotResolver,
     canonical_github_remote_repository,
 )
-from .policy import preview_plan
+from .policy import preview_plan, _canonical_prestage_record
 from .primary_coordinator import PrimaryTaskCoordinator
 from .primary_effects import (
     DeterministicExternalEffectExecutor,
@@ -347,8 +348,8 @@ def _terminal_review_assignment(record: TaskRecord) -> Assignment | None:
 
     The barrier is identified structurally - the highest-sequence independent
     review that depends on every other plan member - never by provider lane. A
-    reviewer deliberately reuses a first-wave lane, so lane equality can select
-    the producer's packets instead of the review's artifacts.
+    reviewer is independently selected; structure binds the complete evidence
+    barrier even for older plans that reused a first-wave lane.
     """
 
     plan = record.plan
@@ -430,22 +431,18 @@ def _typed_effect_binding(
     raise RuntimeError("external effect action is unsupported")
 
 
-def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
-    """Expand one normalized preview into an all-lane wave and one review barrier."""
+def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
+                        available: tuple[str, ...], history: tuple[str, ...]) -> None:
+    """Freeze a minimal capability-selected DAG before execution approval."""
 
     if record.plan is None or not record.plan.assignments:
         raise RuntimeError("live primary parallel expansion requires a normalized plan")
-    required = tuple(settings.langgraph_primary_required_providers)
-    if not required or len(set(required)) != len(required):
-        raise RuntimeError("live primary required-provider roster is invalid")
-    unknown = sorted(set(required) - set(_PRIMARY_LANE_AGENT))
-    if unknown:
-        raise RuntimeError(
-            "live primary required-provider roster contains unknown lanes: "
-            + ",".join(unknown)
-        )
-    if len(required) + 1 > 20:
-        raise RuntimeError("live primary provider roster exceeds the bounded plan size")
+    from .primary_roster import select_primary_roster
+    selected = select_primary_roster(available=available, history=history,
+        required_capabilities=record.intake.primary_required_capabilities,
+        public_research_query=record.intake.primary_public_research_query,
+        trusted_cost_ranks=json.loads(settings.trusted_provider_cost_ranks_json))
+    required = ((selected.research,) if selected.research else ()) + (selected.producer,)
     # The paid-off preview always declares a zero cost. A live wave must carry a
     # trusted positive per-lane limit derived from the configured task budget so
     # the packet, the dispatcher and the transport all enforce the same ceiling.
@@ -482,6 +479,8 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
                     "task": (
                         "Produce a bounded generic module skeleton for independent integration."
                         if is_antigravity
+                        else record.intake.primary_public_research_query
+                        if is_research
                         else record.intake.text.strip()
                     ),
                     "acceptance": [
@@ -489,7 +488,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
                         "Report blockers and unresolved risks without external effects",
                     ],
                     "public_research_query": (
-                        "public sources for the owner-defined research topic"
+                        record.intake.primary_public_research_query
                         if is_research
                         else None
                     ),
@@ -502,7 +501,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
                     ),
                     "repository": None if is_research or is_antigravity else repository,
                     "starting_ref": starting_ref,
-                    "depends_on": [],
+                    "depends_on": ([1] if selected.research and lane == selected.producer else []),
                     "requires_approval": is_research,
                     "allow_draft_pr": False,
                     "retry_limit": 3,
@@ -510,11 +509,12 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
                 }
             )
         )
-    review_lane = _primary_provider_lane(review_template.agent)
+    review_lane = selected.reviewer
     review = review_template.model_copy(
         update={
             "sequence": len(first_wave) + 1,
             "primary_provider_lane": review_lane,
+            "agent": _PRIMARY_LANE_AGENT[review_lane],
             "kind": AssignmentKind.INDEPENDENT_REVIEW,
             "task": (
                 "Review the complete first-wave provider evidence, identify conflicts, "
@@ -535,6 +535,12 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings) -> None:
         }
     )
     record.plan = plan.model_copy(update={"assignments": [*first_wave, review]})
+    if record.plan.prestage is not None:
+        record.plan.prestage = _canonical_prestage_record(record.plan.prestage.model_copy(update={
+            "producer": _PRIMARY_LANE_AGENT[selected.producer],
+            "independent_reviewer": _PRIMARY_LANE_AGENT[selected.reviewer],
+            "digest": None,
+        }))
 
 
 def _bounded_secret_file(path_value: str) -> str:
@@ -599,7 +605,8 @@ class DefaultPrimaryLiveDependencies:
     def validate(self, required_providers: tuple[str, ...]) -> None:
         expected = set(required_providers)
         actual = set(self.adapters)
-        if actual != expected:
+        from .primary_roster import core_inventory_ready
+        if not actual.issubset(expected) or not core_inventory_ready(tuple(actual)):
             missing = sorted(expected - actual)
             extra = sorted(actual - expected)
             details = []
@@ -608,7 +615,7 @@ class DefaultPrimaryLiveDependencies:
             if extra:
                 details.append("unexpected=" + ",".join(extra))
             raise ValueError(
-                "live primary provider adapters must exactly cover required "
+                "live primary provider adapters must cover core capabilities within configured "
                 "providers (" + "; ".join(details) + ")"
             )
         for provider, adapter in self.adapters.items():
@@ -813,12 +820,13 @@ def build_automatic_primary_live_dependencies(
         ),
     )
     adapters = build_graph_native_packet_adapters(
-        transports=transports,
-        capabilities=capabilities,
+        transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
+        capabilities={k: v for k, v in capabilities.items() if k in settings.langgraph_primary_required_providers},
         required_providers=settings.langgraph_primary_required_providers,
     )
     missing = sorted(set(settings.langgraph_primary_required_providers) - set(adapters))
-    if missing:
+    from .primary_roster import core_inventory_ready
+    if not core_inventory_ready(tuple(adapters)):
         blockers = provider_lane_external_blockers(capabilities)
         blocked_missing = [
             f"{provider_id}:{blockers[provider_id]}"
@@ -1087,6 +1095,8 @@ class DefaultDryRunServices:
             raise ValueError("Default dry-run primary services require paid runs off")
         self.settings = settings
         self._live_composition = live_composition
+        self.available_provider_lanes: tuple[str, ...] = ()
+        self.provider_lane_ready: Callable[[str], bool] = lambda _provider: False
         if packet_router is None:
             if len(settings.repository_allowlist) != 1:
                 raise ValueError("Default packet planning requires one repository")
@@ -1190,6 +1200,8 @@ class DefaultDryRunServices:
         return PlanResult(
             plan_digest=plan_digest,
             work_packet_digest=document_digest(work_packet),
+            passed=not record.workload_selection_hold_reasons,
+            reason_code=(record.workload_selection_hold_reasons[0] if record.workload_selection_hold_reasons else "ok"),
         )
 
     def policy_budget(self, context: HandlerContext) -> PhaseResult:
@@ -1439,18 +1451,8 @@ class DefaultPrimaryApplication:
         for provider in self.settings.langgraph_primary_required_providers:
             provider_caps.setdefault(provider, 1)
         return ParallelDispatchPolicy(
-            # The primary first wave is deliberately one simultaneous slot per
-            # required lane. This remains bounded by the exact configured roster.
-            max_concurrency=max(
-                self.settings.langgraph_parallel_initial_max_concurrency,
-                len(self.settings.langgraph_primary_required_providers),
-            ),
+            max_concurrency=self.settings.langgraph_parallel_initial_max_concurrency,
             provider_caps=provider_caps,
-            simultaneous_provider_roster=(
-                tuple(self.settings.langgraph_primary_required_providers)
-                if len(self.settings.langgraph_primary_required_providers) > 3
-                else ()
-            ),
         )
 
     def _parallel_assignments(
@@ -1490,6 +1492,8 @@ class DefaultPrimaryApplication:
     def _ensure_parallel_lifecycle(self, record: TaskRecord) -> str:
         """Idempotently repair a crash after graph intake but before registration."""
 
+        if record.workload_selection_hold_reasons:
+            return _digest(record.workload_selection_hold_reasons)
         return self._register_parallel_lifecycle(record)
 
     def _drive_parallel_lifecycle(self, record: TaskRecord) -> ParallelAggregate:
@@ -1654,7 +1658,16 @@ class DefaultPrimaryApplication:
         )
         record.plan = preview_plan(record.intake.text, self.settings)
         if self.services._live_composition:
-            _live_parallel_plan(record, self.settings)
+            from .primary_workload import read_admission_history, WorkloadAdmissionHold
+            from .primary_roster import PrimaryRosterHold
+            try:
+                with self.coordinator._store._pool.connection() as connection:
+                    history = read_admission_history(connection, schema=self.coordinator._store._schema)
+                _live_parallel_plan(record, self.settings,
+                    available=tuple(p for p in self.services.available_provider_lanes if self.services.provider_lane_ready(p)), history=history)
+            except (PrimaryRosterHold, WorkloadAdmissionHold) as hold:
+                record.workload_selection_hold_reasons = ["primary_roster_" + str(hold)]
+
         request = self._request(record)
         if authenticated_replay_identity is not None:
             claimed_task_id, created = self.coordinator.claim_authenticated_intake(
@@ -1953,6 +1966,8 @@ class DefaultPrimaryActivation:
                         settings, handle, services
                     )
                 live_dependencies.validate(settings.langgraph_primary_required_providers)
+                services.available_provider_lanes = tuple(live_dependencies.adapters)
+                services.provider_lane_ready = lambda provider: provider_activation.provider_ready(provider, live=True)
                 if effect_executor is None:
                     registry = (
                         effect_gateways
@@ -2057,10 +2072,11 @@ class DefaultPrimaryActivation:
                         "live LangGraph primary requires exact typed Slack/GitHub "
                         "effect transports"
                     )
-                if not provider_activation.health()["combined_live_ready"]:
+                from .primary_roster import core_inventory_ready
+                if not core_inventory_ready(tuple(p for p in services.available_provider_lanes if services.provider_lane_ready(p))):
                     raise ValueError(
                         "live LangGraph primary startup requires current LIVE_OK "
-                        "evidence for every required provider app and runtime adapter"
+                        "evidence for the mandatory core provider capabilities"
                     )
                 def write_work_packet(
                     context: HandlerContext,
@@ -2511,10 +2527,12 @@ class DefaultPrimaryActivation:
             and self._reconciliation_worker_ready
             and not self.settings.allow_paid_runs
         )
+        from .primary_roster import core_inventory_ready
+        effective_core_ready = bool(self.services and core_inventory_ready(tuple(p for p in self.services.available_provider_lanes if self.services.provider_lane_ready(p))))
         observed["primary_runtime_active"] = bool(
             self.settings.langgraph_primary_live_provider_dispatch_enabled
             and self._live_dependencies_ready
-            and provider_activation["combined_live_ready"]
+            and effective_core_ready
             and observed["primary_router_wired"]
             and observed["checkpoint_backend_postgres"]
             and observed["claim_store_ready"]
@@ -2564,3 +2582,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]

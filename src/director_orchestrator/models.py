@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -245,6 +247,8 @@ class SlackIntake(BaseModel):
     thread_ts: str = Field(min_length=1, max_length=64)
     user_id: str = Field(min_length=1, max_length=64)
     text: str = Field(min_length=1, max_length=MAX_SLACK_INTAKE_TEXT)
+    primary_required_capabilities: tuple[Literal["public_research", "enterprise_context"], ...] = Field(default=(), max_length=2)
+    primary_public_research_query: str | None = Field(default=None, min_length=1, max_length=500)
     permalink: str | None = Field(default=None, max_length=2_000)
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -1228,3 +1232,5 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]

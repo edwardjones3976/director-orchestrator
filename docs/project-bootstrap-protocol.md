@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
@@ -192,8 +194,8 @@ Accepted productive work remains enforced at external OpenAI/Codex
 Total effort is prospectively guarded at Claude/Cursor/Gemini-Antigravity/Grok/
 OpenAI/Perplexity targets of 36/20/20/11/8/5, normal bands of
 33–39/17–23/17–23/8–14/5–11/1–7. Direct-production allocation counts assignments in the prospective last-20
-window and blocks above target plus five percentage points. Insufficient
-qualifying history requires an owner decision; no startup exception is implied.
+window and blocks above target plus five percentage points. Startup uses the
+owner-approved full twenty-slot denominator; only real assignments count.
 
 Choose the cheapest capable trusted model, never simply the cheapest contact.
 First establish exact scope and allowlists, usable transport, readiness,
@@ -509,3 +511,5 @@ project-specific control.
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->

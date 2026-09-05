@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
@@ -1000,7 +1002,7 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
                 (reservation_digest ~ '^sha256:[0-9a-f]{{64}}$'),
             fencing_generation bigint NOT NULL CHECK (fencing_generation >= 0),
             policy_version text NOT NULL CHECK
-                (policy_version = 'primary-assignment-count-v1'),
+                (policy_version = 'primary-assignment-count-v2'),
             policy_digest text NOT NULL CHECK
                 (policy_digest ~ '^sha256:[0-9a-f]{{64}}$'),
             recorded_at timestamptz NOT NULL DEFAULT now(),
@@ -4862,3 +4864,5 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | BEGIN]]
 """Fail-closed activation preflight for primary provider dispatch."""
@@ -34,14 +36,17 @@ class PrimaryProviderActivationService:
             required_providers
         ):
             raise ValueError("required providers must be non-empty and unique")
+        if not bindings:
+            raise ValueError("activation bindings must not be empty")
         normalized: dict[str, ProviderActivationRegistry] = {}
-        for provider_id in required_providers:
+        from .primary_roster import KNOWN_LANES, core_inventory_ready
+        if not set(bindings).issubset(set(required_providers) & KNOWN_LANES):
+            raise ValueError("activation binding is outside the configured provider pool")
+        for provider_id in bindings:
             binding = bindings.get(provider_id)
             if binding is None or binding.provider_id != provider_id:
                 raise ValueError("every required provider needs an exact binding")
             normalized[provider_id] = ProviderActivationRegistry(store, binding)
-        if set(bindings) != set(required_providers):
-            raise ValueError("activation bindings must exactly match required providers")
         self._registries = normalized
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
@@ -137,7 +142,9 @@ class PrimaryProviderActivationService:
             app_live = app_live and readiness.app.live_ready
             adapter_dry = adapter_dry and readiness.runtime_adapter.dry_run_ready
             adapter_live = adapter_live and readiness.runtime_adapter.live_ready
+        from .primary_roster import core_inventory_ready
         return {
+            "core_live_ready": core_inventory_ready(tuple(p for p in self._registries if self.provider_ready(p, live=True))),
             "app_dry_run_ready": app_dry,
             "app_live_ready": app_live,
             "runtime_adapter_dry_run_ready": adapter_dry,
@@ -149,3 +156,5 @@ class PrimaryProviderActivationService:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
