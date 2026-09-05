@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:55 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
@@ -39,9 +40,11 @@ A packet missing its authority snapshot, acceptance checks, or repository bounda
 An additional attempt is valid only within that retry limit, with a classified
 failure, positive expected information gain from new evidence, a corrected
 approach, or a different transport, and remaining resource budget. Primary
-parallel dispatch stops after authenticated success, authorizes one recovery only
-from typed transient transport evidence, and never treats provider prose as retry
-authority. An ambiguous
+parallel dispatch stops after authenticated success and authorizes one ordinary
+recovery only from typed transient transport evidence. A third attempt requires
+typed transient failure plus explicit evidence of a distinct supported underlying
+transport and remaining resource budget. Changing an alias or wrapper does not
+supply that evidence, and provider prose never supplies retry authority. An ambiguous
 external effect is reconciled through its idempotency and provider identifiers;
 it is never blindly repeated.
 For v1 paid revisions, the additional attempt also requires authenticated,
@@ -143,3 +146,4 @@ A self-contained digest detects accidental or unsynchronized modification; it is
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:55 UTC | END]] -->
