@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:36 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | BEGIN]]
@@ -11,21 +13,24 @@
 from __future__ import annotations
 
 import os
+import asyncio
 import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
-from director_orchestrator.approvals import reserve_provider_effect
+from director_orchestrator.approvals import reserve_provider_effect, current_owner_decision, StaleApproval
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.langgraph_runtime import RuntimeExecutionStatus
 from director_orchestrator.models import (
     Assignment,
     AssignmentKind,
+    IntakeAuthentication,
+    OwnerApproval,
     DirectorPlan,
     PlanPrestageRecord,
     ProviderName,
@@ -45,6 +50,7 @@ from director_orchestrator.workload_policy import (
     WorkKind,
     WorkSize,
     WorkloadPolicyError,
+    WorkloadSelectionHold,
 )
 
 
@@ -411,6 +417,95 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             ),
         )
         return plan
+
+    def test_real_plan_install_persists_selection_hold_without_dispatch_or_credit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "director.sqlite3"
+            settings = replace(Settings(), sqlite_path=str(path), allow_paid_runs=True,
+                openai_api_key="fixture", project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                trusted_provider_cost_ranks_json='{"cursor":1,"claude":2,"grok":3}',
+                claude_routine_url="https://example.invalid/claude", claude_routine_token="fixture",
+                cursor_api_key="fixture", grok_enabled=True, grok_api_key="fixture")
+            store = TaskStore(path)
+            providers = {provider: Mock() for provider in
+                         (ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK)}
+            engine = OrchestrationEngine(settings, store, providers=providers)
+            from director_orchestrator import main
+            plan = self._selection_plan().model_copy(update={
+                "owner_question": None, "approval_required": True,
+                "approval_reasons": ["Review selected plan"],
+            })
+            engine.director = Mock(plan=AsyncMock(return_value=plan))
+            record = TaskRecord(task_id="DIR-SELECTION-HOLD", status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                intake=SlackIntake(source_event_id="selection-hold", channel_id="C1",
+                    thread_ts="1.1", user_id="U1", text="Implement and independently review the bounded change"))
+            store.create(record)
+            asyncio.run(engine.run(record.task_id))
+            held = store.get(record.task_id)
+            self.assertEqual(held.status, TaskStatus.OWNER_DECISION_REQUIRED, held.error)
+            self.assertEqual(held.message, WorkloadSelectionHold.code)
+            self.assertEqual(held.workload_selection_hold_reasons,
+                ["direct_production_history_insufficient_requires_owner_decision"])
+            self.assertEqual(store.list_recent_direct_production(limit=20), [])
+            self.assertEqual(held.provider_runs, [])
+            self.assertEqual([event.kind for event in held.task_effect_ledger],
+                             ["director_intent", "director_observation"])
+            engine._require_verified_plan_materialization(held)
+            # Generic approval/resume cannot erase the typed persisted hold or replan.
+            held.owner_approved = True
+            held.message = "Resume approved"
+            store.save(held)
+            restarted = OrchestrationEngine(settings, TaskStore(path), providers=providers)
+            restarted.director = Mock(plan=AsyncMock(side_effect=AssertionError("must not replan")))
+            asyncio.run(restarted.run(record.task_id))
+            restarted.director.plan.assert_not_awaited()
+            engine.director.plan.assert_awaited_once()
+            self.assertFalse(store.get(record.task_id).owner_approved)
+            for provider in providers.values():
+                self.assertEqual(provider.mock_calls, [])
+            held = store.get(record.task_id)
+            decision = current_owner_decision(held)
+            self.assertEqual(decision.kind, "workload_selection_clarification")
+            self.assertTrue(decision.clarification)
+            changed = held.model_copy(deep=True)
+            changed.plan_generation += 1
+            self.assertNotEqual(current_owner_decision(changed).digest, decision.digest)
+            changed = held.model_copy(deep=True)
+            changed.workload_selection_hold_reasons = ["different allocation hold"]
+            self.assertNotEqual(current_owner_decision(changed).digest, decision.digest)
+            with patch.object(main, "settings", settings):
+                for note, digest in (("Approved", decision.digest),
+                                     ("Reconsider available routes", "sha256:" + "0" * 64)):
+                    with self.assertRaises(StaleApproval):
+                        main._consume_owner_decision(store, record.task_id,
+                            OwnerApproval(owner_user_id="U1", note=note, workload_selection_decision_digest=digest))
+                main._consume_owner_decision(store, record.task_id,
+                    OwnerApproval(owner_user_id="U1", note="Reconsider available routes",
+                                  workload_selection_decision_digest=decision.digest))
+            self.assertIsNone(store.get(record.task_id).plan)
+            asyncio.run(engine.run(record.task_id))
+            held = store.get(record.task_id)
+            self.assertEqual(held.message, WorkloadSelectionHold.code)
+            self.assertEqual(store.list_recent_direct_production(limit=20), [])
+            self.assertEqual(engine.director.plan.await_count, 2)
+            # Mature TEST credits permit a separately bound clarification to
+            # reach normal selected-plan approval; written input never waives caps.
+            self._seed_mature_selector_history(path)
+            with patch.object(main, "settings", settings):
+                main._consume_owner_decision(store, record.task_id,
+                    OwnerApproval(owner_user_id="U1", note="Reassess with the current ledger",
+                                  workload_selection_decision_digest=current_owner_decision(held).digest))
+            asyncio.run(engine.run(record.task_id))
+            installed = store.get(record.task_id)
+            self.assertEqual(installed.workload_selection_hold_reasons, [])
+            self.assertEqual(current_owner_decision(installed).kind, "plan_approval", installed.error)
+            self.assertEqual(installed.plan.assignments[0].agent, ProviderName.CURSOR)
+            self.assertEqual(len(store.list_recent_direct_production(limit=20)), 19)
+            self.assertEqual(engine.director.plan.await_count, 3)
+            for provider in providers.values():
+                self.assertEqual(provider.mock_calls, [])
 
     def test_runtime_selector_uses_explicit_cost_readiness_and_independence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -795,3 +890,5 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:51 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]
