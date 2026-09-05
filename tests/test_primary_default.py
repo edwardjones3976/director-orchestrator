@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
@@ -1148,7 +1149,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             attempt=first,
             status=ParallelAssignmentStatus.FAILED,
             result_digest=digest("failed-result"),
-            reason_code="authenticated_failure",
+            reason_code=PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
         )
 
         restarted = PostgresParallelDispatch(self.handle.claim_store)
@@ -1200,6 +1201,82 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual([1, 1, 2, 2], [row["attempt_ordinal"] for row in rows])
         self.assertTrue(rows[1]["outcome_evidence_digest"])
         self.assertTrue(rows[3]["outcome_evidence_digest"])
+
+    def test_durable_retry_gate_uses_stored_failure_and_transport_after_restart(self):
+        cases = (
+            ("terminal", "api", "cli", None, "authenticated_failure",
+             "provider_retry_requires_transient_failure"),
+            ("same-third", "api", "cli", "cli",
+             PROVIDER_TRANSIENT_TRANSPORT_FAILURE, "provider_retry_evidence_insufficient"),
+            ("unknown-third", "api", "cli", "unknown-a",
+             PROVIDER_TRANSIENT_TRANSPORT_FAILURE, "provider_retry_transport_unknown"),
+            ("unknown-previous", "unknown-a", "cli", None,
+             PROVIDER_TRANSIENT_TRANSPORT_FAILURE, "provider_retry_transport_unknown"),
+            ("valid", "api", "cli", "api",
+             PROVIDER_TRANSIENT_TRANSPORT_FAILURE, None),
+        )
+        for label, primary, recovery, third, reason, expected_error in cases:
+            with self.subTest(case=label):
+                record = self.application.create_intake(
+                    self.intake().model_copy(update={"source_event_id": f"durable-{label}"}),
+                    intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+                )
+                reservation = self.coordinator.reserve_parallel_ready(
+                    task_id=record.task_id, policy=self.application._parallel_policy(),
+                )[0]
+                roster = (("json", primary), ("text", recovery))
+                if third is not None:
+                    roster += (("third", third),)
+                first = self.coordinator.reserve_provider_attempt(
+                    reservation=reservation, attempt_ordinal=1, format_roster=roster,
+                    idempotency_key_digest=digest(f"{label}-1"),
+                    budget_evidence_digest=digest("budget"),
+                )
+                self.coordinator.record_provider_attempt(
+                    attempt=first, status=ParallelAssignmentStatus.FAILED,
+                    result_digest=None, reason_code=reason,
+                )
+                with open_postgres_control_plane(
+                    TEST_DSN, schema=self.schema, allow_insecure_local_transport=True,
+                ) as restarted_handle:
+                    store = PostgresParallelDispatch(restarted_handle.claim_store)
+                    writer = restarted_handle.claim_store.current_task_writer(record.task_id)
+                    assert writer is not None
+                    def reserve(ordinal):
+                        return store.reserve_provider_attempt(
+                            reservation=reservation, writer=writer,
+                            attempt_ordinal=ordinal, format_roster=roster,
+                            idempotency_key_digest=digest(f"{label}-{ordinal}"),
+                            budget_evidence_digest=digest("budget"),
+                        )
+                    ordinal = 2
+                    if third is not None:
+                        second = reserve(2)
+                        store.record_provider_attempt(
+                            attempt=second, writer=writer,
+                            status=ParallelAssignmentStatus.FAILED,
+                            result_digest=None,
+                            reason_code=PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
+                        )
+                        # Replace the store before the third attempt too.
+                        store = PostgresParallelDispatch(restarted_handle.claim_store)
+                        ordinal = 3
+                    if expected_error:
+                        with self.assertRaisesRegex(ParallelDispatchError, expected_error):
+                            reserve(ordinal)
+                    else:
+                        self.assertEqual(ordinal, reserve(ordinal).attempt_ordinal)
+                    with restarted_handle.pool.connection() as connection:
+                        rows = connection.execute(
+                            f"SELECT attempt_ordinal FROM "
+                            f"{self.schema}.director_primary_provider_attempt "
+                            "WHERE task_id = %s ORDER BY attempt_ordinal, event_sequence",
+                            (record.task_id,),
+                        ).fetchall()
+                    expected = [1, 1] if ordinal == 2 else [1, 1, 2, 2]
+                    if expected_error is None:
+                        expected.append(ordinal)
+                    self.assertEqual(expected, [row["attempt_ordinal"] for row in rows])
 
     def test_authenticated_success_blocks_all_later_reservations_after_restart(self):
         record = self.application.create_intake(
@@ -2534,3 +2611,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-05 | 00:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:14 UTC | END]]
