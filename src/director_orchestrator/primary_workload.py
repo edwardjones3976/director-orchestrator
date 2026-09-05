@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -54,11 +55,29 @@ def admission_reason(provider: str, history: Sequence[str]) -> str | None:
     return None
 
 
+def _require_compatible_admission_schema(cursor: Any, *, schema: str) -> None:
+    # Keep the table definition stable through the caller's transaction. Merely
+    # reopening an old empty v1 table does not upgrade its CREATE-IF-ABSENT CHECK.
+    cursor.execute(f"LOCK TABLE {schema}.director_primary_workload_assignment IN ROW SHARE MODE")
+    cursor.execute("""SELECT pg_get_constraintdef(c.oid) AS definition, c.convalidated
+        FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = %s AND t.relname = 'director_primary_workload_assignment'
+          AND c.conname = 'director_primary_workload_assignment_policy_version_check'
+          AND c.contype = 'c'""", (schema,))
+    constraint = cursor.fetchone()
+    expected = f"CHECK ((policy_version = '{POLICY_VERSION}'::text))"
+    if constraint is None or not constraint["convalidated"] or constraint["definition"] != expected:
+        raise WorkloadAdmissionHold("workload_schema_policy_incompatible")
+
+
 def read_admission_history(connection: Any, *, schema: str) -> tuple[str, ...]:
     schema = _require_schema(schema)
-    with connection.cursor() as cursor:
-        cursor.execute(f"SELECT provider_lane, policy_digest FROM {schema}.director_primary_workload_assignment ORDER BY ledger_id DESC LIMIT 19")
-        rows = cursor.fetchall()
+    with connection.transaction():
+        with connection.cursor() as cursor:
+            _require_compatible_admission_schema(cursor, schema=schema)
+            cursor.execute(f"SELECT provider_lane, policy_digest FROM {schema}.director_primary_workload_assignment ORDER BY ledger_id DESC LIMIT 19")
+            rows = cursor.fetchall()
     if any(row["policy_digest"] != POLICY_DIGEST for row in rows):
         raise WorkloadAdmissionHold("workload_history_invalid")
     return tuple(row["provider_lane"] for row in reversed(rows))
@@ -76,6 +95,7 @@ schema is trusted and validated by its owner, never supplied by a work packet.
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                        ("director-primary-workload-admission",))
+        _require_compatible_admission_schema(cursor, schema=schema)
         cursor.execute(f"""SELECT provider_lane, reservation_digest, policy_version, policy_digest
             FROM {schema}.director_primary_workload_assignment
             WHERE task_id = %s AND assignment_id = %s""", (task_id, assignment_id))
@@ -106,3 +126,4 @@ schema is trusted and validated by its owner, never supplied by a work packet.
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]

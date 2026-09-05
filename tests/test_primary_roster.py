@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 import unittest
 from director_orchestrator.primary_roster import PrimaryRosterHold, select_primary_roster
@@ -39,6 +40,27 @@ class PrimaryRosterTests(unittest.TestCase):
         with self.assertRaisesRegex(PrimaryRosterHold, "cost_rank"):
             self.select(trusted_cost_ranks={})
 
+    def test_producer_rollover_unlocks_independent_reviewer(self):
+        prior = ["cursor"] + ["claude"] * 6 + ["cursor"] * 4 + ["grok"] * 2 + ["openai"] * 6
+        original = list(prior)
+        self.assertIsNotNone(admission_reason("cursor", prior))
+        selected = self.select(history=prior)
+        self.assertEqual((selected.producer, selected.reviewer), ("grok", "cursor"))
+        self.assertIsNone(admission_reason(selected.producer, prior))
+        self.assertIsNone(admission_reason(selected.reviewer, prior + [selected.producer]))
+        self.assertEqual(prior, original)
+
+    def test_research_is_projected_before_production_and_review(self):
+        prior = ["cursor"] + ["claude"] * 6 + ["cursor"] * 4 + ["grok"] * 2 + ["openai"] * 6
+        selected = self.select(history=prior,
+            available=("openai", "claude", "cursor", "grok", "perplexity"),
+            required_capabilities=("public_research",), public_research_query="public API")
+        self.assertEqual((selected.research, selected.producer, selected.reviewer), ("perplexity", "cursor", "claude"))
+        projected = list(prior)
+        for provider in (selected.research, selected.producer, selected.reviewer):
+            self.assertIsNone(admission_reason(provider, projected))
+            projected.append(provider)
+
     def test_fixed_original_targets_eventually_hold_core_only_work(self):
         history = []
         for _ in range(10):
@@ -56,3 +78,4 @@ class PrimaryRosterTests(unittest.TestCase):
         self.assertLessEqual(history.count("cursor"), 5)
         self.assertLessEqual(history.count("grok"), 3)
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
