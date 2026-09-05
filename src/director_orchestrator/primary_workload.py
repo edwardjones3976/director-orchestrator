@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 """Transactional assignment admission for the primary control plane.
 
@@ -9,9 +10,9 @@ from __future__ import annotations
 from collections import Counter
 import hashlib
 import json
-import re
 from typing import Any, Sequence
 
+from .langgraph_postgres import _require_schema
 from .workload_policy import DEFAULT_POLICY, DirectProductionProvider
 
 POLICY_VERSION = "primary-assignment-count-v1"
@@ -62,8 +63,7 @@ def admit_assignment(connection: Any, *, schema: str, task_id: str,
 One database-wide lock serializes every task. The configured control-plane
 schema is trusted and validated by its owner, never supplied by a work packet.
     """
-    if re.fullmatch(r"[a-z][a-z0-9_]*", schema) is None:
-        raise ValueError("invalid control-plane schema")
+    schema = _require_schema(schema)
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                        ("director-primary-workload-admission",))
@@ -95,3 +95,4 @@ schema is trusted and validated by its owner, never supplied by a work packet.
             (task_id, assignment_id, provider, reservation_digest,
              fencing_generation, POLICY_VERSION, POLICY_DIGEST))
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]
