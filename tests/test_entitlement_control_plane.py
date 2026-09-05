@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
@@ -1087,13 +1088,21 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
                 for failure in failures),
             failures,
         )
-        self.assertTrue(
-            not failures
-            or failures == [
-                "grant:EntitlementControlPlaneError:project registration is not active"
-            ],
-            failures,
-        )
+        if failures:
+            # Supersede won the project lock. Either exact rejection preserves
+            # the same fail-closed outcome; the lifecycle check may run first.
+            self.assertEqual(len(failures), 1, failures)
+            self.assertIn(failures[0], (
+                "grant:EntitlementControlPlaneError:project registration is not active",
+                "grant:EntitlementControlPlaneError:suspended, revoked, superseded, "
+                "or uninstalled installation cannot be granted",
+            ))
+            self.assertEqual(outcomes, ["supersede"])
+            expected_generation = 1
+        else:
+            # Rotation won the lock, then supersede revoked its new generation.
+            self.assertCountEqual(outcomes, ["grant", "supersede"])
+            expected_generation = 2
         with self.handle.pool.connection() as connection:
             current = connection.execute(
                 f"SELECT lifecycle_status, entitlement_generation "
@@ -1108,7 +1117,7 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         self.assertEqual(
             current["lifecycle_status"], EntitlementLifecycleStatus.SUPERSEDED.value
         )
-        self.assertIn(int(current["entitlement_generation"]), (1, 2))
+        self.assertEqual(int(current["entitlement_generation"]), expected_generation)
         self.assertEqual(int(active_registration["registration_generation"]), 2)
 
     def test_uninstall_removes_authority(self) -> None:
@@ -2002,3 +2011,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:34 UTC | END]]
