@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | BEGIN]]
@@ -646,7 +648,11 @@ def current_owner_decision(record: TaskRecord) -> CurrentOwnerDecision | None:
     source_digest: str | None = None
     clarification = False
 
-    if record.plan.owner_question:
+    if record.workload_selection_hold_reasons:
+        kind = "workload_selection_clarification"
+        source_digest = _canonical_digest(record.workload_selection_hold_reasons)
+        clarification = True
+    elif record.plan.owner_question:
         kind = "plan_clarification"
         clarification = True
     elif plan_gate_pending(record):
@@ -1118,6 +1124,8 @@ def apply_owner_approval(record: TaskRecord, approval: OwnerApproval) -> None:
     """
     if approval.retry_decision_digest is not None:
         raise StaleApproval("A failed-retry binding cannot authorize an owner decision")
+    if approval.workload_selection_decision_digest is not None:
+        raise StaleApproval("A workload clarification binding cannot authorize ordinary approval")
     pending = pending_assignment(record)
     if pending is not None and unresolved_ambiguous_dispatch(record, pending):
         raise StaleApproval(
@@ -1307,6 +1315,7 @@ def reset_for_owner_clarification(record: TaskRecord) -> None:
     record.debate_tie_judgment = None
     record.debate_tie_judgment_interaction_id = None
     record.plan_interaction_id = None
+    record.workload_selection_hold_reasons = []
     record.review_interaction_id = None
     record.review = None
     record.oracle_recovery = None
@@ -1347,6 +1356,17 @@ def apply_owner_clarification(record: TaskRecord, approval: OwnerApproval) -> No
         raise StaleApproval(
             "A written clarification cannot be bound to an assignment approval"
         )
+    decision = current_owner_decision(record)
+    if decision is not None and decision.kind == "workload_selection_clarification":
+        # Slack commands bind this decision through their verified gateway proof;
+        # direct API clarification must supply the exact decision digest.
+        if (approval.source == OwnerApprovalSource.API or approval.workload_selection_decision_digest is not None) and (
+            approval.workload_selection_decision_digest is None
+            or not hmac.compare_digest(approval.workload_selection_decision_digest, decision.digest)
+        ):
+            raise StaleApproval("Workload clarification no longer matches the exact pending hold")
+    elif approval.workload_selection_decision_digest is not None:
+        raise StaleApproval("A workload binding cannot answer a different clarification")
     note = approval.note.strip()
     if not note or note in _SYNTHETIC_APPROVAL_NOTES:
         raise StaleApproval("This task needs a written clarification, not a bare approval")
@@ -1390,3 +1410,5 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:24 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 16:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
@@ -190,13 +191,14 @@ Accepted productive work remains enforced at external OpenAI/Codex
 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%.
 Total effort is prospectively guarded at Claude/Cursor/Gemini-Antigravity/Grok/
 OpenAI/Perplexity targets of 36/20/20/11/8/5, normal bands of
-33–39/17–23/17–23/8–14/5–11/1–7. Former ceiling markers remain visible for
-drift reporting, but workload share is never a dispatch blocker.
+33–39/17–23/17–23/8–14/5–11/1–7. Direct-production allocation counts assignments in the prospective last-20
+window and blocks above target plus five percentage points. Insufficient
+qualifying history requires an owner decision; no startup exception is implied.
 
 Choose the cheapest capable trusted model, never simply the cheapest contact.
 First establish exact scope and allowlists, usable transport, readiness,
-capability, tools/context, risk, and independence; then apply total-effort
-eligibility and corrective under-band preference before direct-production rank,
+capability, tools/context, risk, and independence; then apply direct-production
+hard eligibility and under-target preference before total-effort rank,
 compare trusted cost evidence, and use a deterministic tie-breaker. Unknown cost is not zero. An
 exact trusted requirement may select Claude or a named model profile; workload
 length alone does not. Record eligible candidates, exclusions, comparable costs,
@@ -205,8 +207,8 @@ the selected provider/model, and the tie-break reason.
 For paid routing, only the operator-authored `TRUSTED_PROVIDER_COST_RANKS`
 setting supplies the comparable total order. It must cover every configured
 ready specialist with unique positive ranks and is never inferred, generated,
-or rewritten by a provider. Allocation is a soft preference after capability,
-scope, independence, safety, and resource eligibility.
+or rewritten by a provider. Direct allocation hard caps apply after capability, scope, independence,
+safety, and resource eligibility; the normal band remains a soft preference.
 
 ### Firecrawl privacy routing
 
@@ -506,3 +508,4 @@ project-specific control.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->

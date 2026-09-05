@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:26 UTC | BEGIN]]
@@ -173,6 +175,7 @@ from .workload_policy import (
     WorkKind as WorkloadKind,
     WorkloadRecord,
     WorkloadPolicyError,
+    WorkloadSelectionHold,
     evaluate_retry,
     select_cheapest_capable_provider,
 )
@@ -568,6 +571,7 @@ class OrchestrationEngine:
                 reviewer_independent_providers=frozenset(reviewer_independent),
                 direct_production_history=history,
                 overall_effort_history=overall_history,
+                mode=WorkloadEnforcementMode(self.settings.workload_policy_mode),
             )
             provider_name = ProviderName(provider.value)
             selected[assignment.sequence] = provider_name
@@ -2559,6 +2563,13 @@ class OrchestrationEngine:
             return
         try:
             plan_installed = False
+            if record.workload_selection_hold_reasons:
+                # Generic resume/approval cannot clear a plan-local allocation hold.
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.owner_approved = False
+                record.message = WorkloadSelectionHold.code
+                self.store.save(record)
+                return
             if record.status == TaskStatus.DONE:
                 return
             if not self.settings.allow_paid_runs:
@@ -2683,15 +2694,18 @@ class OrchestrationEngine:
                 verified_plan_event = self._complete_director_interaction(
                     record, interaction_id=plan_interaction_id, result=plan
                 )
-                record.plan = self._apply_trusted_provider_selection(
-                    record,
-                    enforce_plan(
-                        plan,
-                        record.intake.text,
-                        self.settings,
-                        activate_workload_policy=True,
-                    ),
+                normalized_plan = enforce_plan(
+                    plan, record.intake.text, self.settings,
+                    activate_workload_policy=True,
                 )
+                selection_hold = None
+                try:
+                    record.plan = self._apply_trusted_provider_selection(record, normalized_plan)
+                except WorkloadSelectionHold as exc:
+                    # Retain the authenticated planning result and completed effect;
+                    # it cannot authorize dispatch while the persisted hold remains.
+                    record.plan = normalized_plan
+                    selection_hold = exc
                 record.plan_generation = target_plan_generation
                 record.plan_interaction_id = plan_interaction_id
                 record_task_effect_observation(
@@ -2711,6 +2725,14 @@ class OrchestrationEngine:
                     ),
                 )
                 plan_installed = True
+                if selection_hold is not None:
+                    record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                    record.owner_approved = False
+                    record.message = WorkloadSelectionHold.code
+                    record.workload_selection_hold_reasons = list(selection_hold.reasons)
+                    record.error = "; ".join(selection_hold.reasons)[:2_000]
+                    self.store.save(record)
+                    return
             try:
                 self._require_verified_plan_materialization(record)
             except CommunicationEvidenceFailure as exc:
@@ -6839,3 +6861,5 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
@@ -985,6 +987,7 @@ class TaskRecord(BaseModel):
     debate_tie_judgment: DebateTieJudgment | None = None
     debate_tie_judgment_interaction_id: str | None = Field(default=None, max_length=255)
     plan_interaction_id: str | None = Field(default=None, max_length=255)
+    workload_selection_hold_reasons: list[str] = Field(default_factory=list, max_length=20)
     review_interaction_id: str | None = Field(default=None, max_length=255)
     debate_synthesis_interaction_id: str | None = Field(default=None, max_length=255)
     review: ReviewDecision | None = None
@@ -1076,6 +1079,9 @@ class OwnerApproval(BaseModel):
         max_length=71,
         pattern=r"^sha256:[0-9a-f]{64}$",
     )
+    workload_selection_decision_digest: str | None = Field(
+        default=None, min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$",
+    )
     retry_decision_digest: str | None = Field(
         default=None,
         min_length=71,
@@ -1091,6 +1097,8 @@ class OwnerApproval(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_binding(self) -> OwnerApproval:
+        if self.workload_selection_decision_digest is not None and self.source != OwnerApprovalSource.API:
+            raise ValueError("Explicit workload clarification digest is reserved for API requests")
         note = self.note.strip()
         if self.source == OwnerApprovalSource.SLACK_BUTTON:
             if self.decision_digest is None:
@@ -1218,3 +1226,5 @@ class ManualRunCompletion(BaseModel):
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]
