@@ -293,11 +293,9 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         )
         dependencies = SimpleNamespace(
             validate=lambda _required: None,
-            adapters={
-                "openai": PacketBoundaryAdapter(
-                    "openai", SimpleNamespace(dispatch=lambda *_args, **_kwargs: {})
-                )
-            },
+            adapters={provider: PacketBoundaryAdapter(
+                    provider, SimpleNamespace(dispatch=lambda *_args, **_kwargs: {}))
+                for provider in ("openai", "claude", "cursor")},
             packet_result_resolver=lambda _context: None,
             completion_evidence_resolver=lambda _context: None,
             external_effect_resolver=lambda _context: None,
@@ -308,7 +306,7 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
             adapter_for_format=lambda *_args: None,
         )
         provider_activation = SimpleNamespace(
-            health=lambda: {"combined_live_ready": True},
+            health=lambda: {"combined_live_ready": True, "core_live_ready": True},
             provider_ready=lambda *_args, **_kwargs: True,
         )
         captured = {}
@@ -341,6 +339,12 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                 live_dependencies=dependencies,
                 effect_gateways=registry,
             )
+            # Separately sufficient pools cannot claim readiness when their
+            # intersection lacks a second independent specialist.
+            provider_activation.provider_ready = lambda provider, **_kwargs: provider in {"openai", "claude", "grok"}
+            with self.assertRaisesRegex(ValueError, "mandatory core"):
+                DefaultPrimaryActivation(settings, live_dependencies=dependencies,
+                                         effect_gateways=registry)
 
         self.assertTrue(captured["effect_executor"].ready)
         self.assertIsNotNone(activation.application)
@@ -541,9 +545,9 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             )
         )
 
-        _live_parallel_plan(record, settings)
+        _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}'), available=("openai", "claude", "cursor", "grok"), history=())
 
-        lanes = settings.langgraph_primary_required_providers
+        lanes = ("cursor",)
         self.assertEqual(len(lanes) + 1, len(record.plan.assignments))
         expected = settings.max_task_budget_usd / (len(lanes) + 1)
         for assignment in record.plan.assignments:
@@ -565,6 +569,26 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             ],
         )
 
+    def test_research_is_explicit_public_only_and_precedes_implementation(self):
+        settings = replace(Settings(), repository_allowlist=("owner/repository",),
+            trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}')
+        record = self._record(settings, text="PRIVATE-CONTEXT implementation")
+        record.intake = record.intake.model_copy(update={
+            "primary_required_capabilities": ("public_research",),
+            "primary_public_research_query": "public API specification",
+        })
+        _live_parallel_plan(record, settings, available=("openai", "claude", "cursor", "perplexity"), history=())
+        research, producer, reviewer = record.plan.assignments
+        self.assertEqual(research.task, "public API specification")
+        self.assertEqual(research.public_research_query, research.task)
+        self.assertIsNone(research.repository)
+        self.assertEqual(producer.depends_on, [1])
+        self.assertNotEqual(producer.primary_provider_lane, reviewer.primary_provider_lane)
+        self.assertNotIn("PRIVATE-CONTEXT", research.model_dump_json())
+        packet = packet_router(settings).planned_work_packet(record, research)
+        self.assertNotIn("PRIVATE-CONTEXT", json.dumps(packet))
+        self.assertEqual(packet["objective"], "public API specification")
+
     def test_zero_configured_task_budget_fails_the_live_wave_closed(self):
         settings = replace(
             Settings(),
@@ -574,7 +598,7 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
         record = self._record(settings)
 
         with self.assertRaisesRegex(RuntimeError, "positive configured task budget"):
-            _live_parallel_plan(record, settings)
+            _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}'), available=("openai", "claude", "cursor", "grok"), history=())
 
     def test_terminal_review_barrier_is_identified_structurally(self):
         settings = replace(
@@ -583,7 +607,7 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             max_task_budget_usd=2.0,
         )
         record = self._record(settings)
-        _live_parallel_plan(record, settings)
+        _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}'), available=("openai", "claude", "cursor", "grok"), history=())
         assignments = record.plan.assignments
         producer = min(assignments, key=lambda item: item.sequence)
         review = max(assignments, key=lambda item: item.sequence)
@@ -599,7 +623,8 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             for item in assignments
             if _assignment_provider_lane(item) == _assignment_provider_lane(review)
         ]
-        self.assertGreater(len(reused), 1)
+        self.assertEqual(len(reused), 1)
+        self.assertNotEqual(_assignment_provider_lane(producer), _assignment_provider_lane(review))
 
         detached = record.model_copy(
             update={
@@ -607,7 +632,7 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
                     update={
                         "assignments": [
                             *assignments[:-1],
-                            review.model_copy(update={"depends_on": [1]}),
+                            review.model_copy(update={"depends_on": []}),
                         ]
                     }
                 )
@@ -1528,12 +1553,53 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         )
         self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
 
-    def test_live_primary_postgres_dispatches_every_required_lane_in_first_wave(self):
+    def test_requested_enterprise_capability_persists_owner_hold_before_registration(self):
+        settings = replace(self.settings, langgraph_primary_offline_simulation_enabled=True,
+            trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}')
+        services = DefaultOfflineSimulationServices(settings, packet_router=packet_router(settings), live_composition=True)
+        services.available_provider_lanes = ("openai", "claude", "cursor", "grok")
+        services.provider_lane_ready = lambda _provider: True
+        coordinator = PrimaryTaskCoordinator(self.handle, services.handlers(),
+            owner_token="default-primary-test-owner", checkpoint_namespace="capability-hold-v1",
+            application_projection_provider=services.application_projection)
+        coordinator.adopt_or_activate_new_intake()
+        def forbidden(_reservation):
+            self.fail("capability hold must precede provider dispatch")
+        application = DefaultPrimaryApplication(settings, coordinator, services,
+            DefaultPrimaryAuthority(SHA, digest("authority")), parallel_dispatcher=forbidden)
+        held = application.create_intake(self.intake().model_copy(update={
+            "primary_required_capabilities": ("enterprise_context",),
+        }), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        self.assertEqual(held.status, TaskStatus.OWNER_DECISION_REQUIRED)
+        self.assertIn("primary_roster_primary_enterprise_accounting_authority_required", held.workload_selection_hold_reasons)
+        with self.handle.pool.connection() as connection:
+            count = connection.execute(f"SELECT count(*) AS n FROM {self.schema}.director_primary_provider_attempt").fetchone()["n"]
+        self.assertEqual(count, 0)
+        # A stale policy digest is retained and surfaced as an owner hold.
+        from director_orchestrator.primary_workload import POLICY_VERSION
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                (task_id, assignment_id, provider_lane, reservation_digest,
+                 fencing_generation, policy_version, policy_digest)
+                VALUES ('old-history','old-assignment','claude',%s,1,%s,%s)""",
+                (digest("old-reservation"), POLICY_VERSION, digest("old-policy")))
+        incompatible = application.create_intake(self.intake().model_copy(update={
+            "source_event_id": "incompatible-history", "primary_required_capabilities": (),
+        }), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        self.assertEqual(incompatible.status, TaskStatus.OWNER_DECISION_REQUIRED)
+        self.assertEqual(incompatible.workload_selection_hold_reasons,
+                         ["primary_roster_workload_history_invalid"])
+        with self.handle.pool.connection() as connection:
+            row = connection.execute(f"SELECT policy_digest FROM {self.schema}.director_primary_workload_assignment WHERE task_id='old-history'").fetchone()
+        self.assertEqual(row["policy_digest"], digest("old-policy"))
+
+    def test_live_primary_postgres_dispatches_minimal_independent_capability_roster(self):
         settings = replace(
             self.settings,
             langgraph_primary_offline_simulation_enabled=True,
+            trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}',
         )
-        first_wave_size = len(settings.langgraph_primary_required_providers)
+        first_wave_size = 1
         barrier = threading.Barrier(first_wave_size)
         completed_first_wave: set[int] = set()
         entered: list[tuple[int, str]] = []
@@ -1563,6 +1629,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             packet_router=packet_router(settings),
             live_composition=True,
         )
+        services.available_provider_lanes = ("openai", "claude", "cursor", "grok")
+        services.provider_lane_ready = lambda _provider: True
         coordinator = PrimaryTaskCoordinator(
             self.handle,
             services.handlers(),
@@ -1587,7 +1655,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         first_wave = pending.plan.assignments[:first_wave_size]
         review = pending.plan.assignments[first_wave_size]
         self.assertEqual(
-            set(settings.langgraph_primary_required_providers),
+            {"cursor"},
             {item.primary_provider_lane for item in first_wave},
         )
         self.assertTrue(all(not item.depends_on for item in first_wave))
@@ -1607,7 +1675,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
 
         self.assertEqual(first_wave_size + 1, len(rows))
         self.assertEqual(
-            set(settings.langgraph_primary_required_providers),
+            {"cursor"},
             {row["provider_id"] for row in rows[:first_wave_size]},
         )
         self.assertGreaterEqual(len(worker_threads), first_wave_size)

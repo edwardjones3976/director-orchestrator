@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | BEGIN]]
 from __future__ import annotations
@@ -94,7 +95,7 @@ class PrimaryProviderActivationServiceTests(unittest.TestCase):
             )
 
     def test_requires_exact_binding_set(self):
-        with self.assertRaisesRegex(ValueError, "exactly match"):
+        with self.assertRaisesRegex(ValueError, "outside the configured"):
             PrimaryProviderActivationService(
                 store=self.store,
                 bindings={**self.bindings, "extra": self.bindings["openai"]},
@@ -202,3 +203,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

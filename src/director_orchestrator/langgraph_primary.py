@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | BEGIN]]
@@ -1296,7 +1297,10 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
             transition_reason_code=result.reason_code,
         )
         if not result.passed:
-            return _handler_failure(update, reason_code=result.reason_code)
+            return _handler_failure(update, reason_code=result.reason_code,
+                classification=(TerminalClassification.OWNER_DECISION_REQUIRED
+                    if result.reason_code.startswith("primary_roster_")
+                    else TerminalClassification.FAILED))
         return update
 
     def policy_budget(state: PrimaryGraphState) -> PrimaryGraphState:
@@ -3184,3 +3188,4 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

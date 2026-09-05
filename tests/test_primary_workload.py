@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -29,8 +30,7 @@ HISTORY = ["claude"] * 5 + ["cursor"] * 4 + ["antigravity"] * 3 + ["grok", "perp
 
 class AdmissionPolicyTests(unittest.TestCase):
     def test_bootstrap_is_explicit_and_aliases_do_not_invent_credit(self):
-        self.assertEqual(admission_reason("openai", []),
-                         "workload_bootstrap_authority_required")
+        self.assertIsNone(admission_reason("openai", []))
         for lane in ("firecrawl", "github-copilot", "microsoft-365-copilot"):
             self.assertEqual(admission_reason(lane, HISTORY),
                              "workload_unsupported_allocation_lane")
@@ -94,11 +94,13 @@ class PostgresAdmissionTests(unittest.TestCase):
             connection.execute(f"DROP SCHEMA {self.schema} CASCADE")
         self.handle.close()
 
-    def seed_test_history(self):
-        with self.handle.claim_store._pool.connection() as connection:
+    def seed_test_history(self, target=None, *, capped=False):
+        target = target or self
+        providers = (["openai"] * 6 + ["claude"] * 6 + ["cursor"] * 5 + ["grok"] * 2) if capped else HISTORY
+        with target.handle.claim_store._pool.connection() as connection:
             with connection.transaction():
-                for index, provider in enumerate(HISTORY):
-                    connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                for index, provider in enumerate(providers):
+                    connection.execute(f"""INSERT INTO {target.schema}.director_primary_workload_assignment
                         (task_id, assignment_id, provider_lane, reservation_digest,
                          fencing_generation, policy_version, policy_digest) VALUES (%s,%s,%s,%s,1,%s,%s)""",
                         ("test-fixture", str(index), provider, DIGEST, POLICY_VERSION, POLICY_DIGEST))
@@ -128,21 +130,12 @@ class PostgresAdmissionTests(unittest.TestCase):
         with self.handle.claim_store._pool.connection() as connection:
             return connection.execute(f"SELECT count(*) AS n FROM {self.schema}.{table}").fetchone()["n"]
 
-    def test_bootstrap_hold_is_not_an_ambiguous_attempt(self):
-        task_id, writer = self.task()
-        def dispatcher(reservation):
-            self.attempt(reservation, writer)
-            self.fail("provider dispatch must not be reached")
-        self.parallel.execute_ready(task_id=task_id, writer=writer,
-                                    policy=self.policy, dispatcher=dispatcher)
-        aggregate = self.parallel.aggregate(task_id)
-        self.assertTrue(aggregate.terminal)
-        self.assertFalse(aggregate.succeeded)
-        self.assertEqual(aggregate.ambiguous_slot_count, 0)
-        self.assertEqual(aggregate.workload_hold_reasons,
-                         ("workload_bootstrap_authority_required",))
-        self.assertEqual(self.count("director_primary_provider_attempt"), 0)
-        self.assertEqual(self.count("director_primary_workload_assignment"), 0)
+    def test_startup_admits_one_real_assignment_without_synthetic_history(self):
+        task = self.task()
+        reservation = self.ready(task)
+        self.attempt(reservation, task[1])
+        self.assertEqual(self.count("director_primary_provider_attempt"), 1)
+        self.assertEqual(self.count("director_primary_workload_assignment"), 1)
 
     def test_owner_hold_reaches_real_graph_without_success_evidence(self):
         from tests.test_primary_default import DefaultPrimaryApplicationIntegrationTests
@@ -150,6 +143,7 @@ class PostgresAdmissionTests(unittest.TestCase):
         fixture = DefaultPrimaryApplicationIntegrationTests(methodName="runTest")
         fixture.setUp()
         try:
+            self.seed_test_history(fixture, capped=True)
             record = fixture.application.create_intake(fixture.intake(),
                 intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
             def dispatcher(reservation):
@@ -190,6 +184,7 @@ class PostgresAdmissionTests(unittest.TestCase):
         fixture = DefaultPrimaryApplicationIntegrationTests(methodName="runTest")
         fixture.setUp()
         try:
+            self.seed_test_history(fixture, capped=True)
             assignments = (
                 ParallelAssignment("leaf", 1, "cursor", "test", ("middle",)),
                 ParallelAssignment("middle", 2, "claude", "test", ("root",)),
@@ -277,3 +272,4 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]

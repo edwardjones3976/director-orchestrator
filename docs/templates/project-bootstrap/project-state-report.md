@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
@@ -15,7 +16,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=273c970ea024cf3adebbbf9f28bcee7bf4b4da64e04bc30667cdef82e2f165f4 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=18a374adca6356c5b8e3612a86e720ab507335226570056bab3f41faf84035d3 -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -63,7 +64,7 @@ report or submission envelope.
 - **Director/control plane:** <OpenAI Director duties; never a specialist assignment target; recorded in historical overall effort but separate from its external 25% accepted-productive-work share>
 - **Enforced accepted-productive-work routing:** <external OpenAI/Codex 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, Perplexity 4%; assignment and rolling-20 target, accepted actual, deviation, rationale, and automatic correction>
 - **Prospective total effort:** <Claude 36%, Cursor 20%, Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, Perplexity 5%; assignment and rolling-20 actual immutable effort points; normal bands 33–39/17–23/17–23/8–14/5–11/1–7; soft preference only>
-- **Workload accounting:** <prospective last-20 assignment counts; target+5 hard ceiling and ±3-point normal preference; insufficient history requires owner decision; separate total-effort soft routing>
+- **Workload accounting:** <prospective last-20 assignment counts; target+5 hard ceiling and ±3-point normal preference; startup uses all 20 slots with real assignments only; separate total-effort soft routing>
 - **External OpenAI production:** <none, or exact owner authorization, authenticated candidate identity, different-provider exact-candidate review, and current security/CI/merge evidence>
 - **Team-first routing:** <distinct provider roles, one writer lease per file/error surface, rotating different non-author reviewer, or exact truly-simple local OpenAI exception>
 - **Cheap-capable selection:** <eligible candidates and exclusions; exact scope/allowlists, transport/readiness, capability/tools/context/risk/independence; under-target preference; trusted comparable costs; selected provider/model; deterministic tie-break reason; exact trusted Claude/model requirement or none>
@@ -154,3 +155,4 @@ published, enabled, or otherwise changed>.
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
