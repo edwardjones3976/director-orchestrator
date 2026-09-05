@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | BEGIN]]
@@ -714,6 +715,42 @@ class PrimaryWorkflowTests(unittest.TestCase):
             completion.terminal_classification,
             TerminalClassification.OWNER_DECISION_REQUIRED,
         )
+
+    def test_schema_workload_hold_is_checkpointed_and_survives_recovery(self):
+        saver = InMemorySaver()
+        claims = InProcessConditionalClaimStore()
+        counters = {}
+        runtime = _runtime(_handlers(counters), saver=saver, claim_store=claims)
+        request = _request("DIR-SCHEMA-WORKLOAD-HOLD", execution_approval_required=True)
+        runtime.start(request)
+        aggregate_digest = _digest("schema-held-aggregate")
+        runtime.record_parallel_aggregate(request.task_id,
+            plan_digest=_digest("schema-held-plan"), aggregate_digest=aggregate_digest,
+            terminal=True, succeeded=False, ambiguous_slot_count=0)
+        held = runtime.record_parallel_workload_hold(request.task_id,
+            aggregate_digest=aggregate_digest,
+            reason_code="workload_schema_policy_incompatible")
+        self.assertEqual(held.terminal_classification,
+                         TerminalClassification.OWNER_DECISION_REQUIRED)
+        state = runtime._snapshot(request.task_id).values
+        self.assertEqual(state["transition_reason_code"], "workload_schema_policy_incompatible")
+        self.assertIsNone(state.get("provider_result_receipt_digest"))
+        self.assertEqual(counters.get("provider_subgraph", 0), 0)
+        self.assertEqual(counters.get("effect_execution_readback", 0), 0)
+        before = dict(counters)
+        restarted = _runtime(_handlers(counters), saver=saver, claim_store=claims)
+        recovered = restarted.recover(request.task_id)
+        self.assertEqual(recovered.terminal_classification,
+                         TerminalClassification.OWNER_DECISION_REQUIRED)
+        self.assertEqual(restarted._snapshot(request.task_id).values["transition_reason_code"],
+                         "workload_schema_policy_incompatible")
+        self.assertEqual(counters, before)
+        self.assertEqual(restarted.record_parallel_workload_hold(request.task_id,
+            aggregate_digest=aggregate_digest,
+            reason_code="workload_schema_policy_incompatible"), recovered)
+        with self.assertRaisesRegex(ValueError, "unknown workload hold reason"):
+            restarted.record_parallel_workload_hold(request.task_id,
+                aggregate_digest=aggregate_digest, reason_code="untrusted_schema_override")
 
     def test_parallel_aggregate_is_checkpointed_with_immutable_plan_binding(self):
         runtime = _runtime()
@@ -2277,3 +2314,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:27 UTC | END]]
