@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]]
 """Synthetic identity keys and offline API fixtures; no activation evidence."""
@@ -5,6 +6,7 @@ import base64
 import copy
 from dataclasses import replace
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -16,7 +18,8 @@ import tarfile
 import tempfile
 import textwrap
 import unittest
-from unittest.mock import patch
+import urllib.error
+from unittest.mock import MagicMock, patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -226,6 +229,53 @@ class WorkflowIsolationTests(unittest.TestCase):
                 self.assertEqual((target/'ci-issuer-runtime/proof').exists(),mutation=='none')
 
 
+class EvidenceTransportErrorTests(unittest.TestCase):
+    def test_network_and_http_failures_are_sanitized_domain_errors(self):
+        from director_orchestrator.ci_acceptance_issuer import _read_json
+        errors = [urllib.error.URLError('sensitive upstream detail'),
+                  urllib.error.HTTPError(JWKS_URL, 503, 'sensitive upstream detail', {}, None),
+                  TimeoutError('sensitive upstream detail'),
+                  http.client.IncompleteRead(b'sensitive response body')]
+        for error in errors:
+            for during_read in (False, True):
+                with self.subTest(error=type(error).__name__,during_read=during_read):
+                    opener=MagicMock()
+                    if during_read:
+                        opener.open.return_value.__enter__.return_value.read.side_effect=error
+                    else:
+                        opener.open.side_effect=error
+                    with patch('director_orchestrator.ci_acceptance_issuer.urllib.request.build_opener',return_value=opener):
+                        with self.assertRaises(ProviderAcceptanceError) as caught:
+                            _read_json(JWKS_URL)
+                    self.assertEqual(str(caught.exception),'issuer evidence transport unavailable')
+                    self.assertTrue(caught.exception.__suppress_context__)
+                    opener.open.assert_called_once()
+
+    def test_invalid_json_and_utf8_are_sanitized_domain_errors(self):
+        from director_orchestrator.ci_acceptance_issuer import _read_json
+        for body in (b'{sensitive malformed response',b'\xff'):
+            with self.subTest(body=body):
+                opener=MagicMock()
+                opener.open.return_value.__enter__.return_value.read.return_value=body
+                with patch('director_orchestrator.ci_acceptance_issuer.urllib.request.build_opener',return_value=opener):
+                    with self.assertRaisesRegex(ProviderAcceptanceError,'^issuer response is not valid JSON$') as caught:
+                        _read_json(JWKS_URL)
+                self.assertTrue(caught.exception.__suppress_context__)
+
+    def test_existing_bounds_object_and_redirect_controls_remain_domain_errors(self):
+        from director_orchestrator.ci_acceptance_issuer import _read_json
+        for body,message in ((b'x'*2_000_001,'issuer response exceeds bound'),(b'[]','issuer response must be an object')):
+            opener=MagicMock();opener.open.return_value.__enter__.return_value.read.return_value=body
+            with patch('director_orchestrator.ci_acceptance_issuer.urllib.request.build_opener',return_value=opener):
+                with self.assertRaisesRegex(ProviderAcceptanceError,'^'+message+'$'):
+                    _read_json(JWKS_URL)
+        opener=MagicMock();opener.open.side_effect=ProviderAcceptanceError('issuer HTTP redirects are forbidden')
+        with patch('director_orchestrator.ci_acceptance_issuer.urllib.request.build_opener',return_value=opener):
+            with self.assertRaisesRegex(ProviderAcceptanceError,'redirects are forbidden'):
+                _read_json(JWKS_URL)
+
+
 if __name__ == '__main__': unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:04 UTC | END]]
