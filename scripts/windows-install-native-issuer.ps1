@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
@@ -54,6 +55,8 @@ function Assert-Protected([string]$Path, [bool]$Runtime = $false) {
         }
         if ($owner -notin $trusted) { throw "Administrator-owned installation path required: $($item.FullName)" }
         foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
+            # InheritOnly does not grant access to the object being inspected.
+            if ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
             $writes = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
             if ($depth -gt 1) {
                 # Ancestors must not permit replacing protected descendants;
@@ -233,3 +236,5 @@ Write-Output 'No key generated and no native login or dispatch occurred. Follow 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | END]]

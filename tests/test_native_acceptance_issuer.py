@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
@@ -254,6 +255,38 @@ class WindowsBoundaryTests(unittest.TestCase):
             self.assertEqual((destination / "director_orchestrator" / "__init__.py").read_text(), "# accepted")
             self.assertFalse((destination / "director_orchestrator" / "__pycache__").exists())
 
+    @unittest.skipUnless(os.name == "nt", "Windows installer ACL semantics")
+    def test_installer_inherit_only_parity_preserves_capability_rejection(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "windows-install-native-issuer.ps1").read_text()
+        function = source.split('function Assert-Protected', 1)[1].split('# Owner must provision', 1)[0]
+        harness = r'''
+function Get-Item { param($LiteralPath) return [pscustomobject]@{FullName='C:\FixtureRuntime';Attributes=0;PSIsContainer=$true;Parent=$null} }
+function Get-Acl {
+ param($LiteralPath)
+ $acl=[pscustomobject]@{}
+ $acl | Add-Member ScriptMethod GetOwner { param($Type) return [pscustomobject]@{Value='S-1-5-32-544'} }
+ $acl | Add-Member ScriptMethod GetAccessRules { param($A,$B,$C) return @($script:rule) }
+ return $acl
+}
+$script:rule=[pscustomobject]@{AccessControlType='Allow';FileSystemRights=[Security.AccessControl.FileSystemRights]::FullControl;IdentityReference=[pscustomobject]@{Value='S-1-5-11'};PropagationFlags=[Security.AccessControl.PropagationFlags]::InheritOnly}
+Assert-Protected 'C:\FixtureRuntime'
+$script:rule.PropagationFlags=[Security.AccessControl.PropagationFlags]::None
+$rejected=$false
+try { Assert-Protected 'C:\FixtureRuntime' } catch { $rejected=$_.Exception.Message -like 'Unprotected runtime path:*' }
+if(-not $rejected){throw 'Effective broad grant was accepted'}
+$script:rule.IdentityReference.Value='S-1-15-3-65536-1-2-3-4'
+$rejected=$false
+try { Assert-Protected 'C:\FixtureRuntime' } catch { $rejected=$_.Exception.Message -like 'Unprotected runtime path:*' }
+if(-not $rejected){throw 'Custom capability grant was accepted'}
+Write-Output 'ACL_SEMANTICS_PASS'
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            script = Path(temp) / "acl-semantics.ps1"
+            script.write_text("$ErrorActionPreference='Stop'\nfunction Assert-Protected" + function + harness)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            self.assertEqual(result.stdout.strip(), b"ACL_SEMANTICS_PASS")
+
     def test_trustedinstaller_is_limited_to_os_ancestors_and_runtime(self):
         from director_orchestrator.native_acceptance_issuer import validate_acl_rows
         servicing = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
@@ -287,3 +320,5 @@ class WindowsBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | END]]
