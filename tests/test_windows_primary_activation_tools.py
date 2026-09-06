@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | BEGIN]]
@@ -339,10 +341,14 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertIn("database_instance_id", text)
         self.assertIn('"firecrawl", "github-copilot", "microsoft-365-copilot"', text)
         self.assertNotIn('"firecrawl", "github-copilot", "windows-copilot"', text)
-        self.assertLess(
-            text.index("Invoke-Compose up -d langgraph-primary-db"),
-            text.index("$databaseBinding = Get-DatabaseBinding"),
-        )
+        self.assertNotIn("Invoke-Compose up -d langgraph-primary-db", text)
+        self.assertNotIn("Invoke-Compose build orchestrator", text)
+        self.assertIn("Get-DatabaseBinding -Bootstrap", text)
+        self.assertIn("Invoke-Evidence -Command require-accepted", text)
+        self.assertEqual(text.count("accepted_storage_identity='$databaseIdentity', accepted_instance_id='$databaseInstanceId'"), 2)
+        self.assertIn("Get-ResolvedDeploymentDigest", text)
+        self.assertIn("$env:DIRECTOR_RUNTIME_IMAGE = $runtimeImageId", text)
+        self.assertIn('Assert-RunningCandidate -AsgiApp "director_orchestrator.primary_staging:app"', text)
         self.assertIn("Primary activation failed and was unwound", text)
         self.assertIn("acquire_intake_authority(intake_owner='legacy'", text)
         self.assertLess(
@@ -563,3 +569,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]

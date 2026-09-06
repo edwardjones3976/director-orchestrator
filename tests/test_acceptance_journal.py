@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
@@ -262,6 +264,28 @@ class AcceptanceJournalTests(unittest.TestCase):
                              (ActivationStage.RESTORE_PROVED,{"backup_digest":"sha256:"+"1"*64,"required_control_plane_tables":17,"checkpoint_tables":4,"schema_evidence_rows":1})):
             self.store.record(self.identity, stage, facts=facts, evidence_digest=canonical_facts_digest(facts))
         self.store.bind_legacy_inventory(self.identity, inventory_digest="2"*64, task_count=0)
+        # A restored journal alone is no longer runtime authority: select exact
+        # generation bytes binding this deployment, registry and provider pool.
+        from director_orchestrator.primary_generation import deployment_digest
+        manifest = dict(image_id="sha256:" + "8" * 64, resolved_compose_sha256="9" * 64, version="director-primary-generation/v1", activation=asdict(self.identity),
+            journal_path=str(self.db), registry_path=str(self.registry),
+            registry_sha256=settings.langgraph_primary_acceptance_registry_sha256,
+            provider_bindings_sha256=hashlib.sha256(b"").hexdigest(),
+            deployment_configuration_sha256=deployment_digest(settings))
+        manifest_path = self.root / "generation.json"
+        manifest_path.write_text(json.dumps(manifest))
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("CREATE TABLE activation_generation (singleton INTEGER PRIMARY KEY, manifest_sha256 TEXT)")
+            db.execute("INSERT INTO activation_generation VALUES (1,?)", (hashlib.sha256(manifest_path.read_bytes()).hexdigest(),))
+            db.commit()
+        selection = patch.dict("os.environ", {
+            "DIRECTOR_RUNTIME_IMAGE_ID": "sha256:" + "8" * 64, "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": "9" * 64,
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": str(manifest_path),
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": ""})
+        selection.start(); self.addCleanup(selection.stop)
+        storage_root = patch("director_orchestrator.primary_generation.GENERATION_DATA_ROOT", self.root)
+        storage_root.start(); self.addCleanup(storage_root.stop)
         verified_identity = require_runtime_acceptance(settings)
         from types import SimpleNamespace
         handle = SimpleNamespace(storage_identity=self.identity.database_identity,
@@ -287,3 +311,5 @@ if __name__ == "__main__": unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
