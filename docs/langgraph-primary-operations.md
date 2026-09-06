@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
@@ -452,6 +453,42 @@ all three attestations before readiness can pass. Every stage digest is also
 recomputed from canonical facts on read, so coordinated public-fact/hash rewrite,
 fact mutation, artifact substitution, or digest replacement fails closed.
 Operator-set booleans are not acceptance evidence.
+
+Before issuer signing, `windows-langgraph-primary-control.ps1 -Action
+PrepareAcceptance -GitHubRepository owner/repository -PullRequestNumber 98
+-CandidateCommit <exact-40-character-PR-head>
+-SecurityReviewerAllowlistJson '["security-login"]'
+-IndependentReviewerAllowlistJson '["independent-login"]' emits an unsigned JSON
+request to stdout. Supply operator-authorized nonsecret reviewer allowlists;
+these inputs do not grant GitHub membership or create a review. Preparation
+fetches the candidate tree from GitHub and reuses `Accept`'s exact check/review
+validation and serialization. Missing, failed, stale, unaffiliated, prose-only,
+or author-self-acceptance evidence emits no request. Preparation accepts no
+runtime environment file or prebuilt facts, reads no deployment secrets, starts
+no Docker services, writes no files, and does not record an activation stage.
+The unsigned five-field request lacks `attestations`, so the existing verifier
+rejects it as an acceptance artifact. This is preparation tooling, not a
+production signer or proof of acceptance.
+
+Production issuer provisioning remains required. Two independently controlled,
+non-author GitHub identities must provide the exact canonical APPROVED review
+bodies above and have an eligible repository association. A shared owner token,
+provider prose, CI check name, or environment flag cannot supply those identities.
+Each issuer must independently refresh and validate the request's GitHub facts,
+and authenticate its own principal in its own execution context. The CI issuer
+needs a deployment that binds authenticated GitHub Actions provenance to the
+exact successful run/candidate; no such identity integration is implemented here.
+Only after provisioning should each issuer sign its own role using its separately
+held role secret. The coordinator must never generate all three signatures.
+The three distinct verifier secrets remain provisioned through the existing
+secret store/environment mechanism; preparation neither accesses nor creates them.
+Assemble only attestations over the identical canonical unsigned request, with
+issuer names matching the facts and domain-separated signatures specified by
+`primary_activation_evidence.py`. Submit the completed package through unchanged
+`Accept`, which rereads GitHub and verifies all signatures. A facts change requires
+fresh issuer validation and signatures. This tooling does not supply reviewer
+accounts, signing credentials, deployment authority, or a fallback acceptance mode.
+
 Activation reopens Slack only after the observed health
 projection proves Postgres, writer fencing, reconciliation, current provider
 activation, graph ownership, and zero ambiguous effects. Rollback stops Slack and
@@ -619,3 +656,5 @@ identity cannot authorize successful completion.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]] -->

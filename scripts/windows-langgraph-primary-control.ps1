@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -13,11 +14,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
+    [ValidateSet("PrepareAcceptance", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
     [string]$Action,
-    [Parameter(Mandatory = $true)][string]$EnvironmentFile,
-    [Parameter(Mandatory = $true)][string]$ComposeProject,
-    [Parameter(Mandatory = $true)][ValidateRange(1024, 65535)][int]$HostPort,
+    [string]$EnvironmentFile,
+    [string]$ComposeProject,
+    [int]$HostPort,
+    [string]$CandidateCommit,
+    [string]$SecurityReviewerAllowlistJson,
+    [string]$IndependentReviewerAllowlistJson,
     [string]$BackupPath,
     [string]$AcceptanceArtifactPath,
     [string]$GitHubRepository,
@@ -138,7 +142,7 @@ function Get-GitHubAcceptanceFacts {
     if ($null -eq (Get-Command gh -ErrorAction SilentlyContinue)) {
         throw "GitHub CLI is required to verify exact-head acceptance evidence."
     }
-    $json = & gh pr view $script:PullRequestNumber --repo $script:GitHubRepository `
+    $json = & gh pr view $script:PullRequestNumber --repo "https://github.com/$script:GitHubRepository" `
         --json headRefOid,author,reviews,statusCheckRollup
     if ($LASTEXITCODE -ne 0) { throw "GitHub acceptance evidence could not be read." }
     $pull = $json | ConvertFrom-Json -Depth 20
@@ -213,8 +217,8 @@ function Get-GitHubAcceptanceFacts {
         pull_request_author = [string]$pull.author.login
         remote_head_commit = [string]$pull.headRefOid
         security_evidence_digest = $securityDigest
-        security_reviewer = [string]$security[0].actor
         security_reviewed_commit = $script:candidateCommit
+        security_reviewer = [string]$security[0].actor
         security_verdict = "ACCEPT"
     }
 }
@@ -343,6 +347,49 @@ function Invoke-Evidence {
     else {
         Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator @arguments
     }
+}
+
+# Preparation is deliberately before any environment read, Docker call, or write.
+# This unsigned output is not acceptance evidence and has no attestation fields.
+if ($Action -ceq "PrepareAcceptance") {
+    if ($EnvironmentFile -or $ComposeProject -or $HostPort -or $AcceptanceArtifactPath -or $BackupPath) {
+        throw "PrepareAcceptance accepts no runtime environment or artifact inputs."
+    }
+    if ($CandidateCommit -cnotmatch '^[0-9a-f]{40}$' -or
+        $GitHubRepository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $PullRequestNumber -lt 1) {
+        throw "Preparation requires repository, pull request, and exact candidate commit."
+    }
+    $script:values = @{
+        LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON = $SecurityReviewerAllowlistJson
+        LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON = $IndependentReviewerAllowlistJson
+    }
+    if ($null -eq (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "Authenticated GitHub CLI is required to prepare acceptance."
+    }
+    # Tree authority comes from GitHub, not a caller-provided facts file or tree.
+    $commitJson = & gh api --hostname github.com "repos/$GitHubRepository/git/commits/$CandidateCommit"
+    if ($LASTEXITCODE -ne 0) { throw "GitHub candidate could not be verified." }
+    $commit = $commitJson | ConvertFrom-Json -Depth 10
+    if ([string]$commit.sha -cne $CandidateCommit -or [string]$commit.tree.sha -cnotmatch '^[0-9a-f]{40}$') {
+        throw "GitHub candidate identity is invalid."
+    }
+    $script:candidateTree = [string]$commit.tree.sha
+    $facts = Get-GitHubAcceptanceFacts
+    $unsigned = [ordered]@{
+        facts = $facts
+        facts_digest = Get-Sha256Text ($facts | ConvertTo-Json -Depth 8 -Compress)
+        pull_request_number = $PullRequestNumber
+        repository = $GitHubRepository
+        version = "director-primary-acceptance-artifact/v1"
+    }
+    $unsigned | ConvertTo-Json -Depth 12 -Compress
+    return
+}
+if (-not $EnvironmentFile -or -not $ComposeProject -or $HostPort -lt 1024 -or $HostPort -gt 65535) {
+    throw "Runtime actions require EnvironmentFile, ComposeProject, and HostPort (1024-65535)."
+}
+if ($CandidateCommit -or $SecurityReviewerAllowlistJson -or $IndependentReviewerAllowlistJson) {
+    throw "Runtime actions do not accept preparation-only authority inputs."
 }
 
 $environmentPath = (Resolve-Path -LiteralPath $EnvironmentFile).Path
@@ -587,3 +634,5 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]]
