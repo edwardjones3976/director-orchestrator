@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 from contextlib import closing
 import os
@@ -168,7 +169,7 @@ if($env:LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH -cne '/data/fresh.sqlite3'){th
             langgraph_primary_pinned_tree_sha=fixture.identity.candidate_tree,
             langgraph_primary_postgres_schema=fixture.identity.postgres_schema,
             langgraph_primary_checkpoint_namespace=fixture.identity.checkpoint_namespace)
-        manifest = dict(version="director-primary-generation/v1", activation=asdict(fixture.identity),
+        manifest = dict(image_id="sha256:" + "8" * 64, resolved_compose_sha256="9" * 64, version="director-primary-generation/v1", activation=asdict(fixture.identity),
             journal_path=str(fixture.db), registry_path=str(fixture.registry),
             registry_sha256=settings.langgraph_primary_acceptance_registry_sha256,
             provider_bindings_sha256=hashlib.sha256(os.environ.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "").encode()).hexdigest(),
@@ -180,7 +181,8 @@ if($env:LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH -cne '/data/fresh.sqlite3'){th
             db.execute("INSERT INTO activation_generation VALUES (1,?)", (hashlib.sha256(source.read_bytes()).hexdigest(),))
             db.commit()
         before = fixture.db.read_bytes()
-        with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": str(source),
+        with patch.dict(os.environ, {"DIRECTOR_RUNTIME_IMAGE_ID": "sha256:" + "8" * 64, "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": "9" * 64,
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": str(source),
             "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": hashlib.sha256(source.read_bytes()).hexdigest()}), patch(
             "director_orchestrator.primary_generation.GENERATION_DATA_ROOT", fixture.root), patch(
             "director_orchestrator.primary_staging.Settings", return_value=settings), patch(
@@ -252,3 +254,4 @@ class DatabaseIdentityBoundaryTests(unittest.TestCase):
         with self.psycopg.connect(self.dsn) as db:
             self.assertEqual(db.execute(f"SELECT storage_identity FROM {self.schema}.director_primary_control_plane").fetchone()[0], "wrong")
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]

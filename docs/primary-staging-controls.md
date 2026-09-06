@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
 # Primary staging and generation controls
 
@@ -10,12 +11,17 @@ and the owner-provided manifest outside writable provider workspaces.
 
 Build the reviewed clean checkout explicitly before running runtime controls;
 the control script no longer builds images or starts Postgres as a side effect.
+Set the build-only `DIRECTOR_RUNTIME_IMAGE` process value to
+`<compose-project>-orchestrator` so building never retags a selected image ID.
 Use the same Compose project/environment as the deployment, with
 `--build-arg DIRECTOR_CANDIDATE_COMMIT=<exact-commit>` and
 `--build-arg DIRECTOR_CANDIDATE_TREE=<exact-tree>` on `docker compose build
 orchestrator`. These label values must match the control checkout and configured
 candidate pins. Building is not acceptance. The image must already exist for
-utility containers, which use `--no-deps --pull never`.
+utility containers, which use `--no-deps --pull never`. The control tool inspects
+the actual content-addressed image ID and rejects an embedded entrypoint. It
+then sets the Compose image to that immutable ID. Candidate labels help identify
+the checkout but are not accepted as image-content identity.
 
 Start the intended Postgres service explicitly under the approved host setup.
 `BootstrapDatabaseIdentity` then creates only the schema container and
@@ -45,6 +51,8 @@ contract is `director-primary-generation/v1`, with exactly these fields:
 | `registry_sha256` | Exact registry bytes and configured digest |
 | `provider_bindings_sha256` | SHA256 of the complete UTF-8 `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON` string |
 | `deployment_configuration_sha256` | `primary_generation.deployment_digest(Settings())` under the intended resolved container settings and new journal path |
+| `image_id` | Actual `sha256:...` Docker image ID from host inspection, covering image configuration and root filesystem content |
+| `resolved_compose_sha256` | `primary_generation.resolved_deployment_digest` of the complete resolved Compose JSON with that immutable image selected |
 
 The deployment digest covers all resolved Settings fields, including secrets
 only through the digest. Its documented exclusions are the operational switches
@@ -53,6 +61,22 @@ and the parallel kill switch. Staging independently requires execution gates
 off; live activation uses the existing deterministic authority gates. All other
 settings changes require a fresh manifest. Manifest path/digest selection is
 outside Settings and therefore does not create a circular self-hash.
+
+The second deployment digest binds the entire resolved Compose graph: mounts,
+ports, networks, dependency configuration, environments, image ID, command and
+entrypoint. Only the explicit mode switches, checked main/staging command choice,
+and the manifest selection/digest self-references normalize. An arbitrary
+command or staged command with enabled execution switches is rejected instead
+of normalized. The control script computes this digest inside the exact image
+using a utility container with no network or host mounts; resolved configuration
+travels over stdin and only its digest is printed. When preparing a manifest,
+use `primary_generation compose-digest --image-id <id>` with that resolved JSON
+on stdin and the intended new journal path selected.
+
+Image and actual Compose verification are host control responsibilities. The
+isolated service checks their pinned launch metadata against the manifest; it
+does not claim to inspect Docker itself or receive a Docker socket. After start,
+the control also reads back the running container's actual image ID and command.
 
 Supply the independently controlled manifest file and its exact SHA256 to
 `SelectGeneration -GenerationManifestPath <file> -GenerationManifestSha256 <hash>`.
@@ -101,7 +125,18 @@ existing acceptance, provider, ownership and effect gates. Provider-v2 normal
 startup also verifies the selected immutable generation before database setup.
 Rollback selects the normal application after its existing fenced proof.
 
-Provider qualification and issuer enrollment remain separate authorized work.
-This package does not implement `ValidateProviders`, enroll a host, call any
-provider, create an acceptance signature, or assert live activation.
+`ValidateProviders` requires the verified staged container and freshly checked
+generation/acceptance/restore evidence. It checks the validation manifest's
+candidate/tree and requires its `generation` to equal the primary manifest
+SHA256 before invoking the fixed `provider_validation_cli validate` entry point.
+No caller command or namespace is accepted, and validation storage is never
+bootstrapped implicitly. The separately authored provider-validation package
+must be adopted into the deployed candidate; it owns authenticated bridge
+access, durable admissions, bounded budgets and captured results. Without that
+package or its independently provisioned authority, validation cannot run.
+
+Issuer enrollment and real provider qualification remain separate authorized
+work. Developing these controls did not enroll a host, call any provider, create
+an acceptance signature or activate the runtime.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]] -->

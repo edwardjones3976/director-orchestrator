@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]]
@@ -266,7 +267,7 @@ class AcceptanceJournalTests(unittest.TestCase):
         # A restored journal alone is no longer runtime authority: select exact
         # generation bytes binding this deployment, registry and provider pool.
         from director_orchestrator.primary_generation import deployment_digest
-        manifest = dict(version="director-primary-generation/v1", activation=asdict(self.identity),
+        manifest = dict(image_id="sha256:" + "8" * 64, resolved_compose_sha256="9" * 64, version="director-primary-generation/v1", activation=asdict(self.identity),
             journal_path=str(self.db), registry_path=str(self.registry),
             registry_sha256=settings.langgraph_primary_acceptance_registry_sha256,
             provider_bindings_sha256=hashlib.sha256(b"").hexdigest(),
@@ -278,6 +279,7 @@ class AcceptanceJournalTests(unittest.TestCase):
             db.execute("INSERT INTO activation_generation VALUES (1,?)", (hashlib.sha256(manifest_path.read_bytes()).hexdigest(),))
             db.commit()
         selection = patch.dict("os.environ", {
+            "DIRECTOR_RUNTIME_IMAGE_ID": "sha256:" + "8" * 64, "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": "9" * 64,
             "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": str(manifest_path),
             "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
             "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": ""})
@@ -310,3 +312,4 @@ if __name__ == "__main__": unittest.main()
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
