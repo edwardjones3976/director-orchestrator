@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
@@ -2014,11 +2015,16 @@ class DefaultPrimaryActivation:
                 if effect_mutation is not None and effect_readback is not None
                 else None
             )
+            from .provider_validation import capture_verifier_from_environment
             provider_activation = (
                 PrimaryProviderActivationService(
                     store=handle.claim_store,
                     bindings=bindings,
                     required_providers=settings.langgraph_primary_required_providers,
+                    capture_verifier=capture_verifier_from_environment(
+                        candidate=settings.langgraph_primary_pinned_commit_sha,
+                        tree=settings.langgraph_primary_pinned_tree_sha,
+                    ),
                 )
                 if bindings
                 else None
@@ -2662,3 +2668,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]

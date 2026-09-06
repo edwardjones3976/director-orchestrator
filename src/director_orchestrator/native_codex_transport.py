@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 """One packet-only Codex account run, with no implicit API retry."""
 from __future__ import annotations
@@ -84,7 +85,11 @@ class NativeCodexPacketTransport:
                 argv.extend(("-c", option))
             argv.append("-")
             output = self._run(argv, prompt, directory, timeout)
-        return normalize_codex_jsonl(work, output, requested_model=self.model)
+        result = normalize_codex_jsonl(work, output, requested_model=self.model)
+        observer = getattr(context, "execution_observer", None)
+        if observer is not None:
+            observer("openai", output, result)
+        return result
 
     @staticmethod
     def _run(argv: list[str], prompt: bytes, cwd: str, timeout: int) -> bytes:
@@ -177,3 +182,5 @@ def normalize_codex_jsonl(work: Mapping[str, Any], stdout: bytes, *, requested_m
     except (ValueError, TypeError, KeyError, UnicodeDecodeError) as exc:
         raise RuntimeError("Codex terminal event evidence is invalid or ambiguous") from exc
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]

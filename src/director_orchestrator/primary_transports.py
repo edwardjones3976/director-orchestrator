@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -1000,7 +1001,11 @@ class NativeCommandPacketTransport:
         if completed.returncode != 0:
             raise RuntimeError("native provider command outcome is ambiguous")
         work = json.loads(work_packet_json)
-        return self._normalize(work, self._native_payload(completed.stdout))
+        result = self._normalize(work, self._native_payload(completed.stdout))
+        observer = getattr(context, "execution_observer", None)
+        if observer is not None:
+            observer(self.provider_id, completed.stdout, result)
+        return result
 
 
 def _which(names: Sequence[str]) -> str | None:
@@ -1399,3 +1404,5 @@ def provider_lane_external_blockers(
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]

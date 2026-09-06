@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -124,6 +125,26 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler contract
+        if self.path == "/v1/provider/validate":
+            try:
+                from .provider_validation import ValidationRequest
+                service = getattr(self.server, "validation_service", None)
+                if service is None:
+                    self._json(503, {"ok": False, "reason": "validation_unconfigured"})
+                    return
+                authorization = self.headers.get("Authorization", "")
+                if not authorization.startswith("Bearer "):
+                    raise ValueError("validation authentication missing")
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 1024:
+                    raise ValueError("validation request size invalid")
+                request = ValidationRequest.model_validate_json(self.rfile.read(length))
+                result = service.run(request, authorization.removeprefix("Bearer "))
+                self._json(200, {"ok": True, **result})
+            except Exception:
+                # No provider output, account paths, tokens, or DB details in errors.
+                self._json(409, {"ok": False, "reason": "validation_rejected_or_ambiguous"})
+            return
         if self.path != "/v1/provider/dispatch":
             self._json(404, {"ok": False})
             return
@@ -210,6 +231,25 @@ def main() -> None:
     server.bridge_secret = secret  # type: ignore[attr-defined]
     server.claim_store = store  # type: ignore[attr-defined]
     server.executor = executor  # type: ignore[attr-defined]
+    if os.environ.get("DIRECTOR_PROVIDER_VALIDATION_ENABLED") == "true":
+        from .provider_validation import PostgresValidationStore, ValidationBridgeService
+        account_files = json.loads(_required("DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON"))
+        if not isinstance(account_files, dict) or any(
+            not isinstance(values,list) or not all(isinstance(value,str) for value in values)
+            for values in account_files.values()
+        ):
+            raise RuntimeError("validation account-file bindings malformed")
+        if any(hmac.compare_digest(secret, _required(name)) for name in (
+            "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY", "DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"
+        )):
+            raise RuntimeError("validation keys must differ from production bridge authentication")
+        server.validation_service = ValidationBridgeService(  # type: ignore[attr-defined]
+            store=PostgresValidationStore(_required("DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN")),
+            production_executor=executor,
+            capture_key=_required("DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"),
+            owner_token=_required("DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"),
+            account_files={key:tuple(values) for key,values in account_files.items()},
+        )
     server.serve_forever(poll_interval=0.5)
 
 
@@ -223,3 +263,5 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]

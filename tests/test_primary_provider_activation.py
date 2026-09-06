@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -142,7 +143,8 @@ class PrimaryProviderActivationServiceTests(unittest.TestCase):
             ProviderActivationStage.LIVE_OK,
         )
 
-        self.assertTrue(self.service.provider_ready("openai", live=True))
+        # Legacy owner assertions without captured execution cannot activate a lane.
+        self.assertFalse(self.service.provider_ready("openai", live=True))
         self.assertFalse(self.service.provider_ready("claude", live=True))
         self.assertFalse(self.service.health()["combined_live_ready"])
 
@@ -234,3 +236,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
