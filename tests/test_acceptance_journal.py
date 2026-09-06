@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 import base64
 from contextlib import closing
@@ -63,6 +64,53 @@ class AcceptanceJournalTests(unittest.TestCase):
 
     def accept(self):
         return self.store.record_acceptance_artifact(self.identity, self.artifact)
+
+    def test_dynamic_ci_is_reauthenticated_on_readback_not_trusted_from_database(self):
+        import time
+        from director_orchestrator.provider_acceptance_v2 import ReviewContext, canonical
+        from director_orchestrator.ci_acceptance_issuer import oidc_audience
+        from tests.test_ci_acceptance_issuer import CIIssuerTests
+        CIIssuerTests.setUpClass()
+        ci = CIIssuerTests(); ci.setUp()
+        self.policy["ci_oidc_policy"] = asdict(ci.policy)
+        self.policy["ci_oidc_policy"]["required_ci_checks"] = sorted(ci.policy.required_ci_checks)
+        self.registry.write_text(json.dumps(self.policy))
+        pin = hashlib.sha256(self.registry.read_bytes()).hexdigest()
+        with patch.dict("os.environ", {"LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256":pin}):
+            self.store = ActivationEvidenceStore(self.path)
+            context = self.store._journal.challenge(self.identity)
+            ci.context = ReviewContext(self.identity, "owner/repo", 100, "d"*64, context["challenge"],
+                context["issued_at"], context["expires_at"], frozenset({"openai"}))
+            now = int(time.time())
+            ci.claims.update(iat=now, nbf=now, exp=now+200, aud=oidc_audience(ci.public, ci.context))
+            authority = ci.resolve(now=now)
+            receipt = self.fixture.package["receipts"]["ci"]
+            for field in ("role", "provider", "principal", "deployment", "ci_workflow_ref", "ci_workflow_commit"):
+                receipt[field] = getattr(authority, field)
+            receipt["ci_checks"] = [dict(name="unit", run_id=1, status="COMPLETED", conclusion="SUCCESS")]
+            self.fixture.keys["ci"] = ci.key
+            self.fixture.package["context"] = context
+            self.fixture.sign()
+            source = dict(version="director-provider-acceptance-envelope/v2", package=self.fixture.package, ci_identity=ci.envelope())
+            self.artifact.write_text(json.dumps(source))
+            with patch("director_orchestrator.ci_acceptance_issuer._read_json", return_value=ci.jwks):
+                self.accept()
+                self.assertEqual("ACCEPTED", ActivationEvidenceStore(self.path).load()["stages"][-1]["stage"])
+            # Rewrite source plus every publicly recomputable hash in both records.
+            # A database assertion cannot replace the real GitHub signature anchor.
+            source["ci_identity"]["token"] = "forged.jwt.token"
+            digest = hashlib.sha256(canonical(source)).hexdigest()
+            with closing(sqlite3.connect(self.db)) as db:
+                state = json.loads(db.execute("SELECT document FROM activation_state").fetchone()[0])
+                item = state["stages"][-1]
+                item.update(source_artifact=source, source_artifact_digest=digest)
+                item["facts"]["package_digest"] = digest
+                item["evidence_digest"] = canonical_facts_digest(item["facts"])
+                db.execute("UPDATE activation_state SET document=?", (json.dumps(state),))
+                db.execute("UPDATE acceptance_challenge SET package=?,package_digest=? WHERE accepted_at IS NOT NULL", (canonical(source), digest))
+                db.commit()
+            with patch("director_orchestrator.ci_acceptance_issuer._read_json", return_value=ci.jwks):
+                with self.assertRaises(ValueError): ActivationEvidenceStore(self.path).load()
 
     def test_real_startup_rejects_missing_acceptance_before_database_or_writer(self):
         from director_orchestrator.primary_default import DefaultPrimaryActivation
@@ -145,3 +193,5 @@ class AcceptanceJournalTests(unittest.TestCase):
 if __name__ == "__main__": unittest.main()
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:13 UTC | END]]
