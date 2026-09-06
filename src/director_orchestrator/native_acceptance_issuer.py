@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 """Fixed-role native acceptance issuer. Installed broker and worker SIDs differ.
@@ -138,6 +139,7 @@ def current_sid() -> str:
 def validate_acl_rows(rows, *, broker_sid, worker_sid=None):
     """Check actual ACL grants, not a configuration label claiming isolation."""
     trusted = {"S-1-5-18", "S-1-5-32-544"}
+    servicing = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
     # NT access masks: read data/list, write data/add, append/add child, EA,
     # delete child, write attrs, delete, WRITE_DAC, WRITE_OWNER.
     write_mask = 2 | 4 | 16 | 64 | 256 | 65536 | 262144 | 524288
@@ -145,8 +147,9 @@ def validate_acl_rows(rows, *, broker_sid, worker_sid=None):
     if not rows:
         raise IssuerError("Windows ACL evidence unavailable")
     for row in rows:
+        row_trusted = trusted | ({servicing} if row["kind"] in {"ancestor", "runtime"} else set())
         private = row["kind"] == "private"
-        owners = trusted | ({broker_sid} if private or row["kind"] in {"requests", "public"} else {worker_sid} if row["kind"] == "responses" else set())
+        owners = row_trusted | ({broker_sid} if private or row["kind"] in {"requests", "public"} else {worker_sid} if row["kind"] == "responses" else set())
         if row["owner"] not in owners or row["reparse"]:
             raise IssuerError("untrusted owner or reparse point in issuer boundary")
         for rule in row["rules"]:
@@ -155,7 +158,7 @@ def validate_acl_rows(rows, *, broker_sid, worker_sid=None):
             if private:
                 if rule["sid"] not in owners and rule["rights"]:
                     raise IssuerError("signer state accessible outside broker identity")
-            elif rule["sid"] not in (trusted | ({broker_sid} if row["kind"] in {"requests", "public"} else {worker_sid} if row["kind"] == "responses" else set())) and rule["rights"] & (replace_mask if row["kind"] == "ancestor" else write_mask):
+            elif rule["sid"] not in (row_trusted | ({broker_sid} if row["kind"] in {"requests", "public"} else {worker_sid} if row["kind"] == "responses" else set())) and rule["rights"] & (replace_mask if row["kind"] == "ancestor" else write_mask):
                 raise IssuerError("issuer program or ancestor is replaceable")
 
 
@@ -177,8 +180,9 @@ foreach($tree in $trees) {
  if($tree -isnot [string] -or -not $tree){continue}
  $children=@(Get-ChildItem -LiteralPath $tree -Recurse -Force)
  if($children.Count -gt 30000){throw 'Runtime inspection bound exceeded'}
- $items+=@{item=(Get-Item -LiteralPath $tree);kind='protected'}
- foreach($child in $children){$items+=@{item=$child;kind='protected'}}
+ $kind=if($tree -in $runtimeRoots){'runtime'}else{'protected'}
+ $items+=@{item=(Get-Item -LiteralPath $tree);kind=$kind}
+ foreach($child in $children){$items+=@{item=$child;kind=$kind}}
  $ancestor=(Get-Item -LiteralPath $tree).Parent
  while($null -ne $ancestor){$items+=@{item=$ancestor;kind='ancestor'};$ancestor=$ancestor.Parent}
 }
@@ -389,3 +393,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
