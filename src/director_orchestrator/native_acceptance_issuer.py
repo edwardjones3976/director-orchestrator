@@ -167,10 +167,11 @@ def verify_boundary(root: Path, *, broker_sid: str, worker_sid: str, worker: boo
 $ErrorActionPreference='Stop'
 $root=Get-Item -LiteralPath $env:DIRECTOR_ISSUER_ROOT
 $items=@(@{item=$root;kind='protected'},@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'code'));kind='protected'},@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'issuer.json'));kind='protected'})
-foreach($name in @('requests','responses','public','cursor-config')){$items+=@{item=(Get-Item -LiteralPath (Join-Path $root.FullName $name));kind=$name}}
+foreach($name in @('requests','responses','cursor-config')){$items+=@{item=(Get-Item -LiteralPath (Join-Path $root.FullName $name));kind=$name}}
 $parent=$root.Parent
 while($null -ne $parent){$items+=@{item=$parent;kind='ancestor'};$parent=$parent.Parent}
 if($env:DIRECTOR_ISSUER_WORKER -ne '1'){
+ $items+=@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'public'));kind='public'}
  $items+=@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'broker'));kind='private'}
  $key=Join-Path $root.FullName 'broker\private.key'
  if(Test-Path -LiteralPath $key){$items+=@{item=(Get-Item -LiteralPath $key);kind='private'}}
