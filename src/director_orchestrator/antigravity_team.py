@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 """Explicit owner-signed engineering authority; subordinate contracts stay closed.
 
@@ -36,7 +37,7 @@ def safe_path(value: str) -> str:
     path = PurePosixPath(value)
     if (not value or path.is_absolute() or str(path) != value
             or any(part in {"..", ".", ".git"} for part in path.parts)
-            or "\\" in value or ":" in value or "\x00" in value):
+            or "\\" in value or ":" in value or any(ord(char)<32 or ord(char)==127 for char in value)):
         raise TeamAuthorizationError("noncanonical or prohibited source path")
     for part in path.parts:
         if part.rstrip(" .") != part or re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?",part):
@@ -113,6 +114,8 @@ class TeamGrant(ClosedModel):
                 raise TeamAuthorizationError("prohibited path in assignment")
         if any(not command or any(not arg or "\x00" in arg for arg in command) for command in self.commands):
             raise TeamAuthorizationError("commands must be explicit argument vectors")
+        if len(self.commands)>self.max_local_commands:
+            raise TeamAuthorizationError("declared checks exceed local command ceiling")
         if self.operation == "review":
             if self.review_base is None or self.writable_paths or self.commands:
                 raise TeamAuthorizationError("review environment must be immutable and command-free")
@@ -200,6 +203,11 @@ def team_ddl(schema: str) -> tuple[str, ...]:
                 {schema}.director_primary_team_grant(grant_digest),
             stage text NOT NULL CHECK(stage IN ('disclosure','dispatch','execution','command','result')),
             attempt_digest text, evidence_digest text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())""",
+        f"""CREATE TABLE IF NOT EXISTS {schema}.director_primary_team_candidate (
+            attempt_digest text PRIMARY KEY REFERENCES {schema}.director_primary_provider_spend(attempt_digest),
+            grant_digest text NOT NULL REFERENCES {schema}.director_primary_team_grant(grant_digest),
+            capture_digest text NOT NULL CHECK(capture_digest ~ '^[0-9a-f]{{64}}$'),
+            candidate_sha text NOT NULL CHECK(candidate_sha ~ '^[0-9a-f]{{40}}$'))""",
         f"""CREATE UNIQUE INDEX IF NOT EXISTS director_primary_team_execution_once
             ON {schema}.director_primary_team_boundary(attempt_digest)
             WHERE stage='execution'""",
@@ -217,8 +225,63 @@ def team_ddl(schema: str) -> tuple[str, ...]:
               CREATE TRIGGER {table}_guard BEFORE UPDATE OR DELETE ON {schema}.{table}
               FOR EACH ROW EXECUTE FUNCTION {schema}.director_primary_team_guard();
             END IF; END $guard$""" for table in (
-                "director_primary_team_grant","director_primary_provider_budget","director_primary_provider_spend","director_primary_provider_usage","director_primary_team_boundary")),
+                "director_primary_team_grant","director_primary_provider_budget","director_primary_provider_spend","director_primary_provider_usage","director_primary_team_boundary","director_primary_team_candidate")),
     )
+
+
+def verify_team_schema(connection, schema):
+    """Fail on missing/disabled authority guards or a changed storage contract."""
+    statements = team_ddl(schema)
+    columns = {
+        "director_primary_team_grant": {"grant_digest", "document", "budget_document", "revoked"},
+        "director_primary_provider_budget": {"authority_digest", "document"},
+        "director_primary_provider_spend": {"attempt_digest", "grant_digest", "provider_id", "project_id", "task_id", "budget_day", "reserved_microusd", "token_limit"},
+        "director_primary_provider_usage": {"attempt_digest", "document", "actual_microusd", "observed_tokens"},
+        "director_primary_team_boundary": {"nonce", "grant_digest", "stage", "attempt_digest", "evidence_digest", "created_at"},
+        "director_primary_team_candidate": {"attempt_digest", "grant_digest", "capture_digest", "candidate_sha"},
+    }
+    json_columns={"document","budget_document"}
+    integer_columns={"reserved_microusd","token_limit","actual_microusd","observed_tokens"}
+    for table, expected in columns.items():
+        actual = connection.execute("SELECT column_name,is_nullable,data_type FROM information_schema.columns WHERE table_schema=%s AND table_name=%s", (schema,table)).fetchall()
+        if {r["column_name"] for r in actual} != expected or any(r["is_nullable"] != "NO" and (table,r["column_name"]) != ("director_primary_team_boundary","attempt_digest") for r in actual):
+            raise TeamAuthorizationError("team schema column inventory changed: " + table)
+        for column in actual:
+            name=column["column_name"]
+            expected_type=("jsonb" if name in json_columns else "bigint" if name in integer_columns else
+                "boolean" if name=="revoked" else "date" if name=="budget_day" else
+                "timestamp with time zone" if name=="created_at" else "text")
+            if column["data_type"]!=expected_type:
+                raise TeamAuthorizationError("team schema column type changed")
+        row = connection.execute("""SELECT t.tgtype,t.tgenabled,p.proname,n.nspname FROM pg_trigger t
+            JOIN pg_proc p ON p.oid=t.tgfoid JOIN pg_namespace n ON n.oid=p.pronamespace
+            WHERE t.tgrelid=%s::regclass AND t.tgname=%s AND NOT t.tgisinternal""",
+            (schema+"."+table,table+"_guard")).fetchone()
+        if row is None or (row["tgtype"],row["tgenabled"],row["proname"],row["nspname"]) != (27,"O","director_primary_team_guard",schema):
+            raise TeamAuthorizationError("team immutable guard changed: " + table)
+        primary = connection.execute("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid=%s::regclass AND contype='p' AND convalidated",(schema+"."+table,)).fetchall()
+        key="grant_digest" if table=="director_primary_team_grant" else "authority_digest" if table=="director_primary_provider_budget" else "nonce" if table=="director_primary_team_boundary" else "attempt_digest"
+        if len(primary)!=1 or primary[0]["definition"]!="PRIMARY KEY ("+key+")":
+            raise TeamAuthorizationError("team primary key changed")
+        checks=connection.execute("SELECT pg_get_constraintdef(oid) AS definition,convalidated FROM pg_constraint WHERE conrelid=%s::regclass AND contype='c'",(schema+"."+table,)).fetchall()
+        expected_checks={
+            "director_primary_provider_spend":{"CHECK ((reserved_microusd > 0))","CHECK ((token_limit > 0))"},
+            "director_primary_provider_usage":{"CHECK ((actual_microusd >= 0))","CHECK ((observed_tokens >= 0))"},
+            "director_primary_team_boundary":{"CHECK ((stage = ANY (ARRAY['disclosure'::text, 'dispatch'::text, 'execution'::text, 'command'::text, 'result'::text])))"},
+            "director_primary_team_candidate":{"CHECK ((capture_digest ~ '^[0-9a-f]{64}$'::text))","CHECK ((candidate_sha ~ '^[0-9a-f]{40}$'::text))"},
+        }.get(table,set())
+        if {r["definition"] for r in checks}!=expected_checks or any(not r["convalidated"] for r in checks):
+            raise TeamAuthorizationError("team check constraints changed")
+    function = connection.execute("SELECT prosrc FROM pg_proc WHERE oid=%s::regprocedure",(schema+".director_primary_team_guard()",)).fetchone()
+    expected_body = next(s for s in statements if "CREATE OR REPLACE FUNCTION" in s).split("AS $$",1)[1].rsplit("$$",1)[0].strip()
+    if function is None or function["prosrc"].strip()!=expected_body:
+        raise TeamAuthorizationError("team immutable guard implementation changed")
+    index = connection.execute("""SELECT i.indisunique,i.indisvalid,i.indisready,pg_get_expr(i.indpred,i.indrelid) AS predicate,
+        pg_get_indexdef(i.indexrelid,1,true) AS key_column
+        FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname=%s AND c.relname='director_primary_team_execution_once'""",(schema,)).fetchone()
+    if index is None or not all(index[k] for k in ("indisunique","indisvalid","indisready")) or index["predicate"]!="(stage = 'execution'::text)" or index["key_column"]!="attempt_digest":
+        raise TeamAuthorizationError("team execution uniqueness guard changed")
 
 
 class PrimaryProviderBudgetAuthority:
@@ -415,3 +478,4 @@ class TeamAttemptAdmission:
         if (grant.task_id,grant.assignment_id,provider) != (task_id,assignment_id,"antigravity"):
             raise TeamAuthorizationError("parallel attempt/task grant mismatch")
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]

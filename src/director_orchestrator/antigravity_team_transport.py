@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 """Team packet boundary for an independently qualified isolated native worker.
 
@@ -106,13 +107,15 @@ class NativeTeamPacketTransport:
     """
     def __init__(self, *, authority: TeamAuthority, pool, grant_digest: str,
                  attempt_digest: str, query_factory, worker, worker_verifier_secret: bytes,
-                 source_root: Path):
+                 source_root: Path, artifact_store=None, integrator=None, writer_owner_token=None):
         if len(worker_verifier_secret)<32 or worker_verifier_secret==authority.entitlements._owner_authority_secret:
             raise TeamAuthorizationError("distinct protected worker verifier required")
         self.authority,self.pool,self.grant_digest=authority,pool,grant_digest
         self.attempt_digest,self.query_factory,self.worker=attempt_digest,query_factory,worker
         self.secret=worker_verifier_secret
         self.source_root=source_root
+        self.artifacts, self.integrator = artifact_store, integrator
+        self.writer_owner_token=writer_owner_token
 
     def _boundary(self, stage, command=None):
         query=self.query_factory(stage,command)
@@ -129,6 +132,13 @@ class NativeTeamPacketTransport:
         return response["evidence"]
 
     def send(self, work_packet_json: bytes, *, context) -> Mapping[str,object]:
+        try:
+            return self._send(work_packet_json,context=context)
+        finally:
+            close=getattr(self.worker,"close",None)
+            if callable(close):close()
+
+    def _send(self, work_packet_json: bytes, *, context) -> Mapping[str,object]:
         work=validate_packet("work",json.loads(work_packet_json,object_pairs_hook=_unique))
         with self.pool.connection() as connection,connection.transaction():
             grant,_=self.authority._load(connection,self.grant_digest)
@@ -155,6 +165,8 @@ class NativeTeamPacketTransport:
                     "broker_keys","launcher_mutation","production_network"}
                 or datetime.fromisoformat(prepared["expires_at"])<=datetime.now(timezone.utc)):
             raise TeamAuthorizationError("worker containment qualification invalid")
+        if self.artifacts is None or self.integrator is None or not self.writer_owner_token:
+            raise TeamAuthorizationError("protected durable candidate integration is unbound")
         # Do not disclose even the packet until its durable STARTED attempt exists.
         with self.pool.connection() as connection, connection.transaction():
             row=connection.execute(f"""SELECT 1 FROM {self.authority.schema}.director_primary_provider_attempt a
@@ -195,7 +207,7 @@ class NativeTeamPacketTransport:
         required={"grant_digest","attempt_digest","packet_digest","installation_id","executable_digest",
             "runtime_digest","adapter_digest","binding_digest","native_account_id","authentication_mode",
             "workspace_id","cwd","source_manifest_digest","containment_evidence_digest","native_stream","exit_code","challenge",
-            "changed_files","executed_commands","checks"}
+            "changed_files","returned_files","executed_commands","checks","completed_at"}
         if set(evidence)!=required:
             raise TeamAuthorizationError("native capture contract mismatch")
         for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id"):
@@ -207,7 +219,24 @@ class NativeTeamPacketTransport:
                 or evidence["exit_code"]!=0 or not evidence["containment_evidence_digest"]
                 or evidence["source_manifest_digest"]!=document_digest({"source":[item.model_dump() for item in grant.source]})):
             raise TeamAuthorizationError("native capture authority mismatch")
-        result,_,_=parse_native_stream(evidence["native_stream"].encode(),grant=grant,expected_cwd=evidence["cwd"])
+        proposal,session,native_usage=parse_native_stream(evidence["native_stream"].encode(),grant=grant,expected_cwd=evidence["cwd"])
+        if set(proposal)!={"packet","returned_files"} or proposal["returned_files"]!=evidence["returned_files"]:
+            raise TeamAuthorizationError("native proposal differs from captured returned bytes")
+        result=dict(proposal["packet"])
+        if any(result.get(key)!=work.get(key) for key in ("task_id","assignment_id","idempotency_key","authority_snapshot_digest","correlation")) or result.get("provider")!="antigravity":
+            raise TeamAuthorizationError("native result identity differs from assignment")
+        if not isinstance(native_usage,dict) or type(native_usage.get("total_tokens")) is not int or not 0<=native_usage["total_tokens"]<=grant.max_tokens:
+            raise TeamAuthorizationError("native usage missing or exceeds authorized ceiling")
+        result["run_reference"]=session
+        result["usage"]={"model":"unknown","input_tokens":native_usage.get("input_tokens"),
+            "output_tokens":native_usage.get("output_tokens"),"total_tokens":native_usage["total_tokens"],"cost_usd":None}
+        if result.get("checks"):
+            raise TeamAuthorizationError("native packet cannot impersonate independently executed checks")
+        result["checks"]=evidence["checks"]
+        from .antigravity_team_artifacts import decode_returned_files
+        files=decode_returned_files(grant,evidence["returned_files"])
+        if evidence["changed_files"] != [{"path":p,"sha256":hashlib.sha256(data).hexdigest()} for p,data in files.items()]:
+            raise TeamAuthorizationError("changed-file inventory differs from returned bytes")
         if evidence["executed_commands"]!=authorized_commands:
             raise TeamAuthorizationError("worker command log differs from authorized commands")
         for entry in evidence["changed_files"]:
@@ -219,10 +248,20 @@ class NativeTeamPacketTransport:
             raise TeamAuthorizationError("review worker changed immutable state")
         if datetime.fromisoformat(prepared["expires_at"])<=datetime.now(timezone.utc):
             raise TeamAuthorizationError("worker qualification expired before result admission")
-        if result.get("checks")!=evidence["checks"] or result.get("side_effects"):
+        if any(check.get("exit_code")!=0 for check in evidence["checks"]) or result.get("side_effects"):
             raise TeamAuthorizationError("provider checks/effects lack independent worker evidence")
         self._boundary("result")
-        return validate_packet("result",result)
+        validated=validate_packet("result",result)
+        if self.artifacts is None or self.integrator is None:
+            raise TeamAuthorizationError("durable team artifact integration is unbound")
+        capture_digest=self.artifacts.put(capture)
+        candidate=self.integrator.integrate(grant=grant,attempt_digest=self.attempt_digest,
+            capture_digest=capture_digest,query=self.query_factory("result",None),
+            owner_token=self.writer_owner_token,
+            fencing_generation=context.fencing_generation)
+        validated["artifacts"]=[a for a in validated["artifacts"] if a["kind"]!="git_commit"]+[
+            {"kind":"git_commit","location":grant.repository+"@"+candidate,"digest":"sha256:"+capture_digest}]
+        return validate_packet("result",validated)
 
 
 def team_packet_adapter(settings, **transport_arguments):
@@ -232,3 +271,4 @@ def team_packet_adapter(settings, **transport_arguments):
         raise TeamAuthorizationError("primary Antigravity team mode is disabled")
     return PacketBoundaryAdapter("antigravity",NativeTeamPacketTransport(**transport_arguments))
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
@@ -39,7 +40,8 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
                           required_capabilities: Sequence[str] = (),
                           public_research_query: str | None = None,
                           trusted_cost_ranks: Mapping[str, int],
-                          allocation_profile: str = DEFAULT_ALLOCATION_PROFILE) -> PrimaryRoster:
+                          allocation_profile: str = DEFAULT_ALLOCATION_PROFILE,
+                          team_mode: bool = False) -> PrimaryRoster:
     targets = allocation_targets(allocation_profile)
     pool = set(available)
     if pool - KNOWN_LANES:
@@ -67,7 +69,7 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
     projected = tuple(history[-19:]) + ((research,) if research else ())
     def eligible_for(prior: Sequence[str], *, exclude: str | None = None):
         candidates = [lane for lane in IMPLEMENTERS if lane != exclude and lane in pool
-                      and (lane != "antigravity" or "bounded_scaffolding" in required_capabilities)
+                      and (lane != "antigravity" or team_mode or "bounded_scaffolding" in required_capabilities)
                       and (lane != "github-copilot" or "repository_assistance" in required_capabilities)
                       and admission_reason(lane, prior, allocation_profile=allocation_profile) is None]
         if any(type(trusted_cost_ranks.get(lane)) is not int or trusted_cost_ranks[lane] < 0
@@ -81,7 +83,8 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
         return sorted(candidates, key=rank)
     for producer in eligible_for(projected):
         reviewers = [lane for lane in eligible_for((*projected[-19:], producer), exclude=producer)
-                     if lane in REVIEWERS and (producer != "antigravity" or lane in {"claude", "cursor", "grok"})]
+                     if (lane in REVIEWERS or (team_mode and lane=="antigravity"))
+                     and (team_mode or producer != "antigravity" or lane in {"claude", "cursor", "grok"})]
         if reviewers:
             return PrimaryRoster(producer, reviewers[0], research)
     raise PrimaryRosterHold("primary_independent_review_allocation_unavailable")
@@ -89,3 +92,4 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]

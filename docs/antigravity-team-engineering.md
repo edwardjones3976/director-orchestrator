@@ -1,7 +1,8 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]] -->
 # Antigravity team engineering boundary
 
-**Draft implementation checkpoint; not a foundation-adoption candidate.**
+**Default-off implementation; independent review and actual host qualification remain required.**
 
 This candidate adds `antigravity-team-engineering/v1` beside the existing closed
 subordinate and debate contracts. The primary-specific
@@ -61,12 +62,58 @@ worker capture. Requested model configuration is not an observed backend-model
 claim. Source export reads only manifest files, checks every blob, and rejects
 link aliases or extra Git history.
 
-This candidate does **not** supply or provision the protected engineering worker
-host. The `prepare`/`exchange` host integration and actual-token containment tests
-are required before using the route. Issuer installation, acceptance signatures,
-roster promotion, provider qualification, activation generations and live cutover
-remain separate packages. Schema/fixture tests do not establish native AGY
-execution, engineering qualification, review qualification or primary ownership.
+The executable `antigravity_team_worker` supplies the protected Linux broker and
+one-attempt pinned-SSH client. Preparation discloses only public installation
+binding identifiers and grant/attempt digests. Full grants, filenames, packets
+and source bytes are sent only after authenticated qualification. Ordered signed
+frames prevent replay and require an immediate Director acknowledgement before
+native execution and each granted check. A durable create-once claim prevents
+ambiguous native execution from being repeated after restart. A per-native-UID
+file lock prevents simultaneous jobs from sharing that account.
+
+Native AGY runs without broker keys as one unprivileged identity. Its protected
+permission policy denies every tool namespace; the prompt carries the exact
+source manifest and requests a structured proposal. The supervisor applies only
+proposed bytes within granted writable paths and runs each exact granted command
+as a different unprivileged identity with a clean environment and pinned
+executable. Checks cannot access the native account and must not change the
+candidate or produce undeclared files. The runner bounds total time, output,
+memory, processes, open files and CPU, disables privilege acquisition and kills
+the process group on exit. Observed native token usage is checked at result
+admission; no undocumented CLI flag is claimed to enforce an exact remote token
+ceiling. Host acceptance must separately establish any required upstream spend
+or token enforcement before live use.
+
+The host must have a separately accepted issuer-signed
+`director-team-linux-qualification/v1` receipt binding this boot ID, network
+namespace, native/check UIDs, protected configuration and complete runtime files,
+native account, installation and adapter bindings, expiry and actual negative
+access evidence. The broker verifies protected root ownership and denies absent,
+expired or changed qualification. This source does not install the guest, sign
+that receipt or invent native authentication. Ordinary code review is not issuer
+adoption or worker enrollment.
+
+`TeamArtifactStore` persists authenticated captures with complete returned bytes.
+`GitTeamCandidateIntegrator` reauthorizes under a locked live writer, checks the
+actual base tree and every source blob, and creates immutable Git blobs, tree and
+commit objects. It independently reads the resulting candidate bytes before
+recording its SHA in PostgreSQL. A private `refs/director/team/` retention anchor
+protects its objects from Git garbage collection. It changes no checkout or
+branch ref and performs no merge. An interrupted database transaction can leave
+an orphan private anchor, which confers no candidate authority. Result artifacts use the recorded candidate
+SHA, not a provider-supplied SHA. Startup verifies team columns, keys, checks,
+immutable triggers and the execution uniqueness index; accepted restart verifies
+before migration can repair a changed guard.
+
+`PrimaryTeamRouting` composes enrolled runtime-proof, worker, artifact and
+repository services. `DefaultPrimaryActivation` accepts that explicit typed
+composition. When team mode is enabled, automatic startup without it fails
+closed. The primary roster can plan Antigravity engineering and independent
+review; selection alone grants no permission. Each exact planned assignment must
+have its own owner-signed registered grant, and every selected provider uses the
+shared authoritative monetary admission. Old subordinate transports remain
+closed and cannot execute a team assignment. Host enrollment, issuer acceptance,
+activation generations and live cutover remain separately gated.
 
 Use `team_packet_adapter(settings, ...)` only for an explicitly selected team
 assignment with its grant and authoritative attempt. The existing subordinate
@@ -75,3 +122,4 @@ adapter remains the default. Register the team attempt using format identity
 `team_admission=TeamAttemptAdmission(...)`; the signed envelope retains the
 versioned contract name with `/v1`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]] -->

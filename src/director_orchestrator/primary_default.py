@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
@@ -498,7 +499,8 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
         required_capabilities=record.intake.primary_required_capabilities,
         public_research_query=record.intake.primary_public_research_query,
         trusted_cost_ranks={canonical_allocation_lane(lane): rank for lane, rank in settings.trusted_provider_cost_ranks().items()},
-        allocation_profile=record.intake.allocation_profile)
+        allocation_profile=record.intake.allocation_profile,
+        team_mode=settings.langgraph_primary_antigravity_team_enabled)
     required = ((selected.research,) if selected.research else ()) + (selected.producer,)
     # The paid-off preview always declares a zero cost. A live wave must carry a
     # trusted positive per-lane limit derived from the configured task budget so
@@ -640,6 +642,7 @@ class DefaultPrimaryLiveDependencies:
     attempt_adapters: Mapping[
         str, Mapping[tuple[str, str], PacketBoundaryAdapter]
     ] = field(default_factory=dict)
+    team_routing: Any | None = None
 
     def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
         return deterministic_format_roster(
@@ -807,6 +810,7 @@ def build_automatic_primary_live_dependencies(
     settings: Settings,
     handle: PostgresCheckpointHandle,
     services: "DefaultDryRunServices",
+    *, team_routing=None,
 ) -> DefaultPrimaryLiveDependencies:
     """Discover installed exact lanes and compose graph-owned durable resolvers.
 
@@ -817,6 +821,8 @@ def build_automatic_primary_live_dependencies(
     """
 
     bridge_secret = settings.langgraph_primary_host_bridge_secret
+    if settings.langgraph_primary_antigravity_team_enabled and team_routing is None:
+        raise ValueError("primary team mode requires explicitly enrolled worker, entitlement and artifact services")
     if bridge_secret and bridge_secret in {
         settings.shared_secret,
         settings.slack_gateway_secret,
@@ -885,6 +891,10 @@ def build_automatic_primary_live_dependencies(
         capabilities={k: v for k, v in capabilities.items() if k in settings.langgraph_primary_required_providers},
         required_providers=settings.langgraph_primary_required_providers,
     )
+    if team_routing is not None:
+        from .antigravity_team_routing import ParallelOnlyTeamTransport
+        adapters=dict(adapters)
+        adapters["antigravity"]=PacketBoundaryAdapter("antigravity",ParallelOnlyTeamTransport())
     missing = sorted(set(settings.langgraph_primary_required_providers) - set(adapters))
     from .primary_roster import core_inventory_ready
     if not core_inventory_ready(tuple(adapters)):
@@ -907,6 +917,8 @@ def build_automatic_primary_live_dependencies(
     def candidate_sha(
         _work_packet: Mapping[str, Any], result_packet: Mapping[str, Any]
     ) -> str:
+        if team_routing is not None and result_packet.get("provider")=="antigravity":
+            return team_routing.candidate(_work_packet["task_id"],_work_packet["assignment_id"])
         candidates: set[str] = set()
         for artifact in result_packet.get("artifacts", []):
             if not isinstance(artifact, Mapping) or artifact.get("kind") != "git_commit":
@@ -1055,6 +1067,7 @@ def build_automatic_primary_live_dependencies(
             for provider_id, adapter in adapters.items()
         },
         candidate_sha_resolver=candidate_sha,
+        team_routing=team_routing,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
@@ -1941,6 +1954,7 @@ class DefaultPrimaryActivation:
         settings: Settings,
         *,
         live_dependencies: DefaultPrimaryLiveDependencies | None = None,
+        team_routing=None,
         effect_mutation: EffectMutation | None = None,
         effect_readback: EffectReadback | None = None,
         effect_gateways: ExactEffectGatewayRegistry | None = None,
@@ -2032,8 +2046,14 @@ class DefaultPrimaryActivation:
                 services = DefaultDryRunServices(settings, live_composition=True)
                 if live_dependencies is None:
                     live_dependencies = build_automatic_primary_live_dependencies(
-                        settings, handle, services
+                        settings, handle, services, team_routing=team_routing
                     )
+                if settings.langgraph_primary_antigravity_team_enabled:
+                    from .antigravity_team_routing import PrimaryTeamRouting
+                    if not isinstance(getattr(live_dependencies,"team_routing",None),PrimaryTeamRouting):
+                        raise ValueError("primary team mode lacks typed enrolled routing services")
+                elif getattr(live_dependencies,"team_routing",None) is not None:
+                    raise ValueError("team routing cannot bypass the default-off setting")
                 live_dependencies.validate(settings.langgraph_primary_required_providers)
                 services.available_provider_lanes = tuple(live_dependencies.adapters)
                 services.provider_lane_ready = lambda provider: provider_activation.provider_ready(provider, live=True)
@@ -2336,6 +2356,10 @@ class DefaultPrimaryActivation:
                     if artifact.document_digest != packet_digest:
                         raise RuntimeError("parallel work-packet persistence changed")
                     format_roster = live_dependencies.format_roster(provider)
+                    team_routing=getattr(live_dependencies,"team_routing",None)
+                    if team_routing is not None and provider=="antigravity":
+                        from .antigravity_team_routing import TEAM_FORMAT
+                        format_roster=(TEAM_FORMAT,)
                     attempt_timeout_seconds = max(
                         1, int(limits["timeout_seconds"]) // 3
                     )
@@ -2366,6 +2390,7 @@ class DefaultPrimaryActivation:
                             format_roster=format_roster,
                             idempotency_key_digest=idempotency_key_digest,
                             budget_evidence_digest=budget_evidence_digest,
+                            **({} if team_routing is None else team_routing.admissions(provider,packet)),
                         )
                     def record_attempt(
                         attempt: ProviderAttemptReservation,
@@ -2383,9 +2408,9 @@ class DefaultPrimaryActivation:
                     def dispatch_attempt(
                         attempt: ProviderAttemptReservation,
                     ) -> Mapping[str, Any]:
-                        adapter = live_dependencies.adapter_for_format(
-                            provider, (attempt.format_id, attempt.transport_id)
-                        )
+                        adapter = (team_routing.adapter(packet,attempt)
+                            if team_routing is not None and provider=="antigravity"
+                            else live_dependencies.adapter_for_format(provider,(attempt.format_id,attempt.transport_id)))
                         return adapter.dispatch(
                             packet,
                             context=ProviderAdapterContext(
@@ -2662,3 +2687,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]

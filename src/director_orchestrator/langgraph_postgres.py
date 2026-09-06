@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -4755,8 +4756,12 @@ def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str,
                     _require_accepted_database(cursor, schema=schema,
                                                storage_identity=storage_identity,
                                                instance_id=accepted_instance_id)
+                    from .antigravity_team import verify_team_schema
+                    verify_team_schema(connection, schema)
                 for statement in _control_plane_ddl(schema):
                     cursor.execute(statement)
+                from .antigravity_team import verify_team_schema
+                verify_team_schema(connection, schema)
                 cursor.execute(
                     f"ALTER TABLE {schema}.director_primary_control_plane "
                     "ADD COLUMN IF NOT EXISTS database_instance_id text"
@@ -4950,3 +4955,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]

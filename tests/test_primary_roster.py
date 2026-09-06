@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
@@ -75,6 +76,18 @@ class PrimaryRosterTests(unittest.TestCase):
         self.assertEqual(roster.producer, "antigravity")
         self.assertIn(roster.reviewer, {"claude", "cursor", "grok"})
 
+    def test_explicit_team_mode_plans_engineering_without_scaffolding_permission(self):
+        roster=self.select(available=("openai","claude","grok","antigravity"),team_mode=True,
+            trusted_cost_ranks={"openai":3,"claude":2,"grok":4,"antigravity":0})
+        self.assertEqual(roster.producer,"antigravity")
+        self.assertNotEqual(roster.reviewer,"antigravity")
+
+    def test_explicit_team_mode_can_plan_independent_antigravity_review(self):
+        roster=self.select(available=("openai","claude","grok","antigravity"),team_mode=True,
+            trusted_cost_ranks={"openai":0,"claude":3,"grok":4,"antigravity":1})
+        self.assertEqual(roster.producer,"openai")
+        self.assertEqual(roster.reviewer,"antigravity")
+
     def test_firecrawl_real_research_lane_and_no_implicit_scaffolding(self):
         roster = self.select(available=("openai", "claude", "cursor", "firecrawl", "antigravity"),
             allocation_profile="public_research", required_capabilities=("public_research",), public_research_query="public docs")
@@ -90,3 +103,4 @@ class PrimaryRosterTests(unittest.TestCase):
         self.assertEqual(roster.producer, "github-copilot")
         self.assertIn(roster.reviewer, {"openai", "claude", "cursor", "grok"})
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
