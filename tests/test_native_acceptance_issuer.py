@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 """Isolated fixture issuers only; no native login, provider or real signing key."""
@@ -253,6 +254,20 @@ class WindowsBoundaryTests(unittest.TestCase):
             self.assertEqual((destination / "director_orchestrator" / "__init__.py").read_text(), "# accepted")
             self.assertFalse((destination / "director_orchestrator" / "__pycache__").exists())
 
+    def test_trustedinstaller_is_limited_to_os_ancestors_and_runtime(self):
+        from director_orchestrator.native_acceptance_issuer import validate_acl_rows
+        servicing = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+        for kind in ("ancestor", "runtime"):
+            row = dict(kind=kind, owner=servicing, reparse=False,
+                       rules=[dict(allow=True, inherit_only=False, sid=servicing, rights=2032127)])
+            validate_acl_rows([row], broker_sid="broker", worker_sid="worker")
+            row["owner"] = "S-1-5-80-1-2-3-4-5"
+            with self.assertRaises(IssuerError):
+                validate_acl_rows([row], broker_sid="broker", worker_sid="worker")
+        for kind in ("protected", "private", "requests", "responses", "authorizations"):
+            with self.assertRaises(IssuerError):
+                validate_acl_rows([dict(kind=kind, owner=servicing, reparse=False, rules=[])], broker_sid="broker", worker_sid="worker")
+
     def test_consumed_file_owners_and_ancestor_delete_are_enforced(self):
         from director_orchestrator.native_acceptance_issuer import validate_acl_rows
         broker, worker = "broker", "worker"
@@ -270,3 +285,5 @@ class WindowsBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]

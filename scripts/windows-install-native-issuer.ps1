@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 <# Owner-run installation only. Never invoked by application startup.
@@ -38,14 +39,20 @@ foreach ($sid in @($broker,$worker)) {
     if ($sid -notmatch '^S-1-5-21-(\d+-){3}\d+$') { throw 'Dedicated local users required.' }
     $null = Get-LocalUser -SID $sid
 }
-function Assert-Protected([string]$Path) {
+function Assert-Protected([string]$Path, [bool]$Runtime = $false) {
     $item = Get-Item -LiteralPath $Path
     $depth = 0
     while ($null -ne $item) {
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Reparse point forbidden: $($item.FullName)" }
         $acl = Get-Acl -LiteralPath $item.FullName
         $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-        if ($owner -notin @('S-1-5-18','S-1-5-32-544')) { throw "Administrator-owned installation path required: $($item.FullName)" }
+        $trusted = @('S-1-5-18','S-1-5-32-544')
+        $roleParent = [IO.Path]::GetFullPath((Join-Path $env:ProgramData 'DirectorAcceptance')).TrimEnd('\')
+        $insideRole = $item.FullName.Equals($roleParent,[StringComparison]::OrdinalIgnoreCase) -or $item.FullName.StartsWith($roleParent+'\',[StringComparison]::OrdinalIgnoreCase)
+        if (($Runtime -or $depth -gt 0) -and -not $insideRole) {
+            $trusted += 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464' # Windows TrustedInstaller
+        }
+        if ($owner -notin $trusted) { throw "Administrator-owned installation path required: $($item.FullName)" }
         foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
             $writes = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
             if ($depth -gt 1) {
@@ -53,7 +60,7 @@ function Assert-Protected([string]$Path) {
                 # permission to create an unrelated sibling is not replacement.
                 $writes = [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
             }
-            if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writes) -and $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544')) {
+            if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writes) -and $rule.IdentityReference.Value -notin $trusted) {
                 throw "Unprotected runtime path: $($item.FullName)"
             }
         }
@@ -63,14 +70,14 @@ function Assert-Protected([string]$Path) {
 }
 # Owner must provision a protected Python/dependency installation and entire
 # native installation first; individual executable hashes do not protect imports.
-foreach ($p in @($PythonExecutable,$GitExecutable,$NativeExecutable)) { Assert-Protected $p }
-if ($NativeEntrypoint) { Assert-Protected $NativeEntrypoint }
+foreach ($p in @($PythonExecutable,$GitExecutable,$NativeExecutable)) { Assert-Protected $p $true }
+if ($NativeEntrypoint) { Assert-Protected $NativeEntrypoint $true }
 # Audit every loadable sibling, not merely the executable. Roots are owner inputs.
 foreach ($runtimeRoot in $ProtectedRuntimeRoots) {
-    Assert-Protected $runtimeRoot
+    Assert-Protected $runtimeRoot $true
     $children = @(Get-ChildItem -LiteralPath $runtimeRoot -Recurse -Force)
     if ($children.Count -gt 30000) { throw 'Runtime tree exceeds inspection bound.' }
-    foreach ($child in $children) { Assert-Protected $child.FullName }
+    foreach ($child in $children) { Assert-Protected $child.FullName $true }
 }
 foreach ($executable in @($PythonExecutable,$GitExecutable,$NativeExecutable,$NativeEntrypoint) | Where-Object {$_}) {
     if (-not @($ProtectedRuntimeRoots | Where-Object {[IO.Path]::GetFullPath($executable).StartsWith([IO.Path]::GetFullPath($_).TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)}).Count) { throw 'Executable outside protected runtime roots.' }
@@ -224,3 +231,5 @@ Write-Output 'No key generated and no native login or dispatch occurred. Follow 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
