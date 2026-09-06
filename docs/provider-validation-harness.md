@@ -1,5 +1,5 @@
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]] -->
-<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]] -->
 # Provider validation harness checkpoint
 
 This package is a validation foundation, disabled by default. Software wiring is implemented; host qualification and real authenticated runs remain required. It makes owner-signed LIVE_OK status alone insufficient. No live provider was called and no production database or host configuration was changed during implementation.
@@ -21,6 +21,6 @@ A capture authenticates raw native output, normalized result, native session, pa
 * No signed acceptance package, deployment, provider LIVE_OK record or LangGraph ownership switch is produced here. Staging ValidateProviders may call this CLI only after its own generation/image/restore gates, and must remain disabled until the missing qualification paths are completed and independently reviewed.
 
 Focused tests use a disposable sanctioned Postgres lane and a local synthetic subprocess. These demonstrate database fencing, admission races, budget consumption, replay prevention, raw-output authentication and the production-executor reuse path. They are not native paid-provider evidence.
-<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]] -->
