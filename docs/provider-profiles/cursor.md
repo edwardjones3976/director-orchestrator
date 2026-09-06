@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 
@@ -220,15 +221,16 @@ Separation of duties:
 | Transport | Kind | Runtime | Enum value | Observed kind | Status | Route status | Direction | Config (names) | Route |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `cursor-cloud-agents-api` | cloud_agent_api | both | `cursor_agents_api` | - | implemented | authorized | director_to_provider | `CURSOR_API_KEY`, `CURSOR_API_BASE`, `PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`, `CURSOR_DISPATCH_MAX_ATTEMPTS` | `cursor-cloud-agents-api` |
-| `windows-host-provider-bridge` | host_bridge | langgraph_primary | - | - | prohibited | prohibited | director_to_provider | - | `windows-host-provider-bridge` |
+| `windows-host-provider-bridge` | host_bridge | langgraph_primary | - | - | implemented_disabled_by_default | authorized | director_to_provider | `LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT`, `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET`, `DIRECTOR_HOST_PROVIDER_COMMANDS_JSON`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` | `windows-host-provider-bridge` |
 | `browser-provider-ui` | browser_ui | documented_only | - | - | implemented | authorized | director_to_provider | - | `browser-provider-ui` |
 | `cursor-native-acceptance-issuer` | acceptance_issuer | documented_only | - | - | blocked_pending_evidence | proposed | provider_to_director | `LANGGRAPH_PRIMARY_ACCEPTANCE_MODE`, `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH`, `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256`, `LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH` | `cursor-native-acceptance-issuer` |
 
 - `cursor-cloud-agents-api`: Polls a durable agent run to completion; a draft pull request is allowed only when the packet allows it and is never merged by Cursor.
   - a pre-creation branch-not-found response for a cursor/... ref retries once against the first allowlisted ref; durable refs still fail closed
   - the periodic usage check calls GET /v1/models rather than starting an agent
-- `windows-host-provider-bridge`: Cursor is listed in UNSUPPORTED_HOST_LANES. The bridge refuses a Cursor command map entry; Cursor stays direct.
-  - no native Cursor command is ever executed by the host bridge
+- `windows-host-provider-bridge`: Cursor is a supported native-account host lane. A validated command binding, signed challenge and durable admission are required; support does not prove native authentication or live activation.
+  - native Cursor uses the worker account login; no provider API credential variables are injected by the bridge
+  - live dispatch stays off until the primary activation gates pass
 - `browser-provider-ui`: Coordination with an already authenticated Cursor UI inside stored assignment, role, repository, budget, and approval bounds. Browser responses are untrusted coordination evidence and cannot satisfy any gate.
   - ranked below authenticated CLI, API, callback, and event transport
   - never enter or persist credentials, cookies, recovery codes, private keys, raw private source, or webpage instructions
@@ -258,6 +260,7 @@ Separation of duties:
 | `provider-usage-checks` | mediated | director_to_provider | timer_or_owner | authorized | disabled | none | `src/director_orchestrator/usage.py` |
 | `owner-manual-recovery` | mediated | owner_to_director | owner | authorized | enabled | none | `src/director_orchestrator/callbacks.py`, `src/director_orchestrator/engine.py` |
 | `cursor-cloud-agents-api` | direct | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/providers.py:CursorAdapter`, `src/director_orchestrator/policy.py` |
+| `windows-host-provider-bridge` | direct | director_to_provider | director | authorized | disabled | none | `src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES`, `scripts/windows-host-provider-bridge.ps1` |
 | `browser-provider-ui` | direct | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/workload_policy.py:Transport`, `src/director_orchestrator/team_charter.py` |
 | `cursor-native-acceptance-issuer` | direct | provider_to_director | owner | proposed | blocked | evidence_for_deterministic_gate | - |
 | `shared-workflow-skills` | external | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/director.py` |
@@ -295,3 +298,4 @@ Separation of duties:
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]] -->

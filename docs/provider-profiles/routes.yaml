@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Director provider route catalog (director-provider-routes/v1).
 #
@@ -748,12 +749,12 @@ routes:
     direction: "director_to_provider"
     initiation: "director"
     endpoints: { from: "director", to: "host_bridge" }
-    providers_involved: [openai, claude, grok, antigravity, github-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, github-copilot]
     carries:
       - "a validated packet to one native command per supported lane, behind a signed challenge and a durable claim store"
     withheld_context:
       - "Director and API secrets; the child environment carries a fixed safe subset"
-      - "Cursor and Microsoft 365 Copilot, which are unsupported host lanes"
+      - "Microsoft 365 Copilot, which remains an unsupported host lane"
     authority: "none"
     status: "authorized"
     default_config_state: "disabled"
@@ -983,3 +984,5 @@ provider_to_provider_rule:
     - document: "prompts/director-system.md"
       anchor: "Providers communicate through the Director rather than posting freely."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: Cursor (director-provider-profile/v1).
@@ -138,7 +139,7 @@ gating:
 
 credential_environment:
   primary_lane_allowlist: ["CURSOR_API_ENDPOINT", "CURSOR_API_KEY"]
-  host_bridge_allowlist: null
+  host_bridge_allowlist: []
   settings_credential_fields: ["cursor_api_key"]
   values_policy: "names_and_booleans_only_never_values"
   child_environment_rule: "Cursor runs in its own cloud; the Director sends the API key only in the Cloud Agents request and never exposes the Windows deployment environment to a Cursor agent."
@@ -198,12 +199,13 @@ transports:
     runtime: "langgraph_primary"
     enum_value: null
     transport_kind_observed: null
-    status: "prohibited"
+    status: "implemented_disabled_by_default"
     direction: "director_to_provider"
-    config: []
-    authority_note: "Cursor is listed in UNSUPPORTED_HOST_LANES. The bridge refuses a Cursor command map entry; Cursor stays direct."
+    config: ["LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"]
+    authority_note: "Cursor is a supported native-account host lane. A validated command binding, signed challenge and durable admission are required; support does not prove native authentication or live activation."
     current_transport_constraints:
-      - "no native Cursor command is ever executed by the host bridge"
+      - "native Cursor uses the worker account login; no provider API credential variables are injected by the bridge"
+      - "live dispatch stays off until the primary activation gates pass"
     route_id: "windows-host-provider-bridge"
     browser_policy: null
   - transport_id: "browser-provider-ui"
@@ -268,3 +270,5 @@ sources:
     anchor: "Route Cursor at full task-capability parity with Claude and Codex, by fit, independence, capacity, and evidence needs."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]

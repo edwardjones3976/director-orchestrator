@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]]
@@ -166,6 +167,19 @@ class SchemaTests(unittest.TestCase):
         for path in SCHEMA_ROOT.glob("*.schema.json"):
             with self.subTest(path=path.name):
                 self.assertTrue(path.with_name(path.name.replace(".schema.json", ".example.json")).exists())
+
+    def test_team_examples_validate_without_granting_authority(self):
+        from director_orchestrator.antigravity_team import TeamGrant, ProviderBudget, ProviderUsageReceipt
+        for name, model in (("antigravity-team-engineering-v1", TeamGrant),
+                            ("primary-provider-budget-v1", ProviderBudget),
+                            ("primary-provider-usage-v1", ProviderUsageReceipt)):
+            with self.subTest(name=name):
+                schema = json.loads((SCHEMA_ROOT / (name + ".schema.json")).read_text())
+                document = json.loads((SCHEMA_ROOT / (name + ".example.json")).read_text())
+                Draft202012Validator(schema).validate(document)
+                model.model_validate_json(json.dumps(document))
+                signature = "meter_signature" if name.endswith("usage-v1") else "owner_signature"
+                self.assertEqual(document[signature], "0" * 64)
 
     def test_enums_mirror_runtime(self):
         self.assertEqual(self.defs["lane"]["enum"], list(LANES))
@@ -890,3 +904,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
