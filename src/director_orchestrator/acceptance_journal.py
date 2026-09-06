@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 """Pre-migration v2 activation journal. Owner-protected configuration is authority."""
@@ -163,9 +164,11 @@ class AcceptanceJournal:
                 raise ActivationEvidenceError("acceptance requires exact preflight identity")
             authorities = self.authorities(policy)
             if policy["ci_oidc_policy"] is not None:
-                from .ci_acceptance_issuer import GitHubOIDCPolicy, resolve_ci_authority
-                authorities["ci"] = resolve_ci_authority(source["ci_identity"], expected=context,
+                from .ci_acceptance_issuer import GitHubOIDCPolicy, resolve_ci_identity
+                authorities["ci"], ci_session = resolve_ci_identity(source["ci_identity"], expected=context,
                     policy=GitHubOIDCPolicy.from_document(policy["ci_oidc_policy"]), now=now)
+                if package["receipts"]["ci"]["session_id"] != ci_session:
+                    raise ActivationEvidenceError("CI receipt session differs from authenticated issuer run")
             if any(a.deployment in policy["revoked_deployments"] for a in authorities.values()):
                 raise ActivationEvidenceError("effective issuer is currently revoked")
             verify_provider_acceptance(canonical(package), expected=context, authorities=authorities, now=now)
@@ -219,9 +222,11 @@ class AcceptanceJournal:
         source = json.loads(row[3])
         package = source["package"] if snapshot["ci_oidc_policy"] is not None else source
         if snapshot["ci_oidc_policy"] is not None:
-            from .ci_acceptance_issuer import GitHubOIDCPolicy, resolve_ci_authority
-            authenticated_ci = resolve_ci_authority(source["ci_identity"], expected=context,
+            from .ci_acceptance_issuer import GitHubOIDCPolicy, resolve_ci_identity
+            authenticated_ci, ci_session = resolve_ci_identity(source["ci_identity"], expected=context,
                 policy=GitHubOIDCPolicy.from_document(policy["ci_oidc_policy"]), now=row[2])
+            if package["receipts"]["ci"]["session_id"] != ci_session:
+                raise ActivationEvidenceError("CI receipt session differs from authenticated issuer run")
             if authenticated_ci.deployment in policy["revoked_deployments"]:
                 raise ActivationEvidenceError("effective CI issuer is currently revoked")
             if authenticated_ci != authorities["ci"]:
@@ -287,3 +292,5 @@ def bind_runtime_database(identity, handle):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]]

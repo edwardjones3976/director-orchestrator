@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]] -->
 # Provider-v2 runtime acceptance
@@ -54,7 +55,10 @@ Static CI uses the unchanged v2 signed package. Dynamic CI uses the closed wrapp
 ci_identity: <director-ci-oidc/v1 envelope>}`. First acceptance verifies CI OIDC
 online against the pinned GitHub issuer/workflow policy, never caller JWKS, then
 stores the resulting authority and original source in the SAME transaction as
-challenge consumption and ACCEPTED activation state. Dynamic CI requires the
+challenge consumption and ACCEPTED activation state. Both acceptance and readiness
+require the CI receipt session to equal the authenticated OIDC issuing run/attempt;
+the candidate check run is separate evidence and cannot substitute for issuer identity.
+Dynamic CI requires the
 independently reviewed CI issuer module; missing integration fails closed.
 
 BEGIN IMMEDIATE and state revision CAS serialize writers. Unknown, expired or
@@ -83,3 +87,5 @@ own deployment/adoption.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]] -->

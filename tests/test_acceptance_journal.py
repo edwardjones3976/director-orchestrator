@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
@@ -95,6 +96,7 @@ class AcceptanceJournalTests(unittest.TestCase):
             receipt = self.fixture.package["receipts"]["ci"]
             for field in ("role", "provider", "principal", "deployment", "ci_workflow_ref", "ci_workflow_commit"):
                 receipt[field] = getattr(authority, field)
+            receipt["session_id"] = "github-actions:900:1"
             receipt["ci_checks"] = [dict(name=name, run_id=1, status="COMPLETED", conclusion="SUCCESS") for name in sorted(REQUIRED_ACTIVATION_CHECKS)]
             self.fixture.keys["ci"] = ci.key
             self.fixture.package["context"] = context
@@ -102,6 +104,15 @@ class AcceptanceJournalTests(unittest.TestCase):
             source = dict(version="director-provider-acceptance-envelope/v2", package=self.fixture.package, ci_identity=ci.envelope())
             self.artifact.write_text(json.dumps(source))
             with patch("director_orchestrator.ci_acceptance_issuer._read_json", return_value=ci.jwks):
+                # Even a valid Ed25519 signature cannot claim a different issuer session.
+                receipt["session_id"] = "github-actions:10:2"
+                self.fixture.sign()
+                self.artifact.write_text(json.dumps(source))
+                with self.assertRaisesRegex(ActivationEvidenceError, "session differs"):
+                    self.accept()
+                receipt["session_id"] = "github-actions:900:1"
+                self.fixture.sign()
+                self.artifact.write_text(json.dumps(source))
                 self.accept()
                 self.assertEqual("ACCEPTED", ActivationEvidenceStore(self.path).load()["stages"][-1]["stage"])
             # Rewrite source plus every publicly recomputable hash in both records.
@@ -232,3 +243,5 @@ if __name__ == "__main__": unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:13 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]]
