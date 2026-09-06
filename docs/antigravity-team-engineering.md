@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]] -->
 # Antigravity team engineering boundary
@@ -85,10 +86,14 @@ ceiling. Host acceptance must separately establish any required upstream spend
 or token enforcement before live use.
 
 The host must have a separately accepted issuer-signed
-`director-team-linux-qualification/v1` receipt binding this boot ID, network
+`director-team-linux-qualification/v1` receipt binding this exact task grant, boot ID, network
 namespace, native/check UIDs, protected configuration and complete runtime files,
 native account, installation and adapter bindings, expiry and actual negative
-access evidence. The broker verifies protected root ownership and denies absent,
+access evidence, including isolation from earlier native-account task history.
+The receipt is consumed before readiness is returned; a general reusable host
+receipt cannot authorize disclosure. A subsequent task needs fresh qualification
+of its isolated native state, or a newly prepared isolated guest. The broker
+verifies protected root ownership and denies absent,
 expired or changed qualification. This source does not install the guest, sign
 that receipt or invent native authentication. Ordinary code review is not issuer
 adoption or worker enrollment.
@@ -123,3 +128,4 @@ adapter remains the default. Register the team attempt using format identity
 versioned contract name with `/v1`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]] -->

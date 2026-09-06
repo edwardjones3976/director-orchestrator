@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | BEGIN]]
 """Protected Linux native broker with deny-all native tools and isolated checks.
@@ -205,6 +206,16 @@ class LinuxNativeTeamWorker:
             or not re.fullmatch(r"sha256:[0-9a-f]{64}",attempt_digest)):
             raise TeamAuthorizationError("public worker binding contract mismatch")
         qualification = self.qualify(SimpleNamespace(**binding))
+        if qualification.get("grant_digest")!=grant_digest:
+            raise TeamAuthorizationError("host qualification is not scoped to this exact task grant")
+        # A general host receipt is insufficient: cached native state must be
+        # re-qualified for each task. Consume the exact task-scoped receipt
+        # before acknowledging readiness to receive private source.
+        qualification_claim=Path(self.config["claims_root"])/("qualification-"+document_digest(qualification))
+        with qualification_claim.open("xb") as handle:
+            handle.write(canonical_json_bytes({"grant_digest":grant_digest,"attempt_digest":attempt_digest,"challenge":challenge}))
+            handle.flush()
+            os.fsync(handle.fileno())
         self.prepared = (grant_digest, attempt_digest, challenge)
         self.qualification = qualification
         return sign(self.secret, dict(grant_digest=grant_digest, attempt_digest=attempt_digest,
@@ -417,3 +428,4 @@ if __name__ == "__main__":
     serve(sys.argv[1])
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:42 UTC | BEGIN]]
 """Transport/candidate tests; no test result represents native host enrollment."""
@@ -87,7 +88,7 @@ class WorkerProtocolTests(unittest.TestCase):
                 "native_uid":1001,"native_gid":1001,"check_uid":1002,"check_gid":1002,
                 "native_home":"/native","executable":"/native/agy","command_binaries":{"python":"/usr/bin/python"}},
                 owner_secret=fixtures.OWNER_SECRET,issuer_secret=b"i"*32,worker_secret=b"w"*32)
-            qualification={"protected_files":{"/usr/bin/python":"d"*64},"expires_at":(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
+            qualification={"grant_digest":g.digest,"protected_files":{"/usr/bin/python":"d"*64},"expires_at":(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
             calls=[]
             def native(argv,**kwargs):
                 calls.append(argv)
@@ -103,11 +104,16 @@ class WorkerProtocolTests(unittest.TestCase):
                     worker.exchange(grant=g,work_packet=work,source={"src/allowed.py":b"old"},challenge="a"*64,
                         before_execute=lambda:self.assertTrue((root/"claims"/("1"*64)).exists()),before_local_command=denied)
                 self.assertEqual(len(calls),1)
-                worker.prepare(grant=g,grant_digest=g.digest,attempt_digest="sha256:"+"1"*64,challenge="b"*64)
                 with self.assertRaises(FileExistsError):
-                    worker.exchange(grant=g,work_packet=work,source={"src/allowed.py":b"old"},challenge="b"*64,
-                        before_execute=lambda:None,before_local_command=lambda argv:None)
+                    worker.prepare(grant=g,grant_digest=g.digest,attempt_digest="sha256:"+"1"*64,challenge="b"*64)
                 self.assertEqual(len(calls),1)
+
+    def test_general_host_qualification_cannot_authorize_another_grants_source(self):
+        g=grant()
+        worker=LinuxNativeTeamWorker({},owner_secret=fixtures.OWNER_SECRET,issuer_secret=b"i"*32,worker_secret=b"w"*32)
+        with patch.object(worker,"qualify",return_value={"grant_digest":"f"*64}):
+            with self.assertRaisesRegex(TeamAuthorizationError,"exact task grant"):
+                worker.prepare(grant=g,grant_digest=g.digest,attempt_digest="sha256:"+"1"*64,challenge="a"*64)
 
 
 class TeamCandidatePostgresTests(unittest.TestCase):
@@ -243,3 +249,4 @@ class TeamCandidatePostgresTests(unittest.TestCase):
         self.assertEqual(stages,["disclosure","execution","result","result"])
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
