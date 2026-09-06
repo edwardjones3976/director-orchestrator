@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
@@ -8,6 +9,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('security','independent_review')][string]$Role,
+    [ValidateSet('claude','cursor','openai','gemini','antigravity')][string]$Provider,
+    [string]$NativeHome,
+    [string]$NativeProject,
+    [string]$NativeDenyHook,
     [Parameter(Mandatory)][string]$BrokerAccount,
     [Parameter(Mandatory)][string]$WorkerAccount,
     [Parameter(Mandatory)][string]$CoordinatorSid,
@@ -24,6 +29,10 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,255}$')][string]$Deployment
 )
 $ErrorActionPreference = 'Stop'
+if ($Provider -eq 'antigravity') { $Provider = 'gemini' }
+if (-not $Provider) { $Provider = if ($Role -eq 'security') {'claude'} else {'cursor'} }
+if (($Role -eq 'security' -and $Provider -notin @('claude','openai','gemini')) -or ($Role -eq 'independent_review' -and $Provider -notin @('cursor','gemini'))) { throw 'Provider is not eligible for this issuer role.' }
+if ($Provider -eq 'gemini' -and (-not $NativeHome -or -not $NativeProject -or -not $NativeDenyHook)) { throw 'AGY requires separately qualified protected native home, project and deny-all hook.' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Installation requires an owner-controlled elevated administrator session.'
@@ -94,6 +103,7 @@ foreach ($loadPath in ($pythonPaths | ConvertFrom-Json)) {
     if (-not @($ProtectedRuntimeRoots | Where-Object { $a=[IO.Path]::GetFullPath($loadPath); $b=[IO.Path]::GetFullPath($_).TrimEnd('\'); $a.Equals($b,[StringComparison]::OrdinalIgnoreCase) -or $a.StartsWith($b+'\',[StringComparison]::OrdinalIgnoreCase)}).Count) { throw 'Python base or dependency path outside protected runtime roots.' }
 }
 $root = Join-Path $env:ProgramData "DirectorAcceptance\$Role"
+if ($Provider -ne $(if ($Role -eq 'security') {'claude'} else {'cursor'})) { $root += "-$Provider" }
 $root = [IO.Path]::GetFullPath($root)
 if (Test-Path -LiteralPath $root) {
     $manifestPath = Join-Path $root 'installation.json'
@@ -185,7 +195,7 @@ function Install-TrackedPackage([string]$Git, [string]$Source, [string]$Commit, 
 Install-TrackedPackage $GitExecutable $source $AcceptedCommit (Join-Path $root 'code')
 & $GitExecutable -c "core.hooksPath=NUL" clone --bare --no-hardlinks --local $mirrorSource (Join-Path $root 'mirror\repository.git')
 if ($LASTEXITCODE -ne 0) { throw 'Local independent object mirror failed; no key or provider was used.' }
-$provider = if ($Role -eq 'security') {'claude'} else {'cursor'}
+$provider = $Provider
 $config = [ordered]@{
     root=$root;role=$Role;provider=$provider;broker_sid=$broker;worker_sid=$worker;deployment=$Deployment
     mirror=(Join-Path $root 'mirror\repository.git');repository=$Repository;git=$GitExecutable
@@ -193,6 +203,8 @@ $config = [ordered]@{
     entrypoint=$(if ($NativeEntrypoint) {$NativeEntrypoint} else {$null})
     entrypoint_digest=$(if ($NativeEntrypoint) {(Get-FileHash -LiteralPath $NativeEntrypoint -Algorithm SHA256).Hash.ToLowerInvariant()} else {$null})
     model=$Model;runtime_roots=@($ProtectedRuntimeRoots)
+    native_home=$NativeHome;native_project=$NativeProject;native_deny_hook=$NativeDenyHook
+    native_deny_hook_digest=$(if ($NativeDenyHook) {(Get-FileHash -LiteralPath $NativeDenyHook -Algorithm SHA256).Hash.ToLowerInvariant()} else {''})
 }
 $utf8 = [Text.UTF8Encoding]::new($false)
 $configPath = Join-Path $root 'issuer.json'
@@ -238,3 +250,4 @@ Write-Output 'No key generated and no native login or dispatch occurred. Follow 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]

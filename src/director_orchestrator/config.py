@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
@@ -391,6 +392,12 @@ class Settings:
         default_factory=lambda: _int(
             "LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_PULL_NUMBER", 0
         )
+    )
+    langgraph_primary_external_effect_base_sha: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_BASE_SHA", "").strip()
+    )
+    langgraph_primary_external_effect_head_sha: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_HEAD_SHA", "").strip()
     )
     langgraph_runtime_checkpoint_path: str = field(
         default_factory=lambda: os.getenv(
@@ -2037,3 +2044,4 @@ class Settings:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
