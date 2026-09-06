@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
@@ -532,6 +533,29 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
         record.plan = preview_plan(intake.text, settings)
         return record
 
+    def test_validated_antigravity_cost_alias_routes_the_actual_lane(self):
+        settings = replace(Settings(), repository_allowlist=("owner/repository",),
+            trusted_provider_cost_ranks_json='{"openai":4,"claude":3,"cursor":2,"gemini":1}')
+        record = self._record(settings)
+        record.intake = record.intake.model_copy(update={"primary_required_capabilities":("bounded_scaffolding",)})
+        _live_parallel_plan(record, settings, available=("openai","claude","cursor","antigravity"), history=())
+        self.assertEqual(record.plan.assignments[0].primary_provider_lane,"antigravity")
+        self.assertIn(record.plan.assignments[-1].primary_provider_lane, {"claude","cursor","grok"})
+
+    def test_profiles_freeze_through_plan_and_prestage(self):
+        from director_orchestrator.allocation_profiles import allocation_profile_digest
+        settings = replace(Settings(), repository_allowlist=("owner/repository",),
+            trusted_provider_cost_ranks_json='{"openai":1,"claude":2,"cursor":3,"grok":4}')
+        for profile in ("engineering", "mixed", "public_research", "enterprise"):
+            with self.subTest(profile=profile):
+                record = self._record(settings)
+                record.intake = record.intake.model_copy(update={"allocation_profile":profile})
+                _live_parallel_plan(record, settings, available=("openai","claude","cursor","grok"), history=())
+                self.assertEqual({item.allocation_profile for item in record.plan.assignments}, {profile})
+                self.assertNotEqual(record.plan.assignments[0].agent, record.plan.assignments[-1].agent)
+                if record.plan.prestage is not None:
+                    self.assertEqual(record.plan.prestage.allocation_profile_digest, allocation_profile_digest(profile))
+
     def test_live_wave_binds_a_positive_bounded_per_lane_budget(self):
         settings = replace(
             Settings(),
@@ -546,7 +570,7 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             )
         )
 
-        _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}'), available=("openai", "claude", "cursor", "grok"), history=())
+        _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}'), available=("openai", "claude", "cursor", "grok"), history=())
 
         lanes = ("cursor",)
         self.assertEqual(len(lanes) + 1, len(record.plan.assignments))
@@ -572,9 +596,10 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
 
     def test_research_is_explicit_public_only_and_precedes_implementation(self):
         settings = replace(Settings(), repository_allowlist=("owner/repository",),
-            trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}')
+            trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}')
         record = self._record(settings, text="PRIVATE-CONTEXT implementation")
         record.intake = record.intake.model_copy(update={
+            "allocation_profile": "public_research",
             "primary_required_capabilities": ("public_research",),
             "primary_public_research_query": "public API specification",
         })
@@ -599,7 +624,7 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
         record = self._record(settings)
 
         with self.assertRaisesRegex(RuntimeError, "positive configured task budget"):
-            _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}'), available=("openai", "claude", "cursor", "grok"), history=())
+            _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}'), available=("openai", "claude", "cursor", "grok"), history=())
 
     def test_terminal_review_barrier_is_identified_structurally(self):
         settings = replace(
@@ -608,7 +633,7 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             max_task_budget_usd=2.0,
         )
         record = self._record(settings)
-        _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}'), available=("openai", "claude", "cursor", "grok"), history=())
+        _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}'), available=("openai", "claude", "cursor", "grok"), history=())
         assignments = record.plan.assignments
         producer = min(assignments, key=lambda item: item.sequence)
         review = max(assignments, key=lambda item: item.sequence)
@@ -1556,7 +1581,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
 
     def test_requested_enterprise_capability_persists_owner_hold_before_registration(self):
         settings = replace(self.settings, langgraph_primary_offline_simulation_enabled=True,
-            trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}')
+            trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}')
         services = DefaultOfflineSimulationServices(settings, packet_router=packet_router(settings), live_composition=True)
         services.available_provider_lanes = ("openai", "claude", "cursor", "grok")
         services.provider_lane_ready = lambda _provider: True
@@ -1572,7 +1597,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             "primary_required_capabilities": ("enterprise_context",),
         }), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
         self.assertEqual(held.status, TaskStatus.OWNER_DECISION_REQUIRED)
-        self.assertIn("primary_roster_primary_enterprise_accounting_authority_required", held.workload_selection_hold_reasons)
+        self.assertIn("primary_roster_primary_enterprise_scoped_adapter_required", held.workload_selection_hold_reasons)
         with self.handle.pool.connection() as connection:
             count = connection.execute(f"SELECT count(*) AS n FROM {self.schema}.director_primary_provider_attempt").fetchone()["n"]
         self.assertEqual(count, 0)
@@ -1598,7 +1623,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         settings = replace(
             self.settings,
             langgraph_primary_offline_simulation_enabled=True,
-            trusted_provider_cost_ranks_json='{"claude":2,"cursor":1,"grok":3}',
+            trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}',
         )
         first_wave_size = 1
         barrier = threading.Barrier(first_wave_size)
@@ -2487,3 +2512,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]] -->
@@ -48,17 +49,17 @@ An absent project allowlist blocks every live plan. Cursor cannot use an implici
 
 - **The primary team is OpenAI, Claude, Cursor, and Grok.** These should cover planning, implementation, review, and repository execution; periodic-check membership remains independently configurable.
 - **Implementation uses cheap-capable-model-first routing.** Establish scope, transport, readiness, capability, tools, context, risk, and reviewer independence; then prefer an under-target eligible provider and the lowest trusted comparable estimated cost. Missing cost is unknown, not zero. An exact trusted assignment requirement may select Claude, but workload length alone does not.
-- **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
+- **OpenAI Pro 20x and Claude Max 5x** are the owner-reported account context. These capacity signals do not fund separate API calls; verify route-specific remaining capacity and budget.
 - **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.
 - **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.
 
-The accepted-productive-work allocation remains external OpenAI/Codex
-25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity
-4%. Total effort is also enforced prospectively: Claude 36%, Cursor 20%,
-Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, and Perplexity 5%, with normal
-bands of 33–39%, 17–23%, 17–23%, 8–14%, 5–11%, and 1–7%. These shares are
-accounting and soft routing preferences only; no provider workload-share
-percentage blocks an otherwise safe assignment.
+Use the [approved nine-lane allocation profiles](provider-allocation-profiles.md),
+with Engineering as the default. Freeze profile and digest before approval,
+preserve real history, exclude zero-target lanes, and enforce the prospective
+fixed twenty-slot target+5 ceiling. The ±3-point normal band guides preference;
+observed effort is separately reported and cannot create production credit.
+OpenAI production and Antigravity specialist work require their actual scoped
+adapters and non-author verification; a target alone proves no live capability.
 
 Every assignment has exactly three authorized attempt slots. The Director
 derives a deterministic roster of the provider's configured packet formats and
@@ -71,7 +72,7 @@ overwrite the final assignment result artifact.
 
 Practical operating patterns:
 
-1. **Cheap-capable implementation lane:** select Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, and independence; apply direct-production hard eligibility and under-target preference before total-effort rank, then trusted cost and deterministic tie-break; retain the assigned provider's transport and authority limits.
+1. **Cheap-capable implementation lane:** select OpenAI production, Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, and independence; apply direct-production hard eligibility and under-target preference before total-effort rank, then trusted cost and deterministic tie-break; retain the assigned provider's transport and authority limits.
 2. **Exact-requirement lane:** when a trusted work order explicitly requires Claude or a named model profile, honor it; otherwise do not infer a provider requirement from task length.
 3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate artifacts. A primary model independently verifies and integrates or rejects their evidence.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
@@ -406,3 +407,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->

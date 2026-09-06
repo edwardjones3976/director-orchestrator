@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
@@ -33,8 +34,8 @@ Two percentage ledgers are intentionally separate:
   reservations conservatively projected without crediting them. The external
   OpenAI lane is distinct from OpenAI's overall control-plane work.
 
-Keeping the ledgers typed separately prevents the 36 percent overall Claude
-target from being confused with the 25 percent direct-production target.
+The profile targets are shared; observed effort and accepted output remain separate
+from immutable admission accounting.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Sequence
+from .allocation_profiles import allocation_targets, canonical_allocation_lane, DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest
 
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
@@ -76,6 +78,9 @@ class Provider(str, Enum):
     OPENAI = "openai"
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
+    FIRECRAWL = "firecrawl"
+    GITHUB_COPILOT = "github-copilot"
+    MICROSOFT_365_COPILOT = "microsoft-365-copilot"
 
 
 class DirectProductionProvider(str, Enum):
@@ -91,6 +96,9 @@ class DirectProductionProvider(str, Enum):
     GROK = "grok"
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
+    FIRECRAWL = "firecrawl"
+    GITHUB_COPILOT = "github-copilot"
+    MICROSOFT_365_COPILOT = "microsoft-365-copilot"
     EXTERNAL_OPENAI = "external_openai"
 
 
@@ -168,23 +176,19 @@ def _validate_percent(value: int, label: str) -> None:
         raise WorkloadPolicyError(f"{label} must be between 0 and 100")
 
 
-OVERALL_TARGETS: tuple[OverallTarget, ...] = (
-    OverallTarget(Provider.CLAUDE, 36, 33, 39),
-    OverallTarget(Provider.CURSOR, 20, 17, 23),
-    OverallTarget(Provider.GROK, 11, 8, 14),
-    OverallTarget(Provider.OPENAI, 8, 5, 11),
-    OverallTarget(Provider.GEMINI, 20, 17, 23),
-    OverallTarget(Provider.PERPLEXITY, 5, 1, 7),
-)
+def _overall_targets(profile):
+    targets = allocation_targets(profile)
+    return tuple(OverallTarget(provider, targets[canonical_allocation_lane(provider.value)],
+        max(0, targets[canonical_allocation_lane(provider.value)]-3),
+        min(100, targets[canonical_allocation_lane(provider.value)]+3)) for provider in Provider)
 
-DIRECT_PRODUCTION_TARGETS: tuple[DirectProductionTarget, ...] = (
-    DirectProductionTarget(DirectProductionProvider.CLAUDE, 25),
-    DirectProductionTarget(DirectProductionProvider.CURSOR, 20),
-    DirectProductionTarget(DirectProductionProvider.GROK, 11),
-    DirectProductionTarget(DirectProductionProvider.GEMINI, 15),
-    DirectProductionTarget(DirectProductionProvider.PERPLEXITY, 4),
-    DirectProductionTarget(DirectProductionProvider.EXTERNAL_OPENAI, 25),
-)
+def _direct_targets(profile):
+    targets = allocation_targets(profile)
+    return tuple(DirectProductionTarget(provider, targets[canonical_allocation_lane(provider.value)])
+                 for provider in DirectProductionProvider)
+
+OVERALL_TARGETS = _overall_targets(DEFAULT_ALLOCATION_PROFILE)
+DIRECT_PRODUCTION_TARGETS = _direct_targets(DEFAULT_ALLOCATION_PROFILE)
 
 PRIMARY_PROVIDERS: frozenset[Provider] = frozenset(
     {Provider.CLAUDE, Provider.CURSOR, Provider.GROK, Provider.OPENAI}
@@ -203,6 +207,7 @@ TRANSPORT_PRIORITY: tuple[Transport, ...] = (
 class WorkloadPolicy:
     """Owner-authored policy values used by deterministic evaluators."""
 
+    allocation_profile: str = DEFAULT_ALLOCATION_PROFILE
     overall_targets: tuple[OverallTarget, ...] = OVERALL_TARGETS
     direct_production_targets: tuple[DirectProductionTarget, ...] = (
         DIRECT_PRODUCTION_TARGETS
@@ -237,14 +242,7 @@ class WorkloadPolicy:
         )
         if sum(target.percent for target in self.overall_targets) != 100:
             raise WorkloadPolicyError("overall targets must total 100 percent")
-        if {target.provider: target.percent for target in self.overall_targets} != {
-            Provider.CLAUDE: 36,
-            Provider.CURSOR: 20,
-            Provider.GROK: 11,
-            Provider.OPENAI: 8,
-            Provider.GEMINI: 20,
-            Provider.PERPLEXITY: 5,
-        }:
+        if self.overall_targets != _overall_targets(self.allocation_profile):
             raise WorkloadPolicyError("overall targets do not match owner policy")
 
         _validate_complete_targets(
@@ -256,17 +254,7 @@ class WorkloadPolicy:
             raise WorkloadPolicyError(
                 "direct-production targets must total 100 percent"
             )
-        if {
-            target.provider: target.percent
-            for target in self.direct_production_targets
-        } != {
-            DirectProductionProvider.CLAUDE: 25,
-            DirectProductionProvider.CURSOR: 20,
-            DirectProductionProvider.GROK: 11,
-            DirectProductionProvider.GEMINI: 15,
-            DirectProductionProvider.PERPLEXITY: 4,
-            DirectProductionProvider.EXTERNAL_OPENAI: 25,
-        }:
+        if self.direct_production_targets != _direct_targets(self.allocation_profile):
             raise WorkloadPolicyError(
                 "direct-production targets do not match owner policy"
             )
@@ -319,6 +307,11 @@ class WorkloadPolicy:
             raise WorkloadPolicyError(
                 "browser transport must remain enabled at the lowest priority"
             )
+
+    @classmethod
+    def for_profile(cls, profile: str) -> "WorkloadPolicy":
+        return cls(allocation_profile=profile, overall_targets=_overall_targets(profile),
+                   direct_production_targets=_direct_targets(profile))
 
     @classmethod
     def default(cls) -> "WorkloadPolicy":
@@ -499,13 +492,12 @@ def direct_production_provider(
 ) -> DirectProductionProvider | None:
     """Map runtime providers into accepted-production accounting.
 
-    Ordinary OpenAI assignments are control-plane work. The separately
-    owner-authorized external OpenAI production lane is not a runtime assignment
-    target and therefore cannot be manufactured here.
+    Separately assigned OpenAI production maps to its production identity.
+    Coordination is excluded by work-kind classification before admission.
     """
 
     if provider is Provider.OPENAI:
-        return None
+        return DirectProductionProvider.EXTERNAL_OPENAI
     return DirectProductionProvider(provider.value)
 
 
@@ -521,8 +513,8 @@ def is_accepted_productive_kind(provider: Provider, kind: WorkKind) -> bool:
     """Return whether accepted work may enter the productive-work ledger.
 
     Implementation remains productive work for repository-capable providers.
-    Perplexity's narrow, authenticated public-research product is the sole
-    non-code exception; this does not grant Perplexity programming, review,
+    Authenticated research from scoped research/enterprise lanes may be productive
+    without code. This classification grants no data access, dispatch, review,
     voting, merge, Slack, or operational authority.
     """
 
@@ -531,7 +523,7 @@ def is_accepted_productive_kind(provider: Provider, kind: WorkKind) -> bool:
             "accepted productive-work classification requires typed provider and kind"
         )
     return is_direct_production_kind(kind) or (
-        provider is Provider.PERPLEXITY and kind is WorkKind.RESEARCH
+        provider in {Provider.PERPLEXITY, Provider.FIRECRAWL, Provider.MICROSOFT_365_COPILOT} and kind is WorkKind.RESEARCH
     )
 
 
@@ -622,6 +614,8 @@ def direct_assignment_capacity_violation(
     """
     prior = tuple(history)[-(policy.rolling_window_size - 1):]
     provider_count = 1 + sum(record.provider is provider for record in prior)
+    if policy.direct_production_target(provider) == 0:
+        return f"allocation_profile_lane_ineligible:{provider.value}"
     ceiling = policy.direct_production_target(provider) + DIRECT_PRODUCTION_HARD_TOLERANCE_PERCENTAGE_POINTS
     if provider_count * 100 > ceiling * policy.rolling_window_size:
         return f"direct_production_hard_cap_exceeded:{provider.value}:{ceiling}"
@@ -1246,6 +1240,7 @@ class PrestagePacket:
     retry_limit: int
     merge_eligibility_conditions: tuple[str, ...]
     stopping_conditions: tuple[str, ...]
+    allocation_profile: str = DEFAULT_ALLOCATION_PROFILE
 
     def __post_init__(self) -> None:
         for name in (
@@ -1329,6 +1324,8 @@ class PrestagePacket:
 
         return {
             "schema_version": "prestage.v1",
+            "allocation_profile": self.allocation_profile,
+            "allocation_profile_digest": allocation_profile_digest(self.allocation_profile),
             "packet_id": self.packet_id,
             "goal": self.goal,
             "terminal_condition": self.terminal_condition,
@@ -1433,3 +1430,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

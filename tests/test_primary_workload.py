@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -27,7 +28,7 @@ from director_orchestrator.langgraph_primary import PrimaryWorkflowRuntime
 DIGEST = "sha256:" + "a" * 64
 # Last nineteen: five OpenAI, five Claude, four Cursor, three Gemini, one Grok,
 # one Perplexity. The next OpenAI fits exactly at its 30% ceiling.
-HISTORY = ["claude"] * 5 + ["cursor"] * 4 + ["antigravity"] * 3 + ["grok", "perplexity"] + ["openai"] * 5
+HISTORY = ["claude"] * 3 + ["cursor"] * 4 + ["antigravity"] * 3 + ["grok", "perplexity"] + ["openai"] * 7
 
 
 class AdmissionPolicyTests(unittest.TestCase):
@@ -35,7 +36,7 @@ class AdmissionPolicyTests(unittest.TestCase):
         self.assertIsNone(admission_reason("openai", []))
         for lane in ("firecrawl", "github-copilot", "microsoft-365-copilot"):
             self.assertEqual(admission_reason(lane, HISTORY),
-                             "workload_unsupported_allocation_lane")
+                             "workload_profile_lane_ineligible")
 
     def test_admission_rejects_noncanonical_schema_before_database_access(self):
         for schema in ("public", "director", "director_v", "director_v1234567",
@@ -98,7 +99,7 @@ class PostgresAdmissionTests(unittest.TestCase):
 
     def seed_test_history(self, target=None, *, capped=False):
         target = target or self
-        providers = (["openai"] * 6 + ["claude"] * 6 + ["cursor"] * 5 + ["grok"] * 2) if capped else HISTORY
+        providers = (["openai"] * 8 + ["claude"] * 7 + ["cursor"] * 4) if capped else HISTORY
         with target.handle.claim_store._pool.connection() as connection:
             with connection.transaction():
                 for index, provider in enumerate(providers):
@@ -169,6 +170,46 @@ class PostgresAdmissionTests(unittest.TestCase):
                     with self.handle.pool.connection() as connection:
                         row = connection.execute(f"SELECT policy_version, policy_digest FROM {self.schema}.director_primary_workload_assignment").fetchone()
                     self.assertEqual(row, {"policy_version": "primary-assignment-count-v1", "policy_digest": DIGEST})
+
+    def test_profile_switch_preserves_old_v2_history_and_digest(self):
+        from director_orchestrator.primary_workload import LEGACY_V2_DIGEST, read_admission_history
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                (task_id,assignment_id,provider_lane,reservation_digest,fencing_generation,policy_version,policy_digest)
+                VALUES ('old','old','cursor',%s,1,'primary-assignment-count-v2',%s)""", (DIGEST, LEGACY_V2_DIGEST))
+        self.handle.close()
+        self.handle = open_postgres_control_plane(self.dsn, schema=self.schema, allow_insecure_local_transport=True)
+        with self.handle.pool.connection() as connection:
+            self.assertEqual(read_admission_history(connection, schema=self.schema), ("cursor",))
+            before = connection.execute(f"SELECT * FROM {self.schema}.director_primary_workload_assignment").fetchone()
+            with connection.transaction():
+                admit_assignment(connection, schema=self.schema, task_id="new", assignment_id="new",
+                    provider="perplexity", reservation_digest=DIGEST, fencing_generation=1, allocation_profile="public_research")
+            after = connection.execute(f"SELECT * FROM {self.schema}.director_primary_workload_assignment WHERE task_id='old'").fetchone()
+            self.assertEqual(before, after)
+            self.assertEqual(read_admission_history(connection, schema=self.schema), ("cursor", "perplexity"))
+            with self.assertRaisesRegex(WorkloadAdmissionHold, "identity_changed"):
+                with connection.transaction():
+                    admit_assignment(connection, schema=self.schema, task_id="new", assignment_id="new",
+                        provider="perplexity", reservation_digest=DIGEST, fencing_generation=1, allocation_profile="mixed")
+
+    def test_all_four_profiles_admit_into_one_history(self):
+        from director_orchestrator.primary_workload import read_admission_history
+        sequence = (("engineering", "openai"), ("mixed", "firecrawl"), ("public_research", "perplexity"), ("enterprise", "github-copilot"))
+        with self.handle.pool.connection() as connection:
+            for profile, lane in sequence:
+                with connection.transaction():
+                    admit_assignment(connection, schema=self.schema, task_id=profile, assignment_id=profile,
+                        provider=lane, reservation_digest=DIGEST, fencing_generation=1, allocation_profile=profile)
+            self.assertEqual(read_admission_history(connection, schema=self.schema), tuple(lane for _, lane in sequence))
+            self.assertEqual(self.count("director_primary_workload_assignment"), 4)
+
+    def test_profile_authority_change_invalidates_registered_plan(self):
+        task_id, writer = self.task()
+        with patch("director_orchestrator.primary_parallel.allocation_profile_digest", return_value="sha256:" + "b" * 64):
+            with self.assertRaises(ParallelDispatchError):
+                self.parallel.register_plan(task_id=task_id, writer=writer, plan_digest=DIGEST,
+                    assignments=(ParallelAssignment("assignment",1,"openai","test-deployment"),), policy=self.policy)
 
     def test_startup_admits_one_real_assignment_without_synthetic_history(self):
         task = self.task()
@@ -315,3 +356,4 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]] -->
@@ -513,8 +514,8 @@ exception is not production TLS evidence.
 For live Default intake, the configured provider list is an available pool, not a
 requirement to dispatch every provider. Current authenticated app and adapter
 readiness must cover OpenAI orchestration and at least two other primary providers
-capable of implementation and independent review. OpenAI is excluded from implicit
-production/review spillover. The planner freezes one implementation provider and a
+capable of implementation and independent review. OpenAI production is explicitly assigned under the frozen allocation profile;
+control-plane work creates no production credit and material authors cannot self-review. The planner freezes one implementation provider and a
 different reviewer before the existing exact-plan execution approval. Eligible
 providers satisfy the prospective hard cap; the normal band guides preference,
 then operator-configured comparable cost ranks break ties. Pair selection projects
@@ -525,29 +526,31 @@ new provider after approval. Concurrency remains the configured initial bound,
 independent of the inventory size.
 
 Structured `primary_required_capabilities` on authenticated intake can request
-`public_research` or `enterprise_context`; private task prose never grants either.
-Public research requires `primary_public_research_query`, selects Perplexity only,
+`public_research`, `enterprise_context`, `bounded_scaffolding`, or
+`repository_assistance`; private task prose never grants these scopes.
+Public research requires `primary_public_research_query`, selects an eligible
+Perplexity or Firecrawl contact under the frozen profile,
 and precedes implementation. Its outbound task contains only that explicit public
-query. Enterprise context currently stops with an accounting-authority hold:
-enterprise providers have no direct production targets and are never aliased into
-another provider's allocation. Missing requested scope/readiness similarly holds.
+query. Enterprise context stops when its scoped adapter is unavailable:
+allocation targets do not supply missing enterprise adapter capability or source
+authorization. Enterprise lanes are never aliased into another provider's allocation. Missing requested scope/readiness similarly holds.
 
 Startup uses the owner-approved full twenty-slot denominator with only real
-assignments. Primary allocation counts durable ADMITTED assignments; legacy direct
-production counts ACCEPTED productive assignments. Neither ledger fabricates rows.
-The primary policy version/digest changes with this rule; old incompatible history
-fails closed and is not silently migrated. An existing empty v1 table also
-requires explicit schema remediation: its old policy CHECK remains after reopen,
-and both planning and admission return `workload_schema_policy_incompatible`
-before any provider attempt. No old rows or constraints are rewritten automatically.
+assignments. Primary and legacy admission retain real reserved assignments;
+accepted productive output remains separately recorded. Neither ledger fabricates
+rows. Recognized genuine v2 primary constraints may be upgraded to the new profile
+policy while preserving existing rows. Unknown or incompatible schema/history
+fails closed; the v1-only table still requires explicit remediation before any
+provider attempt. Legacy reservations without frozen profile-admission provenance
+require explicit reconciliation before new admissions, preserving their history.
 Mature windows still assess last
 nineteen plus the prospective assignment at target+5 percentage points.
-The original targets permit at most six Claude, five Cursor, and three Grok
-admissions in twenty slots. Core-only work therefore stops before twenty real
-assignments can accumulate (and can stop earlier when fewer than two independent
-lanes remain eligible). This bounded startup is not sustainable core-only rollover.
-It does not renormalize targets, generate filler work, or grant OpenAI production
-spillover; continued throughput requires a separate explicit owner policy decision.
+The approved Engineering profile replaces the former unsustainable core-only
+allocation: OpenAI35/Claude30/Cursor15/Grok10/Antigravity10. The full matrix,
+role boundaries, zero-target rule and preserved-history profile changes are in
+[Provider allocation profiles](provider-allocation-profiles.md). Real authenticated
+adapter capability and independent review remain prerequisites; percentages alone
+do not prove operational throughput or authorize deployment.
 
 The Default primary application registers this complete assignment DAG in the
 Postgres parallel ledger before an execution approval can cross the provider
@@ -606,3 +609,4 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->

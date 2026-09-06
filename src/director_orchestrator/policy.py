@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -368,6 +369,7 @@ def _canonical_prestage_record(record: PlanPrestageRecord) -> PlanPrestageRecord
 
     packet = PrestagePacket(
         packet_id=record.packet_id,
+        allocation_profile=record.allocation_profile,
         goal=record.goal,
         terminal_condition=record.terminal_condition,
         repository=canonical_repository(record.repository),
@@ -496,6 +498,7 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         decision = evaluate_assignment(
             request,
             history=overall_history,
+            policy=WorkloadPolicy.for_profile(assignment.allocation_profile),
             mode=EnforcementMode.ENFORCED,
         )
         errors.update(
@@ -516,12 +519,16 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
             )
         )
 
+    profiles = {item.allocation_profile for item in plan.assignments}
+    if len(profiles) != 1 or (plan.prestage is not None and plan.prestage.allocation_profile not in profiles):
+        errors.add("allocation profile must be frozen consistently across plan and prestage")
+
     # A genuinely simple request that needs no external opinion may stay local.
     # Every short, medium, or long provider plan is team work.
     team = {
         item.agent
         for item in plan.assignments
-        if item.agent not in {ProviderName.OWNER, ProviderName.OPENAI}
+        if item.agent != ProviderName.OWNER
     }
     nontrivial = any(
         item.workload_size.value != "simple" for item in plan.assignments
@@ -593,7 +600,7 @@ def _v1_workload_plan_errors(plan: DirectorPlan) -> set[str]:
         repository_scope.append((repository, assignment.starting_ref.strip()))
     repository_binding_required = any(
         assignment.agent
-        in {ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK}
+        in {ProviderName.OPENAI, ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK, ProviderName.GITHUB_COPILOT}
         or assignment.allow_draft_pr
         for assignment in plan.assignments
     )
@@ -835,10 +842,8 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
     }
     allowed_refs = set(settings.allowed_starting_refs)
     for assignment in plan.assignments:
-        if assignment.agent == ProviderName.OPENAI:
-            errors.add(
-                f"assignment {assignment.sequence}: OpenAI is the Director runtime and cannot be an assignment target"
-            )
+        if assignment.agent == ProviderName.OPENAI and assignment.kind not in {AssignmentKind.GENERAL, AssignmentKind.INDEPENDENT_REVIEW}:
+            errors.add(f"assignment {assignment.sequence}: OpenAI production requires an explicit work or review role")
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
         if (
@@ -1204,7 +1209,7 @@ def synchronize_trusted_provider_selection(
     rewritten: list[Assignment] = []
     for item in safe.assignments:
         selected = selected_providers[item.sequence]
-        if selected in {ProviderName.OWNER, ProviderName.OPENAI}:
+        if selected == ProviderName.OWNER:
             raise WorkloadPolicyError(
                 "ordinary trusted routing cannot select owner or OpenAI Director"
             )
@@ -1442,3 +1447,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

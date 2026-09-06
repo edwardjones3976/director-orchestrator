@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | BEGIN]]
@@ -44,7 +45,7 @@ from director_orchestrator.store import TaskStore
 
 
 class PolicyTests(unittest.TestCase):
-    def test_openai_runtime_cannot_be_an_assignment_target(self):
+    def test_separately_assigned_openai_production_is_a_policy_target(self):
         settings = replace(
             Settings(),
             project_allowlist=("demo",),
@@ -62,7 +63,7 @@ class PolicyTests(unittest.TestCase):
                 Assignment(
                     sequence=1,
                     agent=ProviderName.OPENAI,
-                    task="Duplicate the Director planning phase",
+                    task="Implement the bounded repository change",
                     acceptance=["Plan exists"],
                     repository="example/demo",
                 )
@@ -70,10 +71,7 @@ class PolicyTests(unittest.TestCase):
             final_acceptance=["Accepted"],
         )
 
-        self.assertIn(
-            "assignment 1: OpenAI is the Director runtime and cannot be an assignment target",
-            execution_policy_errors(plan, settings),
-        )
+        self.assertEqual(execution_policy_errors(plan, settings), [])
 
     def setUp(self):
         self.settings = replace(Settings(), max_agent_hops=4, max_revisions=1, max_task_budget_usd=1.0)
@@ -954,3 +952,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:03 UTC | END]]

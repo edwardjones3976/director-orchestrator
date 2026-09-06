@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
@@ -304,28 +305,9 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
         directive = charter["director_operating_directive"]
-        self.assertEqual(
-            directive["direct_workload_percent"],
-            {
-                "claude": 25,
-                "cursor": 20,
-                "grok": 11,
-                "gemini": 15,
-                "perplexity": 4,
-                "external_openai": 25,
-            },
-        )
-        self.assertEqual(
-            directive["overall_effort_percent"],
-            {
-                "claude": 36,
-                "cursor": 20,
-                "grok": 11,
-                "openai": 8,
-                "gemini": 20,
-                "perplexity": 5,
-            },
-        )
+        self.assertEqual(directive["default_allocation_profile"], "engineering")
+        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [35, 30, 15, 10, 10, 0, 0, 0, 0])
+        self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 9)
         self.assertEqual(
             directive["workload_accounting"]["ledgers"]["overall_effort"],
             "prospective_observed_effort_guard",
@@ -353,7 +335,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(
             "github_copilot_cli_lite",
-            directive["workload_enforcement"]["overall_effort_normal_bands_percent"],
+            directive["allocation_profiles"]["lane_order"],
         )
         self.assertEqual(
             directive["copilot_lite_hygiene_review"]["attempts"],
@@ -550,13 +532,13 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             / "project-state-report.md"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("must never emit OpenAI as an assignment target", charter)
-        self.assertIn("Never emit OpenAI as a specialist assignment target", prompt)
-        self.assertIn("never emits OpenAI as a", readme)
+        self.assertIn("OpenAI production may be separately assigned", charter)
+        self.assertIn("OpenAI production may be separately assigned", prompt)
+        self.assertIn("OpenAI production uses a separately assigned", readme)
         self.assertIn("different-provider exact-candidate review", charter)
         self.assertIn("different-provider exact-candidate review", prompt)
-        self.assertIn("different-provider exact-candidate review", readme)
-        self.assertIn("different-provider exact-candidate review", report)
+        self.assertIn("Different-provider exact-candidate review", readme)
+        self.assertIn("non-author review/merge", report)
 
     def test_balanced_allocation_selection_and_copilot_are_synchronized(self):
         root = Path(__file__).resolve().parents[1]
@@ -584,13 +566,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         for name, text in content.items():
             with self.subTest(surface=name):
                 normalized = " ".join(text.split()).lower()
-                self.assertIn("25", normalized)
-                self.assertIn("20", normalized)
-                self.assertIn("15", normalized)
-                self.assertIn("11", normalized)
-                self.assertIn("4", normalized)
-                self.assertIn("prospective", normalized)
-                self.assertIn("33", normalized)
+                self.assertIn("allocation", normalized)
+                self.assertIn("profile", normalized)
                 self.assertIn("copilot", normalized)
                 self.assertIn("waste", normalized)
 
@@ -606,15 +583,16 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         directive = team_operating_charter()["director_operating_directive"]
-        self.assertEqual(sum(directive["direct_workload_percent"].values()), 100)
-        self.assertEqual(sum(directive["overall_effort_percent"].values()), 100)
+        self.assertEqual(set(directive["allocation_profiles"]["weights"]), {"engineering", "mixed", "public_research", "enterprise"})
+        for weights in directive["allocation_profiles"]["weights"].values():
+            self.assertEqual(sum(weights), 100)
         self.assertEqual(
-            directive["workload_accounting"]["accepted_production_ledger"],
-            "direct_production",
+            directive["workload_accounting"]["unit_basis"],
+            "real_reserved_assignment_once",
         )
         self.assertEqual(
-            directive["workload_accounting"]["usage_guard_ledger"],
-            "overall_effort",
+            directive["overall_effort_policy"],
+            "telemetry_only_no_separate_allocation",
         )
 
     def test_antigravity_work_and_debate_boundaries_are_synchronized(self):
@@ -836,12 +814,12 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
     def test_contract_mirrors_prospective_total_effort_controls(self):
         contract = self.contract()
         for field in (
-            "prospective_total_effort_percent:",
-            "gemini_antigravity: 20",
-            "grok: 11",
-            "total_effort_normal_bands_percent:",
-            "cursor: [17, 23]",
-            'total_effort_status: "prospective_soft_routing_preference"',
+            'default_profile: "engineering"',
+            'engineering: [35, 30, 15, 10, 10, 0, 0, 0, 0]',
+            'mixed: [30, 25, 10, 10, 5, 5, 5, 5, 5]',
+            'public_research: [25, 20, 5, 5, 5, 25, 15, 0, 0]',
+            'enterprise: [30, 25, 5, 5, 5, 0, 5, 10, 15]',
+            'total_effort_status: "separate_telemetry_not_production_credit"',
         ):
             with self.subTest(field=field):
                 self.assertIn(field, contract)
@@ -1255,3 +1233,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]

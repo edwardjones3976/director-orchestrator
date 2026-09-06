@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
@@ -49,34 +50,24 @@ responsibility_areas:
     expectation: "Coordinate dependencies and dissent under owner intent and deterministic policy."
 
 allocation_and_selection:
-  enforced_ledger: "accepted_productive_work"
-  accepted_productive_work_percent:
-    external_openai_codex: 25
-    claude: 25
-    cursor: 20
-    gemini_antigravity: 15
-    grok: 11
-    perplexity: 4
-  prospective_total_effort_percent:
-    claude: 36
-    cursor: 20
-    gemini_antigravity: 20
-    grok: 11
-    openai: 8
-    perplexity: 5
-  total_effort_normal_bands_percent:
-    claude: [33, 39]
-    cursor: [17, 23]
-    gemini_antigravity: [17, 23]
-    grok: [8, 14]
-    openai: [5, 11]
-    perplexity: [1, 7]
-  total_effort_status: "prospective_soft_routing_preference"
+  enforced_ledger: "real_assignment_admissions"
+  accepted_output_ledger: "separate_authenticated_accepted_production"
+  default_profile: "engineering"
+  allocation_profiles:
+    lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    weights:
+      engineering: [35, 30, 15, 10, 10, 0, 0, 0, 0]
+      mixed: [30, 25, 10, 10, 5, 5, 5, 5, 5]
+      public_research: [25, 20, 5, 5, 5, 25, 15, 0, 0]
+      enterprise: [30, 25, 5, 5, 5, 0, 5, 10, 15]
+  profile_binding: "frozen_before_approval_preserve_real_history_no_silent_redistribution"
+  zero_target: "ineligible"
+  total_effort_status: "separate_telemetry_not_production_credit"
   normal_tolerance_percentage_points: 3
   hard_ceiling_above_target_percentage_points: 5
   allocation_unit: "assignment_count"
   prospective_window_assignments: 20
-  insufficient_history_action: "OWNER_DECISION_REQUIRED"
+  insufficient_history_action: "fixed_twenty_slots_real_assignments_only"
   selection_policy: "cheap_capable_model_first"
   selection_order:
     - "exact scope, allowlists, transport, and readiness"
@@ -311,7 +302,7 @@ providers:
       producer_exclusion: "A producer cannot review, accept, or approve its own work; the reviewer must differ from the logical producer and every material author."
       material_tie_escalation: "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision; only an ordinary tie reaches documented OpenAI evidence judgment."
       deterministic_gates: "Exact-SHA review, trusted checks, budgets, allowlists, and approval gates remain mandatory where configured."
-      assignment_target: "OpenAI is never emitted as a specialist assignment target; its external production share is separately owner-authorized."
+      assignment_target: "Separately assigned OpenAI production under the frozen profile; material authorship requires different-provider exact-candidate review and removes Director merge independence."
 
 supplemental_reviewers:
   github_copilot_lite:
@@ -359,3 +350,4 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
