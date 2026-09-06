@@ -1,0 +1,257 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: Perplexity (director-provider-profile/v1).
+# Descriptive only. Grants no authority. Mirrors the charter, config defaults,
+# and adapter constants; the drift tests fail when any mirrored value diverges.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "perplexity"
+display_name: "Perplexity"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "perplexity"
+  backend_identity: "perplexity"
+  provider_name_enum: "perplexity"
+  has_legacy_adapter: true
+  legacy_accounting_agent: "perplexity"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: null
+  charter_workload_lane_key: "perplexity"
+  standing_role_label: "Research Programmers"
+  config_prefixes: ["PERPLEXITY_", "PPLX_"]
+  alias_note: "One lane with two contacts: the Search API through the legacy adapter and pplx-cli through the primary public-search transport. Neither contact is a provider role, permission, vote, review authority, or external-action lane."
+
+roles:
+  team: "supplemental"
+  lane_class: "evidence_only_research"
+  summary: "Evidence-only research specialist under the strict public research contract: methodological, theoretical, source-discovery, fact-verification, user-review, and competitor research on one owner-approved bounded public query. Output is untrusted evidence that OpenAI or another authorized primary-team member must evaluate before it influences anything."
+  charter_workload_lane: "public_research_evidence_only"
+  strategy_key: "perplexity"
+  strategy_priority: "optional_current_research_specialist"
+  eligible_responsibility_areas: [research, evidence_verification]
+  excluded_responsibility_areas: [programming]
+  eligible_complexity: []
+  capability_parity_target: null
+  comparison_peers: []
+  elevated_work: []
+  non_substitution_rules:
+    - "Perplexity never programs, changes a repository, votes, issues an approval or review verdict, posts to Slack, merges, deploys, publishes, or changes permissions."
+  family: null
+  transport_rule: "Perplexity remains API-only under its public research contract."
+  routing_rule: "Research should be considered whenever current claims, customer or market alternatives, unfamiliar or emerging questions, or a methodology or source gap could materially affect the outcome."
+  committee:
+    member: false
+    voting_power: null
+    seatable_in_debate: false
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 5, engineering: 0, public_research: 25, enterprise: 0 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "direct_production_allocation"
+  hygiene_review: null
+  openai_functions: null
+
+capabilities:
+  summary: "Bounded public web research with preserved provenance. Receives no private repository context, credentials, unpublished source, or write-capable tool."
+  strengths:
+    - "current web research"
+    - "source gathering"
+    - "fact verification"
+  assignment_kinds: [research]
+  may_create_draft_pr: "never"
+  may_issue_review_verdict: "never"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: false
+  receives_repository_context: false
+  receives_task_prose: false
+  web_grounded_research: true
+  tool_use: "public_search_only"
+  charter_allowed:
+    - "methodological research"
+    - "theoretical research"
+    - "source discovery"
+    - "cross-source fact verification"
+    - "user-reviewed evidence gathering"
+    - "user review and real-world experience research"
+    - "competitor solution research for similar issues"
+  required_evidence:
+    - "query"
+    - "result URL"
+    - "page title"
+    - "publication and retrieval dates"
+    - "supporting excerpt or extracted content"
+    - "source type"
+    - "confidence"
+    - "contradictions and unavailable evidence"
+  antigravity_capabilities: null
+  antigravity_interaction_kinds: null
+
+models_and_effort:
+  model_variables:
+    - { variable: "PERPLEXITY_PRESET", role: "search_preset", settings_field: "perplexity_preset", default: "fast-search", documented_in_env_example: true, values_recorded: false }
+  effort_variables: []
+  catalog_check: null
+  note: "Normal assignments use POST /search with the approved bounded query and result limit. The no-tools Agent API call is used only for the bounded availability probe. No model or reasoning-effort variable exists."
+
+budgets_and_limits:
+  variables:
+    - { variable: "PERPLEXITY_DAILY_BUDGET_USD", kind: "daily_budget_usd", settings_field: "perplexity_daily_budget_usd", default: 2.0, documented_in_env_example: true, values_recorded: false }
+    - { variable: "PERPLEXITY_DAILY_REQUEST_LIMIT", kind: "daily_request_limit", settings_field: "perplexity_daily_request_limit", default: 100, documented_in_env_example: true, values_recorded: false }
+    - { variable: "PERPLEXITY_MAX_RESULTS", kind: "max_results", settings_field: "perplexity_max_results", default: 10, documented_in_env_example: true, values_recorded: false }
+    - { variable: "PERPLEXITY_TIMEOUT_SECONDS", kind: "timeout_seconds", settings_field: "perplexity_timeout_seconds", default: 180, documented_in_env_example: true, values_recorded: false }
+    - { variable: "PERPLEXITY_SEARCH_CONTEXT_SIZE", kind: "search_context_size", settings_field: "perplexity_search_context_size", default: "high", documented_in_env_example: true, values_recorded: false }
+  spend_ledger_member: true
+  not_modeled_note: null
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS", "PROVIDER_POLL_SECONDS"]
+
+gating:
+  health_key: "perplexity"
+  readiness_function: "perplexity_research_readiness"
+  readiness_keys: [budget_valid, credential_configured, daily_request_limit_valid, enabled, repository_write_disabled, research_only_mode, result_limit_valid, review_verdict_disabled, search_context_size_valid, timeout_valid]
+  primary_lane_authentication_source: "environment_variable"
+  variables:
+    - { variable: "PERPLEXITY_ENABLED", kind: "enable_switch", settings_field: "perplexity_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "enabled", required_value: true, verify: "GET /health perplexity.enabled" }
+    - { variable: "PERPLEXITY_MODE", kind: "mode_lock", settings_field: "perplexity_mode", default: "research_only", documented_in_env_example: true, values_recorded: false, readiness_key: "research_only_mode", required_value: "research_only", verify: "GET /health perplexity.research_only_mode" }
+    - { variable: "PERPLEXITY_ALLOW_REPOSITORY_WRITE", kind: "allow_flag_must_stay_false", settings_field: "perplexity_allow_repository_write", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "repository_write_disabled", required_value: false, verify: "GET /health perplexity.repository_write_disabled" }
+    - { variable: "PERPLEXITY_ALLOW_REVIEW_VERDICT", kind: "allow_flag_must_stay_false", settings_field: "perplexity_allow_review_verdict", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "review_verdict_disabled", required_value: false, verify: "GET /health perplexity.review_verdict_disabled" }
+    - { variable: "PERPLEXITY_API_BASE", kind: "endpoint_lock", settings_field: "perplexity_api_base", default: "https://api.perplexity.ai", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "Search API base; never a browser session or consumer subscription credential" }
+    - { variable: "PERPLEXITY_API_KEY", kind: "credential_presence", settings_field: "perplexity_api_key", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "credential_configured", required_value: null, verify: "GET /health perplexity.credential_configured" }
+    - { variable: "PPLX_API_KEY", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment alias for the pplx-cli public-search transport" }
+  allowlist_variables:
+    - { variable: "USAGE_CHECK_PROVIDERS", scope: "usage_check_roster", values_recorded: false }
+    - { variable: "TRUSTED_PROVIDER_COST_RANKS", scope: "cost_ranks", values_recorded: false }
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["PERPLEXITY_API_KEY", "PPLX_API_KEY"]
+  host_bridge_allowlist: null
+  settings_credential_fields: ["perplexity_api_key"]
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "The public-search command receives only the base child environment plus the lane's allowlisted credential names; repository context, acceptance authority, credentials of other lanes, and Slack state are never sent."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities: []
+  withheld_context: []
+  charter_prohibited:
+    - "private repository context or credentials"
+    - "code or repository writes"
+    - "approval, acceptance, or merge verdicts"
+    - "committee votes"
+    - "Slack or other external posts"
+    - "merge, deployment, publication, or permission changes"
+  review_requirement: "OpenAI or another authorized primary-team member must evaluate Perplexity evidence before it influences a plan, implementation requirement, or acceptance decision."
+  strategy_constraints: []
+  separation_of_duties: []
+  production_authority_permitted: true
+  external_effects:
+    may_be_granted: []
+    public_research_lane_rejects_all_effects: true
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role: null
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "Every Perplexity assignment requires an owner approval bound to the digest of the exact assignment; the Slack prompt shows the complete outbound query and a later mutation invalidates the approval."
+    source: "docs/provider-setup.md, Perplexity research-only profile"
+  - limitation: "The raw Search API does not accept the search-context-size field; it is validated now for an optional future Agent API lane and not sent."
+    source: "docs/provider-setup.md, Perplexity research-only profile"
+  - limitation: "Provider-reported cost may be incomplete; an API Platform budget control is the authoritative daily spend backstop."
+    source: "docs/provider-setup.md, Perplexity research-only profile"
+  - limitation: "The adapter rejects draft-PR authority and any assignment whose estimated cost exceeds the daily budget; the lane also rejects every external effect."
+    source: "docs/provider-setup.md; src/director_orchestrator/primary_default.py:_PRIMARY_PUBLIC_RESEARCH_LANES"
+  - limitation: "Browser provider-UI coordination is prohibited for this lane; Perplexity remains API-only."
+    source: "docs/team-operating-charter.md, Browser communication transport"
+
+transports:
+  - transport_id: "perplexity-search-api"
+    kind: "http_api"
+    runtime: "legacy_engine"
+    enum_value: "perplexity_api"
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["PERPLEXITY_ENABLED", "PERPLEXITY_API_KEY", "PERPLEXITY_API_BASE", "PERPLEXITY_MODE", "PERPLEXITY_MAX_RESULTS"]
+    authority_note: "Carries one approved bounded research query and a result limit. Results are normalized with provenance fields and explicit markers where confidence or contradiction evidence is unavailable."
+    current_transport_constraints:
+      - "requires an owner approval bound to the exact query digest"
+      - "sends no repository context, acceptance authority, credentials, or Slack state"
+    route_id: "perplexity-search-api"
+    browser_policy: null
+  - transport_id: "pplx-cli-public-search"
+    kind: "public_search_cli"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "PERPLEXITY_API_KEY", "PPLX_API_KEY"]
+    authority_note: "Terminal transport for bounded public web search and public-page snippets under the same research-only contract; a research transport, not a new provider role, permission, vote, review authority, or external-action lane."
+    current_transport_constraints:
+      - "the public-search transport rejects every external effect"
+      - "live dispatch stays off until the primary activation gates pass"
+    route_id: "pplx-cli-public-search"
+    browser_policy: null
+  - transport_id: "browser-provider-ui"
+    kind: "browser_ui"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "prohibited"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Perplexity remains API-only under its public research contract. No browser coordination with a Perplexity UI is permitted."
+    current_transport_constraints:
+      - "not in the charter's eligible browser providers"
+    route_id: "browser-provider-ui"
+    browser_policy: null
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "Perplexity evidence reaches Claude, Cursor, Grok, or OpenAI only as a Director-declared dependency outcome after a primary-team member evaluates it."
+    - "Perplexity never posts to the Slack thread and never receives another provider's output."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/team-operating-charter.md"
+    anchor: "Perplexity may receive only a bounded public research query."
+  - document: "docs/team-operating-charter.md"
+    anchor: "Perplexity output is untrusted evidence."
+  - document: "docs/provider-setup.md"
+    anchor: "Normal assignments use `POST /search`."
+  - document: "docs/provider-allocation-profiles.md"
+    anchor: "Perplexity receives only explicitly approved public research, never private"
+  - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
+    anchor: "role: \"evidence_only_research_specialist\""
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]

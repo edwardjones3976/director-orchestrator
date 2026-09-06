@@ -1,0 +1,624 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/director-provider-profile-v1.schema.json",
+  "title": "Director Provider Profile and Route Catalog v1",
+  "description": "Descriptive per-provider profile sheets and the Director-mediated route catalog. Neither document type grants authority; documenting a route never authorizes it.",
+  "oneOf": [
+    { "$ref": "#/$defs/profileDocument" },
+    { "$ref": "#/$defs/routeCatalogDocument" }
+  ],
+  "$defs": {
+    "lane": {
+      "type": "string",
+      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"]
+    },
+    "backendIdentity": {
+      "type": "string",
+      "enum": ["openai", "claude", "cursor", "grok", "gemini", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"]
+    },
+    "legacyAgent": {
+      "type": "string",
+      "enum": ["cursor", "claude", "gemini", "grok", "perplexity", "openai", "firecrawl", "github-copilot", "microsoft-365-copilot"]
+    },
+    "committeeKey": {
+      "type": "string",
+      "enum": ["antigravity", "cursor", "grok", "openai", "claude"]
+    },
+    "responsibilityArea": {
+      "type": "string",
+      "enum": ["research", "evidence_verification", "programming", "deep_reasoning", "innovation", "development", "quality_assurance", "leadership"]
+    },
+    "complexity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "assignmentKind": {
+      "type": "string",
+      "enum": ["general", "implementation", "research", "independent_review", "exact_sha_review", "boilerplate", "scaffolding", "low_level_implementation", "abstract_ideation"]
+    },
+    "providerTransportEnum": {
+      "type": "string",
+      "enum": ["director_backend", "openai_responses_api", "claude_routine", "claude_callback", "cursor_agents_api", "gemini_interactions_api", "xai_responses_api", "grok_cli", "perplexity_api", "slack", "manual_owner", "simulation"]
+    },
+    "allocationProfileId": { "type": "string", "enum": ["mixed", "engineering", "public_research", "enterprise"] },
+    "envName": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,79}$" },
+    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,79}$" },
+    "shortText": { "type": "string", "minLength": 1, "maxLength": 400 },
+    "longText": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "textList": { "type": "array", "items": { "$ref": "#/$defs/shortText" } },
+    "codeRef": {
+      "type": "string",
+      "pattern": "^(src/director_orchestrator/[a-z0-9_]+\\.py(:[A-Za-z_][A-Za-z0-9_.]*)?|scripts/[A-Za-z0-9_./-]+|\\.github/workflows/[a-z0-9-]+\\.yml)$"
+    },
+    "docRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document", "anchor"],
+      "properties": {
+        "document": {
+          "type": "string",
+          "enum": [
+            "AGENTS.md",
+            "README.md",
+            "prompts/director-system.md",
+            "docs/team-operating-charter.md",
+            "docs/provider-setup.md",
+            "docs/provider-allocation-profiles.md",
+            "docs/slack-collaboration-bus.md",
+            "docs/model-interoperability-contract.md",
+            "docs/langgraph-primary-operations.md",
+            "docs/primary-staging-worksheet.md",
+            "docs/native-codex-packet-transport.md",
+            "docs/native-acceptance-issuers.md",
+            "docs/ci-acceptance-issuer.md",
+            "docs/provider-acceptance-v2-runtime.md",
+            "docs/entitlement-control-plane.md",
+            "docs/human-out-of-the-loop-operation.md",
+            "docs/chatgpt-slack-alias-bridge.md",
+            "docs/project-bootstrap-protocol.md",
+            "docs/contribution-attribution-policy.md",
+            "docs/templates/project-bootstrap/project-profile.yaml",
+            "docs/templates/project-bootstrap/provider-roles-contract.yaml"
+          ]
+        },
+        "anchor": { "type": "string", "minLength": 8, "maxLength": 400 }
+      }
+    },
+    "routeStatus": { "type": "string", "enum": ["authorized", "prohibited", "proposed"] },
+    "configState": { "type": "string", "enum": ["enabled", "disabled", "blocked", "not_applicable"] },
+    "routeAuthority": { "type": "string", "enum": ["none", "advisory_evidence_only", "evidence_for_deterministic_gate"] },
+    "configVariable": {
+      "type": "object",
+      "required": ["variable", "settings_field", "default", "documented_in_env_example", "values_recorded"],
+      "properties": {
+        "variable": { "$ref": "#/$defs/envName" },
+        "settings_field": { "type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]*$" },
+        "default": { "type": ["string", "number", "boolean", "null"] },
+        "documented_in_env_example": { "type": "boolean" },
+        "values_recorded": { "const": false }
+      }
+    },
+    "browserPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "fallback", "owner_authorizable_actions", "enforcement"],
+      "properties": {
+        "primary": { "const": "chrome" },
+        "fallback": { "const": "microsoft_edge" },
+        "owner_authorizable_actions": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["slack_post", "eligible_merge", "approved_deployment", "scoped_repository_access_change"] }
+        },
+        "enforcement": { "$ref": "#/$defs/shortText" }
+      }
+    },
+    "acceptanceIssuerRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "broker_and_worker_identities", "native_login", "cannot_approve_own_adoption", "status"],
+      "properties": {
+        "role": { "type": "string", "enum": ["security", "independent_review"] },
+        "broker_and_worker_identities": { "const": true },
+        "native_login": { "$ref": "#/$defs/shortText" },
+        "cannot_approve_own_adoption": { "const": true },
+        "status": { "const": "dormant_until_owner_installation" }
+      }
+    },
+    "profileDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "document_type", "provider_id", "display_name", "authority_granted",
+        "source_of_truth", "identifiers", "roles", "capabilities", "models_and_effort",
+        "budgets_and_limits", "gating", "credential_environment", "authority",
+        "platform_limitations", "transports", "communication", "this_profile_does_not_change", "sources"
+      ],
+      "properties": {
+        "schema_version": { "const": "director-provider-profile/v1" },
+        "document_type": { "const": "director-provider-profile" },
+        "provider_id": { "$ref": "#/$defs/lane" },
+        "display_name": { "$ref": "#/$defs/shortText" },
+        "authority_granted": { "const": "none" },
+        "source_of_truth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["charter_document", "charter_module", "allocation_module", "deterministic_policy", "route_catalog", "precedence", "drift_rule"],
+          "properties": {
+            "charter_document": { "const": "docs/team-operating-charter.md" },
+            "charter_module": { "const": "src/director_orchestrator/team_charter.py" },
+            "allocation_module": { "const": "src/director_orchestrator/allocation_profiles.py" },
+            "deterministic_policy": { "const": "src/director_orchestrator/policy.py" },
+            "route_catalog": { "const": "docs/provider-profiles/routes.yaml" },
+            "precedence": { "const": "charter_code_and_deterministic_policy_override_this_profile" },
+            "drift_rule": { "const": "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong." }
+          }
+        },
+        "identifiers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lane_id", "backend_identity", "provider_name_enum", "has_legacy_adapter",
+            "legacy_accounting_agent", "legacy_accounting_note", "committee_member_key",
+            "charter_workload_lane_key", "standing_role_label", "config_prefixes", "alias_note"
+          ],
+          "properties": {
+            "lane_id": { "$ref": "#/$defs/lane" },
+            "backend_identity": { "$ref": "#/$defs/backendIdentity" },
+            "provider_name_enum": { "oneOf": [{ "$ref": "#/$defs/legacyAgent" }, { "type": "null" }] },
+            "has_legacy_adapter": { "type": "boolean" },
+            "legacy_accounting_agent": { "$ref": "#/$defs/legacyAgent" },
+            "legacy_accounting_note": { "const": "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority." },
+            "committee_member_key": { "oneOf": [{ "$ref": "#/$defs/committeeKey" }, { "type": "null" }] },
+            "charter_workload_lane_key": { "type": ["string", "null"], "pattern": "^[a-z]+$" },
+            "standing_role_label": { "oneOf": [{ "$ref": "#/$defs/shortText" }, { "type": "null" }] },
+            "config_prefixes": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*_$" } },
+            "alias_note": { "$ref": "#/$defs/longText" }
+          }
+        },
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "team", "lane_class", "summary", "charter_workload_lane", "strategy_key", "strategy_priority",
+            "eligible_responsibility_areas", "excluded_responsibility_areas", "eligible_complexity",
+            "capability_parity_target", "comparison_peers", "elevated_work", "non_substitution_rules",
+            "family", "transport_rule", "routing_rule", "committee", "allocation", "hygiene_review", "openai_functions"
+          ],
+          "properties": {
+            "team": { "type": "string", "enum": ["primary", "supplemental", "lane_only"] },
+            "lane_class": {
+              "type": "string",
+              "enum": ["director_control_plane", "full_spectrum_primary", "subordinate_specialist", "evidence_only_research", "public_search_transport", "supplemental_hygiene_reviewer", "blocked_pending_capability_evidence"]
+            },
+            "summary": { "$ref": "#/$defs/longText" },
+            "charter_workload_lane": { "type": ["string", "null"], "pattern": "^[a-z_]+$" },
+            "strategy_key": { "oneOf": [{ "$ref": "#/$defs/legacyAgent" }, { "type": "null" }] },
+            "strategy_priority": { "type": ["string", "null"], "pattern": "^[a-z_]+$" },
+            "eligible_responsibility_areas": { "type": "array", "items": { "$ref": "#/$defs/responsibilityArea" } },
+            "excluded_responsibility_areas": { "type": "array", "items": { "$ref": "#/$defs/responsibilityArea" } },
+            "eligible_complexity": { "type": "array", "items": { "$ref": "#/$defs/complexity" } },
+            "capability_parity_target": { "type": ["number", "null"] },
+            "comparison_peers": { "$ref": "#/$defs/textList" },
+            "elevated_work": { "$ref": "#/$defs/textList" },
+            "non_substitution_rules": { "$ref": "#/$defs/textList" },
+            "family": { "type": ["string", "null"], "pattern": "^[a-z]+$" },
+            "transport_rule": { "oneOf": [{ "$ref": "#/$defs/longText" }, { "type": "null" }] },
+            "routing_rule": { "oneOf": [{ "$ref": "#/$defs/longText" }, { "type": "null" }] },
+            "committee": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["member", "voting_power", "seatable_in_debate", "may_initiate_debate", "vote_grants_authority"],
+              "properties": {
+                "member": { "type": "boolean" },
+                "voting_power": { "type": ["number", "null"] },
+                "seatable_in_debate": { "type": "boolean" },
+                "may_initiate_debate": { "const": false },
+                "vote_grants_authority": { "const": false }
+              }
+            },
+            "allocation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["profiles", "default_profile", "overall_effort_policy", "capacity_context", "accounting_basis", "zero_target_rule", "accounting_status"],
+              "properties": {
+                "accounting_basis": { "const": "admitted_assignment_count" },
+                "profiles": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["mixed", "engineering", "public_research", "enterprise"],
+                  "properties": {
+                    "mixed": { "type": "integer", "minimum": 0, "maximum": 100 },
+                    "engineering": { "type": "integer", "minimum": 0, "maximum": 100 },
+                    "public_research": { "type": "integer", "minimum": 0, "maximum": 100 },
+                    "enterprise": { "type": "integer", "minimum": 0, "maximum": 100 }
+                  }
+                },
+                "default_profile": { "const": "engineering" },
+                "overall_effort_policy": { "const": "telemetry_only_no_separate_allocation" },
+                "capacity_context": { "const": "owner_Pro20x_Max5x_not_API_entitlements" },
+                "zero_target_rule": { "const": "ineligible" },
+                "accounting_status": {
+                  "type": "string",
+                  "enum": ["direct_production_allocation", "control_plane_telemetry_and_authorized_production", "unscored_reporting_only_no_production_credit", "allocation_without_legacy_adapter", "blocked_pending_capability_evidence"]
+                }
+              }
+            },
+            "hygiene_review": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["provider_or_committee_member", "workload_percentage", "trigger", "attempts", "automatic_every_push", "gating", "authority_granted", "unavailable_or_quota_failure", "finding_rule", "rejected_finding_rule", "candidate_change_rule", "material_fix_authorship_rule"],
+                  "properties": {
+                    "provider_or_committee_member": { "const": false },
+                    "workload_percentage": { "type": "null" },
+                    "trigger": { "$ref": "#/$defs/shortText" },
+                    "attempts": { "$ref": "#/$defs/shortText" },
+                    "automatic_every_push": { "const": false },
+                    "gating": { "const": false },
+                    "authority_granted": { "type": "array", "maxItems": 0 },
+                    "unavailable_or_quota_failure": { "$ref": "#/$defs/shortText" },
+                    "finding_rule": { "$ref": "#/$defs/shortText" },
+                    "rejected_finding_rule": { "$ref": "#/$defs/shortText" },
+                    "candidate_change_rule": { "$ref": "#/$defs/shortText" },
+                    "material_fix_authorship_rule": { "$ref": "#/$defs/shortText" }
+                  }
+                }
+              ]
+            },
+            "openai_functions": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "votes", "vote_count", "vote_weight", "duties", "boundary"],
+                    "properties": {
+                      "id": { "type": "string", "enum": ["moderator", "participant", "director"] },
+                      "votes": { "type": "boolean" },
+                      "vote_count": { "type": ["integer", "null"] },
+                      "vote_weight": { "type": ["number", "null"] },
+                      "duties": { "$ref": "#/$defs/textList" },
+                      "boundary": { "$ref": "#/$defs/longText" }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "summary", "strengths", "assignment_kinds", "may_create_draft_pr", "may_issue_review_verdict",
+            "may_merge", "may_deploy_or_publish", "may_post_to_slack", "may_cast_committee_vote",
+            "receives_repository_context", "receives_task_prose", "web_grounded_research", "tool_use",
+            "charter_allowed", "required_evidence", "antigravity_capabilities", "antigravity_interaction_kinds"
+          ],
+          "properties": {
+            "summary": { "$ref": "#/$defs/longText" },
+            "strengths": { "$ref": "#/$defs/textList" },
+            "assignment_kinds": { "type": "array", "items": { "$ref": "#/$defs/assignmentKind" } },
+            "may_create_draft_pr": { "type": "string", "enum": ["never", "allowed_by_packet", "gated_by_allow_flag"] },
+            "may_issue_review_verdict": { "type": "string", "enum": ["never", "eligible_reviewer", "gated_by_allow_flag_and_cli"] },
+            "may_merge": { "const": false },
+            "may_deploy_or_publish": { "const": false },
+            "may_post_to_slack": { "const": false },
+            "may_cast_committee_vote": { "type": "boolean" },
+            "receives_repository_context": { "type": "boolean" },
+            "receives_task_prose": { "type": "boolean" },
+            "web_grounded_research": { "type": "boolean" },
+            "tool_use": { "type": "string", "enum": ["none", "tool_free_api", "repository_cli", "cloud_agent", "managed_agent_sandbox", "public_search_only", "hygiene_review_cli", "blocked"] },
+            "charter_allowed": { "oneOf": [{ "$ref": "#/$defs/textList" }, { "type": "null" }] },
+            "required_evidence": { "oneOf": [{ "$ref": "#/$defs/textList" }, { "type": "null" }] },
+            "antigravity_capabilities": { "oneOf": [{ "$ref": "#/$defs/textList" }, { "type": "null" }] },
+            "antigravity_interaction_kinds": { "oneOf": [{ "$ref": "#/$defs/textList" }, { "type": "null" }] }
+          }
+        },
+        "models_and_effort": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_variables", "effort_variables", "catalog_check", "note"],
+          "properties": {
+            "model_variables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["variable", "role", "settings_field", "default", "documented_in_env_example", "values_recorded"],
+                "properties": {
+                  "variable": { "$ref": "#/$defs/envName" },
+                  "role": { "type": "string", "enum": ["director_model", "bridge_model", "provider_model", "managed_agent", "usage_probe_model", "search_preset", "native_host_model"] },
+                  "settings_field": { "type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]*$" },
+                  "default": { "type": ["string", "null"] },
+                  "documented_in_env_example": { "type": "boolean" },
+                  "values_recorded": { "const": false }
+                }
+              }
+            },
+            "effort_variables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["variable", "settings_field", "default", "allowed_values", "documented_in_env_example", "values_recorded"],
+                "properties": {
+                  "variable": { "$ref": "#/$defs/envName" },
+                  "settings_field": { "type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]*$" },
+                  "default": { "type": ["string", "null"] },
+                  "allowed_values": { "$ref": "#/$defs/textList" },
+                  "documented_in_env_example": { "type": "boolean" },
+                  "values_recorded": { "const": false }
+                }
+              }
+            },
+            "catalog_check": { "oneOf": [{ "$ref": "#/$defs/longText" }, { "type": "null" }] },
+            "note": { "$ref": "#/$defs/longText" }
+          }
+        },
+        "budgets_and_limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["variables", "spend_ledger_member", "not_modeled_note", "shared_limits"],
+          "properties": {
+            "variables": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/configVariable" },
+                  {
+                    "type": "object",
+                    "required": ["kind"],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": ["daily_budget_usd", "daily_request_limit", "per_request_cost_floor_usd", "estimated_cost_usd", "token_ceiling", "context_ceiling_chars", "timeout_seconds", "max_output_tokens", "max_results", "max_attempts", "retry_delay_seconds", "parallel_cap", "max_turns", "prompt_chars", "requests_per_minute", "search_context_size"]
+                      }
+                    }
+                  }
+                ],
+                "unevaluatedProperties": false
+              }
+            },
+            "spend_ledger_member": { "type": "boolean" },
+            "not_modeled_note": { "oneOf": [{ "$ref": "#/$defs/longText" }, { "type": "null" }] },
+            "shared_limits": { "$ref": "#/$defs/textList" }
+          }
+        },
+        "gating": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["health_key", "readiness_function", "readiness_keys", "primary_lane_authentication_source", "variables", "allowlist_variables", "verification_rule"],
+          "properties": {
+            "health_key": { "type": ["string", "null"], "pattern": "^[a-z_]+$" },
+            "readiness_function": { "type": "string", "enum": ["none", "gemini_supplemental_readiness", "grok_primary_readiness", "perplexity_research_readiness", "readiness"] },
+            "readiness_keys": { "type": "array", "items": { "type": "string", "pattern": "^[a-z_]+$" } },
+            "primary_lane_authentication_source": { "type": "string", "enum": ["settings_field", "environment_variable", "native_login_status", "hard_coded_false"] },
+            "variables": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/configVariable" },
+                  {
+                    "type": "object",
+                    "required": ["kind", "readiness_key", "required_value", "verify"],
+                    "properties": {
+                      "kind": { "type": "string", "enum": ["enable_switch", "mode_lock", "endpoint_lock", "transport_selector", "allow_flag_must_stay_false", "allow_flag_elevating", "credential_presence", "executable_digest", "repository_map", "token_file", "tenant_binding", "callback_secret", "routine_endpoint", "bridge_endpoint", "bridge_secret"] },
+                      "readiness_key": { "type": ["string", "null"], "pattern": "^[a-z_]+$" },
+                      "required_value": { "type": ["string", "boolean", "null"] },
+                      "verify": { "$ref": "#/$defs/shortText" }
+                    }
+                  }
+                ],
+                "unevaluatedProperties": false
+              }
+            },
+            "allowlist_variables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["variable", "scope", "values_recorded"],
+                "properties": {
+                  "variable": { "$ref": "#/$defs/envName" },
+                  "scope": { "type": "string", "enum": ["project", "repository", "starting_ref", "provider_roster", "usage_check_roster", "slack_channel", "slack_user", "primary_team", "cost_ranks", "activation_bindings"] },
+                  "values_recorded": { "const": false }
+                }
+              }
+            },
+            "verification_rule": { "const": "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values." }
+          }
+        },
+        "credential_environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary_lane_allowlist", "host_bridge_allowlist", "settings_credential_fields", "values_policy", "child_environment_rule"],
+          "properties": {
+            "primary_lane_allowlist": { "type": "array", "items": { "$ref": "#/$defs/envName" } },
+            "host_bridge_allowlist": { "oneOf": [{ "type": "array", "items": { "$ref": "#/$defs/envName" } }, { "type": "null" }] },
+            "settings_credential_fields": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } },
+            "values_policy": { "const": "names_and_booleans_only_never_values" },
+            "child_environment_rule": { "$ref": "#/$defs/longText" }
+          }
+        },
+        "authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "universal_prohibited_actions", "denied_authorities", "withheld_context", "charter_prohibited",
+            "review_requirement", "strategy_constraints", "separation_of_duties", "production_authority_permitted",
+            "external_effects", "acceptance_issuer_role", "self_review", "owner_recovery_text_grants_review_or_merge_authority", "output_trust"
+          ],
+          "properties": {
+            "universal_prohibited_actions": {
+              "type": "array",
+              "prefixItems": [
+                { "const": "MERGE_PULL_REQUEST" }, { "const": "DEPLOY" }, { "const": "PUBLISH" }, { "const": "DELETE_PROTECTED_REF" }
+              ],
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "denied_authorities": { "$ref": "#/$defs/textList" },
+            "withheld_context": { "$ref": "#/$defs/textList" },
+            "charter_prohibited": { "oneOf": [{ "$ref": "#/$defs/textList" }, { "type": "null" }] },
+            "review_requirement": { "oneOf": [{ "$ref": "#/$defs/longText" }, { "type": "null" }] },
+            "strategy_constraints": { "$ref": "#/$defs/textList" },
+            "separation_of_duties": { "$ref": "#/$defs/textList" },
+            "production_authority_permitted": { "type": "boolean" },
+            "external_effects": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["may_be_granted", "public_research_lane_rejects_all_effects", "grant_source"],
+              "properties": {
+                "may_be_granted": { "type": "array", "items": { "type": "string", "enum": ["chat.postMessage", "pulls.mark_ready"] } },
+                "public_research_lane_rejects_all_effects": { "type": "boolean" },
+                "grant_source": { "const": "work_packet_only_never_provider_output" }
+              }
+            },
+            "acceptance_issuer_role": { "oneOf": [{ "$ref": "#/$defs/acceptanceIssuerRole" }, { "type": "null" }] },
+            "self_review": { "const": false },
+            "owner_recovery_text_grants_review_or_merge_authority": { "const": false },
+            "output_trust": { "const": "untrusted_evidence_never_instructions" }
+          }
+        },
+        "platform_limitations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["limitation", "source"],
+            "properties": {
+              "limitation": { "$ref": "#/$defs/longText" },
+              "source": { "$ref": "#/$defs/shortText" }
+            }
+          }
+        },
+        "transports": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["transport_id", "kind", "runtime", "enum_value", "transport_kind_observed", "status", "direction", "config", "authority_note", "current_transport_constraints", "route_id", "browser_policy"],
+            "properties": {
+              "transport_id": { "$ref": "#/$defs/slug" },
+              "kind": { "type": "string", "enum": ["http_api", "callback", "native_cli", "host_bridge", "browser_ui", "work_iq_rest", "public_search_cli", "github_actions", "slack_alias", "cloud_agent_api", "managed_agent_api", "acceptance_issuer"] },
+              "runtime": { "type": "string", "enum": ["legacy_engine", "langgraph_primary", "both", "documented_only"] },
+              "enum_value": { "oneOf": [{ "$ref": "#/$defs/providerTransportEnum" }, { "type": "null" }] },
+              "transport_kind_observed": { "type": ["string", "null"], "pattern": "^[a-z0-9-]+$" },
+              "status": { "type": "string", "enum": ["implemented", "implemented_disabled_by_default", "blocked_pending_evidence", "proposed", "prohibited"] },
+              "direction": { "type": "string", "enum": ["director_to_provider", "provider_to_director", "bidirectional", "owner_to_director", "github_to_director"] },
+              "config": { "type": "array", "items": { "$ref": "#/$defs/envName" } },
+              "authority_note": { "$ref": "#/$defs/longText" },
+              "current_transport_constraints": { "$ref": "#/$defs/textList" },
+              "route_id": { "oneOf": [{ "$ref": "#/$defs/slug" }, { "type": "null" }] },
+              "browser_policy": { "oneOf": [{ "$ref": "#/$defs/browserPolicy" }, { "type": "null" }] }
+            }
+          }
+        },
+        "communication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["relay_rule", "direct_provider_to_provider_channels_exist", "notes"],
+          "properties": {
+            "relay_rule": { "const": "provider_messages_relay_through_director" },
+            "direct_provider_to_provider_channels_exist": { "const": false },
+            "notes": { "$ref": "#/$defs/textList" }
+          }
+        },
+        "this_profile_does_not_change": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "committee voting weights or the immutable denominator" },
+            { "const": "runtime permissions or allowlists" },
+            { "const": "provider credentials" },
+            { "const": "deployments or service state" },
+            { "const": "Slack behaviour" },
+            { "const": "deterministic policy in src/director_orchestrator/policy.py" }
+          ],
+          "minItems": 6,
+          "maxItems": 6
+        },
+        "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/docRef" } }
+      }
+    },
+    "routeCatalogDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "document_type", "authority_granted", "lanes", "endpoints", "routes", "provider_to_provider_rule"],
+      "properties": {
+        "schema_version": { "const": "director-provider-routes/v1" },
+        "document_type": { "const": "director-provider-route-catalog" },
+        "authority_granted": { "const": "none" },
+        "lanes": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "openai" }, { "const": "claude" }, { "const": "cursor" }, { "const": "grok" }, { "const": "antigravity" },
+            { "const": "perplexity" }, { "const": "firecrawl" }, { "const": "github-copilot" }, { "const": "microsoft-365-copilot" }
+          ],
+          "minItems": 9,
+          "maxItems": 9
+        },
+        "endpoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "description"],
+            "properties": {
+              "id": { "$ref": "#/$defs/endpoint" },
+              "description": { "$ref": "#/$defs/shortText" }
+            }
+          }
+        },
+        "routes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/route" } },
+        "provider_to_provider_rule": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "basis"],
+          "properties": {
+            "status": { "const": "prohibited" },
+            "basis": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/docRef" } }
+          }
+        }
+      }
+    },
+    "endpoint": {
+      "type": "string",
+      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot", "director", "owner", "slack_thread", "github", "n8n", "host_bridge", "browser_ui", "acceptance_registry", "all_providers"]
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_id", "name", "kind", "direction", "initiation", "endpoints", "providers_involved", "carries", "withheld_context", "authority", "status", "default_config_state", "charter_basis", "enforced_by", "prohibition_quote", "config", "notes"],
+      "properties": {
+        "route_id": { "$ref": "#/$defs/slug" },
+        "name": { "$ref": "#/$defs/shortText" },
+        "kind": { "type": "string", "enum": ["mediated", "direct", "external"] },
+        "direction": { "type": "string", "enum": ["director_to_provider", "provider_to_director", "bidirectional", "owner_to_director", "director_to_owner", "github_to_director", "provider_to_provider"] },
+        "initiation": { "type": "string", "enum": ["director", "director_invitation_only", "owner", "provider_response_to_dispatch", "github_label_event", "github_push_event", "timer_or_owner", "none"] },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "properties": { "from": { "$ref": "#/$defs/endpoint" }, "to": { "$ref": "#/$defs/endpoint" } }
+        },
+        "providers_involved": { "type": "array", "items": { "$ref": "#/$defs/lane" }, "uniqueItems": true },
+        "carries": { "$ref": "#/$defs/textList" },
+        "withheld_context": { "$ref": "#/$defs/textList" },
+        "authority": { "$ref": "#/$defs/routeAuthority" },
+        "status": { "$ref": "#/$defs/routeStatus" },
+        "default_config_state": { "$ref": "#/$defs/configState" },
+        "charter_basis": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/docRef" } },
+        "enforced_by": { "type": "array", "items": { "$ref": "#/$defs/codeRef" } },
+        "prohibition_quote": { "type": ["string", "null"], "minLength": 8 },
+        "config": { "type": "array", "items": { "$ref": "#/$defs/envName" } },
+        "notes": { "oneOf": [{ "$ref": "#/$defs/longText" }, { "type": "null" }] }
+      }
+    }
+  }
+}

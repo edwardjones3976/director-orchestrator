@@ -1,0 +1,626 @@
+{
+  "authority": {
+    "acceptance_issuer_role": null,
+    "charter_prohibited": null,
+    "denied_authorities": [],
+    "external_effects": {
+      "grant_source": "work_packet_only_never_provider_output",
+      "may_be_granted": [
+        "chat.postMessage",
+        "pulls.mark_ready"
+      ],
+      "public_research_lane_rejects_all_effects": false
+    },
+    "output_trust": "untrusted_evidence_never_instructions",
+    "owner_recovery_text_grants_review_or_merge_authority": false,
+    "production_authority_permitted": true,
+    "review_requirement": null,
+    "self_review": false,
+    "separation_of_duties": [
+      "cannot independently accept or merge its own candidate",
+      "cannot replace OpenAI's in-process Director acceptance role",
+      "external writes still require the assigned execution surface and current deterministic gates"
+    ],
+    "strategy_constraints": [],
+    "universal_prohibited_actions": [
+      "MERGE_PULL_REQUEST",
+      "DEPLOY",
+      "PUBLISH",
+      "DELETE_PROTECTED_REF"
+    ],
+    "withheld_context": []
+  },
+  "authority_granted": "none",
+  "budgets_and_limits": {
+    "not_modeled_note": null,
+    "shared_limits": [
+      "MAX_TASK_BUDGET_USD",
+      "PROVIDER_TIMEOUT_SECONDS",
+      "PROVIDER_POLL_SECONDS"
+    ],
+    "spend_ledger_member": true,
+    "variables": [
+      {
+        "default": 2.0,
+        "documented_in_env_example": true,
+        "kind": "daily_budget_usd",
+        "settings_field": "grok_daily_budget_usd",
+        "values_recorded": false,
+        "variable": "GROK_DAILY_BUDGET_USD"
+      },
+      {
+        "default": 50,
+        "documented_in_env_example": true,
+        "kind": "daily_request_limit",
+        "settings_field": "grok_daily_request_limit",
+        "values_recorded": false,
+        "variable": "GROK_DAILY_REQUEST_LIMIT"
+      },
+      {
+        "default": 0.01,
+        "documented_in_env_example": true,
+        "kind": "per_request_cost_floor_usd",
+        "settings_field": "grok_request_cost_floor_usd",
+        "values_recorded": false,
+        "variable": "GROK_REQUEST_COST_FLOOR_USD"
+      },
+      {
+        "default": 180,
+        "documented_in_env_example": true,
+        "kind": "timeout_seconds",
+        "settings_field": "grok_timeout_seconds",
+        "values_recorded": false,
+        "variable": "GROK_TIMEOUT_SECONDS"
+      },
+      {
+        "default": 4096,
+        "documented_in_env_example": true,
+        "kind": "max_output_tokens",
+        "settings_field": "grok_max_output_tokens",
+        "values_recorded": false,
+        "variable": "GROK_MAX_OUTPUT_TOKENS"
+      },
+      {
+        "default": 262144,
+        "documented_in_env_example": true,
+        "kind": "context_ceiling_chars",
+        "settings_field": "grok_max_context_chars",
+        "values_recorded": false,
+        "variable": "GROK_MAX_CONTEXT_CHARS"
+      },
+      {
+        "default": 3600,
+        "documented_in_env_example": true,
+        "kind": "timeout_seconds",
+        "settings_field": "grok_cli_timeout_seconds",
+        "values_recorded": false,
+        "variable": "GROK_CLI_TIMEOUT_SECONDS"
+      },
+      {
+        "default": 20,
+        "documented_in_env_example": true,
+        "kind": "max_turns",
+        "settings_field": "grok_cli_max_turns",
+        "values_recorded": false,
+        "variable": "GROK_CLI_MAX_TURNS"
+      }
+    ]
+  },
+  "capabilities": {
+    "antigravity_capabilities": null,
+    "antigravity_interaction_kinds": null,
+    "assignment_kinds": [
+      "general",
+      "implementation",
+      "research",
+      "independent_review",
+      "exact_sha_review"
+    ],
+    "charter_allowed": null,
+    "may_cast_committee_vote": true,
+    "may_create_draft_pr": "gated_by_allow_flag",
+    "may_deploy_or_publish": false,
+    "may_issue_review_verdict": "gated_by_allow_flag_and_cli",
+    "may_merge": false,
+    "may_post_to_slack": false,
+    "receives_repository_context": true,
+    "receives_task_prose": true,
+    "required_evidence": null,
+    "strengths": [
+      "full-spectrum repository implementation",
+      "independent technical reasoning and planning",
+      "architecture, reliability, and security-adjacent analysis",
+      "cross-platform quality assurance and exact-candidate review",
+      "technical leadership and coordination"
+    ],
+    "summary": "Implementation, research, reproduction, testing, and independent exact-SHA review through a capable authorized contact when Grok did not materially author the candidate. The in-process API contact is analysis only; repository work and review verdicts need the digest-verified CLI contact.",
+    "tool_use": "repository_cli",
+    "web_grounded_research": false
+  },
+  "communication": {
+    "direct_provider_to_provider_channels_exist": false,
+    "notes": [
+      "Grok reaches Claude, Cursor, OpenAI, and every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns.",
+      "Grok never posts to the Slack thread; the Director relays a concise assignment-correlated summary.",
+      "Grok Bot, if ever implemented, would be a Director-to-Grok contact, not a peer channel."
+    ],
+    "relay_rule": "provider_messages_relay_through_director"
+  },
+  "credential_environment": {
+    "child_environment_rule": "A native command receives only the base child environment plus the lane's allowlisted credential names; Director, Slack, and other provider secrets are never passed to a Grok process.",
+    "host_bridge_allowlist": [
+      "XAI_API_KEY"
+    ],
+    "primary_lane_allowlist": [
+      "GROK_API_KEY",
+      "XAI_API_KEY"
+    ],
+    "settings_credential_fields": [
+      "grok_api_key"
+    ],
+    "values_policy": "names_and_booleans_only_never_values"
+  },
+  "display_name": "Grok (xAI)",
+  "document_type": "director-provider-profile",
+  "gating": {
+    "allowlist_variables": [
+      {
+        "scope": "project",
+        "values_recorded": false,
+        "variable": "PROJECT_ALLOWLIST"
+      },
+      {
+        "scope": "repository",
+        "values_recorded": false,
+        "variable": "REPOSITORY_ALLOWLIST"
+      },
+      {
+        "scope": "starting_ref",
+        "values_recorded": false,
+        "variable": "ALLOWED_STARTING_REFS"
+      },
+      {
+        "scope": "usage_check_roster",
+        "values_recorded": false,
+        "variable": "USAGE_CHECK_PROVIDERS"
+      },
+      {
+        "scope": "cost_ranks",
+        "values_recorded": false,
+        "variable": "TRUSTED_PROVIDER_COST_RANKS"
+      },
+      {
+        "scope": "provider_roster",
+        "values_recorded": false,
+        "variable": "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS"
+      }
+    ],
+    "health_key": "grok",
+    "primary_lane_authentication_source": "environment_variable",
+    "readiness_function": "grok_primary_readiness",
+    "readiness_keys": [
+      "budget_valid",
+      "context_limit_valid",
+      "credential_configured",
+      "cursor_family_primary_mode",
+      "daily_request_limit_valid",
+      "enabled",
+      "model_configured",
+      "official_api_endpoint",
+      "output_limit_valid",
+      "repository_transport_ready",
+      "request_cost_floor_valid",
+      "timeout_valid",
+      "tools_disabled"
+    ],
+    "variables": [
+      {
+        "default": false,
+        "documented_in_env_example": true,
+        "kind": "enable_switch",
+        "readiness_key": "enabled",
+        "required_value": true,
+        "settings_field": "grok_enabled",
+        "values_recorded": false,
+        "variable": "GROK_ENABLED",
+        "verify": "GET /health grok.enabled"
+      },
+      {
+        "default": "cursor_family_primary",
+        "documented_in_env_example": true,
+        "kind": "mode_lock",
+        "readiness_key": "cursor_family_primary_mode",
+        "required_value": "cursor_family_primary",
+        "settings_field": "grok_mode",
+        "values_recorded": false,
+        "variable": "GROK_MODE",
+        "verify": "GET /health grok.cursor_family_primary_mode"
+      },
+      {
+        "default": "https://api.x.ai/v1",
+        "documented_in_env_example": true,
+        "kind": "endpoint_lock",
+        "readiness_key": "official_api_endpoint",
+        "required_value": "https://api.x.ai/v1",
+        "settings_field": "grok_api_base",
+        "values_recorded": false,
+        "variable": "GROK_API_BASE",
+        "verify": "GET /health grok.official_api_endpoint"
+      },
+      {
+        "default": false,
+        "documented_in_env_example": true,
+        "kind": "allow_flag_must_stay_false",
+        "readiness_key": "tools_disabled",
+        "required_value": false,
+        "settings_field": "grok_allow_tools",
+        "values_recorded": false,
+        "variable": "GROK_ALLOW_TOOLS",
+        "verify": "GET /health grok.tools_disabled"
+      },
+      {
+        "default": false,
+        "documented_in_env_example": true,
+        "kind": "allow_flag_elevating",
+        "readiness_key": "repository_transport_ready",
+        "required_value": null,
+        "settings_field": "grok_allow_repository_write",
+        "values_recorded": false,
+        "variable": "GROK_ALLOW_REPOSITORY_WRITE",
+        "verify": "elevates only with GROK_CLI_ENABLED, a digest-verified executable, and a nonempty repository map"
+      },
+      {
+        "default": false,
+        "documented_in_env_example": true,
+        "kind": "allow_flag_elevating",
+        "readiness_key": "repository_transport_ready",
+        "required_value": null,
+        "settings_field": "grok_allow_review_verdict",
+        "values_recorded": false,
+        "variable": "GROK_ALLOW_REVIEW_VERDICT",
+        "verify": "elevates only with GROK_CLI_ENABLED, a digest-verified executable, and a nonempty repository map"
+      },
+      {
+        "default": false,
+        "documented_in_env_example": true,
+        "kind": "enable_switch",
+        "readiness_key": "repository_transport_ready",
+        "required_value": null,
+        "settings_field": "grok_cli_enabled",
+        "values_recorded": false,
+        "variable": "GROK_CLI_ENABLED",
+        "verify": "GET /health grok.repository_transport_ready"
+      },
+      {
+        "default": "",
+        "documented_in_env_example": true,
+        "kind": "executable_digest",
+        "readiness_key": "repository_transport_ready",
+        "required_value": null,
+        "settings_field": "grok_cli_executable_sha256",
+        "values_recorded": false,
+        "variable": "GROK_CLI_EXECUTABLE_SHA256",
+        "verify": "revalidated immediately before every repository-capable dispatch"
+      },
+      {
+        "default": "{}",
+        "documented_in_env_example": true,
+        "kind": "repository_map",
+        "readiness_key": "repository_transport_ready",
+        "required_value": null,
+        "settings_field": "grok_cli_repository_roots",
+        "values_recorded": false,
+        "variable": "GROK_CLI_REPOSITORY_MAP_JSON",
+        "verify": "absolute named-worktree map; never recorded here"
+      },
+      {
+        "default": "",
+        "documented_in_env_example": true,
+        "kind": "credential_presence",
+        "readiness_key": "credential_configured",
+        "required_value": null,
+        "settings_field": "grok_api_key",
+        "values_recorded": false,
+        "variable": "XAI_API_KEY",
+        "verify": "GET /health grok.credential_configured"
+      },
+      {
+        "default": null,
+        "documented_in_env_example": false,
+        "kind": "credential_presence",
+        "readiness_key": null,
+        "required_value": null,
+        "settings_field": null,
+        "values_recorded": false,
+        "variable": "GROK_API_KEY",
+        "verify": "primary-lane environment alias accepted by the host bridge allowlist"
+      }
+    ],
+    "verification_rule": "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+  },
+  "identifiers": {
+    "alias_note": "The committee records the provider as xai. The xAI Responses API, the Grok Build CLI, and the not-yet-implemented Grok Bot are three distinct contacts of one lane; they never create a second quota or an independent reviewer.",
+    "backend_identity": "grok",
+    "charter_workload_lane_key": "grok",
+    "committee_member_key": "grok",
+    "config_prefixes": [
+      "GROK_",
+      "XAI_"
+    ],
+    "has_legacy_adapter": true,
+    "lane_id": "grok",
+    "legacy_accounting_agent": "grok",
+    "legacy_accounting_note": "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority.",
+    "provider_name_enum": "grok",
+    "standing_role_label": "Cursor-Family Primary Teammate"
+  },
+  "models_and_effort": {
+    "catalog_check": "Before the first paid request in a process the adapter authenticates GET /models and requires the configured model ID to be present in the xAI catalog.",
+    "effort_variables": [],
+    "model_variables": [
+      {
+        "default": "grok-4.6",
+        "documented_in_env_example": true,
+        "role": "provider_model",
+        "settings_field": "grok_model",
+        "values_recorded": false,
+        "variable": "GROK_MODEL"
+      }
+    ],
+    "note": "No reasoning-effort variable exists for Grok. Requests use POST /responses with tools=[] and store=false; the synchronous API adapter never polls."
+  },
+  "platform_limitations": [
+    {
+      "limitation": "The in-process Responses API contact is synchronous and tool-free; API-only output is never promoted into repository or review authority.",
+      "source": "docs/provider-setup.md, Grok primary Cursor-family profile"
+    },
+    {
+      "limitation": "The Grok Build CLI is a native-host capability. A containerized Director cannot use the Windows executable or a host worktree path without an authenticated host runner.",
+      "source": "docs/provider-setup.md, Grok primary Cursor-family profile"
+    },
+    {
+      "limitation": "Readiness fails closed unless the endpoint is exactly the official xAI API base, tools stay disabled, every bound is valid, and any elevated authority has a nonempty explicit CLI worktree map.",
+      "source": "src/director_orchestrator/config.py:grok_primary_readiness"
+    },
+    {
+      "limitation": "Draft-PR work requires an isolated grok/* worktree and may create one draft PR but may not merge it.",
+      "source": "docs/provider-setup.md, Grok primary Cursor-family profile"
+    },
+    {
+      "limitation": "Grok Bot is named by the charter as a distinct contact but has no adapter, transport enum value, or configuration variable in this repository.",
+      "source": "docs/team-operating-charter.md; src/director_orchestrator/interactions.py:ProviderTransport"
+    },
+    {
+      "limitation": "Owner-reported account context: lower-capacity paid service; API billing and quotas must be verified separately.",
+      "source": "src/director_orchestrator/config.py:provider_strategy"
+    }
+  ],
+  "provider_id": "grok",
+  "roles": {
+    "allocation": {
+      "accounting_basis": "admitted_assignment_count",
+      "accounting_status": "direct_production_allocation",
+      "capacity_context": "owner_Pro20x_Max5x_not_API_entitlements",
+      "default_profile": "engineering",
+      "overall_effort_policy": "telemetry_only_no_separate_allocation",
+      "profiles": {
+        "engineering": 10,
+        "enterprise": 5,
+        "mixed": 10,
+        "public_research": 5
+      },
+      "zero_target_rule": "ineligible"
+    },
+    "capability_parity_target": 1.0,
+    "charter_workload_lane": "primary_full_spectrum",
+    "committee": {
+      "may_initiate_debate": false,
+      "member": true,
+      "seatable_in_debate": true,
+      "vote_grants_authority": false,
+      "voting_power": 1.5
+    },
+    "comparison_peers": [
+      "claude",
+      "openai_codex",
+      "cursor"
+    ],
+    "elevated_work": [
+      "architecture",
+      "complex implementation",
+      "reliability and recovery",
+      "security remediation",
+      "independent exact-SHA review",
+      "cross-platform QA",
+      "technical coordination"
+    ],
+    "eligible_complexity": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+    ],
+    "eligible_responsibility_areas": [
+      "research",
+      "evidence_verification",
+      "programming",
+      "deep_reasoning",
+      "innovation",
+      "development",
+      "quality_assurance",
+      "leadership"
+    ],
+    "excluded_responsibility_areas": [],
+    "family": "cursor",
+    "hygiene_review": null,
+    "lane_class": "full_spectrum_primary",
+    "non_substitution_rules": [
+      "Grok cannot perform OpenAI's Director acceptance role.",
+      "Grok does not replace mandatory Codex Security.",
+      "Grok cannot review or approve its own work.",
+      "Capability parity does not bypass assignment scope or deterministic gates."
+    ],
+    "openai_functions": null,
+    "routing_rule": "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.",
+    "strategy_key": "grok",
+    "strategy_priority": "primary_cursor_family_repository_partner",
+    "summary": "Cursor-family primary teammate with full task-capability parity to Cursor, Claude, and OpenAI Codex across all eight responsibility areas and low through critical complexity. Transport-specific limits decide what a particular assignment can actually perform without reducing Grok's team rank.",
+    "team": "primary",
+    "transport_rule": "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact."
+  },
+  "schema_version": "director-provider-profile/v1",
+  "source_of_truth": {
+    "allocation_module": "src/director_orchestrator/allocation_profiles.py",
+    "charter_document": "docs/team-operating-charter.md",
+    "charter_module": "src/director_orchestrator/team_charter.py",
+    "deterministic_policy": "src/director_orchestrator/policy.py",
+    "drift_rule": "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong.",
+    "precedence": "charter_code_and_deterministic_policy_override_this_profile",
+    "route_catalog": "docs/provider-profiles/routes.yaml"
+  },
+  "sources": [
+    {
+      "anchor": "xAI API, Grok Build CLI, and Grok Bot are distinct contacts",
+      "document": "docs/team-operating-charter.md"
+    },
+    {
+      "anchor": "Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex.",
+      "document": "docs/team-operating-charter.md"
+    },
+    {
+      "anchor": "The Grok adapter has two explicit transports.",
+      "document": "docs/provider-setup.md"
+    },
+    {
+      "anchor": "Canonical profile IDs are `mixed`, `engineering`, `public_research`, and",
+      "document": "docs/provider-allocation-profiles.md"
+    },
+    {
+      "anchor": "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.",
+      "document": "docs/templates/project-bootstrap/provider-roles-contract.yaml"
+    }
+  ],
+  "this_profile_does_not_change": [
+    "committee voting weights or the immutable denominator",
+    "runtime permissions or allowlists",
+    "provider credentials",
+    "deployments or service state",
+    "Slack behaviour",
+    "deterministic policy in src/director_orchestrator/policy.py"
+  ],
+  "transports": [
+    {
+      "authority_note": "Analysis, planning, and debate only. Carries no repository-write, branch, pull-request, merge, or deployment lane regardless of packet content.",
+      "browser_policy": null,
+      "config": [
+        "GROK_ENABLED",
+        "XAI_API_KEY",
+        "GROK_API_BASE",
+        "GROK_MODEL",
+        "GROK_ALLOW_TOOLS"
+      ],
+      "current_transport_constraints": [
+        "the in-process Responses API contact is synchronous and tool-free",
+        "repository execution uses the separately authenticated Grok Build or Grok Bot contact",
+        "the configured API model must appear in the authenticated xAI model catalog before the first paid request in each process"
+      ],
+      "direction": "director_to_provider",
+      "enum_value": "xai_responses_api",
+      "kind": "http_api",
+      "route_id": "xai-responses-api",
+      "runtime": "both",
+      "status": "implemented_disabled_by_default",
+      "transport_id": "xai-responses-api",
+      "transport_kind_observed": null
+    },
+    {
+      "authority_note": "Repository implementation and exact-SHA review from an exact configured clean worktree. Review verifies both commit objects exist locally, that base is an ancestor of head, runs read-only, and binds repository, base, and head evidence to the returned artifact.",
+      "browser_policy": null,
+      "config": [
+        "GROK_CLI_ENABLED",
+        "GROK_CLI_EXECUTABLE",
+        "GROK_CLI_EXECUTABLE_SHA256",
+        "GROK_CLI_REPOSITORY_MAP_JSON",
+        "GROK_ALLOW_REPOSITORY_WRITE",
+        "GROK_ALLOW_REVIEW_VERDICT"
+      ],
+      "current_transport_constraints": [
+        "executable must be an absolute regular-file path whose exact SHA-256 is recorded and revalidated before every repository-capable dispatch",
+        "draft-PR work requires an isolated grok/* worktree and may not merge"
+      ],
+      "direction": "director_to_provider",
+      "enum_value": "grok_cli",
+      "kind": "native_cli",
+      "route_id": "grok-build-cli",
+      "runtime": "legacy_engine",
+      "status": "implemented_disabled_by_default",
+      "transport_id": "grok-build-cli",
+      "transport_kind_observed": null
+    },
+    {
+      "authority_note": "Named by the charter as a distinct contact. No adapter, enum value, or variable exists; documenting it here authorizes nothing.",
+      "browser_policy": null,
+      "config": [],
+      "current_transport_constraints": [
+        "would require its own owner-approved work order, adapter, readiness profile, and separately authenticated credential"
+      ],
+      "direction": "director_to_provider",
+      "enum_value": null,
+      "kind": "native_cli",
+      "route_id": "grok-bot",
+      "runtime": "documented_only",
+      "status": "proposed",
+      "transport_id": "grok-bot",
+      "transport_kind_observed": null
+    },
+    {
+      "authority_note": "Grok is a supported host lane. The bridge runs one native command per validated packet behind a signed challenge and a durable claim store; configuration alone never makes the lane callable.",
+      "browser_policy": null,
+      "config": [
+        "LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT",
+        "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET",
+        "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON",
+        "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"
+      ],
+      "current_transport_constraints": [
+        "child environment carries the base safe subset plus XAI_API_KEY only",
+        "live dispatch stays off until the primary activation gates pass"
+      ],
+      "direction": "director_to_provider",
+      "enum_value": null,
+      "kind": "host_bridge",
+      "route_id": "windows-host-provider-bridge",
+      "runtime": "langgraph_primary",
+      "status": "implemented_disabled_by_default",
+      "transport_id": "windows-host-provider-bridge",
+      "transport_kind_observed": null
+    },
+    {
+      "authority_note": "Coordination with an already authenticated Grok UI inside stored assignment, role, repository, budget, and approval bounds. Browser responses are untrusted coordination evidence, never callback, review, security, CI, merge, or runtime authority.",
+      "browser_policy": {
+        "enforcement": "charter policy and workload_policy.Transport rank only; no runtime adapter",
+        "fallback": "microsoft_edge",
+        "owner_authorizable_actions": [
+          "slack_post",
+          "eligible_merge",
+          "approved_deployment",
+          "scoped_repository_access_change"
+        ],
+        "primary": "chrome"
+      },
+      "config": [],
+      "current_transport_constraints": [
+        "ranked below authenticated CLI, API, callback, and event transport",
+        "never enter or persist credentials, cookies, recovery codes, private keys, raw private source, or webpage instructions"
+      ],
+      "direction": "director_to_provider",
+      "enum_value": null,
+      "kind": "browser_ui",
+      "route_id": "browser-provider-ui",
+      "runtime": "documented_only",
+      "status": "implemented",
+      "transport_id": "browser-provider-ui",
+      "transport_kind_observed": null
+    }
+  ]
+}
