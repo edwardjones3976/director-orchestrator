@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]] -->
@@ -76,8 +77,14 @@ has rotated out, readiness fails closed. No caller/archive-supplied JWKS fallbac
 is supported; an owner-pinned historical key archive would require separate work.
 
 DefaultPrimaryActivation now checks v2 acceptance/restore/inventory readiness
-before opening the primary database; after opening it verifies the actual storage
-identity and database-instance UUID before any intake/writer acquisition. Both
+before opening the primary database. It compares the accepted target identity
+before connecting, then reads existing server metadata and the database-instance
+UUID before any setup DDL. Each new pool connection validates this metadata, and
+control-plane setup repeats the check under its advisory lock on the same
+connection that performs setup, without reopening between validation and DDL.
+Missing metadata is rejected; v2 startup cannot initialize an unaccepted database.
+The existing post-open comparison remains a final consistency check before any
+intake/writer acquisition. GitHub-v1 retains its existing initialization path. Both
 pre-ACTIVATED readiness and a complete ACTIVATED restart are accepted. Missing,
 revoked, tampered or wrong-candidate evidence blocks startup. This does not waive
 provider LIVE_OK, owner approval, one-writer, migration/restore, kill-switch or
@@ -89,3 +96,5 @@ own deployment/adoption.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]] -->

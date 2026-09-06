@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -1992,6 +1993,10 @@ class DefaultPrimaryActivation:
                 settings.langgraph_primary_allow_insecure_local_postgres
             ),
             completion_authority_verifier=completion_verifier,
+            **({
+                "accepted_storage_identity": accepted_identity.database_identity,
+                "accepted_instance_id": accepted_identity.database_instance_id,
+            } if accepted_identity is not None else {}),
         )
         try:
             bind_runtime_database(accepted_identity, handle)
@@ -2655,3 +2660,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]

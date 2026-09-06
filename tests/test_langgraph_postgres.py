@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | BEGIN]]
@@ -1687,11 +1688,13 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
                 # Emulates ON CONFLICT DO NOTHING.
                 state.setdefault("version", parameters["version"])
                 state.setdefault("identity", parameters["identity"])
+                state.setdefault("instance", parameters["instance_id"])
                 return None
             if squashed.startswith("SELECT control_plane_version"):
                 return {
                     "control_plane_version": state.get("version"),
                     "storage_identity": state.get("identity"),
+                    "database_instance_id": state.get("instance"),
                 }
             return None
 
@@ -1728,6 +1731,55 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
         return _storage_identity(self.parse(dsn), schema=schema)
 
     # -- factory ----------------------------------------------------------
+
+    def test_primary_v2_passes_verified_database_binding_before_open(self):
+        from types import SimpleNamespace
+        from director_orchestrator.config import Settings
+        from director_orchestrator.primary_default import DefaultPrimaryActivation
+        settings = dataclasses.replace(Settings(), langgraph_primary_enabled=True, allow_paid_runs=False)
+        accepted = SimpleNamespace(database_identity="accepted-target", database_instance_id="accepted-instance")
+        with patch("director_orchestrator.primary_default.resolve_default_primary_authority"), patch("director_orchestrator.primary_default.build_typed_external_effect_grant"), patch("director_orchestrator.acceptance_journal.require_runtime_acceptance", return_value=accepted), patch("director_orchestrator.primary_default.open_postgres_control_plane", side_effect=RuntimeError("stop before open")) as opened:
+            with self.assertRaisesRegex(RuntimeError, "stop before open"):
+                DefaultPrimaryActivation(settings)
+        self.assertEqual("accepted-target", opened.call_args.kwargs["accepted_storage_identity"])
+        self.assertEqual("accepted-instance", opened.call_args.kwargs["accepted_instance_id"])
+
+    def test_new_pool_connection_checks_actual_server_metadata_without_ddl(self):
+        from director_orchestrator.langgraph_postgres import _configure_connection
+        connection = _Connection(lambda sql, params: {"search_path": DEFAULT_CONTROL_PLANE_SCHEMA} if sql == "SHOW search_path" else {"control_plane_version": CONTROL_PLANE_VERSION, "storage_identity": "accepted", "database_instance_id": "wrong"})
+        configure = _configure_connection(DEFAULT_CONTROL_PLANE_SCHEMA, "pinned",
+            accepted_storage_identity="accepted", accepted_instance_id="12345678-1234-1234-1234-123456789abc")
+        with self.assertRaisesRegex(PostgresCheckpointConfigurationError, "accepted instance before setup"):
+            configure(connection)
+        self.assertTrue(all(sql.startswith(("SHOW", "SELECT")) for sql in connection.statements()))
+
+    def test_accepted_wrong_target_never_opens_pool(self):
+        with self.assertRaisesRegex(PostgresCheckpointConfigurationError, "target differs"):
+            self.open_with_fakes(accepted_storage_identity="postgres:sha256:" + "0"*64,
+                                 accepted_instance_id="12345678-1234-1234-1234-123456789abc")
+        self.assertEqual([], self.pools)
+
+    def test_accepted_wrong_or_missing_instance_receives_no_ddl(self):
+        accepted = "12345678-1234-1234-1234-123456789abc"
+        for metadata in ({}, {"version": CONTROL_PLANE_VERSION, "identity": self.identity(SECURE_DSN), "instance": "87654321-1234-1234-1234-123456789abc"}):
+            with self.subTest(metadata=metadata):
+                self.metadata = metadata
+                with self.assertRaisesRegex(PostgresCheckpointConfigurationError, "accepted instance before setup"):
+                    self.open_with_fakes(accepted_storage_identity=self.identity(SECURE_DSN), accepted_instance_id=accepted)
+                pool = self.pools[-1]
+                self.assertTrue(all(sql.lstrip().startswith("SELECT") for sql in pool._connection.statements()))
+                self.assertEqual(1, pool.closed)
+                self.assertEqual([], _Saver.instances)
+
+    def test_accepted_instance_is_read_before_ddl_on_same_connection(self):
+        accepted = "12345678-1234-1234-1234-123456789abc"
+        self.metadata = {"version": CONTROL_PLANE_VERSION, "identity": self.identity(SECURE_DSN), "instance": accepted}
+        handle = self.open_with_fakes(accepted_storage_identity=self.identity(SECURE_DSN), accepted_instance_id=accepted)
+        statements = self.pools[0]._connection.statements()
+        self.assertIn("SELECT control_plane_version", statements[1])
+        self.assertTrue(any(sql.lstrip().startswith("CREATE") for sql in statements[2:]))
+        self.assertEqual(accepted, handle.database_instance_id)
+        self.assertEqual(1, _Saver.instances[0].setup_calls)
 
     def test_opens_bounded_pool_and_never_surfaces_credentials(self):
         handle = self.open_with_fakes()
@@ -2293,6 +2345,44 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         )
         self.addCleanup(handle.close)
         return handle.claim_store
+
+    def test_provider_v2_real_pool_checks_identity_before_any_ddl(self):
+        # A disposable event trigger records attempted successful DDL, including
+        # idempotent setup, rather than merely comparing unchanged table names.
+        marker = "acceptance_" + uuid.uuid4().hex[:10]
+        missing_schema = marker + "_v2"
+        bounds = PostgresPoolBounds(min_size=1, max_size=1,
+            connect_timeout_seconds=2, pool_timeout_seconds=2)
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"CREATE TABLE {self.schema}.{marker} (tag text)")
+            connection.execute(f"CREATE FUNCTION {self.schema}.{marker}() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO {self.schema}.{marker} VALUES (TG_TAG); END $$")
+            connection.execute(f"CREATE EVENT TRIGGER {marker} ON ddl_command_end EXECUTE FUNCTION {self.schema}.{marker}()")
+            try:
+                accepted = open_postgres_control_plane(_TEST_DSN, schema=self.schema,
+                    bounds=bounds, allow_insecure_local_transport=True,
+                    accepted_storage_identity=self.handle.storage_identity,
+                    accepted_instance_id=self.handle.database_instance_id)
+                accepted.close()
+                before = connection.execute(f"SELECT count(*) AS n FROM {self.schema}.{marker}").fetchone()["n"]
+                self.assertGreater(before, 0)
+                parsed = _parse_connection_target(_TEST_DSN, conninfo_to_dict=conninfo_to_dict,
+                                                  allow_insecure_local_transport=True)
+                for schema, identity, instance in (
+                    (self.schema, self.handle.storage_identity, str(uuid.uuid4())),
+                    (missing_schema, _storage_identity(parsed, schema=missing_schema), str(uuid.uuid4())),
+                ):
+                    with self.subTest(schema=schema):
+                        with self.assertRaises(Exception):
+                            open_postgres_control_plane(_TEST_DSN, schema=schema,
+                                bounds=bounds, allow_insecure_local_transport=True,
+                                accepted_storage_identity=identity, accepted_instance_id=instance)
+                        after = connection.execute(f"SELECT count(*) AS n FROM {self.schema}.{marker}").fetchone()["n"]
+                        self.assertEqual(before, after, "unaccepted database received setup DDL")
+                self.assertIsNone(connection.execute("SELECT schema_name FROM information_schema.schemata WHERE schema_name = %s", (missing_schema,)).fetchone())
+            finally:
+                connection.execute(f"DROP EVENT TRIGGER {marker}")
+                connection.execute(f"DROP FUNCTION {self.schema}.{marker}()")
+                connection.execute(f"DROP TABLE {self.schema}.{marker}")
 
     # -- ownership races --------------------------------------------------
 
@@ -3491,3 +3581,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 06:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
