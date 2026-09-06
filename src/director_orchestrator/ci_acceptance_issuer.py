@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]]
 """Fixed GitHub OIDC trust and CI-only ephemeral acceptance issuer.
 
@@ -27,6 +28,11 @@ OIDC_VERSION = "director-ci-oidc/v1"
 ISSUER = "https://token.actions.githubusercontent.com"
 JWKS_URL = ISSUER + "/.well-known/jwks"
 API = "https://api.github.com"
+PRODUCTION_CI_CHECKS = frozenset({
+    "Contribution attribution", "Python 3.12 (ubuntu-latest)",
+    "Python 3.12 (windows-latest)", "Compose and container build",
+    "Secret hygiene", "Cross-process recovery probe",
+})
 
 
 @dataclass(frozen=True)
@@ -101,8 +107,8 @@ def oidc_audience(public_key: str, expected: ReviewContext) -> str:
         {"public_key": public_key, "context": expected.document()})).hexdigest()
 
 
-def resolve_ci_authority(envelope: dict, *, expected: ReviewContext,
-                         policy: GitHubOIDCPolicy, now: int) -> IssuerAuthority:
+def resolve_ci_identity(envelope: dict, *, expected: ReviewContext,
+                        policy: GitHubOIDCPolicy, now: int) -> tuple[IssuerAuthority, str]:
     """Authenticate with fresh JWKS at a caller-trusted evaluation time.
 
     Readiness may supply the original acceptance time, but must still verify the
@@ -145,9 +151,15 @@ def resolve_ci_authority(envelope: dict, *, expected: ReviewContext,
             raise ValueError("OIDC lifetime invalid")
         if not all(isinstance(claims.get(k), str) and re.fullmatch(r"[1-9][0-9]*", claims[k]) for k in ("run_id", "run_attempt")):
             raise ValueError("OIDC run identity missing")
-        return policy.authority(key)
+        return policy.authority(key), f"github-actions:{claims['run_id']}:{claims['run_attempt']}"
     except (ValueError, TypeError, KeyError, jwt.PyJWTError) as exc:
         raise ProviderAcceptanceError("GitHub OIDC identity rejected") from exc
+
+
+def resolve_ci_authority(envelope: dict, *, expected: ReviewContext,
+                         policy: GitHubOIDCPolicy, now: int) -> IssuerAuthority:
+    """Compatibility wrapper; package verifiers must also bind issuing session."""
+    return resolve_ci_identity(envelope, expected=expected, policy=policy, now=now)[0]
 
 
 class GitHubEvidenceClient:
@@ -239,9 +251,9 @@ def issue_ci_receipt(*, expected: ReviewContext, policy: GitHubOIDCPolicy,
     url = urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
     token = _read_json(url, {"Authorization": "Bearer " + oidc_request_token})["value"]
     envelope = dict(version=OIDC_VERSION, public_key=encoded, token=token)
-    authority = resolve_ci_authority(envelope, expected=expected, policy=policy, now=int(time.time()))
+    authority, issuer_session = resolve_ci_identity(envelope, expected=expected, policy=policy, now=int(time.time()))
     receipt = dict(role="ci", provider="github-actions", principal=authority.principal,
-        deployment=authority.deployment, session_id=f"github-actions:{run_id}:{run_attempt}",
+        deployment=authority.deployment, session_id=issuer_session,
         transport_evidence_digest=hashlib.sha256(canonical(evidence)).hexdigest(),
         verdict="SUCCESS", ci_checks=evidence["checks"], ci_workflow_ref=policy.workflow_ref,
         ci_workflow_commit=policy.workflow_sha)
@@ -261,6 +273,8 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     policy = GitHubOIDCPolicy.from_document(json.loads(os.environ["CI_ISSUER_POLICY_JSON"]))
+    if not PRODUCTION_CI_CHECKS <= policy.required_ci_checks:
+        raise ProviderAcceptanceError("production CI policy omits mandatory baseline checks")
     document = json.loads(os.environ["CI_REVIEW_CONTEXT_JSON"])
     document["activation"] = ActivationIdentity(**document["activation"])
     document["material_author_providers"] = frozenset(document["material_author_providers"])
@@ -277,3 +291,4 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | END]]
