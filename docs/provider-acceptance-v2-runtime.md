@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]] -->
 # Provider-v2 runtime acceptance
 
@@ -28,7 +29,12 @@ existing COMPOSE_FILE overrides and the staged Postgres port mapping.
 The closed registry document contains `version: director-acceptance-registry/v1`,
 `activation` (all ActivationIdentity fields), `repository`, `pull_request_number`,
 `packet_digest`, `material_author_providers`, `authorities`, `revoked_deployments`,
-and `ci_oidc_policy`. Each of the three authorities contains every IssuerAuthority
+and `ci_oidc_policy`. Production CI policy must include all six existing activation
+checks (attribution, both Python platforms, Compose/container build, secret hygiene
+and cross-process recovery); additional configured checks are also mandatory.
+The static CI template and dynamic OIDC policy must pin identical principal,
+deployment, workflow and required checks. Current revocations apply to the resolved
+CI identity as well as the static template. Each of the three authorities contains every IssuerAuthority
 field, with base64 public_key and a list of required_ci_checks. `ci_oidc_policy`
 is null for static protected CI keys, or the closed GitHubOIDCPolicy document from
 the CI issuer module. The full review-packet digest must be independently prepared
@@ -75,3 +81,5 @@ rollback gates, and it does not create the independent issuers or authorize its
 own deployment/adoption.
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]] -->

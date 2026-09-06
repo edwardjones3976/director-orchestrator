@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 import base64
@@ -13,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 from director_orchestrator.primary_activation_evidence import ActivationEvidenceStore, ActivationStage, ActivationEvidenceError, canonical_facts_digest
-from director_orchestrator.acceptance_journal import AcceptanceJournal, require_runtime_acceptance
+from director_orchestrator.acceptance_journal import AcceptanceJournal, require_runtime_acceptance, bind_runtime_database, REQUIRED_ACTIVATION_CHECKS
 from director_orchestrator.config import Settings
 from tests.test_provider_acceptance_v2 import ProviderAcceptanceV2Tests
 
@@ -45,6 +46,8 @@ class AcceptanceJournalTests(unittest.TestCase):
             fields["public_key"] = base64.b64encode(fields["public_key"]).decode()
             fields["required_ci_checks"] = sorted(fields["required_ci_checks"])
             self.policy["authorities"][role] = fields
+        self.policy["authorities"]["ci"]["required_ci_checks"] = sorted(REQUIRED_ACTIVATION_CHECKS)
+        self.fixture.package["receipts"]["ci"]["ci_checks"] = [dict(name=name, run_id=1, status="COMPLETED", conclusion="SUCCESS") for name in sorted(REQUIRED_ACTIVATION_CHECKS)]
         self.registry.write_text(json.dumps(self.policy))
         self.env = patch.dict("os.environ", {
             "LANGGRAPH_PRIMARY_ACCEPTANCE_MODE":"provider-v2",
@@ -72,8 +75,13 @@ class AcceptanceJournalTests(unittest.TestCase):
         from tests.test_ci_acceptance_issuer import CIIssuerTests
         CIIssuerTests.setUpClass()
         ci = CIIssuerTests(); ci.setUp()
+        ci.policy = replace(ci.policy, required_ci_checks=REQUIRED_ACTIVATION_CHECKS)
         self.policy["ci_oidc_policy"] = asdict(ci.policy)
         self.policy["ci_oidc_policy"]["required_ci_checks"] = sorted(ci.policy.required_ci_checks)
+        # Owner pins one consistent identity across template and OIDC policy.
+        self.policy["authorities"]["ci"].update(principal=ci.policy.principal,
+            deployment=ci.policy.deployment, ci_workflow_ref=ci.policy.workflow_ref,
+            ci_workflow_commit=ci.policy.workflow_sha, required_ci_checks=sorted(ci.policy.required_ci_checks))
         self.registry.write_text(json.dumps(self.policy))
         pin = hashlib.sha256(self.registry.read_bytes()).hexdigest()
         with patch.dict("os.environ", {"LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256":pin}):
@@ -87,7 +95,7 @@ class AcceptanceJournalTests(unittest.TestCase):
             receipt = self.fixture.package["receipts"]["ci"]
             for field in ("role", "provider", "principal", "deployment", "ci_workflow_ref", "ci_workflow_commit"):
                 receipt[field] = getattr(authority, field)
-            receipt["ci_checks"] = [dict(name="unit", run_id=1, status="COMPLETED", conclusion="SUCCESS")]
+            receipt["ci_checks"] = [dict(name=name, run_id=1, status="COMPLETED", conclusion="SUCCESS") for name in sorted(REQUIRED_ACTIVATION_CHECKS)]
             self.fixture.keys["ci"] = ci.key
             self.fixture.package["context"] = context
             self.fixture.sign()
@@ -111,6 +119,26 @@ class AcceptanceJournalTests(unittest.TestCase):
                 db.commit()
             with patch("director_orchestrator.ci_acceptance_issuer._read_json", return_value=ci.jwks):
                 with self.assertRaises(ValueError): ActivationEvidenceStore(self.path).load()
+
+    def test_dynamic_ci_template_mismatch_is_rejected_even_if_only_effective_role_is_revoked(self):
+        from tests.test_ci_acceptance_issuer import CIIssuerTests
+        CIIssuerTests.setUpClass()
+        ci = CIIssuerTests(); ci.setUp()
+        ci.policy = replace(ci.policy, required_ci_checks=REQUIRED_ACTIVATION_CHECKS)
+        self.policy["ci_oidc_policy"] = asdict(ci.policy)
+        self.policy["ci_oidc_policy"]["required_ci_checks"] = sorted(ci.policy.required_ci_checks)
+        self.policy["revoked_deployments"] = [ci.policy.deployment]
+        self.registry.write_text(json.dumps(self.policy))
+        with patch.dict("os.environ", {"LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256":hashlib.sha256(self.registry.read_bytes()).hexdigest()}):
+            with self.assertRaisesRegex(ActivationEvidenceError, "disagree"):
+                ActivationEvidenceStore(self.path)
+
+    def test_production_policy_cannot_remove_a_baseline_ci_check(self):
+        self.policy["authorities"]["ci"]["required_ci_checks"].remove("Secret hygiene")
+        self.registry.write_text(json.dumps(self.policy))
+        with patch.dict("os.environ", {"LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256":hashlib.sha256(self.registry.read_bytes()).hexdigest()}):
+            with self.assertRaisesRegex(ActivationEvidenceError, "six baseline"):
+                ActivationEvidenceStore(self.path)
 
     def test_real_startup_rejects_missing_acceptance_before_database_or_writer(self):
         from director_orchestrator.primary_default import DefaultPrimaryActivation
@@ -183,7 +211,14 @@ class AcceptanceJournalTests(unittest.TestCase):
                              (ActivationStage.RESTORE_PROVED,{"backup_digest":"sha256:"+"1"*64,"required_control_plane_tables":17,"checkpoint_tables":4,"schema_evidence_rows":1})):
             self.store.record(self.identity, stage, facts=facts, evidence_digest=canonical_facts_digest(facts))
         self.store.bind_legacy_inventory(self.identity, inventory_digest="2"*64, task_count=0)
-        require_runtime_acceptance(settings)
+        verified_identity = require_runtime_acceptance(settings)
+        from types import SimpleNamespace
+        handle = SimpleNamespace(storage_identity=self.identity.database_identity,
+                                 database_instance_id=self.identity.database_instance_id)
+        with patch.object(AcceptanceJournal, "policy", side_effect=AssertionError("unexpected second verification")):
+            bind_runtime_database(verified_identity, handle)
+            with self.assertRaises(ActivationEvidenceError):
+                bind_runtime_database(verified_identity, SimpleNamespace(storage_identity="wrong", database_instance_id=handle.database_instance_id))
         self.store.record(self.identity, ActivationStage.ACTIVATED, facts={}, evidence_digest=canonical_facts_digest({}))
         require_runtime_acceptance(settings)
         with self.assertRaises(ActivationEvidenceError):
@@ -195,3 +230,5 @@ if __name__ == "__main__": unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:13 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 """Pre-migration v2 activation journal. Owner-protected configuration is authority."""
 from __future__ import annotations
@@ -17,6 +18,8 @@ from .provider_acceptance_v2 import (IssuerAuthority, ReviewContext, canonical,
 from .primary_activation_evidence import ActivationIdentity, ActivationEvidenceError
 
 POLICY_VERSION = "director-acceptance-registry/v1"
+REQUIRED_ACTIVATION_CHECKS = frozenset({"Contribution attribution", "Python 3.12 (ubuntu-latest)",
+    "Python 3.12 (windows-latest)", "Compose and container build", "Secret hygiene", "Cross-process recovery probe"})
 
 
 class AcceptanceJournal:
@@ -57,10 +60,18 @@ class AcceptanceJournal:
                       "material_author_providers", "authorities", "revoked_deployments", "ci_oidc_policy"})
         if doc["version"] != POLICY_VERSION or not isinstance(doc["revoked_deployments"], list):
             raise ActivationEvidenceError("invalid v2 registry policy")
-        self.authorities(doc)
+        authorities = self.authorities(doc)
+        if not REQUIRED_ACTIVATION_CHECKS <= authorities["ci"].required_ci_checks:
+            raise ActivationEvidenceError("production acceptance requires all six baseline CI checks")
         if doc["ci_oidc_policy"] is not None:
             from .ci_acceptance_issuer import GitHubOIDCPolicy
-            GitHubOIDCPolicy.from_document(doc["ci_oidc_policy"])
+            oidc = GitHubOIDCPolicy.from_document(doc["ci_oidc_policy"])
+            template = doc["authorities"]["ci"]
+            if (template["provider"] != "github-actions" or template["principal"] != oidc.principal or
+                template["deployment"] != oidc.deployment or template["ci_workflow_ref"] != oidc.workflow_ref or
+                template["ci_workflow_commit"] != oidc.workflow_sha or
+                set(template["required_ci_checks"]) != oidc.required_ci_checks):
+                raise ActivationEvidenceError("CI template and OIDC authority disagree")
         self.context(doc, "0"*64, 1, 2)
         return doc
 
@@ -155,6 +166,8 @@ class AcceptanceJournal:
                 from .ci_acceptance_issuer import GitHubOIDCPolicy, resolve_ci_authority
                 authorities["ci"] = resolve_ci_authority(source["ci_identity"], expected=context,
                     policy=GitHubOIDCPolicy.from_document(policy["ci_oidc_policy"]), now=now)
+            if any(a.deployment in policy["revoked_deployments"] for a in authorities.values()):
+                raise ActivationEvidenceError("effective issuer is currently revoked")
             verify_provider_acceptance(canonical(package), expected=context, authorities=authorities, now=now)
             encoded = canonical(source)
             digest = hashlib.sha256(encoded).hexdigest()
@@ -189,7 +202,7 @@ class AcceptanceJournal:
         context = self.context(snapshot, challenge, context_doc["issued_at"], context_doc["expires_at"])
         # Provider key snapshots must still match owner-pinned keys. Dynamic CI
         # is reauthenticated below against GitHub, never trusted because DB says so.
-        effective = dict(snapshot, authorities=json.loads(row[5]))
+        effective = dict(snapshot, authorities=json.loads(row[5]), revoked_deployments=policy["revoked_deployments"])
         for role in ("security", "independent_review", "ci"):
             if role != "ci" or snapshot["ci_oidc_policy"] is None:
                 if effective["authorities"][role] != snapshot["authorities"][role]:
@@ -209,6 +222,8 @@ class AcceptanceJournal:
             from .ci_acceptance_issuer import GitHubOIDCPolicy, resolve_ci_authority
             authenticated_ci = resolve_ci_authority(source["ci_identity"], expected=context,
                 policy=GitHubOIDCPolicy.from_document(policy["ci_oidc_policy"]), now=row[2])
+            if authenticated_ci.deployment in policy["revoked_deployments"]:
+                raise ActivationEvidenceError("effective CI issuer is currently revoked")
             if authenticated_ci != authorities["ci"]:
                 raise ActivationEvidenceError("CI public key archive does not authenticate")
         verify_provider_acceptance(canonical(package), expected=context, authorities=authorities, now=row[2])
@@ -231,8 +246,8 @@ def journal_from_environment():
         os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256"])
 
 
-def require_runtime_acceptance(settings, *, handle=None):
-    """Before DB access check signed readiness; after open bind actual DB instance."""
+def require_runtime_acceptance(settings):
+    """Before DB access verify readiness once and return its immutable identity."""
     mode = settings.langgraph_primary_acceptance_mode
     if mode == "github-v1":
         return
@@ -260,8 +275,15 @@ def require_runtime_acceptance(settings, *, handle=None):
         identity.checkpoint_namespace != settings.langgraph_primary_checkpoint_namespace or
         identity.compose_project != os.environ.get("DIRECTOR_COMPOSE_PROJECT_NAME", "")):
         raise ActivationEvidenceError("runtime identity differs from accepted candidate")
-    if handle is not None and (identity.database_identity != handle.storage_identity or
-                               identity.database_instance_id != handle.database_instance_id):
+    return identity
+
+
+def bind_runtime_database(identity, handle):
+    """Bind the newly opened DB to the already verified startup identity, without I/O."""
+    if identity is not None and (identity.database_identity != handle.storage_identity or
+                                 identity.database_instance_id != handle.database_instance_id):
         raise ActivationEvidenceError("runtime database differs from accepted instance")
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
