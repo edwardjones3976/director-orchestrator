@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]]
 """Fixed GitHub OIDC trust and CI-only ephemeral acceptance issuer.
@@ -10,6 +11,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, fields
 import hashlib
+import http.client
 import json
 import re
 import time
@@ -92,11 +94,19 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _read_json(url: str, headers: dict | None = None) -> dict:
     request = urllib.request.Request(url, headers=headers or {})
-    with urllib.request.build_opener(_NoRedirect()).open(request, timeout=15) as response:
-        raw = response.read(2_000_001)
+    try:
+        with urllib.request.build_opener(_NoRedirect()).open(request, timeout=15) as response:
+            raw = response.read(2_000_001)
+    except (OSError, http.client.HTTPException):
+        # HTTPError/URLError are OSError subclasses. Do not expose upstream
+        # exception text, response bodies or credential-bearing request details.
+        raise ProviderAcceptanceError("issuer evidence transport unavailable") from None
     if len(raw) > 2_000_000:
         raise ProviderAcceptanceError("issuer response exceeds bound")
-    result = json.loads(raw)
+    try:
+        result = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeError):
+        raise ProviderAcceptanceError("issuer response is not valid JSON") from None
     if not isinstance(result, dict):
         raise ProviderAcceptanceError("issuer response must be an object")
     return result
@@ -292,3 +302,4 @@ if __name__ == "__main__":
     main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:04 UTC | END]]
