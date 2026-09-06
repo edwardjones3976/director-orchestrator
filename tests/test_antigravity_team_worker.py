@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:42 UTC | BEGIN]]
@@ -82,16 +83,21 @@ class WorkerProtocolTests(unittest.TestCase):
             root=Path(temporary)
             (root/"claims").mkdir()
             (root/"work").mkdir()
+            (root/"nativehome").mkdir()
             work={"task_id":"task-one"}
             g=grant(packet_digest=document_digest(work),source=(SourceBlob(path="src/allowed.py",sha256=hashlib.sha256(b"old").hexdigest()),))
             worker=LinuxNativeTeamWorker({"claims_root":str(root/"claims"),"workspace_root":str(root/"work"),
                 "native_uid":1001,"native_gid":1001,"check_uid":1002,"check_gid":1002,
-                "native_home":"/native","executable":"/native/agy","command_binaries":{"python":"/usr/bin/python"}},
+                "native_home":str(root/"nativehome"),"executable":"/native/agy","command_binaries":{"python":"/usr/bin/python"}},
                 owner_secret=fixtures.OWNER_SECRET,issuer_secret=b"i"*32,worker_secret=b"w"*32)
-            qualification={"grant_digest":g.digest,"protected_files":{"/usr/bin/python":"d"*64},"expires_at":(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
+            qualification={"grant_digest":g.digest,"native_state_manifest":{},"protected_files":{"/usr/bin/python":"d"*64},"expires_at":(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
             calls=[]
+            write_session=[False]
             def native(argv,**kwargs):
                 calls.append(argv)
+                if argv[0]=="/native/agy":
+                    self.assertEqual(argv[-2:],["--project",g.native_project_id])
+                    if write_session[0]:(root/"nativehome/session.json").write_text('{"new_session":true}')
                 packet={"checks":[]}
                 proposal={"packet":packet,"returned_files":[]}
                 events=[{"event":"init","conversation_id":"session-one","init":{"cwd":str(kwargs["cwd"]),"model":g.model}},
@@ -107,6 +113,16 @@ class WorkerProtocolTests(unittest.TestCase):
                 with self.assertRaises(FileExistsError):
                     worker.prepare(grant=g,grant_digest=g.digest,attempt_digest="sha256:"+"1"*64,challenge="b"*64)
                 self.assertEqual(len(calls),1)
+                # A fresh task-qualified state can legitimately acquire its own
+                # session file. Later command authorization verifies immutable
+                # policy again but does not require the original empty home.
+                newer=grant(grant_id="grant-two",packet_digest=g.packet_digest,source=g.source)
+                qualification["grant_digest"]=newer.digest
+                worker.prepare(grant=newer,grant_digest=newer.digest,attempt_digest="sha256:"+"2"*64,challenge="c"*64)
+                write_session[0]=True
+                capture=worker.exchange(grant=newer,work_packet=work,source={"src/allowed.py":b"old"},challenge="c"*64,
+                    before_execute=lambda:None,before_local_command=lambda argv:None)
+                self.assertIn("session.json",capture["evidence"]["native_state_manifest_after"])
 
     def test_general_host_qualification_cannot_authorize_another_grants_source(self):
         g=grant()
@@ -225,6 +241,8 @@ class TeamCandidatePostgresTests(unittest.TestCase):
                 evidence={key:getattr(test.g,key) for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id")}
                 evidence.update(grant_digest=test.g.digest,attempt_digest=test.attempt,packet_digest=test.g.packet_digest,
                     completed_at=datetime.now(timezone.utc).isoformat(),
+                    native_project_id=test.g.native_project_id,native_identity_observations={"requested_project_id":test.g.native_project_id,"observed_project_id":None,"observed_account_id":None},
+                    native_state_manifest_after={},
                     authentication_mode="native-account",cwd="/isolated",challenge=self.challenge,
                     source_manifest_digest=document_digest({"source":[b.model_dump() for b in test.g.source]}),
                     containment_evidence_digest="f"*64,native_stream=stream,exit_code=0,
@@ -250,3 +268,4 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]

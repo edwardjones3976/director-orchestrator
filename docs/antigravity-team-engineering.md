@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]] -->
@@ -73,7 +74,11 @@ ambiguous native execution from being repeated after restart. A per-native-UID
 file lock prevents simultaneous jobs from sharing that account.
 
 Native AGY runs without broker keys as one unprivileged identity. Its protected
-permission policy denies every tool namespace; the prompt carries the exact
+permission policy denies known namespaces and a protected wildcard PreToolUse
+hook denies every tool category, including categories absent from that list.
+This hook format is documented by [Antigravity's own CLI hook documentation](https://antigravity.google/docs/hooks/);
+JSON validation alone is not evidence that installed AGY 1.1.27 enforces it.
+Actual wildcard denial must be proved during host qualification. The prompt carries the exact
 source manifest and requests a structured proposal. The supervisor applies only
 proposed bytes within granted writable paths and runs each exact granted command
 as a different unprivileged identity with a clean environment and pinned
@@ -88,7 +93,7 @@ or token enforcement before live use.
 The host must have a separately accepted issuer-signed
 `director-team-linux-qualification/v1` receipt binding this exact task grant, boot ID, network
 namespace, native/check UIDs, protected configuration and complete runtime files,
-native account, installation and adapter bindings, expiry and actual negative
+native account, native project, installation and adapter bindings, expiry and actual negative
 access evidence, including isolation from earlier native-account task history.
 The receipt is consumed before readiness is returned; a general reusable host
 receipt cannot authorize disclosure. A subsequent task needs fresh qualification
@@ -97,6 +102,25 @@ verifies protected root ownership and denies absent,
 expired or changed qualification. This source does not install the guest, sign
 that receipt or invent native authentication. Ordinary code review is not issuer
 adoption or worker enrollment.
+
+The owner grant separately names `native_project_id`, passed through documented
+`--project` invocation and recorded as requested project. The preserved actual
+1.1.27 `native-attempt-001` stream emits session, cwd, requested model, tools and
+permission mode; it emits neither project nor account observation. Both absent
+observations are represented as null, never invented from the packet. The worker
+therefore additionally requires a protected, issuer-authenticated
+`director-native-identity-readback/v1` artifact from native authenticated profile
+and project readback, bound to this grant and runtime with observed account and
+project IDs and an expiry. Its digest is part of the qualified protected-file
+inventory. This package does not implement or fabricate the issuer's native
+identity acquisition method; that readback and its independent acceptance remain
+required before use. [Antigravity project invocation semantics](https://antigravity.google/docs/cli/projects/)
+describe the requested project flag but do not supply the absent observations.
+
+The complete initial native-home manifest is checked only before disclosure and
+consumed with the task qualification. Later boundaries continue checking immutable
+runtime/policy and revocation; legitimate new session/cache state is captured as a
+bounded digest manifest and is not compared against an unchanged initial home.
 
 `TeamArtifactStore` persists authenticated captures with complete returned bytes.
 `GitTeamCandidateIntegrator` reauthorizes under a locked live writer, checks the
@@ -129,3 +153,4 @@ versioned contract name with `/v1`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]] -->

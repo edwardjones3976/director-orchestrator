@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | BEGIN]]
@@ -108,6 +109,24 @@ def protected_directory(path):
     return path
 
 
+def native_state_manifest(home):
+    import stat
+    result={}
+    total=0
+    for path in Path(home).rglob("*"):
+        metadata=path.lstat()
+        if path.is_symlink() or not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):
+            raise TeamAuthorizationError("native state contains an unqualified alias")
+        if path.is_file():
+            if metadata.st_nlink!=1:
+                raise TeamAuthorizationError("native state contains a hardlink")
+            total+=metadata.st_size
+            if total>32*1024*1024 or len(result)>=10000:
+                raise TeamAuthorizationError("native state exceeds the bounded capture")
+            result[path.relative_to(home).as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
+
+
 def _limits(timeout):
     import resource
     resource.setrlimit(resource.RLIMIT_FSIZE, (8 * 1024 * 1024, 8 * 1024 * 1024))
@@ -163,7 +182,7 @@ class LinuxNativeTeamWorker:
             or qualification["authentication_mode"] != "native-account"):
             raise TeamAuthorizationError("host qualification absent, stale or foreign")
         for key in ("installation_id", "executable_digest", "runtime_digest", "adapter_digest",
-                    "binding_digest", "native_account_id"):
+                    "binding_digest", "native_account_id", "native_project_id"):
             if qualification[key] != getattr(grant, key):
                 raise TeamAuthorizationError("host qualification binding mismatch")
         native_uid, check_uid = self.config["native_uid"], self.config["check_uid"]
@@ -178,6 +197,18 @@ class LinuxNativeTeamWorker:
         for path, digest in qualification["protected_files"].items():
             if hashlib.sha256(protected_bytes(path)).hexdigest() != digest:
                 raise TeamAuthorizationError("qualified runtime or policy changed")
+        identity_path=self.config["native_identity_evidence_file"]
+        if identity_path not in qualification["protected_files"]:
+            raise TeamAuthorizationError("independent native identity readback is not qualified")
+        identity=authenticate(self.issuer_secret,json.loads(protected_bytes(identity_path)))
+        if (identity.get("schema_version")!="director-native-identity-readback/v1"
+            or identity.get("source")!="native-authenticated-profile-and-project-readback"
+            or identity.get("grant_digest")!=qualification["grant_digest"]
+            or identity.get("observed_native_account_id")!=grant.native_account_id
+            or identity.get("observed_native_project_id")!=grant.native_project_id
+            or identity.get("runtime_digest")!=grant.runtime_digest
+            or datetime.fromisoformat(identity["expires_at"])<=now):
+            raise TeamAuthorizationError("native account/project readback is absent, expired or foreign")
         if hashlib.sha256(protected_bytes(self.config["executable"])).hexdigest() != grant.executable_digest:
             raise TeamAuthorizationError("native executable changed")
         settings_path = str(Path(self.config["native_home"]) / ".gemini/antigravity-cli/settings.json")
@@ -187,6 +218,14 @@ class LinuxNativeTeamWorker:
         permissions = settings.get("permissions", {})
         if permissions.get("allow") or not DENY_TOOLS.issubset(permissions.get("deny", [])):
             raise TeamAuthorizationError("native tools must be denied by protected policy")
+        hooks_path=str(Path(self.config["native_home"])/".gemini/antigravity-cli/hooks.json")
+        hook=self.config["deny_all_hook_executable"]
+        if hooks_path not in qualification["protected_files"] or hook not in qualification["protected_files"]:
+            raise TeamAuthorizationError("wildcard native tool guard is not qualified")
+        expected_hook={"director-team-deny-all":{"PreToolUse":[{"matcher":"*","hooks":[{
+            "type":"command","command":hook,"timeout":5}]}]}}
+        if json.loads(protected_bytes(hooks_path))!=expected_hook:
+            raise TeamAuthorizationError("all native tool categories require the protected wildcard guard")
         # Issuer evidence must cover real negative access tests for both exact
         # identities, native account mode, process termination and network policy.
         # A registry entry or configured flag cannot issue this qualification.
@@ -197,17 +236,20 @@ class LinuxNativeTeamWorker:
         if grant.digest != grant_digest:
             raise TeamAuthorizationError("worker preparation grant mismatch")
         return self.prepare_binding(binding={key:getattr(grant,key) for key in (
-            "installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id")},
+            "installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","native_project_id","workspace_id")},
             grant_digest=grant_digest,attempt_digest=attempt_digest,challenge=challenge)
 
     def prepare_binding(self, *, binding, grant_digest, attempt_digest, challenge):
-        if (set(binding)!={"installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id"}
+        if (set(binding)!={"installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","native_project_id","workspace_id"}
             or not re.fullmatch(r"[0-9a-f]{64}",grant_digest)
             or not re.fullmatch(r"sha256:[0-9a-f]{64}",attempt_digest)):
             raise TeamAuthorizationError("public worker binding contract mismatch")
         qualification = self.qualify(SimpleNamespace(**binding))
         if qualification.get("grant_digest")!=grant_digest:
             raise TeamAuthorizationError("host qualification is not scoped to this exact task grant")
+        state=native_state_manifest(self.config["native_home"])
+        if state!=qualification.get("native_state_manifest"):
+            raise TeamAuthorizationError("native account state changed or contains prior task history")
         # A general host receipt is insufficient: cached native state must be
         # re-qualified for each task. Consume the exact task-scoped receipt
         # before acknowledging readiness to receive private source.
@@ -271,7 +313,8 @@ class LinuxNativeTeamWorker:
                 "writable_paths": grant.writable_paths}
             before_execute()
             code, stream, diagnostics = run_unprivileged([self.config["executable"],
-                "--input-format", "stream-json", "--output-format", "stream-json", "--model", grant.model],
+                "--input-format", "stream-json", "--output-format", "stream-json", "--model", grant.model,
+                "--project",grant.native_project_id],
                 uid=self.config["native_uid"], gid=self.config["native_gid"], cwd=native_cwd,
                 home=self.config["native_home"], timeout=max(1, int(deadline-time.monotonic())),
                 input_bytes=canonical_json_bytes({"event": "user", "message": {"content": canonical_json_bytes(prompt).decode()}})+b"\n")
@@ -319,6 +362,10 @@ class LinuxNativeTeamWorker:
                 "adapter_digest", "binding_digest", "native_account_id", "workspace_id")}
             evidence.update(grant_digest=grant.digest, attempt_digest=attempt, packet_digest=grant.packet_digest,
                 completed_at=datetime.now(timezone.utc).isoformat(),
+                native_state_manifest_after=native_state_manifest(self.config["native_home"]),
+                native_project_id=grant.native_project_id,
+                native_identity_observations={"requested_project_id":grant.native_project_id,
+                    "observed_project_id":None,"observed_account_id":None},
                 authentication_mode="native-account", cwd=str(native_cwd), challenge=challenge,
                 source_manifest_digest=document_digest({"source": [b.model_dump() for b in grant.source]}),
                 containment_evidence_digest=document_digest(self.qualification), native_stream=stream.decode(), exit_code=0,
@@ -367,7 +414,7 @@ class PinnedSshTeamWorker:
         try:
             self.process.stdin.write(challenge.encode()+b"\n")
             self.process.stdin.flush()
-            binding={key:getattr(self.grant,key) for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id")}
+            binding={key:getattr(self.grant,key) for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","native_project_id","workspace_id")}
             self.channel.send("prepare", {"binding":binding,"grant_digest":grant_digest,"attempt_digest":attempt_digest})
             return self.channel.receive("prepared")
         except BaseException:
@@ -423,9 +470,13 @@ def serve(config_path):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:]==["--deny-all-tools"]:
+        print('{"decision":"deny"}')
+        raise SystemExit(0)
     if len(sys.argv) != 2:
         raise SystemExit("exact protected worker configuration path required")
     serve(sys.argv[1])
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 """Team authority contract and real PostgreSQL transaction tests."""
 import hashlib
@@ -31,6 +32,7 @@ def signed(model,secret):
 def grant(**changes):
     values=dict(schema_version="antigravity-team-engineering/v1",grant_id="grant-one",task_id="task-one",assignment_id="assignment-one",project_id="uppercut",repository="edwardjones3976/director-orchestrator",packet_digest="a"*64,commit="a"*40,tree="d"*40,review_base=None,operation="engineering",source=(SourceBlob(path="src/allowed.py",sha256="e"*64),),writable_paths=("src/allowed.py",),prohibited_paths=("secrets",),commands=(("python","-m","unittest"),),workspace_id="isolated-one",provider_family="gemini",installation_id="install-one",installation_build="a"*64,executable_digest="a"*64,runtime_digest="a"*64,adapter_digest="a"*64,binding_digest="a"*64,native_account_id="worker-one",model="gemini-approved",material_authors=("claude",),generation=1,expires_at=datetime.now(timezone.utc)+timedelta(hours=1),max_tokens=1000,timeout_seconds=60,max_attempts=3,owner_signature="0"*64)
     values.update(changes)
+    values.setdefault("native_project_id","native-project-one")
     return signed(TeamGrant(**values),fixtures.OWNER_SECRET)
 
 
@@ -259,3 +261,4 @@ class TeamPostgresTests(unittest.TestCase):
         with self.assertRaisesRegex(TeamAuthorizationError,"revoked"):
             with self.store._pool.connection() as c,c.transaction():self.authority.authorize(c,grant_digest=self.g.digest,query=self.query("result"),stage="result",attempt_digest="sha256:"+"1"*64)
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 """Team packet boundary for an independently qualified isolated native worker.
@@ -207,9 +208,18 @@ class NativeTeamPacketTransport:
         required={"grant_digest","attempt_digest","packet_digest","installation_id","executable_digest",
             "runtime_digest","adapter_digest","binding_digest","native_account_id","authentication_mode",
             "workspace_id","cwd","source_manifest_digest","containment_evidence_digest","native_stream","exit_code","challenge",
-            "changed_files","returned_files","executed_commands","checks","completed_at"}
+            "changed_files","returned_files","executed_commands","checks","completed_at","native_project_id","native_identity_observations","native_state_manifest_after"}
         if set(evidence)!=required:
             raise TeamAuthorizationError("native capture contract mismatch")
+        if not isinstance(evidence["native_state_manifest_after"],dict) or len(evidence["native_state_manifest_after"])>10000:
+            raise TeamAuthorizationError("native state capture invalid")
+        for path,digest in evidence["native_state_manifest_after"].items():
+            safe_path(path)
+            if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
+                raise TeamAuthorizationError("native state capture digest invalid")
+        if evidence["native_project_id"]!=grant.native_project_id or evidence["native_identity_observations"]!={
+            "requested_project_id":grant.native_project_id,"observed_project_id":None,"observed_account_id":None}:
+            raise TeamAuthorizationError("native project invocation binding or observation provenance changed")
         for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id"):
             if evidence[key]!=getattr(grant,key):
                 raise TeamAuthorizationError("native installation binding mismatch")
@@ -272,3 +282,4 @@ def team_packet_adapter(settings, **transport_arguments):
     return PacketBoundaryAdapter("antigravity",NativeTeamPacketTransport(**transport_arguments))
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]

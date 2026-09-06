@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 """Explicit owner-signed engineering authority; subordinate contracts stay closed.
@@ -84,6 +85,7 @@ class TeamGrant(ClosedModel):
     adapter_digest: Digest
     binding_digest: Digest
     native_account_id: Identifier
+    native_project_id: Identifier
     model: str
     material_authors: tuple[str, ...]
     generation: Annotated[int, Field(ge=1)]
@@ -479,3 +481,4 @@ class TeamAttemptAdmission:
             raise TeamAuthorizationError("parallel attempt/task grant mismatch")
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]

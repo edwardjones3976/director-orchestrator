@@ -163,6 +163,11 @@
       "title": "Native Account Id",
       "type": "string"
     },
+    "native_project_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Native Project Id",
+      "type": "string"
+    },
     "model": {
       "title": "Model",
       "type": "string"
@@ -238,6 +243,7 @@
     "adapter_digest",
     "binding_digest",
     "native_account_id",
+    "native_project_id",
     "model",
     "material_authors",
     "generation",
