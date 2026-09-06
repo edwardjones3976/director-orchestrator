@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 from __future__ import annotations
@@ -260,7 +261,7 @@ class PostgresValidationTests(unittest.TestCase):
             native.write_text("import sys\nsys.stdin.buffer.read()\nprint("+repr(raw_native().decode())+")\n")
             # The configured production executor would reject all live calls:
             # no production writer verifier is configured in this fixture.
-            production=WindowsHostProviderExecutor({"claude":(sys.executable,str(native))},cwd=directory)
+            production=WindowsHostProviderExecutor({"claude":(str(Path(sys.executable).resolve(strict=True)),str(native))},cwd=directory)
             config=production_configuration_digest(production,"claude",account_files=(str(account),))
             generation=secrets.token_hex(32)
             self.store.create_generation(generation=generation,candidate=CANDIDATE,tree=TREE,owner_token=OWNER,
@@ -281,7 +282,7 @@ class PostgresValidationTests(unittest.TestCase):
         generation=self.generation()
         with tempfile.TemporaryDirectory() as directory:
             account=Path(directory)/"synthetic-auth";account.write_text("fixture")
-            executor=WindowsHostProviderExecutor({"claude":(sys.executable,"-c","pass")},cwd=directory)
+            executor=WindowsHostProviderExecutor({"claude":(str(Path(sys.executable).resolve(strict=True)),"-c","pass")},cwd=directory)
             service=ValidationBridgeService(store=self.store,production_executor=executor,capture_key=KEY,
                 owner_token=OWNER,account_files={"claude":(str(account),)})
             with patch.object(WindowsHostProviderExecutor,"execute") as execute:
@@ -294,3 +295,5 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
