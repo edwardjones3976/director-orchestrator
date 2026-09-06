@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -404,8 +405,6 @@ $required = @(
     "LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET",
     "LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET",
     "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON",
-    "LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
-    "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON",
     "LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET",
     "LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET",
     "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON",
@@ -414,6 +413,23 @@ $required = @(
     "REPOSITORY_SNAPSHOT_HOST_PATH", "REPOSITORY_SNAPSHOT_ROOT",
     "REPOSITORY_ALLOWLIST", "ALLOWED_STARTING_REFS"
 )
+$acceptanceMode = "github-v1"
+if ($values.ContainsKey("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE")) {
+    $acceptanceMode = [string]$values["LANGGRAPH_PRIMARY_ACCEPTANCE_MODE"]
+}
+switch -CaseSensitive ($acceptanceMode) {
+    "github-v1" {
+        $required += @("LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
+                       "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON")
+    }
+    "provider-v2" {
+        $required += @("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH",
+                       "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256",
+                       "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH",
+                       "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY")
+    }
+    default { throw "Unknown primary acceptance mode." }
+}
 $missing = @($required | Where-Object {
     -not $values.ContainsKey($_) -or [string]::IsNullOrWhiteSpace([string]$values[$_]) -or
     ([string]$values[$_]).StartsWith("REPLACE_WITH_")
@@ -650,3 +666,5 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | END]]
