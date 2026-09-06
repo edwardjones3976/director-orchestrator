@@ -103,7 +103,12 @@ def oidc_audience(public_key: str, expected: ReviewContext) -> str:
 
 def resolve_ci_authority(envelope: dict, *, expected: ReviewContext,
                          policy: GitHubOIDCPolicy, now: int) -> IssuerAuthority:
-    """Fresh enrollment only; JWKS URL and algorithm cannot come from evidence."""
+    """Authenticate with fresh JWKS at a caller-trusted evaluation time.
+
+    Readiness may supply the original acceptance time, but must still verify the
+    original JWT and compare this result to its stored authority. A database key
+    snapshot alone is not authentication. Historical key removal fails closed.
+    """
     try:
         if not isinstance(envelope, dict) or set(envelope) != {"version", "public_key", "token"}:
             raise ValueError("invalid envelope")

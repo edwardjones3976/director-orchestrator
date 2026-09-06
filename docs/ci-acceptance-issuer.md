@@ -46,9 +46,13 @@ JWKS endpoint, rejects redirects, verifies RS256 signature, exact audience/issue
 repository and owner IDs, subject, workflow ref/SHA, run identity and bounded
 expiry. Caller JWKS and alternate issuers are not accepted. The runtime must
 atomically store the resolved public authority with the complete accepted package
-and original trusted acceptance time. Later readiness uses only that protected
-journal snapshot and current owner policy/revocation; it must not re-enroll a key
-from an expired JWT or arbitrary archive. The JWT contains no private signing key,
+and original trusted acceptance time. Later readiness must reauthenticate the
+original JWT against GitHub's fixed fresh JWKS and current owner policy, evaluating
+its signed validity bounds at the original acceptance time and comparing the
+result with the stored authority. A database snapshot or hash is not an identity
+anchor. GitHub key removal or JWKS unavailability fails readiness closed; an
+owner-protected historical key archive is not implemented. Never accept keys from
+a caller-provided archive. The JWT contains no private signing key,
 but remains short-lived evidence and is retained with the restricted receipt.
 
 No live issuer provenance is claimed by unit tests. Synthetic RSA/Ed25519 keys and

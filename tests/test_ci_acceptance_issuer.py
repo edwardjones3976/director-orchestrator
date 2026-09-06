@@ -74,6 +74,13 @@ class CIIssuerTests(unittest.TestCase):
         self.assertEqual((authority.role, authority.provider), ('ci', 'github-actions'))
         self.assertEqual(authority.public_key, base64.b64decode(self.public))
 
+    def test_historical_readback_still_requires_current_github_signing_key(self):
+        envelope=self.envelope()
+        self.assertEqual(self.resolve(envelope,now=1100).public_key,base64.b64decode(self.public))
+        with patch('director_orchestrator.ci_acceptance_issuer._read_json',return_value={'keys':[]}):
+            with self.assertRaises(ProviderAcceptanceError):
+                resolve_ci_authority(envelope,expected=self.context,policy=self.policy,now=1100)
+
     def test_claim_mutations_and_expiry_rejected(self):
         for field, value in [('repository_id','999'), ('repository_owner_id','999'), ('repository','other/repo'),
                 ('sub','repo:owner/repo:ref:refs/heads/evil'), ('workflow_ref','evil'), ('workflow_sha','7'*40),
