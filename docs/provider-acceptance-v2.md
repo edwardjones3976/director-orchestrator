@@ -1,0 +1,72 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 08:24 UTC | BEGIN]] -->
+# Provider acceptance v2 verification core
+
+Status: dormant, independently reviewable core only. It cannot record acceptance,
+activate a service, enroll an issuer, sign a receipt or consume a challenge.
+The existing GitHub-account v1 acceptance path is unchanged. This new mechanism
+must not approve its own adoption; adoption needs separately authorized independent
+review, security review and exact-head CI before runtime integration.
+
+`verify_provider_acceptance(raw, expected=ReviewContext(...),
+authorities={role: IssuerAuthority(...)}, now=trusted_clock)` verifies a closed
+`director-provider-acceptance/v2` JSON document. `context` contains the complete
+ActivationIdentity (SHA/tree/profile/Compose/database identity and instance/schema/
+checkpoint namespace), repository/PR, full review-packet SHA256, challenge, issue
+and expiry times, and canonical material-author provider families. Each role in
+`receipts` is required exactly once: security, independent_review and ci.
+
+Each closed receipt contains role, provider, principal, deployment, session_id,
+transport_evidence_digest, verdict, ci_checks, ci_workflow_ref,
+ci_workflow_commit and signature. Provider verdicts must be ACCEPT and CI fields
+empty. CI verdict must be SUCCESS and every configured required check must have
+name, positive integer run_id, COMPLETED status and SUCCESS conclusion. Its
+workflow ref and immutable workflow commit must exactly match owner-pinned policy.
+A supplied workflow name or check label alone is not provenance authentication.
+
+Ed25519 signatures are base64, over the domain bytes
+`director-provider-acceptance/v2` followed by one zero byte followed by canonical
+JSON of `{version, context, receipt}` with signature omitted from receipt.
+Canonicalization is sorted keys, ASCII escapes, compact separators, UTF-8 and no
+NaN. Digests are plain lowercase SHA256 hex. Bodies have a 128 KiB ceiling;
+challenges have at most a one-hour validity window.
+
+The coordinator has public keys only. The immutable owner-installed registry pins
+role, provider family, principal, protected deployment identity and public key;
+CI additionally pins workflow provenance and required check names. It is trusted
+configuration and must never be enrollable through caller evidence or model output.
+Keys, principals and deployments are distinct for all three roles; reviewer
+provider families are distinct and excluded from material authorship. Another
+OpenAI session cannot independently accept OpenAI material work.
+
+Before this core can be used, provision two protected independent native issuer
+services (separate OS accounts/VMs, keys and authenticated provider logins).
+Each owner-installed fixed-role runner independently obtains the immutable packet,
+launches its pinned provider transport, captures actual terminal session identity
+and result bytes, validates the bound challenge and packet, and signs only evidence
+it observed. There must be no arbitrary sign-receipt or caller-session interface.
+A shared bridge HMAC or same-user role process does not provide this isolation.
+
+A third isolated trusted CI issuer must authenticate exact successful GitHub runs
+and checks with workflow source provenance bound to the pinned trusted workflow.
+That issuer must verify repository IDs, workflow IDs/source commit, exact head, run
+attempt and required-check membership against authenticated GitHub API evidence;
+this core validates signed run IDs/check dispositions, not those online lookups.
+Candidate code must never execute in its key-bearing context. Static protected
+issuer keys are supported by this core; dynamic OIDC-bound keys require separate
+online JWT/JWKS verification and owner-approved enrollment logic, not a
+caller-supplied JWT/JWKS or an environment flag. These services and authentication
+integrations are not implemented here. A valid signature proves a registry key
+signed the evidence, not that a label magically establishes a protected service.
+
+Finally, runtime integration must atomically insert the challenge and full accepted
+package in one durable transaction, rejecting every second consumption (including
+an exact replay). A separate challenge write followed by acceptance is unsafe.
+Pre-migration SQLite is feasible if an explicit protected journal uses a unique
+challenge key and one transaction; no such journal is included. Readiness may
+revalidate the stored package with its original trusted acceptance timestamp and
+registry snapshot, without consuming again. The pure verifier deliberately permits
+reverification and returns immutable bytes/digest, not an activation authorization.
+Migration, restore, provider LIVE_OK, sole-writer, kill-switch and rollback gates
+remain mandatory after any future integrated acceptance.
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 08:24 UTC | END]] -->
