@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 <# Owner-run installation only. Never invoked by application startup.
    Creates no users, stores no passwords, dispatches no model and generates no key.
@@ -13,6 +14,7 @@ param(
     [Parameter(Mandatory)][string]$RepositoryMirror,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')][string]$Repository,
     [Parameter(Mandatory)][string]$PythonExecutable,
+    [Parameter(Mandatory)][string[]]$ProtectedRuntimeRoots,
     [Parameter(Mandatory)][string]$GitExecutable,
     [Parameter(Mandatory)][string]$NativeExecutable,
     [string]$NativeEntrypoint,
@@ -49,7 +51,7 @@ function Assert-Protected([string]$Path) {
             if ($depth -gt 1) {
                 # Ancestors must not permit replacing protected descendants;
                 # permission to create an unrelated sibling is not replacement.
-                $writes = [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+                $writes = [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
             }
             if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writes) -and $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544')) {
                 throw "Unprotected runtime path: $($item.FullName)"
@@ -63,6 +65,24 @@ function Assert-Protected([string]$Path) {
 # native installation first; individual executable hashes do not protect imports.
 foreach ($p in @($PythonExecutable,$GitExecutable,$NativeExecutable)) { Assert-Protected $p }
 if ($NativeEntrypoint) { Assert-Protected $NativeEntrypoint }
+# Audit every loadable sibling, not merely the executable. Roots are owner inputs.
+foreach ($runtimeRoot in $ProtectedRuntimeRoots) {
+    Assert-Protected $runtimeRoot
+    $children = @(Get-ChildItem -LiteralPath $runtimeRoot -Recurse -Force)
+    if ($children.Count -gt 30000) { throw 'Runtime tree exceeds inspection bound.' }
+    foreach ($child in $children) { Assert-Protected $child.FullName }
+}
+foreach ($executable in @($PythonExecutable,$GitExecutable,$NativeExecutable,$NativeEntrypoint) | Where-Object {$_}) {
+    if (-not @($ProtectedRuntimeRoots | Where-Object {[IO.Path]::GetFullPath($executable).StartsWith([IO.Path]::GetFullPath($_).TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)}).Count) { throw 'Executable outside protected runtime roots.' }
+}
+# Isolated metadata probe after the complete runtime trees have passed ACL review.
+# Base interpreter/stdlib and global site dependencies must all be covered, even
+# when the executable is inside a virtual environment.
+$pythonPaths = & $PythonExecutable -I -c 'import json,sys; print(json.dumps([sys.base_prefix,sys.prefix,*sys.path]))'
+if ($LASTEXITCODE -ne 0) { throw 'Protected Python runtime inspection failed.' }
+foreach ($loadPath in ($pythonPaths | ConvertFrom-Json)) {
+    if (-not @($ProtectedRuntimeRoots | Where-Object { $a=[IO.Path]::GetFullPath($loadPath); $b=[IO.Path]::GetFullPath($_).TrimEnd('\'); $a.Equals($b,[StringComparison]::OrdinalIgnoreCase) -or $a.StartsWith($b+'\',[StringComparison]::OrdinalIgnoreCase)}).Count) { throw 'Python base or dependency path outside protected runtime roots.' }
+}
 $root = Join-Path $env:ProgramData "DirectorAcceptance\$Role"
 $root = [IO.Path]::GetFullPath($root)
 if (Test-Path -LiteralPath $root) {
@@ -120,7 +140,39 @@ foreach ($name in @('code','authorizations','mirror','broker','worker','requests
     }
     Set-ExactAcl $path $access
 }
-Copy-Item -LiteralPath (Join-Path $source 'src\director_orchestrator') -Destination (Join-Path $root 'code') -Recurse
+function Install-TrackedPackage([string]$Git, [string]$Source, [string]$Commit, [string]$Destination) {
+    $entries = & $Git -C $Source ls-tree -r $Commit -- src/director_orchestrator
+    if ($LASTEXITCODE -ne 0 -or -not $entries) { throw 'Tracked package tree unavailable.' }
+    $blobs = @{}
+    foreach ($entry in $entries) {
+        if ($entry -notmatch '^(100644|100755) blob [0-9a-f]{40}\t') { throw 'Only tracked regular files may be installed.' }
+        $parts = $entry.Split([char]9,2)
+        $blobs[$parts[1]] = $parts[0].Split(' ')[2]
+    }
+    $archive = Join-Path $Destination 'accepted-source.zip'
+    & $Git -C $Source archive --format=zip --output=$archive $Commit src/director_orchestrator
+    if ($LASTEXITCODE -ne 0) { throw 'Immutable source archive failed.' }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+    try {
+        foreach ($entry in $zip.Entries) {
+            $name = $entry.FullName
+            if ($name.EndsWith('/')) { continue }
+            if (-not $name.StartsWith('src/director_orchestrator/') -or $name.Contains('\') -or @($name.Split('/') | Where-Object {$_ -in @('.','..')}).Count) { throw 'Unsafe tracked package path.' }
+            $target = Join-Path $Destination $name.Substring(4)
+            $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+            $inputStream = $entry.Open()
+            $outputStream = [IO.File]::Open($target,[IO.FileMode]::CreateNew)
+            try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose(); $inputStream.Dispose() }
+            $actual = & $Git hash-object --no-filters -- $target
+            if ($LASTEXITCODE -ne 0 -or -not $blobs.ContainsKey($name) -or $actual -cne $blobs[$name]) { throw 'Archive bytes differ from accepted tracked blob.' }
+            $blobs.Remove($name)
+        }
+        if ($blobs.Count) { throw 'Archive omitted accepted tracked blobs.' }
+    } finally { $zip.Dispose() }
+    Remove-Item -LiteralPath $archive
+}
+Install-TrackedPackage $GitExecutable $source $AcceptedCommit (Join-Path $root 'code')
 & $GitExecutable -c "core.hooksPath=NUL" clone --bare --no-hardlinks --local $mirrorSource (Join-Path $root 'mirror\repository.git')
 if ($LASTEXITCODE -ne 0) { throw 'Local independent object mirror failed; no key or provider was used.' }
 $provider = if ($Role -eq 'security') {'claude'} else {'cursor'}
@@ -130,7 +182,7 @@ $config = [ordered]@{
     executable=$NativeExecutable;executable_digest=(Get-FileHash -LiteralPath $NativeExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
     entrypoint=$(if ($NativeEntrypoint) {$NativeEntrypoint} else {$null})
     entrypoint_digest=$(if ($NativeEntrypoint) {(Get-FileHash -LiteralPath $NativeEntrypoint -Algorithm SHA256).Hash.ToLowerInvariant()} else {$null})
-    model=$Model
+    model=$Model;runtime_roots=@($ProtectedRuntimeRoots)
 }
 $utf8 = [Text.UTF8Encoding]::new($false)
 $configPath = Join-Path $root 'issuer.json'
@@ -141,8 +193,9 @@ $configDigest = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash.T
 # Fixed launcher has no caller-selectable code, executable, config, or role.
 $launcher = @"
 param([ValidateSet('prepare','initialize','issue','work','collect')][string]`$Action,[string]`$Job,[string]`$Base,[string]`$Head)
+Get-ChildItem Env: | Where-Object {`$_.Name -like 'PYTHON*'} | Remove-Item
 `$env:PYTHONPATH = '$root\code'
-`$arguments = @('-s','-m','director_orchestrator.native_acceptance_issuer',`$Action,'--config','$configPath','--config-sha256','$configDigest')
+`$arguments = @('-P','-s','-m','director_orchestrator.native_acceptance_issuer',`$Action,'--config','$configPath','--config-sha256','$configDigest')
 if (`$Job) { `$arguments += @('--job',`$Job) }
 if (`$Base) { `$arguments += @('--base',`$Base) }
 if (`$Head) { `$arguments += @('--head',`$Head) }
@@ -169,3 +222,5 @@ Set-Acl -LiteralPath $manifestPath -AclObject $acl
 Write-Output "Installed dormant $Role tooling at $root. Config SHA256 $configDigest."
 Write-Output 'No key generated and no native login or dispatch occurred. Follow docs/native-acceptance-issuers.md for separate identity enrollment and deny-access checks.'
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]

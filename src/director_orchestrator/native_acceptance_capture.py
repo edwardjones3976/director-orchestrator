@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 """Native-only worker capture. This module never loads a signing key."""
 from __future__ import annotations
@@ -226,7 +227,7 @@ def work(cfg, job_id):
     cfg.identity(worker=True)
     if len(job_id) != 64 or any(c not in "0123456789abcdef" for c in job_id):
         raise IssuerError("invalid worker challenge")
-    request = read_json(cfg.root / "requests" / (job_id + ".json"), MAX_PACKET * 2)
+    request = cfg.read("requests", job_id + ".json", MAX_PACKET * 2, worker=True)
     if set(request) != {"context", "packet", "run_nonce"}:
         raise IssuerError("unknown worker request fields")
     context = context_from(request["context"])
@@ -251,8 +252,12 @@ def work(cfg, job_id):
             # when ACP cannot broker a tool call. Enrollment verifies this pin.
             if read_json(cfg.root / "cursor-config" / "cli-config.json") != {"permissions": {"allow": [], "deny": CURSOR_DENY}}:
                 raise IssuerError("protected Cursor deny-all tool configuration missing")
+            env["HOME"] = str(cfg.root / "cursor-config")
+            env["USERPROFILE"] = str(cfg.root / "cursor-config")
             env["CURSOR_CONFIG_DIR"] = str(cfg.root / "cursor-config")
             code, capture = run_acp(command, cwd=cwd, env=env, prompt=prompt_for(request), model=cfg.model, timeout=timeout)
         parse_capture(capture, provider=cfg.provider, model=cfg.model, request=request, exit_code=code)
         write_new(cfg.root / "responses" / (job_id + ".json"), dict(request_digest=digest(canonical(request)), worker_sid=cfg.worker_sid, exit_code=code, capture=base64.b64encode(capture).decode()))
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]

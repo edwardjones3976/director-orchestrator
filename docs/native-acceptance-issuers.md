@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]] -->
 # Native acceptance issuers
 
@@ -51,10 +52,11 @@ separate protected task/service ACL and profile-loading acceptance check.
 4. Run `scripts/windows-install-native-issuer.ps1` once for each role, specifying
    `Role`, `BrokerAccount`, `WorkerAccount`, `CoordinatorSid`, `AcceptedSource`,
    `AcceptedCommit`, `RepositoryMirror`, `Repository`, `PythonExecutable`,
-   `GitExecutable`, `NativeExecutable`, `Model`, and `Deployment`. Cursor also
+   `GitExecutable`, `NativeExecutable`, `ProtectedRuntimeRoots`, `Model`, and `Deployment`. Cursor also
    requires the pinned `NativeEntrypoint` (its index.js); NativeExecutable is its
    node.exe. Claude's native executable is claude.exe. No environment secret input
-   or password is accepted by this script. It copies accepted code and an
+   or password is accepted by this script. It extracts only regular tracked package blobs from the exact accepted commit
+   (ignored bytecode and dirty working files are excluded) and creates an
    independent local bare mirror; it does not fetch remote data, create accounts,
    generate a private key, sign evidence, log in, or dispatch a model.
 5. The installer prints a configuration digest and writes an immutable launcher
@@ -66,10 +68,10 @@ separate protected task/service ACL and profile-loading acceptance check.
    happen asynchronously while verifier work continues. Claude must report native
    `claude.ai` authentication, not an API key. Cursor uses the native
    `cursor_login` ACP method, which consumes existing login credentials. A missing
-   login fails; the worker never runs an interactive login flow. Verify how the
-   installed Cursor version resolves authentication with `CURSOR_CONFIG_DIR`
-   before enrollment; keep permission configuration administrator-owned, and
-   keep native saved authentication exclusively under the worker identity.
+   login fails; the worker never runs an interactive login flow. On the pinned
+   Windows build, login uses the worker APPDATA/Cursor/auth.json independently
+   of CURSOR_CONFIG_DIR (see the verified storage detail below). Keep permission
+   configuration administrator-owned and saved authentication worker-only.
 7. Under each broker identity, run the installed `invoke.ps1 -Action initialize`.
    It verifies the actual Windows token SID and internally generates a private
    Ed25519 key if absent. Only the public IssuerAuthority document is printed.
@@ -167,3 +169,37 @@ Reference behavior: [Cursor ACP](https://cursor.com/docs/cli/acp),
 [Cursor permissions](https://prod.cursor.com/docs/cli/reference/permissions), and
 [Cursor configuration](https://prod.cursor.com/docs/cli/reference/configuration).
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]] -->
+
+The installer now requires `-ProtectedRuntimeRoots` covering the complete Python
+base installation (including a virtual environment's separate base), Git runtime,
+and native CLI distribution. It recursively verifies all files and directories,
+then checks the isolated Python interpreter's base, prefix and import paths fall
+inside those roots. A per-action runtime audit checks the installed code and
+runtime trees once; consumed authorization/request/response files receive separate
+owner, ACL and reparse checks. Ancestor DELETE permission is also rejected.
+
+The generated launcher clears all inherited `PYTHON*` settings and uses `-P -s`
+with only its fixed installed code directory as `PYTHONPATH`. A real subprocess
+regression places a hostile same-named package in the caller's folder and poisons
+PYTHONHOME/PYTHONPATH; the installed template loads only the intended package.
+
+For Cursor 2026.09.02-c22c1a3 on Windows, installed code computes credentials from
+APPDATA, the title-cased credential domain, and `auth.json`; the CLI supplies domain
+`cursor`. Thus its native login resides at `%APPDATA%/Cursor/auth.json` under the
+worker identity. `CURSOR_CONFIG_DIR` instead controls `cli-config.json` independently.
+Enrollment uses the pinned CLI's `login` command under the worker identity with
+its normal APPDATA. No credential is moved or read by the broker. At review time
+HOME and USERPROFILE point to the empty administrator-owned cursor-config directory,
+while APPDATA remains the worker's actual profile location. Cursor's home-based
+rules/skills loaders therefore see the protected empty home; the workspace is a
+fresh empty temporary directory. Claude uses its documented `--safe-mode` (disables
+CLAUDE.md, skills, plugins, hooks, MCP and custom instructions) together with
+`--restricted`, empty tools and strict empty MCP configuration; `--bare` is avoided
+because it disables the native OAuth credential mechanism.
+
+Validation here exercises the actual generated launcher and rejects a real
+current-user-owned temporary installation through Windows Get-Acl. It does not
+claim an elevated installation or successful four-SID effective-access test:
+those and the two native logins remain owner provisioning gates.
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]] -->
