@@ -1,9 +1,20 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]]
 """Synthetic identity keys and offline API fixtures; no activation evidence."""
 import base64
 import copy
 from dataclasses import replace
 import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -165,8 +176,56 @@ class CIIssuerTests(unittest.TestCase):
         Ed25519PublicKey.from_public_bytes(base64.b64decode(result['ci_identity']['public_key'])).verify(signature,
             DOMAIN+canonical(dict(version=VERSION,context=self.context.document(),receipt=receipt)))
         self.assertEqual(receipt['role'],'ci')
+        self.assertEqual(receipt['session_id'],'github-actions:900:1')
+        self.assertEqual(receipt['ci_checks'][0]['run_id'],10)
         self.assertEqual(receipt['transport_evidence_digest'],hashlib.sha256(canonical(self.collect())).hexdigest())
+
+    def test_production_cli_rejects_reduced_check_policy_before_network(self):
+        from dataclasses import asdict
+        from director_orchestrator.ci_acceptance_issuer import main
+        policy=asdict(self.policy);policy['required_ci_checks']=list(policy['required_ci_checks'])
+        with patch.dict(os.environ,{'CI_ISSUER_POLICY_JSON':json.dumps(policy)}),patch.object(sys,'argv',['issuer','--output','unused.json']):
+            with self.assertRaisesRegex(ProviderAcceptanceError,'mandatory baseline'):
+                main()
+
+
+class WorkflowIsolationTests(unittest.TestCase):
+    def setUp(self):
+        self.workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/ci-acceptance-issuer.yml').read_text()
+
+    def test_signer_cannot_install_dependencies_or_choose_mutable_source(self):
+        preparation,signer=self.workflow.split('  issue:',1)
+        self.assertNotIn('id-token: write',preparation)
+        self.assertNotIn('pip install',signer)
+        self.assertNotIn('CI_ISSUER_SOURCE_SHA',self.workflow)
+        self.assertEqual(self.workflow.count('ref: ${{ github.workflow_sha }}'),2)
+        self.assertIn('artifact-ids: ${{ needs.prepare.outputs.artifact_id }}',signer)
+        self.assertIn('EXPECTED_RUNTIME_SHA256: ${{ needs.prepare.outputs.runtime_sha256 }}',signer)
+
+    def test_actual_workflow_verifier_rejects_artifact_substitution_before_extract(self):
+        blocks=re.findall(r"python3\.12 - <<'PY'\n(.*?)\n          PY",self.workflow,re.S)
+        verifier=textwrap.dedent(blocks[1])
+        for mutation in ('none','digest','source','run','attempt'):
+            with self.subTest(mutation=mutation),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);prepared=root/'prepared-runtime';prepared.mkdir()
+                archive=prepared/'issuer-runtime.tar.gz'
+                with tarfile.open(archive,'w:gz') as bundle:
+                    member=tarfile.TarInfo('ci-issuer-runtime/proof');member.size=4
+                    bundle.addfile(member,io.BytesIO(b'safe'))
+                digest=hashlib.sha256(archive.read_bytes()).hexdigest()
+                manifest=dict(source_sha='a'*40,run_id='10',run_attempt='2',runtime_sha256=digest)
+                field={'source':'source_sha','run':'run_id','attempt':'run_attempt'}.get(mutation)
+                if field:manifest[field]='wrong'
+                (prepared/'issuer-runtime-manifest.json').write_text(json.dumps(manifest))
+                target=root/'runtime';target.mkdir()
+                environment={**os.environ,'RUNNER_TEMP':str(target),'TRUSTED_SOURCE':'a'*40,
+                    'GITHUB_RUN_ID':'10','GITHUB_RUN_ATTEMPT':'2',
+                    'EXPECTED_RUNTIME_SHA256':('0'*64 if mutation=='digest' else digest)}
+                result=subprocess.run([sys.executable,'-c',verifier],cwd=root,env=environment,capture_output=True)
+                self.assertEqual(result.returncode==0,mutation=='none',result.stderr)
+                self.assertEqual((target/'ci-issuer-runtime/proof').exists(),mutation=='none')
 
 
 if __name__ == '__main__': unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | END]]
