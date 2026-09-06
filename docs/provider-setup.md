@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
@@ -61,10 +62,9 @@ observed effort is separately reported and cannot create production credit.
 OpenAI production and Antigravity specialist work require their actual scoped
 adapters and non-author verification; a target alone proves no live capability.
 
-Every assignment has exactly three authorized attempt slots. The Director
+Every assignment has at most three conditional attempt slots. The Director
 derives a deterministic roster of the provider's configured packet formats and
-transports, rejects rosters larger than three, and invokes every roster entry
-once before reusing one. Each child attempt is appended to Postgres before I/O
+transports and rejects rosters larger than three. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch. Each child attempt is appended to Postgres before I/O
 and settled with exact provider, format, transport, idempotency, budget,
 result, and reason digests. An ambiguous paid attempt stops redispatch until
 authenticated reconciliation; a failed attempt remains untrusted and cannot
@@ -117,8 +117,7 @@ candidate is frozen. It has no assigned workload share, range, or ceiling,
 no provider adapter or automatic routing, and no production credit,
 independent acceptance role, gate, merge authority, or every-push automation.
 Without an authenticated contact it fails closed as unavailable. A requested
-observation binds exactly three attempt slots and exercises each configured
-eligible format once before reuse.
+observation binds at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch.
 Quota/unavailability and rejected findings are recorded as waste.
 A confirmed defect follows the normal correction path, and any substantive
 Copilot-authored fix makes Copilot a material author ineligible to independently
@@ -408,3 +407,5 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

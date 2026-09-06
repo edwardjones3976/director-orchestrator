@@ -206,6 +206,7 @@
           "minimum": 0
         },
         "retry_limit": {
+          "description": "Maximum three total attempts. Stop on success; second only after temporary failure; third only with materially new information or substantially different transport. Never repeat ambiguous paid dispatch.",
           "type": "integer",
           "minimum": 1,
           "maximum": 3

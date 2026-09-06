@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
@@ -1049,7 +1050,7 @@ class CompletionGateContractTests(unittest.TestCase):
         # Pin the current exact packet authority, including assignment-specific
         # retry and owned/prohibited-path contracts, so drift cannot pass silently.
         expected = {
-            "model-work-packet-v1.schema.json": "sha256:8eaa923240bf2b2b57e2ad7081045c50d6abc5a334680e2b250b3b4add0f998d",
+            "model-work-packet-v1.schema.json": "sha256:79e50a3f5312205b10b1bba7b955bd536fbd58ea404de19b9bf964217af289dc",
             "model-work-packet-v1.example.json": "sha256:de50d90969eda8eae71807479f1fa3cac80254dfdf2656c79474206aea0f663e",
             "model-result-packet-v1.schema.json": "sha256:8fec656c0fea5efcc436fe6385416dd521b3dcc2d5e627608ad7198b95961cdb",
             "model-result-packet-v1.example.json": "sha256:8a761ded8fbbd7033fbd2fba90c0e48c311ccae26a063629e1a1c6cfcc43d3a6",
@@ -1075,3 +1076,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | END]]

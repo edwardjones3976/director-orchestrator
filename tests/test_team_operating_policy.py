@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -738,7 +739,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         )
         self.assertEqual(
             copilot["attempts"],
-            "three_each_configured_format_before_reuse",
+            "conditional_maximum_three",
         )
         self.assertFalse(copilot["automatic_every_push"])
         self.assertFalse(copilot["gating"])
@@ -751,10 +752,10 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         availability = self.directive["availability"]
         self.assertEqual(
             availability["attempts"],
-            "exactly_three_per_assignment",
+            "conditional_maximum_three",
         )
         self.assertIn(
-            "positive_expected_information_gain",
+            "second_requires_temporary_failure",
             availability["additional_attempt_requires"],
         )
         self.assertEqual(availability["ambiguous"], "no_duplicate_dispatch")
@@ -897,7 +898,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
         self.assertEqual(
             self.directive["availability"]["attempts"],
-            "exactly_three_per_assignment",
+            "conditional_maximum_three",
         )
         self.assertEqual(
             self.charter["availability_policy"]["nonresponse_attempt_limit"], 3
@@ -2119,3 +2120,5 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

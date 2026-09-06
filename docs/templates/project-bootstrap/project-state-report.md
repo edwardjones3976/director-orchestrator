@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
@@ -18,7 +19,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=63c92e0a40670d96b3989ed82d44b8e72d718017f8339579238302ffc881f26f -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=b8bb72f1449359bb6969dd424234dce09ab47ca05ec8dbb54577bbd3971aa5ac -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -79,7 +80,7 @@ report or submission envelope.
 - **Workload:** <prospectively enforced accepted-productive-work and total-effort ledgers, immutable effort-point basis, assignment and rolling-20 windows, failed-attempt treatment, actual versus target deviation, and rationale>
 - **Efficiency targets:** <80% fewer unchanged status checks, 70% less duplicate validation, 60% fewer total task actions, browser use reported with no reduction target, ordinary review-to-merge at most five major actions>
 - **ROI and waste:** <accepted productive units; historical effort; estimated ROI; correlated provider-reported-cost ROI or unavailable; first-pass yield; correction rate; duplicate validation; rejected/unusable, quota/unavailable, duplicate, recovery, ambiguous, and rejected-hygiene-finding waste>
-- **Copilot Lite hygiene:** <no assigned workload share, range, or ceiling; exactly three attempt slots with each configured eligible format exercised once before reuse; no adapter or automatic routing; no production credit; not requested, unavailable fail-closed, quota waste, validated/rejected findings, invalidated by change, or substantive material authorship; never a gate, authority, or independent acceptance>
+- **Copilot Lite hygiene:** <no assigned workload share, range, or ceiling; at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch.; no adapter or automatic routing; no production credit; not requested, unavailable fail-closed, quota waste, validated/rejected findings, invalidated by change, or substantive material authorship; never a gate, authority, or independent acceptance>
 - **Shadow/enforcement mode:** <five-assignment observe-only shadow result or automatic enforcement state; would-route/would-block/would-correct evidence and drift correction>
 - **Avoidable commit trend:** <rolling comparable baseline window/sample and count/rate; current count/rate; absolute and percentage delta toward 33%; exclusions and comparability changes>
 - **Coordination:** <slack channel ID or configured placeholder and thread>
@@ -118,7 +119,7 @@ report or submission envelope.
 - **Usage:** <cost, input/output/cached/reasoning tokens when available, elapsed time, retries, and explicitly unavailable telemetry>
 - **Selection evidence:** <eligible candidate set, exclusions, trusted comparable cost evidence, selected provider/model, tie-break reason, and confirmation missing cost was not treated as zero>
 - **Value evidence:** <accepted productive units, estimated ROI, correlated reported-cost ROI or unavailable, first-pass yield, correction rate, and categorized waste>
-- **Retry discipline:** <immutable assignment retry_limit exactly 3; each configured format/transport used before reuse; classified failure; expected information gain; new evidence, corrected approach, or different transport; remaining resource budget; v1 paid revision authenticated durable assignment token accounting or fail-closed, with primary attempt unaffected and no budget_units/provider-telemetry reinterpretation; unavailable/fallback state; ambiguous paid dispatch reconciled and not repeated>
+- **Retry discipline:** <immutable assignment retry_limit ceiling 3; stop on success; second requires temporary failure; third requires materially new information or substantially different transport; remaining resource budget; v1 paid revision authenticated durable assignment token accounting or fail-closed, with primary attempt unaffected and no budget_units/provider-telemetry reinterpretation; unavailable/fallback state; ambiguous paid dispatch reconciled and not repeated>
 - **Status checks:** <event/callback sources, initial read, terminal verification, deduplicated unchanged reads, and reduction from comparable baseline>
 - **Validation reuse:** <candidate/check/environment/command digest, reused evidence, reruns and exact state change/ambiguity/named gap, reduction from baseline>
 - **Action accounting:** <major orchestration waves and raw provider/tool calls; percent reduction; five-action closure state or reshaped/owner gate>
@@ -160,3 +161,5 @@ published, enabled, or otherwise changed>.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

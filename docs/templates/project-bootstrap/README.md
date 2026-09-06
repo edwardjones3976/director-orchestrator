@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
@@ -59,7 +60,7 @@ templates are optional and should be selected when they add value.
    `PROJECT_BOOTSTRAP` (intake record), `BOOTSTRAP`, `PLAN`, `WORKING`,
    `EVIDENCE`, `REVIEW_READY`, `DECISION`, `OWNER_DECISION_REQUIRED`,
    `RESHAPED`, `PAUSED`, `COMPLETE`.
-10. Use `minimal-fix.md` only for the charter's exactly-three-attempt minimal-fix lane;
+10. Use `minimal-fix.md` only for the charter's up-to-three-attempt minimal-fix lane;
    changed candidates still require fresh exact-candidate evidence.
 11. Preserve existing valid contribution tags and enclose each completed,
     human-readable template instance in a new matching UTC pair from
@@ -76,3 +77,5 @@ project profile or runtime configuration—never hardcode workspace channel name
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

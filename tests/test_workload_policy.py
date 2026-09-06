@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
@@ -1024,30 +1025,15 @@ class RetryPolicyTests(unittest.TestCase):
         result = evaluate_retry(RetryRequest(attempt_number=1, retry_limit=3))
         self.assertTrue(result.allowed)
 
-    def test_additional_attempt_uses_assignment_budget_and_information_gain(self):
-        allowed = evaluate_retry(
-            RetryRequest(
-                attempt_number=2,
-                retry_limit=3,
-                previous_failure=FailureKind.TERMINAL,
-                corrected_approach=True,
-                positive_expected_information_gain=True,
-            )
-        )
-        blocked = evaluate_retry(
-            RetryRequest(
-                attempt_number=2,
-                retry_limit=3,
-                previous_failure=FailureKind.TERMINAL,
-            )
-        )
-
-        self.assertTrue(allowed.allowed)
-        self.assertTrue(blocked.allowed)
-        self.assertIn(
-            "additional_attempt_information_gain_or_changed_basis_not_observed",
-            blocked.advisories,
-        )
+    def test_recovery_requires_temporary_failure_even_with_corrected_approach(self):
+        for failure, expected in ((FailureKind.TRANSIENT, True),
+                                  (FailureKind.TERMINAL, False),
+                                  (FailureKind.NONE, False)):
+            with self.subTest(failure=failure):
+                result = evaluate_retry(RetryRequest(
+                    attempt_number=2, retry_limit=3, previous_failure=failure,
+                    corrected_approach=True, positive_expected_information_gain=True))
+                self.assertEqual(expected, result.allowed)
 
     def test_third_attempt_requires_new_information_or_changed_transport(self):
         no_change = evaluate_retry(
@@ -1081,10 +1067,10 @@ class RetryPolicyTests(unittest.TestCase):
             )
         )
 
-        self.assertTrue(no_change.allowed)
+        self.assertFalse(no_change.allowed)
         self.assertIn(
-            "additional_attempt_information_gain_or_changed_basis_not_observed",
-            no_change.advisories,
+            "provider_retry_evidence_insufficient",
+            no_change.violations,
         )
         self.assertTrue(new_information.allowed)
         self.assertTrue(changed_transport.allowed)
@@ -1136,7 +1122,7 @@ class RetryPolicyTests(unittest.TestCase):
             mode=EnforcementMode.SHADOW,
         )
         self.assertTrue(result.allowed)
-        self.assertEqual(result.outcome, DecisionOutcome.ALLOW)
+        self.assertIn("recovery_requires_transient_failure", result.violations)
 
 
 class EfficiencyPolicyTests(unittest.TestCase):
@@ -1353,3 +1339,5 @@ class InputValidationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

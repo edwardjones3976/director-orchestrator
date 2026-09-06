@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]]
@@ -37,7 +38,7 @@ from .packet_contracts import canonical_json_bytes
 
 BRIDGE_PROTOCOL = "director-host-provider-bridge/v1"
 SUPPORTED_HOST_LANES = frozenset(
-    {"claude", "grok", "antigravity", "github-copilot"}
+    {"openai", "claude", "grok", "antigravity", "github-copilot"}
 )
 UNSUPPORTED_HOST_LANES = frozenset({"cursor", "microsoft-365-copilot"})
 _TOKEN = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
@@ -50,6 +51,7 @@ _SAFE_OS_ENV = frozenset(
     {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC", "LOCALAPPDATA", "APPDATA", "USERPROFILE"}
 )
 _LANE_AUTH_ENV = {
+    "openai": frozenset(),
     "claude": frozenset({"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}),
     "grok": frozenset({"XAI_API_KEY"}),
     "antigravity": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
@@ -396,8 +398,21 @@ class WindowsHostProviderExecutor:
             if not argv or any(not item or "\x00" in item for item in argv):
                 raise ValueError("bridge commands must be explicit argv arrays")
             normalized[provider] = argv
+        self.native_codex = None
+        if "openai" in normalized:
+            from .native_codex_transport import NativeCodexPacketTransport
+            command = normalized["openai"]
+            if len(command) != 2:
+                raise ValueError("OpenAI host command must be [native executable, model]")
+            self.native_codex = NativeCodexPacketTransport(*command)
         self.commands = normalized
         self.writer_fence_verifier = writer_fence_verifier
+
+    def available_providers(self) -> list[str]:
+        providers = sorted(self.commands)
+        if self.native_codex is not None and not self.native_codex.authenticated():
+            providers.remove("openai")
+        return providers
 
     def execute(self, request: BridgeRequest) -> bytes:
         command = self.commands.get(request.provider)
@@ -407,6 +422,21 @@ class WindowsHostProviderExecutor:
         if verifier is None or not callable(getattr(verifier, "verify", None)):
             raise HostProviderBridgeError("current Postgres writer verification is unavailable")
         verifier.verify(request)
+        if request.provider == "openai":
+            from types import SimpleNamespace
+            from .packet_contracts import validate_packet
+            work = validate_packet("work", json.loads(request.packet))
+            context = SimpleNamespace(
+                fencing_generation=request.writer_generation,
+                max_hops=work["limits"]["max_hops"],
+                timeout_seconds=min(self.timeout_seconds, work["limits"]["timeout_seconds"]),
+                allowed_external_effects=tuple(work["allowed_external_effects"]),
+            )
+            try:
+                result = self.native_codex.send(request.packet, context=context)
+            except (RuntimeError, OSError, ValueError) as exc:
+                raise HostProviderBridgeAmbiguous("native Codex outcome is unavailable or ambiguous") from exc
+            return canonical_json_bytes(result)
         environment = {
             name: value
             for name, value in os.environ.items()
@@ -651,3 +681,5 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]

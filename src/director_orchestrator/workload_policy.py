@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
@@ -1120,6 +1121,9 @@ def evaluate_retry(
             violations.append("primary_attempt_must_not_have_previous_failure")
     elif request.previous_failure is FailureKind.AMBIGUOUS_PAID_DISPATCH:
         violations.append("ambiguous_paid_dispatch_must_not_be_repeated")
+    elif request.attempt_number == 2:
+        if request.previous_failure is not FailureKind.TRANSIENT:
+            violations.append("recovery_requires_transient_failure")
     else:
         if request.previous_failure is FailureKind.NONE:
             violations.append("additional_attempt_requires_classified_failure")
@@ -1127,15 +1131,8 @@ def evaluate_retry(
             request.previous_transport is not None
             and request.previous_transport is not request.transport
         )
-        changed_basis = (
-            request.materially_new_information
-            or request.corrected_approach
-            or transport_changed
-        )
-        if not request.positive_expected_information_gain or not changed_basis:
-            advisories.append(
-                "additional_attempt_information_gain_or_changed_basis_not_observed"
-            )
+        if not (request.materially_new_information or transport_changed):
+            violations.append("provider_retry_evidence_insufficient")
 
     return _decision(mode, violations, advisories)
 
@@ -1431,3 +1428,5 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

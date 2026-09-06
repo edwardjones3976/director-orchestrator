@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
@@ -36,11 +37,13 @@ Every model receives the same bounded work packet and returns the same bounded r
 - idempotency key and correlation identifiers
 
 A packet missing its authority snapshot, acceptance checks, or repository boundary is invalid and must not dispatch.
-An additional attempt is valid only within that retry limit, with a classified
-failure, positive expected information gain from new evidence, a corrected
-approach, or a different transport, and remaining resource budget. An ambiguous
-external effect is reconciled through its idempotency and provider identifiers;
-it is never blindly repeated.
+The retry limit is a ceiling of three total attempts, never a requirement to
+perform three calls. Stop on success. Attempt two requires a classified temporary
+failure. Attempt three requires materially new information or a substantially
+different underlying transport; a corrected approach alone is insufficient.
+Every attempt remains subject to resource and authority gates. After three
+recorded failures the assignment route is unavailable. An ambiguous paid dispatch
+is never repeated, including through a fallback; reconcile it first.
 For v1 paid revisions, the additional attempt also requires authenticated,
 durable assignment token accounting; primary attempts are unaffected. The
 current runtime has no generic token authority and therefore fails paid
@@ -140,3 +143,5 @@ A self-contained digest detects accidental or unsynchronized modification; it is
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

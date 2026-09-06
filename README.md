@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
@@ -27,7 +28,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=63c92e0a40670d96b3989ed82d44b8e72d718017f8339579238302ffc881f26f -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=b8bb72f1449359bb6969dd424234dce09ab47ca05ec8dbb54577bbd3971aa5ac -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -43,7 +44,7 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - A primary OpenAI–Claude–Cursor–Grok team selected through a cheap-capable-model-first policy, with Gemini/Antigravity and Perplexity retained as bounded supplemental specialists.
 - Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all nine provider lanes. Engineering defaults to OpenAI 35%, Claude 30%, Cursor 15%, Grok 10%, and Antigravity 10%; other profiles reserve real research and enterprise work. A fixed real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion, with ±3-point normal preference.
 - Default-on deterministic accepted-productive-work and total-effort accounting, an immutable pre-stage packet, rolling 20-assignment soft drift preferences, cheap-capable-model selection, and a five-action ordinary review-to-merge ceiling. The total-effort normal bands are Claude 33–39%, Cursor 17–23%, Gemini/Antigravity 17–23%, Grok 8–14%, OpenAI 5–11%, and Perplexity 1–7%; provider share never blocks an otherwise safe route.
-- An optional GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It has no assigned workload share, range, or ceiling, no provider adapter or automatic routing, and no production credit, gate, authority, or every-push trigger; without an authenticated contact it fails closed as unavailable. A requested review uses exactly three attempt slots, exercising every configured eligible format once before reuse.
+- An optional GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It has no assigned workload share, range, or ceiling, no provider adapter or automatic routing, and no production credit, gate, authority, or every-push trigger; without an authenticated contact it fails closed as unavailable. A requested review uses at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch.
 - Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
 - Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
@@ -395,3 +396,5 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

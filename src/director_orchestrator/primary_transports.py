@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
@@ -1131,6 +1132,7 @@ def discover_local_primary_command_transports(
     *,
     cwd: str | Path,
     authenticated: Mapping[str, bool],
+    openai_transport: str = "responses-api",
     openai_api_key: str = "",
     openai_model: str = "gpt-5.6",
     openai_reasoning_effort: str = "medium",
@@ -1148,6 +1150,8 @@ def discover_local_primary_command_transports(
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
     """Discover documented noninteractive CLIs; never launch or authenticate them."""
 
+    if openai_transport not in {"responses-api", "native-codex-host"}:
+        raise ValueError("OpenAI primary transport must be explicit")
     root = Path(cwd).resolve(strict=True)
     if len(
         {
@@ -1204,7 +1208,7 @@ def discover_local_primary_command_transports(
                     else "work-packet"
                 ),
             )
-    if openai_api_key and bool(observed_auth.get("openai", False)):
+    if openai_transport == "responses-api" and openai_api_key and bool(observed_auth.get("openai", False)):
         transports["openai"] = OpenAIResponsesPacketTransport(
             api_key=openai_api_key,
             model=openai_model,
@@ -1237,6 +1241,8 @@ def discover_local_primary_command_transports(
         )
     if host_bridge_endpoint and host_bridge_secret and host_bridge_challenge is not None:
         for provider_id in sorted(SUPPORTED_HOST_LANES):
+            if provider_id == "openai" and openai_transport != "native-codex-host":
+                continue
             if provider_id not in host_bridge_challenge.configured_providers:
                 continue
             # The Antigravity lane keeps its closed-directive contract when the
@@ -1391,3 +1397,5 @@ def provider_lane_external_blockers(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
