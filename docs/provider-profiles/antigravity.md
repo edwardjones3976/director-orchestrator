@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 
@@ -12,6 +13,45 @@
 - Precedence: charter_code_and_deterministic_policy_override_this_profile.
 - If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong.
 - Route catalog: docs/provider-profiles/routes.yaml. Schema: docs/schemas/director-provider-profile-v1.schema.json.
+
+## Execution modes
+
+| Field | Value |
+| --- | --- |
+| contract | `antigravity-team-engineering/v1` |
+| assignment_operations | `engineering`, `review` |
+| policy_status | `owner_authorized_team_eligibility` |
+| operational_status | `not_qualified_not_live` |
+| enabled_by_default | `no` |
+| enable_variable | `LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` |
+| format_identity | `antigravity-team-engineering-v1` |
+| worker_format | `qualified-native-worker-v1` |
+| material_author_family | `gemini` |
+| review_requires_different_material_author_family | `yes` |
+| repository_context | `only_exact_owner_signed_readable_manifest_after_authenticated_qualification` |
+| writable_scope | `only_explicit_owner_signed_paths_for_engineering` |
+| review_verdict | `eligible_only_on_exact_target_with_independent_material_authorship` |
+| draft_pr | `validated_candidate_artifact_via_director_broker_only` |
+| may_self_accept | `no` |
+| may_merge | `no` |
+| may_deploy_or_publish | `no` |
+| shared_integration_effects | `no` |
+| adoption_dependency | `docs/antigravity-team-engineering.md and its separately reviewed default-off implementation` |
+| selection_rule | `Roster eligibility and this profile grant no execution authority; legacy Gemini flags and subordinate transport cannot select the team contract.` |
+
+Required team admission gates:
+
+- adopted_reviewed_foundation
+- explicit_team_selection
+- owner_signed_exact_assignment_grant
+- live_entitlement_and_revocation_checks
+- authoritative_shared_monetary_and_workload_admission
+- fresh_task_scoped_host_and_native_account_qualification
+- bound_candidate_tree_generation_and_installation
+- bounded_native_worker_and_validated_result_capture
+- independent_review_and_director_acceptance
+
+The sections below mirror the preserved restricted mode. Their no-repository-context and no-review-verdict rules do not describe the separately authorized team contract. Team eligibility is not operational qualification or a live activation claim.
 
 ## Identity and aliases
 
@@ -295,3 +335,4 @@ Separation of duties:
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]] -->

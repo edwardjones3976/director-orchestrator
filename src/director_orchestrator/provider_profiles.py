@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 20:30 UTC | BEGIN]]
@@ -174,6 +175,10 @@ def lane_order() -> list[str]:
 
 def validate_document(document: Mapping[str, Any]) -> None:
     kind = document.get("document_type")
+    if kind == PROFILE_DOCUMENT_TYPE:
+        has_modes = "execution_modes" in document
+        if has_modes != (document.get("provider_id") == "antigravity"):
+            raise ProviderProfileError("execution_modes is required only for Antigravity")
     validators = _validators()
     if kind not in validators:
         raise ProviderProfileError(
@@ -472,6 +477,14 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
         ]
     )
     lines.append("")
+    if "execution_modes" in profile:
+        modes = profile["execution_modes"]
+        team = modes["team"]
+        lines += ["## Execution modes", ""]
+        lines += _kv_table([(key, _code(value)) for key, value in team.items() if key != "required_gates"])
+        lines += ["", "Required team admission gates:", ""]
+        lines += _bullets(team["required_gates"])
+        lines += ["", "The sections below mirror the preserved restricted mode. Their no-repository-context and no-review-verdict rules do not describe the separately authorized team contract. Team eligibility is not operational qualification or a live activation claim.", ""]
     lines.append("## Identity and aliases")
     lines.append("")
     lines += _kv_table(
@@ -843,6 +856,7 @@ def render_index_markdown(
         ]
     )
     lines.append("")
+    lines += ["Antigravity has two distinct modes: the roster below mirrors the retained restricted route; its separately owner-authorized team contract admits engineering and independent review only after explicit grants, monetary admission and host qualification. The team mode is default off and not live. See [Antigravity execution modes](antigravity.md#execution-modes).", ""]
     lines.append("## Roster")
     lines.append("")
     roster_rows: list[list[Any]] = []
@@ -1062,3 +1076,5 @@ def write_outputs(identity: TagIdentity, *, root: Path | None = None) -> list[Pa
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 20:30 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]

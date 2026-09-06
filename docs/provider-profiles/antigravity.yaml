@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: Antigravity (director-provider-profile/v1).
@@ -9,6 +10,47 @@ document_type: "director-provider-profile"
 provider_id: "antigravity"
 display_name: "Antigravity (Gemini)"
 authority_granted: "none"
+
+execution_modes:
+  legacy_scope: roles_capabilities_gating_authority_transports_and_communication_below_describe_restricted_mode
+  restricted:
+    default: true
+    contract: existing_subordinate_and_invited_debate
+    unchanged: true
+  team:
+    contract: antigravity-team-engineering/v1
+    assignment_operations:
+    - engineering
+    - review
+    policy_status: owner_authorized_team_eligibility
+    operational_status: not_qualified_not_live
+    enabled_by_default: false
+    enable_variable: LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED
+    format_identity: antigravity-team-engineering-v1
+    worker_format: qualified-native-worker-v1
+    material_author_family: gemini
+    review_requires_different_material_author_family: true
+    repository_context: only_exact_owner_signed_readable_manifest_after_authenticated_qualification
+    writable_scope: only_explicit_owner_signed_paths_for_engineering
+    review_verdict: eligible_only_on_exact_target_with_independent_material_authorship
+    draft_pr: validated_candidate_artifact_via_director_broker_only
+    may_self_accept: false
+    may_merge: false
+    may_deploy_or_publish: false
+    shared_integration_effects: false
+    required_gates:
+    - adopted_reviewed_foundation
+    - explicit_team_selection
+    - owner_signed_exact_assignment_grant
+    - live_entitlement_and_revocation_checks
+    - authoritative_shared_monetary_and_workload_admission
+    - fresh_task_scoped_host_and_native_account_qualification
+    - bound_candidate_tree_generation_and_installation
+    - bounded_native_worker_and_validated_result_capture
+    - independent_review_and_director_acceptance
+    adoption_dependency: docs/antigravity-team-engineering.md and its separately reviewed default-off implementation
+    selection_rule: Roster eligibility and this profile grant no execution authority; legacy Gemini flags and subordinate
+      transport cannot select the team contract.
 
 source_of_truth:
   charter_document: "docs/team-operating-charter.md"
@@ -282,3 +324,5 @@ sources:
     anchor: "never_a_primary_team_substitute: true"
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]

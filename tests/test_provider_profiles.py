@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]]
 """Drift tests for the descriptive provider profile sheets.
@@ -479,6 +480,48 @@ class CharterMirrorTests(unittest.TestCase):
                 self.assertIsNone(other["roles"]["hygiene_review"], lane)
 
 
+class AntigravityModeTests(unittest.TestCase):
+    def test_team_eligibility_is_separate_from_restricted_runtime(self):
+        profile = pp.load_profiles()["antigravity"]
+        team = profile["execution_modes"]["team"]
+        self.assertEqual(team["assignment_operations"], ["engineering", "review"])
+        self.assertEqual(team["operational_status"], "not_qualified_not_live")
+        self.assertFalse(team["enabled_by_default"])
+        self.assertFalse(team["may_self_accept"])
+        self.assertFalse(team["may_merge"])
+        self.assertTrue(team["review_requires_different_material_author_family"])
+        self.assertEqual(profile["capabilities"]["may_issue_review_verdict"], "never")
+        self.assertFalse(profile["capabilities"]["receives_repository_context"])
+        rendered = pp.render_profile_markdown(profile, pp.load_route_catalog())
+        self.assertIn("## Execution modes", rendered)
+        self.assertIn("preserved restricted mode", rendered)
+        self.assertIn("not_qualified_not_live", rendered)
+
+    def test_mode_contract_rejects_authority_or_qualification_escalation(self):
+        original = pp.load_profiles()["antigravity"]
+        changes = {"operational_status": "live", "enabled_by_default": True,
+                   "may_merge": True, "required_gates": [],
+                   "review_requires_different_material_author_family": False,
+                   "assignment_operations": ["engineering", "review", "deploy"]}
+        for key, value in changes.items():
+            with self.subTest(key=key):
+                document = json.loads(json.dumps(original))
+                document["execution_modes"]["team"][key] = value
+                with self.assertRaises(pp.ProviderProfileError):
+                    pp.validate_document(document)
+
+    def test_mode_scope_is_required_for_antigravity_only(self):
+        profiles = pp.load_profiles()
+        agy = json.loads(json.dumps(profiles["antigravity"]))
+        modes = agy.pop("execution_modes")
+        with self.assertRaises(pp.ProviderProfileError):
+            pp.validate_document(agy)
+        other = json.loads(json.dumps(profiles["claude"]))
+        other["execution_modes"] = modes
+        with self.assertRaises(pp.ProviderProfileError):
+            pp.validate_document(other)
+
+
 class ConfigMirrorTests(unittest.TestCase):
     def setUp(self):
         self.profiles = _profiles()
@@ -845,3 +888,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]

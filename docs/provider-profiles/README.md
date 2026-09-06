@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 
@@ -12,6 +13,8 @@
 - If a sheet and the team operating charter, configuration defaults, or adapter constants disagree, the charter and code win and the sheet is wrong.
 - No direct provider-to-provider channel exists. Every exchange between providers is brokered by the Director.
 - Values are never recorded: allowlists, keys, tokens, endpoints, paths, and owner identifiers appear only as variable names.
+
+Antigravity has two distinct modes: the roster below mirrors the retained restricted route; its separately owner-authorized team contract admits engineering and independent review only after explicit grants, monetary admission and host qualification. The team mode is default off and not live. See [Antigravity execution modes](antigravity.md#execution-modes).
 
 ## Roster
 
@@ -159,3 +162,4 @@ Endpoints:
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]] -->
