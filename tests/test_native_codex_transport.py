@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 import json
 import os
@@ -65,14 +66,14 @@ class NativeCodexTests(unittest.TestCase):
         self.assertFalse(set(environment) & {'OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_HOME', 'LANGGRAPH_PRIMARY_OWNER_TOKEN'})
 
     def test_auth_requires_exact_chatgpt_status_no_api_auth(self):
-        native = NativeCodexPacketTransport(sys.executable, 'gpt-5.6')
+        native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
         with patch('director_orchestrator.native_codex_transport.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=b'Logged in using ChatGPT\n')):
             self.assertTrue(native.authenticated())
         with patch('director_orchestrator.native_codex_transport.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=b'Logged in using an API key')):
             self.assertFalse(native.authenticated())
 
     def test_isolated_prompt_only_flags_and_no_retry(self):
-        native = NativeCodexPacketTransport(sys.executable, 'gpt-5.6')
+        native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
         context = SimpleNamespace(fencing_generation=1, max_hops=1, timeout_seconds=5, allowed_external_effects=())
         with patch.object(native, 'authenticated', return_value=True), patch.object(native, '_run', return_value=encode(events())) as run:
             native.send(json.dumps(work()).encode(), context=context)
@@ -99,8 +100,8 @@ class NativeCodexTests(unittest.TestCase):
 
     def test_host_command_shape_and_auth_roster(self):
         with self.assertRaises(ValueError):
-            WindowsHostProviderExecutor({'openai': [sys.executable, 'gpt-5.6', '--dangerous']}, cwd=ROOT)
-        executor = WindowsHostProviderExecutor({'openai': [sys.executable, 'gpt-5.6']}, cwd=ROOT)
+            WindowsHostProviderExecutor({'openai': [str(Path(sys.executable).resolve()), 'gpt-5.6', '--dangerous']}, cwd=ROOT)
+        executor = WindowsHostProviderExecutor({'openai': [str(Path(sys.executable).resolve()), 'gpt-5.6']}, cwd=ROOT)
         with patch.object(executor.native_codex, 'authenticated', return_value=False):
             self.assertEqual([], executor.available_providers())
         with patch.object(executor.native_codex, 'authenticated', return_value=True):
@@ -109,7 +110,7 @@ class NativeCodexTests(unittest.TestCase):
     def test_native_host_execution_checks_writer_and_returns_bound_packet(self):
         verifier = SimpleNamespace(verify=lambda request: observed.append(request))
         observed = []
-        executor = WindowsHostProviderExecutor({'openai': [sys.executable, 'gpt-5.6']}, cwd=ROOT, writer_fence_verifier=verifier)
+        executor = WindowsHostProviderExecutor({'openai': [str(Path(sys.executable).resolve()), 'gpt-5.6']}, cwd=ROOT, writer_fence_verifier=verifier)
         request = SimpleNamespace(provider='openai', writer_generation=7, packet=json.dumps(work()).encode())
         with patch.object(executor.native_codex, 'send', return_value={'provider': 'openai'}) as send:
             self.assertEqual({'provider': 'openai'}, json.loads(executor.execute(request)))
@@ -119,8 +120,10 @@ class NativeCodexTests(unittest.TestCase):
     def test_process_output_and_timeout_bounds(self):
         # Actual local child processes; never invokes Codex or a provider.
         with self.assertRaises(RuntimeError):
-            NativeCodexPacketTransport._run([sys.executable, '-c', 'import time; time.sleep(10)'], b'', str(ROOT), 1)
+            NativeCodexPacketTransport._run([str(Path(sys.executable).resolve()), '-c', 'import time; time.sleep(10)'], b'', str(ROOT), 1)
         with self.assertRaises(RuntimeError):
-            NativeCodexPacketTransport._run([sys.executable, '-c', 'import sys; sys.stdout.write("x"*2000000)'], b'', str(ROOT), 5)
+            NativeCodexPacketTransport._run([str(Path(sys.executable).resolve()), '-c', 'import sys; sys.stdout.write("x"*2000000)'], b'', str(ROOT), 5)
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | END]]
