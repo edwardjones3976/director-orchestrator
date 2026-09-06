@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | BEGIN]]
@@ -19,6 +20,7 @@
 from __future__ import annotations
 
 import re
+import json
 import shutil
 import subprocess
 import tempfile
@@ -34,6 +36,30 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         # read_text opens in text mode with newline=None, so a CRLF checkout
         # is already folded to LF before any assertion below sees it.
         return (ROOT / "scripts" / name).read_text(encoding="utf-8")
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_control_requires_only_the_selected_acceptance_identity_configuration(self):
+        script = self.text("windows-langgraph-primary-control.ps1")
+        # Execute the actual required-field block without environment reads or Docker.
+        selection = script[script.index("$required = @("):script.index("$missing = @($required")]
+        for mode in (None, "github-v1", "provider-v2", "unknown"):
+            values = "$values = @{}" if mode is None else "$values = @{LANGGRAPH_PRIMARY_ACCEPTANCE_MODE='" + mode + "'}"
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command",
+                "$ErrorActionPreference='Stop'; " + values + "\n" + selection + "\nConvertTo-Json -Compress -InputObject @($required)"],
+                capture_output=True, text=True, timeout=15)
+            if mode == "unknown":
+                self.assertNotEqual(0, result.returncode)
+                continue
+            self.assertEqual(0, result.returncode, result.stderr)
+            required = set(json.loads(result.stdout))
+            for name in ("LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET", "LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET",
+                         "LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET", "LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON"):
+                self.assertIn(name, required)
+            for name in ("LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
+                         "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON"):
+                self.assertEqual(mode != "provider-v2", name in required)
+            for suffix in ("REGISTRY_PATH", "REGISTRY_SHA256", "JOURNAL_PATH", "REGISTRY_DIRECTORY"):
+                self.assertEqual(mode == "provider-v2", "LANGGRAPH_PRIMARY_ACCEPTANCE_" + suffix in required)
 
     def test_snapshot_creation_is_exact_and_refuses_replacement(self) -> None:
         text = self.text("windows-primary-snapshot.ps1")
@@ -535,3 +561,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | END]]

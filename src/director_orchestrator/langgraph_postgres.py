@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -4683,13 +4684,40 @@ def _assert_open_handle(handle: Any) -> PostgresCheckpointHandle:
     return handle
 
 
-def _configure_connection(schema: str, expected_option: str) -> Callable[[Any], None]:
+def _require_accepted_database(cursor: Any, *, schema: str, storage_identity: str,
+                               instance_id: str) -> None:
+    """Only read existing metadata; never initialize an unaccepted database."""
+    try:
+        cursor.execute(
+            f"SELECT control_plane_version, storage_identity, database_instance_id "
+            f"FROM {schema}.director_primary_control_plane WHERE singleton"
+        )
+        row = cursor.fetchone()
+    except Exception:
+        raise PostgresCheckpointConfigurationError(
+            "accepted database metadata is unavailable before setup"
+        ) from None
+    if (not row or row.get("control_plane_version") != CONTROL_PLANE_VERSION or
+        row.get("storage_identity") != storage_identity or
+        row.get("database_instance_id") != instance_id):
+        raise PostgresCheckpointConfigurationError(
+            "database differs from accepted instance before setup"
+        )
+
+
+def _configure_connection(schema: str, expected_option: str, *,
+                          accepted_storage_identity: str | None = None,
+                          accepted_instance_id: str | None = None) -> Callable[[Any], None]:
     """Return a pool ``configure`` hook that proves the schema pin took effect."""
 
     def configure(connection: Any) -> None:
         with connection.cursor() as cursor:
             cursor.execute("SHOW search_path")
             row = cursor.fetchone()
+            if accepted_instance_id is not None:
+                _require_accepted_database(cursor, schema=schema,
+                                           storage_identity=accepted_storage_identity,
+                                           instance_id=accepted_instance_id)
         observed = "" if row is None else str(_first_value(row)).strip().strip('"')
         if observed != schema:
             raise PostgresCheckpointConfigurationError(
@@ -4706,7 +4734,8 @@ def _first_value(row: Any) -> Any:
     return row[0]
 
 
-def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str) -> str:
+def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str,
+                         accepted_instance_id: str | None = None) -> str:
     """Create or verify the versioned control plane under one advisory lock."""
 
     lock_key = _advisory_key("ddl", schema)
@@ -4714,6 +4743,12 @@ def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str) -> st
         with connection.transaction():
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
+                if accepted_instance_id is not None:
+                    # Provider-v2 restarts must find existing accepted metadata.
+                    # Check on this same connection, before any schema mutation.
+                    _require_accepted_database(cursor, schema=schema,
+                                               storage_identity=storage_identity,
+                                               instance_id=accepted_instance_id)
                 for statement in _control_plane_ddl(schema):
                     cursor.execute(statement)
                 cursor.execute(
@@ -4785,6 +4820,8 @@ def open_postgres_control_plane(
     bounds: PostgresPoolBounds | None = None,
     allow_insecure_local_transport: bool = False,
     completion_authority_verifier: "CompletionAuthorityVerifier | None" = None,
+    accepted_storage_identity: str | None = None,
+    accepted_instance_id: str | None = None,
 ) -> PostgresCheckpointHandle:
     """Open, bound, and initialize the strict production Postgres control plane.
 
@@ -4808,6 +4845,15 @@ def open_postgres_control_plane(
         allow_insecure_local_transport=allow_insecure_local_transport,
     )
     identity = _storage_identity(parsed, schema=schema)
+    if (accepted_storage_identity is None) != (accepted_instance_id is None):
+        raise PostgresCheckpointConfigurationError("accepted database binding must be complete")
+    if accepted_storage_identity is not None:
+        if identity != accepted_storage_identity:
+            raise PostgresCheckpointConfigurationError("database target differs from accepted identity")
+        try:
+            uuid.UUID(accepted_instance_id)
+        except (ValueError, TypeError, AttributeError):
+            raise PostgresCheckpointConfigurationError("accepted database instance is invalid") from None
     serializer = _build_strict_serializer(dependencies.serializer_type)
     search_path_option = _search_path_option(schema)
     pool = dependencies.pool_type(
@@ -4818,7 +4864,9 @@ def open_postgres_control_plane(
         max_idle=limits.max_idle_seconds,
         max_lifetime=limits.max_lifetime_seconds,
         open=False,
-        configure=_configure_connection(schema, search_path_option),
+        configure=_configure_connection(schema, search_path_option,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id),
         kwargs={
             "autocommit": True,
             "prepare_threshold": 0,
@@ -4830,7 +4878,8 @@ def open_postgres_control_plane(
     try:
         pool.open(wait=True, timeout=limits.connect_timeout_seconds)
         database_instance_id = _setup_control_plane(
-            pool, schema=schema, storage_identity=identity
+            pool, schema=schema, storage_identity=identity,
+            accepted_instance_id=accepted_instance_id,
         )
         saver = dependencies.saver_type(pool, serde=serializer)
         saver.setup()
@@ -4892,3 +4941,5 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]

@@ -1,0 +1,134 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]]
+name: Isolated CI acceptance issuer
+on:
+  workflow_dispatch:
+    inputs:
+      context_json:
+        description: Complete issued v2 ReviewContext JSON (data only)
+        required: true
+        type: string
+      candidate_run_id:
+        required: true
+        type: string
+      candidate_run_attempt:
+        required: true
+        type: string
+permissions: {}
+jobs:
+  prepare:
+    # Dependency preparation has neither OIDC minting nor signing authority.
+    if: vars.CI_ISSUER_ADOPTED == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      runtime_sha256: ${{ steps.bundle.outputs.runtime_sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Verify workflow-bound preparation source
+        env:
+          TRUSTED_SOURCE: ${{ github.workflow_sha }}
+        run: |
+          [[ "$TRUSTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SOURCE"
+      - name: Prepare fixed issuer runtime without OIDC permission
+        run: |
+          python3.12 -m venv "$RUNNER_TEMP/ci-issuer-runtime"
+          "$RUNNER_TEMP/ci-issuer-runtime/bin/python" -m pip install --no-deps --only-binary=:all: 'PyJWT==2.10.1' 'cryptography==45.0.6' 'cffi==1.17.1' 'pycparser==2.22'
+      - name: Bind runtime to this workflow source and run attempt
+        id: bundle
+        env:
+          TRUSTED_SOURCE: ${{ github.workflow_sha }}
+        run: |
+          tar -C "$RUNNER_TEMP" -czf issuer-runtime.tar.gz ci-issuer-runtime
+          python3.12 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          digest = hashlib.sha256(Path('issuer-runtime.tar.gz').read_bytes()).hexdigest()
+          manifest = dict(source_sha=os.environ['TRUSTED_SOURCE'], run_id=os.environ['GITHUB_RUN_ID'],
+                          run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], runtime_sha256=digest)
+          Path('issuer-runtime-manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('runtime_sha256=' + digest + '\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: upload
+        with:
+          name: issuer-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            issuer-runtime.tar.gz
+            issuer-runtime-manifest.json
+          retention-days: 1
+  issue:
+    # Adoption requires separately reviewed immutable workflow/source pins and
+    # protected environment provisioning. No candidate checkout or dependencies.
+    if: vars.CI_ISSUER_ADOPTED == 'true'
+    needs: prepare
+    environment: ci-acceptance-issuer
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check separately adopted issuer source
+        env:
+          TRUSTED_SOURCE: ${{ github.workflow_sha }}
+        run: |
+          [[ "$TRUSTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SOURCE"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
+          path: prepared-runtime
+          merge-multiple: true
+      - name: Verify same-run prepared runtime before extraction
+        env:
+          TRUSTED_SOURCE: ${{ github.workflow_sha }}
+          EXPECTED_RUNTIME_SHA256: ${{ needs.prepare.outputs.runtime_sha256 }}
+        run: |
+          python3.12 - <<'PY'
+          import hashlib, json, os, re, tarfile
+          from pathlib import Path
+          expected = os.environ['EXPECTED_RUNTIME_SHA256']
+          if re.fullmatch('[0-9a-f]{64}', expected) is None:
+              raise SystemExit('missing trusted preparation digest')
+          archive = Path('prepared-runtime/issuer-runtime.tar.gz')
+          observed = hashlib.sha256(archive.read_bytes()).hexdigest()
+          if observed != expected:
+              raise SystemExit('prepared runtime digest mismatch')
+          manifest = json.loads(Path('prepared-runtime/issuer-runtime-manifest.json').read_text())
+          if manifest != dict(source_sha=os.environ['TRUSTED_SOURCE'], run_id=os.environ['GITHUB_RUN_ID'],
+                              run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], runtime_sha256=expected):
+              raise SystemExit('prepared runtime provenance mismatch')
+          # The archive is authenticated above against the trusted preparation
+          # job, not a candidate artifact. Its venv includes system-python links.
+          with tarfile.open(archive) as bundle:
+              bundle.extractall(os.environ['RUNNER_TEMP'], filter='fully_trusted')
+          PY
+      - name: Observe CI and issue ephemeral receipt
+        env:
+          PYTHONPATH: src
+          CI_ISSUER_POLICY_JSON: ${{ vars.CI_ISSUER_POLICY_JSON }}
+          CI_REVIEW_CONTEXT_JSON: ${{ inputs.context_json }}
+          CI_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CI_CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/ci-issuer-runtime/bin/python" -m director_orchestrator.ci_acceptance_issuer --output ci-receipt.json'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-acceptance-receipt
+          path: ci-receipt.json
+          retention-days: 1
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:15 UTC | END]]

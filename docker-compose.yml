@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | BEGIN]]
@@ -17,10 +18,19 @@ services:
       # This checked-in local Docker topology is the sole non-loopback exception.
       # Managed/remote production Postgres still requires verify-ca/full TLS.
       LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES: "true"
+      LANGGRAPH_PRIMARY_ACCEPTANCE_MODE: ${LANGGRAPH_PRIMARY_ACCEPTANCE_MODE:-github-v1}
+      LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH: /run/director-acceptance-registry/registry.json
+      LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256: ${LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256:-}
+      LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH: /data/primary-acceptance-v2.sqlite3
+      DIRECTOR_COMPOSE_PROJECT_NAME: ${DIRECTOR_COMPOSE_PROJECT_NAME:-director-orchestrator}
     ports:
       - "127.0.0.1:${DIRECTOR_HOST_PORT:-8080}:8080"
     volumes:
       - director-data:/data
+      - type: bind
+        source: ${LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY:-./.acceptance-registry-disabled}
+        target: /run/director-acceptance-registry
+        read_only: true
       - type: bind
         source: ${REPOSITORY_SNAPSHOT_HOST_PATH:-./.repository-snapshot-disabled}
         target: /repository
@@ -130,3 +140,5 @@ volumes:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:14 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
