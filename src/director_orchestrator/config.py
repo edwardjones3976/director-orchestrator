@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -646,6 +647,7 @@ class Settings:
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    langgraph_primary_openai_transport: str = os.getenv("LANGGRAPH_PRIMARY_OPENAI_TRANSPORT", "responses-api")
     openai_model: str = os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
     openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "medium")
     # Explicit accounting estimates for Director calls. Defaults preserve the
@@ -2022,3 +2024,5 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]

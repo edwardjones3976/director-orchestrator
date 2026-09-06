@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]]
@@ -88,7 +89,7 @@ class _Handler(BaseHTTPRequestHandler):
                     expected, authorization.removeprefix("Director-HMAC ")
                 ):
                     raise HostProviderBridgeError("bridge challenge authentication failed")
-                configured = sorted(self.server.executor.commands)  # type: ignore[attr-defined]
+                configured = self.server.executor.available_providers()  # type: ignore[attr-defined]
                 command_map_digest = "sha256:" + _digest(
                     json.dumps(configured, separators=(",", ":")).encode("utf-8")
                 )
@@ -220,3 +221,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]

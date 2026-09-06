@@ -1,4 +1,5 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
@@ -850,6 +851,7 @@ def build_automatic_primary_live_dependencies(
     transports, capabilities = discover_local_primary_command_transports(
         cwd=settings.repository_snapshot_root,
         authenticated=authenticated,
+        openai_transport=settings.langgraph_primary_openai_transport,
         openai_api_key=settings.openai_api_key,
         openai_model=settings.openai_model,
         openai_reasoning_effort=settings.openai_reasoning_effort,
@@ -2642,4 +2644,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
