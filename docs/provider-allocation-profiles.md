@@ -1,0 +1,103 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
+# Provider allocation profiles
+
+Owner-approved policy, 2026-09-05. Engineering is the default for this repository.
+The canonical runtime definitions are in `allocation_profiles.py`; select one
+profile before plan approval and bind its digest to the immutable assignment plan.
+
+| Provider lane | Mixed | Engineering (default) | Public research | Enterprise |
+| --- | ---: | ---: | ---: | ---: |
+| OpenAI / Codex production | 30% | 35% | 25% | 30% |
+| Claude | 25% | 30% | 20% | 25% |
+| Cursor | 10% | 15% | 5% | 5% |
+| Grok | 10% | 10% | 5% | 5% |
+| Gemini / Antigravity | 5% | 10% | 5% | 5% |
+| Perplexity | 5% | 0% | 25% | 0% |
+| Firecrawl | 5% | 0% | 15% | 5% |
+| GitHub Copilot | 5% | 0% | 0% | 10% |
+| Microsoft 365 Copilot | 5% | 0% | 0% | 15% |
+| Total | 100% | 100% | 100% | 100% |
+
+Canonical profile IDs are `mixed`, `engineering`, `public_research`, and
+`enterprise`. Canonical lane IDs are `openai`, `claude`, `cursor`, `grok`,
+`antigravity`, `perplexity`, `firecrawl`, `github-copilot`, and
+`microsoft-365-copilot`. Models, native apps, CLI contacts, API transports, and
+aliases map to their existing parent lane; they never create a second quota or
+an independent reviewer. Gemini and Antigravity share the Antigravity lane.
+
+## Admission and accounting
+
+Assess the prospective last nineteen real assignments plus the candidate using
+a fixed denominator of twenty, including startup. Normal tolerance is plus or
+minus three percentage points; the hard ceiling is target plus five points.
+A zero target is ineligible, even though the numerical ceiling would otherwise
+be five. Startup under-allocation is warming, never permission for filler work.
+Engineering targets correspond to seven OpenAI, six Claude, three Cursor, two
+Grok, and two Antigravity assignments per full window; these are targets, not
+mandatory concurrent agents or quotas to fill with unnecessary work.
+
+Reserve admission before provider I/O and retain failed or ambiguous reservations
+for admission accounting. Accepted productive output and total observed effort
+remain separate records. Retries and repeated tool calls create no new productive
+assignment credit. Preserve real history across profile changes and simulate the
+ordered specialist, producer, and independent reviewer sequence before approval.
+A profile change invalidates the previous plan approval; it never resets history.
+Do not silently redistribute shares, relax ceilings, or change an approved
+provider after failure. Use an explicitly approved feasible fallback profile or
+return a concise owner decision identifying the unavailable capability.
+
+## Capacity, roles, and authority
+
+The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
+are paid but have materially lower capacity. These owner-reported signals inform
+the approved matrix, not a conversion between providers' usage units. Prefer
+subscription-backed execution when suitable and authenticated. Separately billed
+API execution requires its own known budget and gates. Unknown remaining quota,
+cost, or usage telemetry is unknown, never zero or assumed entitlement.
+
+OpenAI production is separately assigned and attributed; Director coordination,
+Moderator and Participant functions, acceptance supervision, and merge activity
+do not earn production credit. The materially authoring OpenAI lane cannot review
+or merge its own candidate; different-provider exact-candidate review remains
+required. A non-author Director inherits no authorship from delegation, QA, or
+merge coordination. Reserve a capable different
+non-author reviewer before production; all exact-SHA, security, CI and owner gates
+remain binding.
+
+Antigravity remains a bounded subordinate sandbox specialist, requiring downstream
+primary-provider verification. Its allocation grants no exact-SHA acceptance,
+merge authority, unrestricted context, or broader outbound packet contract.
+Perplexity receives only explicitly approved public research, never private
+repository context. Firecrawl and enterprise providers require their actual
+capabilities, authorized sources, least privilege, authenticated readiness, and
+supported adapters. A nonzero target is not evidence that a route is operational.
+GitHub Copilot's production lane is distinct from Copilot Lite hygiene observations;
+Lite creates no production credit or independent acceptance authority.
+
+The default LangGraph primary OpenAI transport uses the separately billed Responses
+API. OpenAI Pro 20x does not fund that API route. A native Codex subscription
+transport is not implemented by this allocation package; subscription capacity
+is a target-setting signal, not proof of subscription-backed execution.
+
+The default legacy provider registry does not include OpenAI production, Firecrawl,
+or Copilot production adapters. Their allocation authority is implemented in
+legacy accounting, but that registry must receive a real authenticated adapter
+before those lanes can execute there. The LangGraph primary path has its own
+authenticated transport composition. Microsoft 365 enterprise production remains
+a typed scope/capability hold in that path until a scoped adapter is supplied.
+
+The legacy default provider registry currently supplies Claude, Cursor, Gemini,
+Grok, and Perplexity adapters. Its expanded accounting does not add OpenAI,
+Firecrawl, or Copilot execution adapters; these lanes remain unavailable there
+unless an actual authorized adapter is composed. The primary LangGraph path uses
+authenticated transport discovery and scoped capability checks for its new lanes.
+Neither path infers production readiness from Director credentials or allocations.
+
+Record profile ID and digest, logical lane, actual provider/model/transport,
+material authors, admission and accepted counts, effort, remaining capacity when
+known, costs and categorized waste. Token, spend, runtime and concurrency limits
+remain separate. Missing eligible integration or review capability fails closed;
+selecting a profile does not install an adapter or deploy LangGraph.
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->

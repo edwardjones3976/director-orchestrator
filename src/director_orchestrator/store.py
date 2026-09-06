@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | BEGIN]]
@@ -53,6 +54,7 @@ from .models import (
     TaskStatus,
     UsageCheckRecord,
 )
+from .allocation_profiles import DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest, allocation_targets, canonical_allocation_lane
 from .policy import trusted_work_kind
 from .productive_work import (
     ExternalOpenAIProductionAuthorization,
@@ -60,6 +62,7 @@ from .productive_work import (
 )
 from .workload_policy import (
     DEFAULT_POLICY,
+    WorkloadPolicy,
     AssignmentRequest,
     DecisionOutcome,
     DecisionResult,
@@ -2499,6 +2502,7 @@ class TaskStore:
         available_primary_providers: frozenset[Provider],
         mode: EnforcementMode,
         shadow_assignment_limit: int = 5,
+        allocation_profile: str = DEFAULT_ALLOCATION_PROFILE,
     ) -> WorkloadLedgerReservation:
         """Atomically evaluate and reserve one prospective provider invocation.
 
@@ -2543,6 +2547,8 @@ class TaskStore:
             or shadow_assignment_limit <= 0
         ):
             raise ValueError("workload shadow assignment limit must be positive")
+        policy = WorkloadPolicy.for_profile(allocation_profile)
+        profile_digest = allocation_profile_digest(allocation_profile)
         available = frozenset(available_primary_providers)
         # Built up front so a structurally invalid request is rejected before any
         # database work, exactly as before. The committed request below carries
@@ -2625,6 +2631,7 @@ class TaskStore:
                             request=committed_request,
                             available=available,
                             mode=effective_mode,
+                            policy=policy,
                         )
                     )
                     if direct_inputs is not None:
@@ -2635,12 +2642,53 @@ class TaskStore:
                                 assignment_id=assignment_id,
                                 available=available,
                                 mode=effective_mode,
+                            policy=policy,
                             )
                         )
                     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
 
                 with self._connect() as connection:
                     connection.execute("BEGIN IMMEDIATE")
+                    connection.execute("""CREATE TABLE IF NOT EXISTS workload_profile_bindings (
+                        assignment_id TEXT PRIMARY KEY,
+                        allocation_profile TEXT NOT NULL,
+                        profile_digest TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        task_id TEXT NOT NULL,
+                        work_kind TEXT NOT NULL,
+                        admitted INTEGER NOT NULL CHECK(admitted IN (0, 1))
+                    )""")
+                    for mutation in ("UPDATE", "DELETE"):
+                        connection.execute(
+                            f"CREATE TRIGGER IF NOT EXISTS workload_profile_bindings_no_{mutation.lower()} "
+                            f"BEFORE {mutation} ON workload_profile_bindings "
+                            "BEGIN SELECT RAISE(ABORT, 'workload profile bindings are immutable'); END"
+                        )
+                    if kind is not WorkKind.COORDINATION and connection.execute(
+                        "SELECT 1 FROM workload_assignment_reservations AS r LEFT JOIN workload_profile_bindings AS b ON b.assignment_id = r.assignment_id WHERE b.assignment_id IS NULL LIMIT 1"
+                    ).fetchone() is not None:
+                        raise WorkloadReservationConflict("legacy workload history requires explicit profile admission reconciliation")
+                    bound = connection.execute(
+                        "SELECT allocation_profile, profile_digest, provider, task_id, work_kind, admitted FROM workload_profile_bindings WHERE assignment_id = ?",
+                        (assignment_id,),
+                    ).fetchone()
+                    if bound is not None and (
+                        str(bound["allocation_profile"]) != allocation_profile
+                        or str(bound["profile_digest"]) != profile_digest
+                        or str(bound["provider"]) != provider.value
+                        or str(bound["task_id"]) != task_id
+                        or str(bound["work_kind"]) != kind.value
+                    ):
+                        raise WorkloadReservationConflict("workload allocation profile binding changed")
+                    if bound is not None and not bool(bound["admitted"]) and kind is not WorkKind.COORDINATION and persisted is None:
+                        raise WorkloadReservationConflict("non-admitted allocation binding requires a new approved assignment")
+                    if bound is None:
+                        if connection.execute(
+                            "SELECT 1 FROM workload_assignment_reservations WHERE assignment_id = ? LIMIT 1",
+                            (assignment_id,),
+                        ).fetchone() is not None:
+                            raise WorkloadReservationConflict("legacy workload reservation lacks frozen allocation profile")
+
                     if self._workload_ledger_fingerprint(connection) != fingerprint:
                         # The ledger moved while the projection ran. Nothing was
                         # written, so discard the snapshot and take it again.
@@ -2729,12 +2777,31 @@ class TaskStore:
                         direct_production_history=direct_history,
                         direct_production_assignment_id=assignment_id,
                         available_primary_providers=available,
-                        policy=DEFAULT_POLICY,
+                        policy=policy,
                         mode=effective_mode,
                     )
+                    # Profile admission retains real reservations after failure or
+                    # ambiguity; accepted-output accounting stays a separate ledger.
+                    if kind is not WorkKind.COORDINATION and (bound is None or not bool(bound["admitted"])):
+                        lane = canonical_allocation_lane(provider.value)
+                        target = allocation_targets(allocation_profile)[lane]
+                        recent = connection.execute(
+                            "SELECT provider FROM workload_profile_bindings WHERE admitted = 1 ORDER BY rowid DESC LIMIT 19"
+                        ).fetchall()
+                        count = 1 + sum(canonical_allocation_lane(str(item["provider"])) == lane for item in recent)
+                        if target == 0:
+                            extra_violations.append(f"allocation_profile_lane_ineligible:{lane}")
+                        elif count * 5 > target + 5:
+                            extra_violations.append(f"allocation_admission_hard_cap_exceeded:{lane}:{target + 5}")
                     decision = self._decision_with_violations(
                         decision, extra_violations
                     )
+                    if bound is None:
+                        connection.execute(
+                            "INSERT INTO workload_profile_bindings VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (assignment_id, allocation_profile, profile_digest, provider.value, task_id, kind.value,
+                             int(decision.allowed and kind is not WorkKind.COORDINATION)),
+                        )
                     recorded_at = datetime.now(timezone.utc)
                     connection.execute(
                         """INSERT INTO workload_assignment_reservations(
@@ -3006,6 +3073,7 @@ class TaskStore:
         request: AssignmentRequest,
         available: frozenset[Provider],
         mode: EnforcementMode,
+        policy: WorkloadPolicy = DEFAULT_POLICY,
     ) -> list[str]:
         """Project every in-window pending row as invoked and as not invoked.
 
@@ -3043,7 +3111,7 @@ class TaskStore:
                     request,
                     history=history,
                     available_primary_providers=available,
-                    policy=DEFAULT_POLICY,
+                    policy=policy,
                     mode=mode,
                 )
             )
@@ -3173,6 +3241,7 @@ class TaskStore:
         assignment_id: str,
         available: frozenset[Provider],
         mode: EnforcementMode,
+        policy: WorkloadPolicy = DEFAULT_POLICY,
     ) -> list[str]:
         """Project every uncredited in-flight implementation unit both ways.
 
@@ -3201,7 +3270,7 @@ class TaskStore:
                     direct_production_history=projected,
                     direct_production_assignment_id=assignment_id,
                     available_primary_providers=available,
-                    policy=DEFAULT_POLICY,
+                    policy=policy,
                     mode=mode,
                 )
             )
@@ -3811,3 +3880,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]

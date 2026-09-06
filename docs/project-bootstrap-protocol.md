@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
@@ -189,13 +190,13 @@ project-local fit here and link back for authority boundaries.
 Each row summarizes the canonical role definitions in
 [`team-operating-charter.md`](team-operating-charter.md#roles).
 
-Accepted productive work remains enforced at external OpenAI/Codex
-25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%.
-Total effort is prospectively guarded at Claude/Cursor/Gemini-Antigravity/Grok/
-OpenAI/Perplexity targets of 36/20/20/11/8/5, normal bands of
-33–39/17–23/17–23/8–14/5–11/1–7. Direct-production allocation counts assignments in the prospective last-20
-window and blocks above target plus five percentage points. Startup uses the
-owner-approved full twenty-slot denominator; only real assignments count.
+Select and freeze an [approved allocation profile](provider-allocation-profiles.md)
+before approval; Engineering is the default. All nine lanes have explicit targets;
+zero-target lanes are ineligible. Preserve actual assignment history and apply the
+full twenty-slot startup denominator, target+5 hard ceiling and ±3-point normal
+preference. Report observed total effort separately; control-plane work, retries,
+and failed output never become accepted production credit. Subscription capacity
+signals (OpenAI Pro 20x, Claude Max 5x) do not grant API budgets or capabilities.
 
 Choose the cheapest capable trusted model, never simply the cheapest contact.
 First establish exact scope and allowlists, usable transport, readiness,
@@ -513,3 +514,4 @@ project-specific control.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->

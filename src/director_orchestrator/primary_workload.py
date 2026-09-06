@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -16,25 +17,24 @@ import json
 from typing import Any, Sequence
 
 from .langgraph_postgres import _require_schema
-from .workload_policy import DEFAULT_POLICY, DirectProductionProvider
+from .allocation_profiles import allocation_targets, allocation_profile_digest, DEFAULT_ALLOCATION_PROFILE
 
-POLICY_VERSION = "primary-assignment-count-v2"
-TARGETS = {
-    lane: DEFAULT_POLICY.direct_production_target(provider)
-    for lane, provider in {
-        "openai": DirectProductionProvider.EXTERNAL_OPENAI,
-        "claude": DirectProductionProvider.CLAUDE,
-        "cursor": DirectProductionProvider.CURSOR,
-        "antigravity": DirectProductionProvider.GEMINI,
-        "grok": DirectProductionProvider.GROK,
-        "perplexity": DirectProductionProvider.PERPLEXITY,
-    }.items()
-}
-POLICY_DIGEST = "sha256:" + hashlib.sha256(json.dumps({
-    "version": POLICY_VERSION, "targets": TARGETS, "window": 20,
-    "hard_tolerance": 5, "unit": "admitted_assignment",
-    "bootstrap": "fixed_twenty_slot_denominator",
-}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+POLICY_VERSION = "primary-assignment-count-v3"
+TARGETS = allocation_targets()
+POLICY_DIGEST = allocation_profile_digest()
+LEGACY_V2_DIGEST = "sha256:" + hashlib.sha256(json.dumps({
+    "version": "primary-assignment-count-v2", "targets": {"openai":25,"claude":25,"cursor":20,"antigravity":15,"grok":11,"perplexity":4},
+    "window":20,"hard_tolerance":5,"unit":"admitted_assignment","bootstrap":"fixed_twenty_slot_denominator",
+},sort_keys=True,separators=(",",":")).encode()).hexdigest()
+
+def _valid_history_row(row):
+    if row["policy_version"] == "primary-assignment-count-v2":
+        return row["policy_digest"] == LEGACY_V2_DIGEST
+    try:
+        return row["policy_version"] == POLICY_VERSION and row["policy_digest"] == allocation_profile_digest(row["allocation_profile"])
+    except ValueError:
+        return False
+
 
 
 class WorkloadAdmissionHold(RuntimeError):
@@ -45,13 +45,16 @@ class WorkloadAdmissionHold(RuntimeError):
         self.reason_code = reason_code
 
 
-def admission_reason(provider: str, history: Sequence[str]) -> str | None:
-    if provider not in TARGETS:
+def admission_reason(provider: str, history: Sequence[str], *, allocation_profile: str = DEFAULT_ALLOCATION_PROFILE) -> str | None:
+    targets = allocation_targets(allocation_profile)
+    if provider not in targets:
         return "workload_unsupported_allocation_lane"
     if any(item not in TARGETS for item in history):
         return "workload_history_invalid"
+    if targets[provider] == 0:
+        return "workload_profile_lane_ineligible"
     counts = Counter((*history[-19:], provider))
-    if 100 * counts[provider] > (TARGETS[provider] + 5) * 20:
+    if 100 * counts[provider] > (targets[provider] + 5) * 20:
         return "workload_assignment_hard_limit"
     return None
 
@@ -67,7 +70,7 @@ def _require_compatible_admission_schema(cursor: Any, *, schema: str) -> None:
           AND c.conname = 'director_primary_workload_assignment_policy_version_check'
           AND c.contype = 'c'""", (schema,))
     constraint = cursor.fetchone()
-    expected = f"CHECK ((policy_version = '{POLICY_VERSION}'::text))"
+    expected = "CHECK ((policy_version = ANY (ARRAY['primary-assignment-count-v2'::text, 'primary-assignment-count-v3'::text])))"
     if constraint is None or not constraint["convalidated"] or constraint["definition"] != expected:
         raise WorkloadAdmissionHold("workload_schema_policy_incompatible")
 
@@ -77,21 +80,23 @@ def read_admission_history(connection: Any, *, schema: str) -> tuple[str, ...]:
     with connection.transaction():
         with connection.cursor() as cursor:
             _require_compatible_admission_schema(cursor, schema=schema)
-            cursor.execute(f"SELECT provider_lane, policy_digest FROM {schema}.director_primary_workload_assignment ORDER BY ledger_id DESC LIMIT 19")
+            cursor.execute(f"SELECT provider_lane, policy_digest, policy_version, allocation_profile FROM {schema}.director_primary_workload_assignment ORDER BY ledger_id DESC LIMIT 19")
             rows = cursor.fetchall()
-    if any(row["policy_digest"] != POLICY_DIGEST for row in rows):
+    if any(not _valid_history_row(row) for row in rows):
         raise WorkloadAdmissionHold("workload_history_invalid")
     return tuple(row["provider_lane"] for row in reversed(rows))
 
 
 def admit_assignment(connection: Any, *, schema: str, task_id: str,
                      assignment_id: str, provider: str,
-                     reservation_digest: str, fencing_generation: int) -> None:
+                     reservation_digest: str, fencing_generation: int,
+                     allocation_profile: str = DEFAULT_ALLOCATION_PROFILE) -> None:
     """Caller owns the writer-fenced transaction; do not commit independently.
 
 One database-wide lock serializes every task. The configured control-plane
 schema is trusted and validated by its owner, never supplied by a work packet.
     """
+    policy_digest = allocation_profile_digest(allocation_profile)
     schema = _require_schema(schema)
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
@@ -105,27 +110,28 @@ schema is trusted and validated by its owner, never supplied by a work packet.
             if (held["provider_lane"] != provider
                     or held["reservation_digest"] != reservation_digest
                     or held["policy_version"] != POLICY_VERSION
-                    or held["policy_digest"] != POLICY_DIGEST):
+                    or held["policy_digest"] != policy_digest):
                 raise WorkloadAdmissionHold("workload_admission_identity_changed")
             return
-        cursor.execute(f"""SELECT provider_lane, policy_digest
+        cursor.execute(f"""SELECT provider_lane, policy_digest, policy_version, allocation_profile
             FROM {schema}.director_primary_workload_assignment
             ORDER BY ledger_id DESC LIMIT 19""")
         rows = cursor.fetchall()
-        if any(row["policy_digest"] != POLICY_DIGEST for row in rows):
+        if any(not _valid_history_row(row) for row in rows):
             raise WorkloadAdmissionHold("workload_history_invalid")
         history = [row["provider_lane"] for row in reversed(rows)]
-        reason = admission_reason(provider, history)
+        reason = admission_reason(provider, history, allocation_profile=allocation_profile)
         if reason:
             raise WorkloadAdmissionHold(reason)
         cursor.execute(f"""INSERT INTO {schema}.director_primary_workload_assignment
             (task_id, assignment_id, provider_lane, reservation_digest,
-             fencing_generation, policy_version, policy_digest)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+             fencing_generation, policy_version, policy_digest, allocation_profile)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
             (task_id, assignment_id, provider, reservation_digest,
-             fencing_generation, POLICY_VERSION, POLICY_DIGEST))
+             fencing_generation, POLICY_VERSION, policy_digest, allocation_profile))
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

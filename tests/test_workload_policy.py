@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -152,12 +153,13 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                Provider.CLAUDE: 36,
-                Provider.CURSOR: 20,
-                Provider.GROK: 11,
-                Provider.OPENAI: 8,
-                Provider.GEMINI: 20,
-                Provider.PERPLEXITY: 5,
+                Provider.CLAUDE: 30,
+                Provider.CURSOR: 15,
+                Provider.GROK: 10,
+                Provider.OPENAI: 35,
+                Provider.GEMINI: 10,
+                Provider.PERPLEXITY: 0,
+                Provider.FIRECRAWL: 0, Provider.GITHUB_COPILOT: 0, Provider.MICROSOFT_365_COPILOT: 0,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
@@ -170,32 +172,33 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                DirectProductionProvider.CLAUDE: 25,
-                DirectProductionProvider.CURSOR: 20,
-                DirectProductionProvider.GROK: 11,
-                DirectProductionProvider.GEMINI: 15,
-                DirectProductionProvider.PERPLEXITY: 4,
-                DirectProductionProvider.EXTERNAL_OPENAI: 25,
+                DirectProductionProvider.CLAUDE: 30,
+                DirectProductionProvider.CURSOR: 15,
+                DirectProductionProvider.GROK: 10,
+                DirectProductionProvider.GEMINI: 10,
+                DirectProductionProvider.PERPLEXITY: 0,
+                DirectProductionProvider.FIRECRAWL: 0, DirectProductionProvider.GITHUB_COPILOT: 0, DirectProductionProvider.MICROSOFT_365_COPILOT: 0,
+                DirectProductionProvider.EXTERNAL_OPENAI: 35,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
         self.assertNotIn(DirectProductionProvider.EXTERNAL_OPENAI, Provider)
 
     def test_default_policy_exposes_machine_readable_targets(self):
-        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.CLAUDE), 36)
+        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.CLAUDE), 30)
         self.assertEqual(
             DEFAULT_POLICY.direct_production_target(
                 DirectProductionProvider.CLAUDE
             ),
-            25,
+            30,
         )
         self.assertEqual(
             DEFAULT_POLICY.direct_production_soft_band(
                 DirectProductionProvider.CLAUDE
             ),
-            (22, 28),
+            (27, 33),
         )
-        self.assertEqual(DEFAULT_POLICY.overall_normal_band(Provider.PERPLEXITY), (1, 7))
+        self.assertEqual(DEFAULT_POLICY.overall_normal_band(Provider.PERPLEXITY), (0, 3))
         self.assertEqual(COPILOT_LITE_NORMAL_BAND, (0, 4))
         self.assertTrue(evaluate_copilot_lite_effort(current_units=0, total_units=99))
         self.assertTrue(evaluate_copilot_lite_effort(current_units=6, total_units=99))
@@ -283,7 +286,7 @@ class AssignmentRoutingTests(unittest.TestCase):
 
         self.assertTrue(result.allowed)
         self.assertIn("prospective_rolling_share:claude:9/20", result.advisories)
-        self.assertIn("total_effort_provider_above_normal_band:claude:39", result.advisories)
+        self.assertIn("total_effort_provider_above_normal_band:claude:33", result.advisories)
 
     def test_skewed_total_effort_history_blocks_new_overage(self):
         history = records(
@@ -344,7 +347,7 @@ class AssignmentRoutingTests(unittest.TestCase):
                 )
                 if provider is Provider.GROK:
                     self.assertIn(
-                        "total_effort_provider_above_normal_band:grok:14",
+                        "total_effort_provider_above_normal_band:grok:13",
                         reported.advisories,
                     )
 
@@ -544,7 +547,7 @@ class DirectProductionRoutingTests(unittest.TestCase):
             ceiling = DEFAULT_POLICY.direct_production_target(direct_provider) + 5
             maximum = ceiling * 20 // 100
             other = DirectProductionProvider.EXTERNAL_OPENAI
-            for prospective_count, allowed in ((maximum, True), (maximum + 1, False)):
+            for prospective_count, allowed in ((maximum, DEFAULT_POLICY.direct_production_target(direct_provider) > 0), (maximum + 1, False)):
                 providers = [direct_provider] * (prospective_count - 1) + [other] * (20 - prospective_count)
                 history = tuple(DirectProductionRecord(str(i), provider, 100 if provider is other else 1)
                                 for i, provider in enumerate(providers))
@@ -579,13 +582,13 @@ class DirectProductionRoutingTests(unittest.TestCase):
             direct_production_history=history,
         )
 
-        self.assertTrue(result.allowed)
+        self.assertFalse(result.allowed)
         self.assertIn(
             "prospective_direct_production_share:cursor:5/20",
             result.advisories,
         )
         self.assertIn(
-            "direct_production_above_soft_band:cursor:23",
+            "direct_production_above_soft_band:cursor:18",
             result.advisories,
         )
 
@@ -620,11 +623,11 @@ class DirectProductionRoutingTests(unittest.TestCase):
 
         self.assertFalse(result.allowed)
         self.assertIn(
-            "direct_production_above_soft_band:claude:28",
+            "direct_production_above_soft_band:claude:33",
             result.advisories,
         )
         self.assertIn(
-            "direct_production_above_soft_band:claude:28",
+            "direct_production_above_soft_band:claude:33",
             result.advisories,
         )
 
@@ -653,10 +656,10 @@ class DirectProductionRoutingTests(unittest.TestCase):
         self.assertFalse(result.allowed)
         self.assertIn("total_effort_prospective_usage_guard", result.advisories)
         self.assertIn(
-            "direct_production_above_soft_band:cursor:23",
+            "direct_production_above_soft_band:cursor:18",
             result.advisories,
         )
-        self.assertIn("direct_production_hard_cap_exceeded:cursor:25", result.violations)
+        self.assertIn("direct_production_hard_cap_exceeded:cursor:20", result.violations)
 
     def test_only_implementation_enters_prospective_direct_production(self):
         history = tuple(
@@ -686,17 +689,15 @@ class DirectProductionRoutingTests(unittest.TestCase):
         self.assertTrue(is_direct_production_kind(WorkKind.IMPLEMENTATION))
 
     def test_perplexity_research_is_prospectively_direct_relevant(self):
-        history = balanced_direct_history(DirectProductionProvider.PERPLEXITY, total_units=19)
-        request = assignment(Provider.PERPLEXITY, kind=WorkKind.RESEARCH, effort_units=999)
-        result = evaluate_assignment(request, direct_production_history=history)
-        self.assertTrue(result.allowed)
-        self.assertIn("prospective_direct_production_share:perplexity:1/20", result.advisories)
-        history = history[1:] + (DirectProductionRecord("research-credit", DirectProductionProvider.PERPLEXITY),)
-        self.assertFalse(evaluate_assignment(request, direct_production_history=history).allowed)
-
+        request = assignment(Provider.PERPLEXITY, kind=WorkKind.RESEARCH)
+        self.assertFalse(evaluate_assignment(request).allowed)
+        policy = WorkloadPolicy.for_profile("public_research")
+        self.assertTrue(evaluate_assignment(request, policy=policy).allowed)
+        history = tuple(DirectProductionRecord(str(i), DirectProductionProvider.PERPLEXITY) for i in range(6))
+        self.assertFalse(evaluate_assignment(request, policy=policy, direct_production_history=history).allowed)
 
     def test_ordinary_openai_does_not_map_to_external_openai_production(self):
-        self.assertIsNone(direct_production_provider(Provider.OPENAI))
+        self.assertIs(direct_production_provider(Provider.OPENAI), DirectProductionProvider.EXTERNAL_OPENAI)
         for runtime_provider, direct_provider in self.PROVIDER_CASES:
             with self.subTest(provider=runtime_provider):
                 self.assertIs(
@@ -789,7 +790,7 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             reviewer_independent_providers=self._eligible(),
         )
 
-        self.assertIs(selected, Provider.CURSOR)
+        self.assertIs(selected, Provider.CLAUDE)
 
     def test_subordinate_producer_scope_uses_separate_independent_reviewer_scope(self):
         profiles = (
@@ -869,7 +870,7 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             reviewer_independent_providers=frozenset({Provider.CURSOR, Provider.CLAUDE}),
             overall_effort_history=history,
         )
-        self.assertIs(selected, Provider.GEMINI)
+        self.assertIs(selected, Provider.CLAUDE)
         self.assertEqual(history[0].provider, Provider.GEMINI)
 
     def test_trusted_explicit_provider_requirement_precedes_cost(self):
@@ -1351,3 +1352,4 @@ class InputValidationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

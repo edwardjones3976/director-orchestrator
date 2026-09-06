@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
@@ -557,7 +558,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.directive = self.charter["director_operating_directive"]
 
     def test_director_duties_are_separate_from_direct_production_share(self):
-        self.assertEqual(self.directive["workload_policy_version"], "v1")
+        self.assertEqual(self.directive["workload_policy_version"], "capacity-allocation-v1")
         self.assertEqual(self.directive["director"], "openai")
         self.assertTrue(
             self.directive["duties_excluded_from_openai_direct_production_share"]
@@ -572,33 +573,11 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "review_handoff",
             "milestone_reporting",
         ])
-        targets = self.directive["direct_workload_percent"]
-        self.assertEqual(
-            targets,
-            {
-                "claude": 25,
-                "cursor": 20,
-                "grok": 11,
-                "gemini": 15,
-                "perplexity": 4,
-                "external_openai": 25,
-            },
-        )
-        self.assertEqual(sum(targets.values()), 100)
-        self.assertEqual(targets["external_openai"], 25)
-        overall = self.directive["overall_effort_percent"]
-        self.assertEqual(
-            overall,
-            {
-                "claude": 36,
-                "cursor": 20,
-                "grok": 11,
-                "openai": 8,
-                "gemini": 20,
-                "perplexity": 5,
-            },
-        )
-        self.assertEqual(sum(overall.values()), 100)
+        profiles = self.directive["allocation_profiles"]
+        self.assertEqual(profiles["weights"]["engineering"], [35,30,15,10,10,0,0,0,0])
+        self.assertEqual(len(profiles["lane_order"]), 9)
+        for targets in profiles["weights"].values():
+            self.assertEqual(sum(targets), 100)
         self.assertEqual(
             self.directive["workload_accounting"]["ledgers"]["overall_effort"],
             "prospective_observed_effort_guard",
@@ -609,12 +588,12 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         )
         self.assertEqual(
             self.directive["workload_lanes"]["openai"],
-            "control_plane_simple_local_and_owner_authorized_external_production",
+            "control_plane_and_authorized_production",
         )
         self.assertEqual(
             self.directive["openai_direct_production_boundary"],
             {
-                "runtime_assignment_target_allowed": False,
+                "runtime_assignment_target_allowed": True,
                 "surface": "owner_authorized_external_codex_openai",
                 "counts": "authenticated_production_only",
                 "review": "different_provider_exact_candidate",
@@ -625,7 +604,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
     def test_direct_and_total_effort_ledgers_are_independently_enforced(self):
         accounting = self.directive["workload_accounting"]
-        self.assertEqual(accounting["unit_basis"], "immutable_prestaged_effort_points")
+        self.assertEqual(accounting["unit_basis"], "real_reserved_assignment_once")
         self.assertEqual(
             accounting["workload_size_values"],
             ["simple", "short", "medium", "long"],
@@ -633,26 +612,25 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertEqual(accounting["effort_points"], {"minimum": 1, "maximum": 100})
         self.assertEqual(
             accounting["windows"],
-            ["assignment", "rolling_20_completed_assignments"],
+            ["rolling_20_real_assignments"],
         )
         self.assertEqual(
             accounting["failed_attempt_rule"],
-            "historical_effort_and_waste_only_not_accepted_productive_work",
+            "retain_admission_without_productive_credit",
         )
         self.assertEqual(
             accounting["ledgers"]["direct_production"],
             "accepted_productive_work_allocation",
         )
         self.assertIn("prospective", accounting["ledgers"]["overall_effort"])
-        self.assertEqual(accounting["accepted_production_ledger"], "direct_production")
-        self.assertEqual(accounting["usage_guard_ledger"], "overall_effort")
+        self.assertEqual(self.directive["overall_effort_policy"], "telemetry_only_no_separate_allocation")
         self.assertEqual(
             accounting["control_plane_rule"],
-            "openai_control_plane_counts_only_in_historical_overall_effort",
+            "usage_telemetry_only_not_production_credit",
         )
 
         enforcement = self.directive["workload_enforcement"]
-        self.assertEqual(enforcement["enforced_measure"], "accepted_assignment_count")
+        self.assertEqual(enforcement["enforced_measure"], "admitted_assignment_count")
         self.assertEqual(enforcement["normal_tolerance_percentage_points"], 3)
         self.assertEqual(
             enforcement["evaluate"],
@@ -756,7 +734,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertIsNone(copilot["workload_percentage"])
         self.assertNotIn(
             "github_copilot_cli_lite",
-            self.directive["workload_enforcement"]["overall_effort_normal_bands_percent"],
+            self.directive["allocation_profiles"]["lane_order"],
         )
         self.assertEqual(
             copilot["attempts"],
@@ -2140,3 +2118,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]

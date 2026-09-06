@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -26,6 +27,7 @@ from enum import StrEnum
 from typing import Any, Iterable, Mapping, Sequence
 
 from .primary_workload import WorkloadAdmissionHold, admit_assignment
+from .allocation_profiles import allocation_targets, allocation_profile_digest
 
 from .langgraph_postgres import (
     PostgresConditionalClaimStore,
@@ -116,8 +118,10 @@ class ParallelAssignment:
     dependencies: tuple[str, ...] = ()
     write_surfaces: tuple[str, ...] = ()
     retry_limit: int = 3
+    allocation_profile: str = "engineering"
 
     def __post_init__(self) -> None:
+        allocation_targets(self.allocation_profile)
         _require_id(self.assignment_id, "assignment_id")
         _require_id(self.provider_id, "provider_id")
         _require_id(self.deployment_id, "deployment_id")
@@ -374,6 +378,8 @@ class PostgresParallelDispatch:
                         "dependencies": list(item.dependencies),
                         "write_surfaces": list(item.write_surfaces),
                         "retry_limit": item.retry_limit,
+                        "allocation_profile": item.allocation_profile,
+                        "allocation_profile_digest": allocation_profile_digest(item.allocation_profile),
                     }
                     for item in ordered
                 ],
@@ -425,12 +431,12 @@ class PostgresParallelDispatch:
                         INSERT INTO {schema}.director_primary_parallel_assignment (
                             task_id, assignment_id, sequence, provider_id,
                             deployment_id, dependencies, write_surfaces,
-                            retry_limit, status
+                            retry_limit, allocation_profile, status
                         ) VALUES (
                             %(task_id)s, %(assignment_id)s, %(sequence)s,
                             %(provider_id)s, %(deployment_id)s,
                             %(dependencies)s::jsonb, %(write_surfaces)s::jsonb,
-                            %(retry_limit)s, 'PENDING'
+                            %(retry_limit)s, %(allocation_profile)s, 'PENDING'
                         ) RETURNING assignment_id
                         """,
                         {
@@ -442,6 +448,7 @@ class PostgresParallelDispatch:
                             "dependencies": json.dumps(list(item.dependencies)),
                             "write_surfaces": json.dumps(list(item.write_surfaces)),
                             "retry_limit": item.retry_limit,
+                        "allocation_profile": item.allocation_profile,
                         },
                     )
         return plan
@@ -688,7 +695,7 @@ class PostgresParallelDispatch:
                     raise ParallelDispatchError("first provider attempt ordinal must be one")
                 binding = self._row(
                     connection,
-                    f"""SELECT provider_id, reservation_digest, status
+                    f"""SELECT provider_id, reservation_digest, status, allocation_profile
                     FROM {schema}.director_primary_parallel_assignment
                     WHERE task_id = %(task_id)s AND assignment_id = %(assignment_id)s
                     FOR UPDATE""",
@@ -705,6 +712,7 @@ class PostgresParallelDispatch:
                     provider=reservation.provider_id,
                     reservation_digest=reservation.reservation_digest,
                     fencing_generation=writer.fencing_generation,
+                    allocation_profile=binding["allocation_profile"],
                 )
                 row = self._row(
                     connection,
@@ -1318,3 +1326,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

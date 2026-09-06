@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
@@ -303,7 +304,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             # Isolated historical accepted-credit fixture, never a live seeding path.
             with closing(sqlite3.connect(path)) as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM direct_production_credits").fetchone()[0], 0)
-                for index, provider in enumerate(["cursor"]*14 + ["claude"]*5):
+                for index, provider in enumerate(["cursor"]*13 + ["claude"]*6):
                     connection.execute("""INSERT INTO direct_production_credits(
                         credit_key, task_id, plan_generation, assignment_sequence, assignment_id,
                         provider, effort_units, provider_event_digest, provider_result_digest,
@@ -314,9 +315,9 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
                 connection.commit()
             mature = reserve("mature")
             # The real startup reservation still occupies capacity alongside the
-            # five accepted Claude fixtures; a seventh Claude is correctly held.
+            # six accepted Claude fixtures; an eighth Claude is correctly held.
             self.assertFalse(mature.decision.allowed)
-            self.assertIn("direct_production_hard_cap_exceeded:claude:30", mature.decision.violations)
+            self.assertIn("direct_production_hard_cap_exceeded:claude:35", mature.decision.violations)
             with closing(sqlite3.connect(path)) as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM direct_production_credits").fetchone()[0], 19)
 
@@ -559,7 +560,8 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             )
         )
         researched.max_hops = 3
-        researched.prestage = self._prestage(budget_units=9)
+        researched.assignments = [item.model_copy(update={"allocation_profile": "public_research"}) for item in researched.assignments]
+        researched.prestage = self._prestage(budget_units=9).model_copy(update={"allocation_profile": "public_research"})
         guarded = enforce_plan(researched, "bounded implementation", self.settings)
         self.assertEqual(execution_policy_errors(guarded, self.settings), [])
 
@@ -704,3 +706,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]

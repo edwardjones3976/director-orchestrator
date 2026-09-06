@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
@@ -175,6 +176,7 @@ from .workload_policy import (
     WorkKind as WorkloadKind,
     WorkloadRecord,
     WorkloadPolicyError,
+    WorkloadPolicy,
     WorkloadSelectionHold,
     evaluate_retry,
     select_cheapest_capable_provider,
@@ -213,6 +215,7 @@ _STANDING_PROVIDER_ROLES = {
 _TRUSTED_ROUTING_CAPABILITIES: dict[
     WorkloadProvider, frozenset[WorkloadKind]
 ] = {
+    WorkloadProvider.OPENAI: frozenset({WorkloadKind.IMPLEMENTATION, WorkloadKind.REVIEW, WorkloadKind.RESEARCH, WorkloadKind.VALIDATION, WorkloadKind.COORDINATION}),
     WorkloadProvider.CLAUDE: frozenset(
         {
             WorkloadKind.IMPLEMENTATION,
@@ -248,9 +251,12 @@ _TRUSTED_ROUTING_CAPABILITIES: dict[
         }
     ),
     WorkloadProvider.PERPLEXITY: frozenset({WorkloadKind.RESEARCH}),
+    WorkloadProvider.FIRECRAWL: frozenset({WorkloadKind.RESEARCH}),
+    WorkloadProvider.GITHUB_COPILOT: frozenset({WorkloadKind.IMPLEMENTATION}),
+    WorkloadProvider.MICROSOFT_365_COPILOT: frozenset({WorkloadKind.RESEARCH}),
 }
 _TRUSTED_PRIMARY_REVIEWERS = frozenset(
-    {WorkloadProvider.CLAUDE, WorkloadProvider.CURSOR, WorkloadProvider.GROK}
+    {WorkloadProvider.OPENAI, WorkloadProvider.CLAUDE, WorkloadProvider.CURSOR, WorkloadProvider.GROK}
 )
 _ANTIGRAVITY_TYPED_KINDS = frozenset(
     {
@@ -469,6 +475,9 @@ class OrchestrationEngine:
             # Debate identities are part of the independently validated committee
             # contract, not production routes selected from cost ranks.
             return frozenset({WorkloadProvider(assignment.agent.value)})
+        if assignment.agent in {ProviderName.FIRECRAWL, ProviderName.GITHUB_COPILOT, ProviderName.MICROSOFT_365_COPILOT}:
+            # Preserve explicitly planned least-privilege specialist scope.
+            return frozenset({WorkloadProvider(assignment.agent.value)})
         if kind is WorkloadKind.REVIEW:
             return _TRUSTED_PRIMARY_REVIEWERS
         if assignment.kind in _ANTIGRAVITY_TYPED_KINDS:
@@ -509,7 +518,9 @@ class OrchestrationEngine:
             dependency = assignments_by_sequence.get(sequence)
             if dependency is None:
                 continue
-            if dependency.agent not in {ProviderName.OWNER, ProviderName.OPENAI}:
+            if dependency.agent != ProviderName.OWNER and not (
+                dependency.agent == ProviderName.OPENAI and trusted_work_kind(dependency) is WorkloadKind.COORDINATION
+            ):
                 authors.add(WorkloadProvider(dependency.agent.value))
             pending.extend(dependency.depends_on)
         return frozenset(authors)
@@ -524,19 +535,20 @@ class OrchestrationEngine:
             or plan.workload_policy_version != "v1"
         ):
             return plan
-        if any(
-            assignment.agent == ProviderName.OPENAI
-            for assignment in plan.assignments
-        ):
-            raise WorkloadPolicyError(
-                "trusted specialist routing excludes OpenAI Director assignments"
-            )
         if not any(
             assignment.agent != ProviderName.OWNER
             and assignment.discussion_phase == DiscussionPhase.WORK
             for assignment in plan.assignments
         ):
             return plan
+        plan = plan.model_copy(update={
+            "assignments": [item.model_copy(update={"allocation_profile": record.intake.allocation_profile}) for item in plan.assignments],
+            "prestage": plan.prestage.model_copy(update={
+                "allocation_profile": record.intake.allocation_profile,
+                "allocation_profile_digest": None,
+                "digest": None,
+            }) if plan.prestage else None,
+        })
         profiles = self._trusted_selection_profiles()
         ready = self._trusted_ready_specialists(record)
         history: tuple[DirectProductionRecord, ...] = tuple(
@@ -572,11 +584,12 @@ class OrchestrationEngine:
                 direct_production_history=history,
                 overall_effort_history=overall_history,
                 mode=WorkloadEnforcementMode(self.settings.workload_policy_mode),
+                policy=WorkloadPolicy.for_profile(record.intake.allocation_profile),
             )
             provider_name = ProviderName(provider.value)
             selected[assignment.sequence] = provider_name
             rewritten[assignment.sequence] = assignment.model_copy(
-                update={"agent": provider_name}
+                update={"agent": provider_name, "allocation_profile": record.intake.allocation_profile}
             )
             overall_history.append(
                 WorkloadRecord(
@@ -586,6 +599,7 @@ class OrchestrationEngine:
                 )
             )
             overall_history = overall_history[-19:]
+        plan = plan.model_copy(update={"assignments": list(rewritten.values())})
         selected_plan = synchronize_trusted_provider_selection(
             plan, selected, self.settings
         )
@@ -806,6 +820,7 @@ class OrchestrationEngine:
                     self._available_workload_primary_providers(record)
                 ),
                 mode=mode,
+                allocation_profile=assignment.allocation_profile,
                 shadow_assignment_limit=(
                     self.settings.workload_policy_shadow_assignments
                 ),
@@ -6863,3 +6878,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]

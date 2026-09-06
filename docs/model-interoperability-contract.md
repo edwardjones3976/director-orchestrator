@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
@@ -12,7 +13,7 @@
 
 The owner accepted this provider-neutral contract authority on 2026-08-16 after Gate 0 acceptance. Merging these documents and schemas authorizes fixture and adapter-conformance work only. It does not install LangGraph, enable a graph, dispatch a provider, migrate state, change the sole writer, or permit an external write.
 
-OpenAI, Claude, and Cursor are the primary team. Gemini, Perplexity, and future providers may implement the same contract later without widening its authority.
+OpenAI, Claude, Cursor, and Grok are primary-capable lanes. The owner-approved allocation profiles also account for Antigravity, Perplexity, Firecrawl, GitHub Copilot, and Microsoft 365 Copilot. Each requires its actual bounded adapter capability; a nonzero target never expands this contract or authenticates readiness. See [Provider allocation profiles](provider-allocation-profiles.md).
 
 ## Principle
 
@@ -138,3 +139,4 @@ A self-contained digest detects accidental or unsynchronized modification; it is
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->

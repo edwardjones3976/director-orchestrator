@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -2454,6 +2455,7 @@ class PrimaryWorkflowRuntime:
             "workload_unsupported_allocation_lane", "workload_history_invalid",
             "workload_bootstrap_authority_required", "workload_assignment_hard_limit",
             "workload_admission_identity_changed", "workload_schema_policy_incompatible",
+            "workload_profile_lane_ineligible",
         }:
             raise ValueError("unknown workload hold reason")
         state = self._snapshot(task_id).values
@@ -3193,3 +3195,4 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

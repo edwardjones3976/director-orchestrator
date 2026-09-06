@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
@@ -116,10 +117,11 @@ class ProviderName(StrEnum):
     GROK = "grok"
     PERPLEXITY = "perplexity"
     OWNER = "owner"
-    # The Director's own runtime. Never a plan assignment target: it is absent from
-    # provider_registry() and from the available_agents list sent to the Director,
-    # and exists only to label the OpenAI usage-check probe in usage.py.
+    # Separately assigned production is distinct from Director control-plane work.
     OPENAI = "openai"
+    FIRECRAWL = "firecrawl"
+    GITHUB_COPILOT = "github-copilot"
+    MICROSOFT_365_COPILOT = "microsoft-365-copilot"
 
 
 class AssignmentKind(StrEnum):
@@ -247,7 +249,8 @@ class SlackIntake(BaseModel):
     thread_ts: str = Field(min_length=1, max_length=64)
     user_id: str = Field(min_length=1, max_length=64)
     text: str = Field(min_length=1, max_length=MAX_SLACK_INTAKE_TEXT)
-    primary_required_capabilities: tuple[Literal["public_research", "enterprise_context"], ...] = Field(default=(), max_length=2)
+    allocation_profile: Literal["engineering", "mixed", "public_research", "enterprise"] = "engineering"
+    primary_required_capabilities: tuple[Literal["public_research", "enterprise_context", "bounded_scaffolding", "repository_assistance"], ...] = Field(default=(), max_length=4)
     primary_public_research_query: str | None = Field(default=None, min_length=1, max_length=500)
     permalink: str | None = Field(default=None, max_length=2_000)
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -268,6 +271,7 @@ class Assignment(BaseModel):
     # Live LangGraph-primary plans may bind a transport lane that is broader than
     # the historical Director agent enum. Model-authored plans leave this unset;
     # the deterministic primary planner supplies it after policy normalization.
+    allocation_profile: Literal["engineering", "mixed", "public_research", "enterprise"] = "engineering"
     primary_provider_lane: str | None = Field(
         default=None,
         min_length=1,
@@ -428,6 +432,8 @@ class PlanPrestageRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    allocation_profile: Literal["engineering", "mixed", "public_research", "enterprise"] = "engineering"
+    allocation_profile_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     schema_version: Literal["prestage.v1"] = "prestage.v1"
     packet_id: str = Field(min_length=1, max_length=255)
     goal: str = Field(min_length=1, max_length=10_000)
@@ -1234,3 +1240,4 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

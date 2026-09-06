@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -997,17 +998,41 @@ def _control_plane_ddl(schema: str) -> tuple[str, ...]:
             task_id text NOT NULL,
             assignment_id text NOT NULL,
             provider_lane text NOT NULL CHECK (provider_lane IN
-                ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity')),
+                ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot', 'microsoft-365-copilot')),
             reservation_digest text NOT NULL CHECK
                 (reservation_digest ~ '^sha256:[0-9a-f]{{64}}$'),
             fencing_generation bigint NOT NULL CHECK (fencing_generation >= 0),
             policy_version text NOT NULL CHECK
-                (policy_version = 'primary-assignment-count-v2'),
+                (policy_version IN ('primary-assignment-count-v2', 'primary-assignment-count-v3')),
             policy_digest text NOT NULL CHECK
                 (policy_digest ~ '^sha256:[0-9a-f]{{64}}$'),
             recorded_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE (task_id, assignment_id)
         )
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_parallel_assignment
+            ADD COLUMN IF NOT EXISTS allocation_profile text NOT NULL DEFAULT 'engineering'
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_workload_assignment
+            ADD COLUMN IF NOT EXISTS allocation_profile text NOT NULL DEFAULT 'engineering'
+        """,
+        f"""
+        DO $migration$ BEGIN
+            ALTER TABLE {schema}.director_primary_workload_assignment DROP CONSTRAINT IF EXISTS director_primary_workload_assignment_provider_lane_check;
+            ALTER TABLE {schema}.director_primary_workload_assignment ADD CONSTRAINT director_primary_workload_assignment_provider_lane_check CHECK
+                (provider_lane IN ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot', 'microsoft-365-copilot'));
+            IF EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+                JOIN pg_namespace n ON n.oid=t.relnamespace
+                WHERE n.nspname='{schema}' AND t.relname='director_primary_workload_assignment'
+                AND c.conname='director_primary_workload_assignment_policy_version_check'
+                AND pg_get_constraintdef(c.oid) = 'CHECK ((policy_version = ''primary-assignment-count-v2''::text))') THEN
+                ALTER TABLE {schema}.director_primary_workload_assignment DROP CONSTRAINT director_primary_workload_assignment_policy_version_check;
+                ALTER TABLE {schema}.director_primary_workload_assignment ADD CONSTRAINT director_primary_workload_assignment_policy_version_check
+                    CHECK (policy_version IN ('primary-assignment-count-v2', 'primary-assignment-count-v3'));
+            END IF;
+        END $migration$
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_provider_attempt (
@@ -4866,3 +4891,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

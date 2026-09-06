@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
@@ -228,6 +229,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         model_label: str | None = None,
         available_primary_providers: frozenset[Provider] = PRIMARY_PROVIDERS,
         shadow_assignment_limit: int = 5,
+        allocation_profile: str = "engineering",
     ):
         return self.store.reserve_workload_assignment(
             reservation_key=key,
@@ -242,6 +244,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             available_primary_providers=available_primary_providers,
             mode=mode,
             shadow_assignment_limit=shadow_assignment_limit,
+            allocation_profile=allocation_profile,
         )
 
     @staticmethod
@@ -812,10 +815,73 @@ class WorkloadLedgerTests(unittest.TestCase):
                     self.store.create(record)
                 self.assertEqual(self.store.list_recent_direct_production(), [])
 
+    def test_profile_bound_replay_rejects_changed_profile_and_preserves_history(self):
+        first = self.reserve("profile-bound", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertTrue(first.decision.allowed)
+        self.store.finalize_workload_reservation(first.reservation_key, WorkloadAttemptOutcome.INVOKED)
+        with self.assertRaisesRegex(WorkloadReservationConflict, "profile binding changed"):
+            self.reserve("profile-bound", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION, allocation_profile="mixed")
+        with self.assertRaisesRegex(WorkloadReservationConflict, "profile binding changed"):
+            self.store.reserve_workload_assignment(
+                reservation_key="other-transport", task_id="DIR-profile-bound", assignment_id="DIR-profile-bound:1",
+                phase="dispatch", provider=Provider.CURSOR, effort_units=1, kind=WorkKind.IMPLEMENTATION,
+                size=WorkSize.SIMPLE, model_label=None, available_primary_providers=PRIMARY_PROVIDERS,
+                mode=EnforcementMode.ENFORCED,
+            )
+        for task_id, kind in (("different-task", WorkKind.IMPLEMENTATION), ("DIR-profile-bound", WorkKind.REVIEW)):
+            with self.assertRaisesRegex(WorkloadReservationConflict, "profile binding changed"):
+                self.store.reserve_workload_assignment(
+                    reservation_key="changed-owner-kind", task_id=task_id, assignment_id="DIR-profile-bound:1",
+                    phase="dispatch", provider=Provider.CLAUDE, effort_units=1, kind=kind,
+                    size=WorkSize.SIMPLE, model_label=None, available_primary_providers=PRIMARY_PROVIDERS,
+                    mode=EnforcementMode.ENFORCED,
+                )
+        self.assertEqual(len(self.store.list_recent_workload_attempts()), 1)
+        with closing(sqlite3.connect(self.path)) as connection:
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute("DELETE FROM workload_profile_bindings")
+
+    def test_old_unbound_history_requires_reconciliation_before_new_admission(self):
+        self.reserve("old-coordination", Provider.CLAUDE)
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute("DROP TRIGGER workload_profile_bindings_no_delete")
+            connection.execute("DELETE FROM workload_profile_bindings")
+            connection.commit()
+        reopened = TaskStore(self.path)
+        with self.assertRaisesRegex(WorkloadReservationConflict, "history requires explicit"):
+            reopened.reserve_workload_assignment(reservation_key="new", task_id="new", assignment_id="new:1",
+                phase="dispatch", provider=Provider.CLAUDE, effort_units=1, kind=WorkKind.IMPLEMENTATION,
+                size=WorkSize.SIMPLE, model_label=None, available_primary_providers=PRIMARY_PROVIDERS,
+                mode=EnforcementMode.ENFORCED)
+
+    def test_real_shadow_work_retains_admission_without_duplicate_retry_credit(self):
+        first = self.reserve("shadow-real", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION, mode=EnforcementMode.SHADOW)
+        self.store.finalize_workload_reservation(first.reservation_key, WorkloadAttemptOutcome.INVOKED)
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM workload_profile_bindings WHERE admitted=1").fetchone()[0], 1)
+        replay = self.reserve("shadow-real", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION, mode=EnforcementMode.ENFORCED)
+        self.assertFalse(replay.created)
+
+    def test_failed_reservations_remain_in_profile_admission_window(self):
+        for index in range(7):
+            item = self.reserve(f"retained-{index}", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+            self.assertTrue(item.decision.allowed, item.decision.violations)
+            self.store.finalize_workload_reservation(item.reservation_key, WorkloadAttemptOutcome.FAILED_PRE_SUBMIT)
+        held = self.reserve("retained-eighth", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertFalse(held.decision.allowed)
+        self.assertIn("allocation_admission_hard_cap_exceeded:claude:35", held.decision.violations)
+        self.assertEqual(self.store.list_recent_direct_production(), [])
+
+    def test_research_profile_admits_perplexity_without_fabricated_history(self):
+        candidate = self.reserve("real-public-research", Provider.PERPLEXITY,
+            kind=WorkKind.RESEARCH, allocation_profile="public_research")
+        self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
+        self.assertEqual(self.store.list_recent_direct_production(), [])
+
     def test_ordinary_openai_outcome_does_not_create_external_openai_credit(self) -> None:
         record = self.accepted_record("DIR-DIRECT-OPENAI", ProviderName.OPENAI)
-        self.store.create(record)
-        self.store.save(record)
+        with self.assertRaisesRegex(WorkloadReservationConflict, "invoked workload authority"):
+            self.store.create(record)
         self.assertEqual(self.store.list_recent_direct_production(), [])
 
     def test_perplexity_authenticated_research_credit_enters_prospective_ledger(
@@ -841,7 +907,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             kind=WorkKind.RESEARCH,
         )
         self.assertFalse(candidate.decision.allowed)
-        self.assertIn("direct_production_hard_cap_exceeded:perplexity:9", candidate.decision.violations)
+        self.assertIn("allocation_profile_lane_ineligible:perplexity", candidate.decision.violations)
         self.assertIn(
             "direct_production_window_warming_up:2/20",
             candidate.decision.advisories,
@@ -979,7 +1045,7 @@ class WorkloadLedgerTests(unittest.TestCase):
 
     def test_direct_window_blocks_while_accepted_credit_is_unresolved(self) -> None:
         # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
-        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*5 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*7
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
         for index, provider in enumerate(providers):
             task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
@@ -1054,7 +1120,7 @@ class WorkloadLedgerTests(unittest.TestCase):
 
     def test_direct_unresolved_rollover_still_blocks_unsafe_sibling(self) -> None:
         # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
-        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*5 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*7
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
         for index, provider in enumerate(providers):
             task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
@@ -1141,7 +1207,7 @@ class WorkloadLedgerTests(unittest.TestCase):
 
     def test_direct_window_projects_invoked_terminal_task_awaiting_credit(self) -> None:
         # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
-        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*5 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*7
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
         for index, provider in enumerate(providers):
             task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
@@ -1163,7 +1229,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         self._insert_raw_direct_credit(task_id="old-credit", assignment_id="old-credit:1:1",
             provider=Provider.CLAUDE, effort_units=1, recorded_at="2026-09-01T00:00:00+00:00")
         # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
-        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*5 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*7
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
         for index, provider in enumerate(providers):
             task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
@@ -1172,7 +1238,7 @@ class WorkloadLedgerTests(unittest.TestCase):
                 recorded_at="2026-08-01T00:00:00+00:00")
         candidate = self.reserve("ordered", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
-        self.assertIn("prospective_direct_production_share:claude:6/20", candidate.decision.advisories)
+        self.assertIn("prospective_direct_production_share:claude:7/20", candidate.decision.advisories)
 
 
     def test_sqlite_cas_allows_one_cross_process_creator(self) -> None:
@@ -1217,3 +1283,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]

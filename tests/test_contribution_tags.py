@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-06 | 00:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
@@ -441,15 +442,15 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             encoding="utf-8"
         )
         for expected in (
-            "Chief Programmer | Claude | 25% | 36%",
-            "Project Secretary | Cursor | 20% | 20%",
-            "Cursor-family primary teammate | Grok | 11% | 11%",
-            "Specialist and Backup Programmer | Gemini/Antigravity | 15% | 20%",
-            "Research Programmers | Perplexity.ai | 4% | 5%",
-            "Director and separately authorized production lane | OpenAI/Codex | 25% | 8%",
+            "| OpenAI / Codex production | 30% | 35% | 25% | 30% |",
+            "| Claude | 25% | 30% | 20% | 25% |",
+            "| Cursor | 10% | 15% | 5% | 5% |",
+            "| Grok | 10% | 10% | 5% | 5% |",
+            "| Gemini / Antigravity | 5% | 10% | 5% | 5% |",
+            "| Perplexity | 5% | 0% | 25% | 0% |",
         ):
             self.assertIn(expected, charter)
-        self.assertIn("Enforce two prospective workload controls", prompt)
+        self.assertIn("Freeze one approved allocation profile and its digest before plan approval", prompt)
         self.assertIn("blocks above target plus 5 percentage points", prompt)
         self.assertIn("startup uses the full 20-slot denominator with real assignments only", prompt)
         self.assertIn("cheapest capable trusted model first", prompt)
@@ -1557,3 +1558,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-06 | 00:55 UTC | END]]

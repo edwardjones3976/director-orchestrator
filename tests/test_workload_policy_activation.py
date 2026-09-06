@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
@@ -73,7 +74,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             + [DirectProductionProvider.EXTERNAL_OPENAI] * 9
         )
         if capped:
-            providers = [DirectProductionProvider.CLAUDE] * 6 + [DirectProductionProvider.CURSOR] * 5 + [DirectProductionProvider.GROK] * 3 + [DirectProductionProvider.EXTERNAL_OPENAI] * 5
+            providers = [DirectProductionProvider.CLAUDE] * 7 + [DirectProductionProvider.CURSOR] * 4 + [DirectProductionProvider.GROK] * 3 + [DirectProductionProvider.EXTERNAL_OPENAI] * 5
         with closing(sqlite3.connect(path)) as connection:
             for index, provider in enumerate(providers):
                 identity = f"accepted-selector-history-{capped}-{index}"
@@ -505,7 +506,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             installed = store.get(record.task_id)
             self.assertEqual(installed.workload_selection_hold_reasons, [])
             self.assertEqual(current_owner_decision(installed).kind, "plan_approval", installed.error)
-            self.assertEqual(installed.plan.assignments[0].agent, ProviderName.CURSOR)
+            self.assertEqual(installed.plan.assignments[0].agent, ProviderName.CLAUDE)
             self.assertEqual(len(store.list_recent_direct_production(limit=50)), 38)
             self.assertEqual(engine.director.plan.await_count, 3)
             for provider in providers.values():
@@ -578,14 +579,14 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
 
             self.assertEqual(
                 [item.agent for item in selected.assignments],
-                [ProviderName.CURSOR, ProviderName.CLAUDE],
+                [ProviderName.CLAUDE, ProviderName.CURSOR],
             )
-            self.assertEqual(selected.prestage.producer, ProviderName.CURSOR)
+            self.assertEqual(selected.prestage.producer, ProviderName.CLAUDE)
             self.assertEqual(
-                selected.prestage.independent_reviewer, ProviderName.CLAUDE
+                selected.prestage.independent_reviewer, ProviderName.CURSOR
             )
-            self.assertNotEqual(selected.prestage.digest, original_digest)
-            self.assertIsNone(selected.assignments[0].model_label)
+            self.assertEqual(selected.prestage.digest, original_digest)
+            self.assertEqual(selected.assignments[0].model_label, plan.assignments[0].model_label)
             self.assertEqual(execution_policy_errors(selected, settings), [])
             direct_history.assert_called_once_with(limit=19)
 
@@ -905,3 +906,4 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]

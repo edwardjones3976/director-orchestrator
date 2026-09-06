@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:05 UTC | BEGIN]]
@@ -601,13 +602,13 @@ class Settings:
     trusted_provider_cost_ranks_json: str = os.getenv(
         "TRUSTED_PROVIDER_COST_RANKS", ""
     ).strip()
-    claude_account_context: str = os.getenv("CLAUDE_ACCOUNT_CONTEXT", "Claude Pro 20x")
+    claude_account_context: str = os.getenv("CLAUDE_ACCOUNT_CONTEXT", "Claude Max 5x")
     openai_account_context: str = os.getenv(
-        "OPENAI_ACCOUNT_CONTEXT", "ChatGPT Plus; OpenAI API usage is billed separately"
+        "OPENAI_ACCOUNT_CONTEXT", "OpenAI Pro 20x; OpenAI API usage is billed separately"
     )
     other_provider_account_context: str = os.getenv(
         "OTHER_PROVIDER_ACCOUNT_CONTEXT",
-        "Comparable paid individual tiers; API billing and quotas must be verified separately",
+        "Lower-capacity paid services per owner; API billing and quotas must be verified separately",
     )
 
     slack_app_token: str = os.getenv("SLACK_APP_TOKEN", "")
@@ -989,7 +990,7 @@ class Settings:
             raise ValueError(
                 "TRUSTED_PROVIDER_COST_RANKS must be a non-empty JSON object"
             )
-        allowed = {"claude", "cursor", "gemini", "grok", "perplexity"}
+        allowed = {"openai", "claude", "cursor", "gemini", "antigravity", "grok", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"}
         parsed: dict[str, int] = {}
         for raw_provider, raw_rank in payload.items():
             if not isinstance(raw_provider, str):
@@ -997,6 +998,8 @@ class Settings:
                     "TRUSTED_PROVIDER_COST_RANKS provider names must be strings"
                 )
             provider = raw_provider.strip().lower()
+            if provider == "antigravity":
+                provider = "gemini"
             if provider not in allowed:
                 raise ValueError(
                     "TRUSTED_PROVIDER_COST_RANKS contains an unsupported provider"
@@ -2018,3 +2021,4 @@ class Settings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]

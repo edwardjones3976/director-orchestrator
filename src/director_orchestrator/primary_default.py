@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -235,12 +236,12 @@ _PRIMARY_LANE_AGENT: Mapping[str, ProviderName] = {
     "grok": ProviderName.GROK,
     "antigravity": ProviderName.GEMINI,
     "perplexity": ProviderName.PERPLEXITY,
-    "firecrawl": ProviderName.PERPLEXITY,
-    "github-copilot": ProviderName.CURSOR,
-    "microsoft-365-copilot": ProviderName.PERPLEXITY,
+    "firecrawl": ProviderName.FIRECRAWL,
+    "github-copilot": ProviderName.GITHUB_COPILOT,
+    "microsoft-365-copilot": ProviderName.MICROSOFT_365_COPILOT,
 }
 _PRIMARY_PUBLIC_RESEARCH_LANES = frozenset(
-    {"perplexity", "firecrawl", "microsoft-365-copilot"}
+    {"perplexity", "firecrawl"}
 )
 
 
@@ -438,10 +439,12 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
     if record.plan is None or not record.plan.assignments:
         raise RuntimeError("live primary parallel expansion requires a normalized plan")
     from .primary_roster import select_primary_roster
+    from .allocation_profiles import canonical_allocation_lane
     selected = select_primary_roster(available=available, history=history,
         required_capabilities=record.intake.primary_required_capabilities,
         public_research_query=record.intake.primary_public_research_query,
-        trusted_cost_ranks=json.loads(settings.trusted_provider_cost_ranks_json))
+        trusted_cost_ranks={canonical_allocation_lane(lane): rank for lane, rank in settings.trusted_provider_cost_ranks().items()},
+        allocation_profile=record.intake.allocation_profile)
     required = ((selected.research,) if selected.research else ()) + (selected.producer,)
     # The paid-off preview always declares a zero cost. A live wave must carry a
     # trusted positive per-lane limit derived from the configured task budget so
@@ -469,6 +472,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                     "sequence": sequence,
                     "agent": _PRIMARY_LANE_AGENT[lane],
                     "primary_provider_lane": lane,
+                    "allocation_profile": record.intake.allocation_profile,
                     "kind": (
                         AssignmentKind.SCAFFOLDING
                         if is_antigravity
@@ -514,6 +518,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
         update={
             "sequence": len(first_wave) + 1,
             "primary_provider_lane": review_lane,
+            "allocation_profile": record.intake.allocation_profile,
             "agent": _PRIMARY_LANE_AGENT[review_lane],
             "kind": AssignmentKind.INDEPENDENT_REVIEW,
             "task": (
@@ -537,6 +542,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
     record.plan = plan.model_copy(update={"assignments": [*first_wave, review]})
     if record.plan.prestage is not None:
         record.plan.prestage = _canonical_prestage_record(record.plan.prestage.model_copy(update={
+            "allocation_profile": record.intake.allocation_profile,
             "producer": _PRIMARY_LANE_AGENT[selected.producer],
             "independent_reviewer": _PRIMARY_LANE_AGENT[selected.reviewer],
             "digest": None,
@@ -1472,6 +1478,7 @@ class DefaultPrimaryApplication:
                 sequence=item.sequence,
                 provider_id=_assignment_provider_lane(item),
                 deployment_id=item.model_label or _assignment_provider_lane(item),
+                allocation_profile=item.allocation_profile,
                 dependencies=tuple(identifiers[sequence] for sequence in item.depends_on),
                 write_surfaces=("repository-write",) if item.allow_draft_pr else (),
                 retry_limit=3,
@@ -2583,3 +2590,4 @@ class DefaultPrimaryActivation:
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]

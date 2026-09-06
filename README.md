@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
@@ -26,7 +27,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=18a374adca6356c5b8e3612a86e720ab507335226570056bab3f41faf84035d3 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=63c92e0a40670d96b3989ed82d44b8e72d718017f8339579238302ffc881f26f -->
 
 A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
 
@@ -40,7 +41,7 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
 - An OpenAI Director planner/reviewer using Structured Outputs.
 - A primary OpenAI–Claude–Cursor–Grok team selected through a cheap-capable-model-first policy, with Gemini/Antigravity and Perplexity retained as bounded supplemental specialists.
-- Two prospective workload controls: accepted productive work targets of external OpenAI/Codex 25%, Claude 25%, Cursor 20%, Gemini/Antigravity 15%, Grok 11%, and Perplexity 4%; and total-effort targets of Claude 36%, Cursor 20%, Gemini/Antigravity 20%, Grok 11%, OpenAI 8%, and Perplexity 5%.
+- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all nine provider lanes. Engineering defaults to OpenAI 35%, Claude 30%, Cursor 15%, Grok 10%, and Antigravity 10%; other profiles reserve real research and enterprise work. A fixed real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion, with ±3-point normal preference.
 - Default-on deterministic accepted-productive-work and total-effort accounting, an immutable pre-stage packet, rolling 20-assignment soft drift preferences, cheap-capable-model selection, and a five-action ordinary review-to-merge ceiling. The total-effort normal bands are Claude 33–39%, Cursor 17–23%, Gemini/Antigravity 17–23%, Grok 8–14%, OpenAI 5–11%, and Perplexity 1–7%; provider share never blocks an otherwise safe route.
 - An optional GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It has no assigned workload share, range, or ceiling, no provider adapter or automatic routing, and no production credit, gate, authority, or every-push trigger; without an authenticated contact it fails closed as unavailable. A requested review uses exactly three attempt slots, exercising every configured eligible format once before reuse.
 - Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
@@ -84,11 +85,12 @@ synthesis and tie handling create no extra vote and never fabricate participatio
 Milestone updates lead with evidence, exact candidate identity, blockers, and one
 next action rather than activity summaries.
 
-Repository oversight is read-only. The Director runtime never emits OpenAI as a
-specialist assignment target. The 25% OpenAI production share applies only to
-separately owner-authorized Codex/OpenAI work outside this runtime; it requires a
-different-provider exact-candidate review, and a changed candidate invalidates
-review, security, CI, and merge evidence. It grants no external-action authority.
+Repository oversight remains scoped. OpenAI production uses a separately assigned,
+attributed lane under the frozen allocation profile; Director coordination creates
+no production credit. Material authorship removes independent acceptance and merge
+eligibility for that candidate. Different-provider exact-candidate review, security,
+CI and action-specific approval remain mandatory. Profile selection grants no
+external-action authority or subscription-to-API entitlement.
 Prepared but undelivered content is labeled
 `DRAFT — NOT SENT`; offline exercises use
 `SIMULATION — NO PROVIDER INTERACTION`; hypothetical provider views use
@@ -267,7 +269,7 @@ Add credentials one provider at a time. Verify each adapter independently before
 6. A separate `CLAUDE_CALLBACK_SECRET` installed in both the orchestrator and the trusted Claude callback sender when callbacks are enabled.
 7. `ALLOW_PAID_RUNS=true`, followed by a low-risk test task.
 
-ChatGPT Plus, Claude Pro, Cursor Pro, Gemini subscriptions, and Perplexity Pro do not necessarily include API usage. Claude Code Routine triggers are the exception represented here: they use the routine-specific URL and token supplied by Claude's routine UI.
+OpenAI Pro 20x, Claude Max 5x, Cursor, Gemini, and Perplexity subscriptions do not necessarily include API usage. Claude Code Routine triggers are the exception represented here: they use the routine-specific URL and token supplied by Claude's routine UI.
 
 ## Periodic provider usage checks
 
@@ -392,3 +394,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
