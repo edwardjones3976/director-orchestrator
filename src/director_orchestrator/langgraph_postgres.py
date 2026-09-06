@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -491,6 +492,11 @@ def _guard_triggers(schema: str) -> tuple[str, ...]:
 
 
 def _control_plane_ddl(schema: str) -> tuple[str, ...]:
+    from .antigravity_team import team_ddl
+    return _base_control_plane_ddl(schema) + team_ddl(schema)
+
+
+def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
     """Return the ordered, idempotent DDL for one versioned control plane.
 
     ``schema`` is interpolated rather than parameterized because an identifier
@@ -4943,3 +4949,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]

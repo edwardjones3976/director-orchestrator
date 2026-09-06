@@ -1,0 +1,252 @@
+{
+  "$defs": {
+    "SourceBlob": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "title": "SourceBlob",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "antigravity-team-engineering/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "grant_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Grant Id",
+      "type": "string"
+    },
+    "task_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "assignment_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Assignment Id",
+      "type": "string"
+    },
+    "project_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "repository": {
+      "title": "Repository",
+      "type": "string"
+    },
+    "packet_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Packet Digest",
+      "type": "string"
+    },
+    "commit": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Commit",
+      "type": "string"
+    },
+    "tree": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Tree",
+      "type": "string"
+    },
+    "review_base": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Review Base"
+    },
+    "operation": {
+      "enum": [
+        "engineering",
+        "review"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "source": {
+      "items": {
+        "$ref": "#/$defs/SourceBlob"
+      },
+      "title": "Source",
+      "type": "array"
+    },
+    "writable_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Writable Paths",
+      "type": "array"
+    },
+    "prohibited_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Prohibited Paths",
+      "type": "array"
+    },
+    "commands": {
+      "items": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "workspace_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Workspace Id",
+      "type": "string"
+    },
+    "provider_family": {
+      "const": "gemini",
+      "title": "Provider Family",
+      "type": "string"
+    },
+    "installation_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Installation Id",
+      "type": "string"
+    },
+    "installation_build": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Installation Build",
+      "type": "string"
+    },
+    "executable_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Executable Digest",
+      "type": "string"
+    },
+    "runtime_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Runtime Digest",
+      "type": "string"
+    },
+    "adapter_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Adapter Digest",
+      "type": "string"
+    },
+    "binding_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Binding Digest",
+      "type": "string"
+    },
+    "native_account_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Native Account Id",
+      "type": "string"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "material_authors": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Material Authors",
+      "type": "array"
+    },
+    "generation": {
+      "minimum": 1,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "max_tokens": {
+      "exclusiveMinimum": 0,
+      "title": "Max Tokens",
+      "type": "integer"
+    },
+    "timeout_seconds": {
+      "exclusiveMinimum": 0,
+      "maximum": 2700,
+      "title": "Timeout Seconds",
+      "type": "integer"
+    },
+    "max_attempts": {
+      "const": 3,
+      "title": "Max Attempts",
+      "type": "integer"
+    },
+    "max_local_commands": {
+      "default": 20,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Max Local Commands",
+      "type": "integer"
+    },
+    "owner_signature": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Owner Signature",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "grant_id",
+    "task_id",
+    "assignment_id",
+    "project_id",
+    "repository",
+    "packet_digest",
+    "commit",
+    "tree",
+    "review_base",
+    "operation",
+    "source",
+    "writable_paths",
+    "prohibited_paths",
+    "commands",
+    "workspace_id",
+    "provider_family",
+    "installation_id",
+    "installation_build",
+    "executable_digest",
+    "runtime_digest",
+    "adapter_digest",
+    "binding_digest",
+    "native_account_id",
+    "model",
+    "material_authors",
+    "generation",
+    "expires_at",
+    "max_tokens",
+    "timeout_seconds",
+    "max_attempts",
+    "owner_signature"
+  ],
+  "title": "TeamGrant",
+  "type": "object"
+}

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | BEGIN]]
@@ -2495,422 +2496,423 @@ class EntitlementControlPlaneStore:
                 raise
         return event_id
 
-    def query_action_boundary(
-        self, query: EntitlementActionBoundaryQuery
-    ) -> EntitlementActionBoundaryResult:
-        trusted_now = self._clock()
+    def query_action_boundary(self, query: EntitlementActionBoundaryQuery) -> EntitlementActionBoundaryResult:
         with self._pool.connection() as connection, connection.transaction():
-            # Eligibility and the immutable effect claim are one serializable
-            # critical section relative to every authority mutation.
-            self._lock_project(connection, query.project_profile_id)
-            self._lock_installation(connection, query.installation_id)
-            if connection.execute(
-                f"""
-                SELECT 1 FROM {self._schema}.entitlement_preemptive_revocation
-                WHERE installation_id = %s
-                """,
-                (query.installation_id,),
-            ).fetchone():
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=None,
-                    lifecycle_status=EntitlementLifecycleStatus.REVOKED,
-                    notice_delivery_state=None,
-                    audit_event_ids=(),
-                    denial_reason="preemptive revocation",
-                )
-            row = connection.execute(
-                f"""
-                SELECT cg.*, pr.document AS registration_document,
-                       pr.document_digest AS live_registration_document_digest,
-                       pr.owner_policy_digest AS registration_owner_policy_digest,
-                       pr.superseded_at, st.template_digest AS live_template_digest,
-                       st.capabilities AS live_template_capabilities,
-                       st.owner_policy_digest AS template_owner_policy_digest,
-                       sd.verified AS slack_destination_verified,
-                       sd.health_proof_expires_at AS slack_health_expires_at
-                FROM {self._schema}.entitlement_current_generation cg
-                JOIN {self._schema}.entitlement_project_registration pr
-                  ON pr.project_profile_id = cg.project_profile_id
-                 AND pr.registration_generation = cg.registration_generation
-                JOIN {self._schema}.entitlement_signed_template st
-                  ON st.profile_template_id = cg.profile_template_id
-                LEFT JOIN {self._schema}.entitlement_slack_destination sd
-                  ON sd.destination_id = pr.slack_destination_id
-                WHERE cg.installation_id = %s
-                  AND cg.project_profile_id = %s
-                  AND cg.provider_id = %s
-                  AND cg.subject_id = %s
-                FOR UPDATE OF cg, pr, st
-                """,
-                (
-                    query.installation_id,
-                    query.project_profile_id,
-                    query.provider_id,
-                    query.subject_id,
-                ),
-            ).fetchone()
-            if row is None:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=None,
-                    lifecycle_status=None,
-                    notice_delivery_state=None,
-                    audit_event_ids=(),
-                    denial_reason="no live entitlement",
-                )
-            if row["superseded_at"] is not None:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=EntitlementLifecycleStatus.SUPERSEDED,
-                    notice_delivery_state=OwnerNoticeDeliveryState(
-                        row["notice_delivery_state"]
-                    ),
-                    audit_event_ids=(str(row["last_event_id"]),),
-                    denial_reason="registration superseded",
-                )
-            lifecycle = EntitlementLifecycleStatus(row["lifecycle_status"])
-            notice_state = OwnerNoticeDeliveryState(row["notice_delivery_state"])
-            audit_ids = (str(row["last_event_id"]),)
-            if lifecycle in (
-                EntitlementLifecycleStatus.REVOKED,
-                EntitlementLifecycleStatus.UNINSTALLED,
-                EntitlementLifecycleStatus.SUPERSEDED,
-            ):
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason=f"lifecycle {lifecycle.value}",
-                )
-            if notice_state == OwnerNoticeDeliveryState.FAILED:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="terminal notice failure",
-                )
-            deadline = row["notice_pending_since"] + timedelta(
-                seconds=NOTICE_SUSPENSION_SECONDS
-            )
-            if (
-                notice_state == OwnerNoticeDeliveryState.PENDING
-                and trusted_now >= deadline
-            ):
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=EntitlementLifecycleStatus.SUSPENDED,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="notice deadline expired",
-                )
-            if lifecycle == EntitlementLifecycleStatus.SUSPENDED:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="notice suspension active",
-                )
-            proof = query.runtime_proof
-            try:
-                proof.verify_signature(
-                    trusted_verifier_secret=self._trusted_verifier_secret
-                )
-            except EntitlementContractError:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="runtime evidence signature invalid",
-                )
-            if proof.issued_at > trusted_now or proof.expires_at <= trusted_now:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="runtime evidence is not fresh",
-                )
-            if (
-                proof.installation_id != query.installation_id
-                or proof.build_digest != query.current_build_digest
-                or proof.action_type != query.action_type
-                or proof.destination_id != query.destination_id
-                or proof.effect_digest != query.effect_digest
-                or proof.source_commit_sha != row["source_commit_sha"]
-                or proof.source_tree_sha != row["source_tree_sha"]
-            ):
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="runtime evidence binding mismatch",
-                )
-            if (
-                query.action_type == EntitlementActionType.REVIEW_EXACT_SHA
-                and query.ref != proof.source_commit_sha
-            ):
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="review ref is not the attested exact commit",
-                )
-            if row["build_digest"] != query.current_build_digest:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="build digest mismatch",
-                )
-            granted_capabilities = tuple(row["granted_capabilities"])
-            granted_capabilities_digest = document_digest(
-                {"capabilities": list(granted_capabilities)}
-            )
-            code_capabilities = tuple(
-                sorted(effective_capabilities(str(row["profile_template_id"])))
-            )
-            if (
-                granted_capabilities_digest != row["granted_capabilities_digest"]
-                or row["template_digest"] != composed_template_digest(
-                    str(row["profile_template_id"])
-                )
-                or row["live_template_digest"] != row["template_digest"]
-                or tuple(row["live_template_capabilities"]) != code_capabilities
-                or granted_capabilities != code_capabilities
-                or row["registration_document_digest"]
-                != row["live_registration_document_digest"]
-                or row["template_owner_policy_digest"]
-                != row["registration_owner_policy_digest"]
-            ):
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="grant authority drift detected",
-                )
-            required_capability = ACTION_CAPABILITY[query.action_type]
-            if required_capability not in granted_capabilities:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="capability not entitled",
-                )
-            registration = row["registration_document"]
-            expected_destination: str | None = None
-            if query.action_type == EntitlementActionType.SLACK_WRITE:
-                expected_destination = str(registration["slack_destination_id"])
-                slack_authority = connection.execute(
-                    f"""
-                    SELECT verified, health_proof_expires_at
-                    FROM {self._schema}.entitlement_slack_destination
-                    WHERE destination_id = %s
-                    FOR SHARE
-                    """,
-                    (expected_destination,),
-                ).fetchone()
-                if (
-                    slack_authority is None
-                    or not slack_authority["verified"]
-                    or slack_authority["health_proof_expires_at"] <= trusted_now
-                ):
-                    return EntitlementActionBoundaryResult(
-                        permitted=False,
-                        entitlement_generation=int(row["entitlement_generation"]),
-                        lifecycle_status=lifecycle,
-                        notice_delivery_state=notice_state,
-                        audit_event_ids=audit_ids,
-                        denial_reason="Slack destination health proof is stale",
-                    )
-            elif query.action_type == EntitlementActionType.NOTION_WRITE:
-                expected_destination = str(registration["notion_destination_id"])
-            elif query.action_type == EntitlementActionType.N8N_WRITE:
-                if query.destination_id not in registration["n8n_workflow_ids"]:
-                    expected_destination = "__denied__"
-                else:
-                    expected_destination = query.destination_id
-            elif query.action_type == EntitlementActionType.PROVIDER_DISPATCH:
-                expected_destination = str(registration["state_namespace"])
-            if expected_destination is not None and query.destination_id != expected_destination:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="signed destination mismatch",
-                )
-            if query.action_type in SPEND_BEARING_ACTIONS:
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="shared budget ledger unavailable",
-                )
-            scopes = [
-                RepositoryScope(
-                    repository=scope["repository"],
-                    refs=tuple(scope["refs"]),
-                    paths=tuple(scope["paths"]),
-                )
-                for scope in registration["repository_scopes"]
-            ]
-            if not any(
-                scope.allows(
-                    repository=query.repository, ref=query.ref, path=query.path
-                )
-                for scope in scopes
-            ):
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="repository scope mismatch",
-                )
-            authorization_document = {
-                "schema_version": "EntitlementAuthorizationBinding/v1",
-                "query": query.to_document(),
-                "runtime_proof_digest": proof.digest,
-                "project_profile_id": query.project_profile_id,
-                "provider_id": query.provider_id,
-                "subject_id": query.subject_id,
-                "installation_id": query.installation_id,
-                "repository": query.repository,
-                "ref": query.ref,
-                "path": query.path,
-                "action_type": query.action_type.value,
-                "destination_id": query.destination_id,
-                "effect_digest": query.effect_digest,
-                "build_digest": query.current_build_digest,
-                "source_commit_sha": proof.source_commit_sha,
-                "source_tree_sha": proof.source_tree_sha,
-                "registration_generation": int(row["registration_generation"]),
-                "registration_document_digest": str(
-                    row["registration_document_digest"]
-                ),
-                "entitlement_generation": int(row["entitlement_generation"]),
-                "lifecycle_status": lifecycle.value,
-                "notice_id": str(row["notice_id"]),
-                "notice_delivery_state": notice_state.value,
-                "notice_deadline": deadline.isoformat(),
-                "profile_template_id": str(row["profile_template_id"]),
-                "template_digest": str(row["template_digest"]),
-            }
-            binding_digest = document_digest(authorization_document)
-            claimed = connection.execute(
-                f"""
-                INSERT INTO {self._schema}.entitlement_runtime_authorization_claim (
-                    nonce_digest, installation_id, action_type, destination_id,
-                    effect_digest, build_digest, source_commit_sha, source_tree_sha,
-                    authorization_document, authorization_binding_digest
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
-                ON CONFLICT (nonce_digest) DO NOTHING
-                RETURNING authorization_binding_digest
-                """,
-                (
-                    proof.nonce_digest,
-                    query.installation_id,
-                    query.action_type.value,
-                    query.destination_id,
-                    query.effect_digest,
-                    query.current_build_digest,
-                    proof.source_commit_sha,
-                    proof.source_tree_sha,
-                    json.dumps(authorization_document),
-                    binding_digest,
-                ),
-            ).fetchone()
-            if claimed is None:
-                prior_claim = connection.execute(
-                    f"""
-                    SELECT installation_id, action_type, destination_id, effect_digest,
-                           build_digest, source_commit_sha, source_tree_sha,
-                           authorization_document, authorization_binding_digest
-                    FROM {self._schema}.entitlement_runtime_authorization_claim
-                    WHERE nonce_digest = %s
-                    """,
-                    (proof.nonce_digest,),
-                ).fetchone()
-                expected_claim = (
-                    query.installation_id,
-                    query.action_type.value,
-                    query.destination_id,
-                    query.effect_digest,
-                    query.current_build_digest,
-                    proof.source_commit_sha,
-                    proof.source_tree_sha,
-                    binding_digest,
-                )
-                actual_claim = None if prior_claim is None else (
-                    str(prior_claim["installation_id"]),
-                    str(prior_claim["action_type"]),
-                    prior_claim["destination_id"],
-                    str(prior_claim["effect_digest"]),
-                    str(prior_claim["build_digest"]),
-                    str(prior_claim["source_commit_sha"]),
-                    str(prior_claim["source_tree_sha"]),
-                    dict(prior_claim["authorization_document"]),
-                    str(prior_claim["authorization_binding_digest"]),
-                )
-                expected_claim = expected_claim[:-1] + (
-                    authorization_document,
-                    expected_claim[-1],
-                )
-                if actual_claim != expected_claim:
-                    return EntitlementActionBoundaryResult(
-                        permitted=False,
-                        entitlement_generation=int(row["entitlement_generation"]),
-                        lifecycle_status=lifecycle,
-                        notice_delivery_state=notice_state,
-                        audit_event_ids=audit_ids,
-                        denial_reason="runtime authorization nonce binding mismatch",
-                    )
-                return EntitlementActionBoundaryResult(
-                    permitted=False,
-                    entitlement_generation=int(row["entitlement_generation"]),
-                    lifecycle_status=lifecycle,
-                    notice_delivery_state=notice_state,
-                    audit_event_ids=audit_ids,
-                    denial_reason="runtime authorization already consumed",
-                    authorization_binding_digest=str(
-                        prior_claim["authorization_binding_digest"]
-                    ),
-                )
+            return self._query_action_boundary_in_transaction(connection, query)
+
+    def _query_action_boundary_in_transaction(self, connection, query, *,
+            manifest_paths=(), team_target=None, spend_reserved=False):
+        """Internal composition seam; the caller retains the transaction and locks."""
+        trusted_now = self._clock()
+        # Eligibility and the immutable effect claim are one serializable
+        # critical section relative to every authority mutation.
+        self._lock_project(connection, query.project_profile_id)
+        self._lock_installation(connection, query.installation_id)
+        if connection.execute(
+            f"""
+            SELECT 1 FROM {self._schema}.entitlement_preemptive_revocation
+            WHERE installation_id = %s
+            """,
+            (query.installation_id,),
+        ).fetchone():
             return EntitlementActionBoundaryResult(
-                permitted=True,
+                permitted=False,
+                entitlement_generation=None,
+                lifecycle_status=EntitlementLifecycleStatus.REVOKED,
+                notice_delivery_state=None,
+                audit_event_ids=(),
+                denial_reason="preemptive revocation",
+            )
+        row = connection.execute(
+            f"""
+            SELECT cg.*, pr.document AS registration_document,
+                   pr.document_digest AS live_registration_document_digest,
+                   pr.owner_policy_digest AS registration_owner_policy_digest,
+                   pr.superseded_at, st.template_digest AS live_template_digest,
+                   st.capabilities AS live_template_capabilities,
+                   st.owner_policy_digest AS template_owner_policy_digest,
+                   sd.verified AS slack_destination_verified,
+                   sd.health_proof_expires_at AS slack_health_expires_at
+            FROM {self._schema}.entitlement_current_generation cg
+            JOIN {self._schema}.entitlement_project_registration pr
+              ON pr.project_profile_id = cg.project_profile_id
+             AND pr.registration_generation = cg.registration_generation
+            JOIN {self._schema}.entitlement_signed_template st
+              ON st.profile_template_id = cg.profile_template_id
+            LEFT JOIN {self._schema}.entitlement_slack_destination sd
+              ON sd.destination_id = pr.slack_destination_id
+            WHERE cg.installation_id = %s
+              AND cg.project_profile_id = %s
+              AND cg.provider_id = %s
+              AND cg.subject_id = %s
+            FOR UPDATE OF cg, pr, st
+            """,
+            (
+                query.installation_id,
+                query.project_profile_id,
+                query.provider_id,
+                query.subject_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=None,
+                lifecycle_status=None,
+                notice_delivery_state=None,
+                audit_event_ids=(),
+                denial_reason="no live entitlement",
+            )
+        if row["superseded_at"] is not None:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=EntitlementLifecycleStatus.SUPERSEDED,
+                notice_delivery_state=OwnerNoticeDeliveryState(
+                    row["notice_delivery_state"]
+                ),
+                audit_event_ids=(str(row["last_event_id"]),),
+                denial_reason="registration superseded",
+            )
+        lifecycle = EntitlementLifecycleStatus(row["lifecycle_status"])
+        notice_state = OwnerNoticeDeliveryState(row["notice_delivery_state"])
+        audit_ids = (str(row["last_event_id"]),)
+        if lifecycle in (
+            EntitlementLifecycleStatus.REVOKED,
+            EntitlementLifecycleStatus.UNINSTALLED,
+            EntitlementLifecycleStatus.SUPERSEDED,
+        ):
+            return EntitlementActionBoundaryResult(
+                permitted=False,
                 entitlement_generation=int(row["entitlement_generation"]),
                 lifecycle_status=lifecycle,
                 notice_delivery_state=notice_state,
                 audit_event_ids=audit_ids,
-                denial_reason=None,
-                authorization_binding_digest=binding_digest,
+                denial_reason=f"lifecycle {lifecycle.value}",
             )
+        if notice_state == OwnerNoticeDeliveryState.FAILED:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="terminal notice failure",
+            )
+        deadline = row["notice_pending_since"] + timedelta(
+            seconds=NOTICE_SUSPENSION_SECONDS
+        )
+        if (
+            notice_state == OwnerNoticeDeliveryState.PENDING
+            and trusted_now >= deadline
+        ):
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=EntitlementLifecycleStatus.SUSPENDED,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="notice deadline expired",
+            )
+        if lifecycle == EntitlementLifecycleStatus.SUSPENDED:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="notice suspension active",
+            )
+        proof = query.runtime_proof
+        try:
+            proof.verify_signature(
+                trusted_verifier_secret=self._trusted_verifier_secret
+            )
+        except EntitlementContractError:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="runtime evidence signature invalid",
+            )
+        if proof.issued_at > trusted_now or proof.expires_at <= trusted_now:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="runtime evidence is not fresh",
+            )
+        if (
+            proof.installation_id != query.installation_id
+            or proof.build_digest != query.current_build_digest
+            or proof.action_type != query.action_type
+            or proof.destination_id != query.destination_id
+            or proof.effect_digest != query.effect_digest
+            or proof.source_commit_sha != row["source_commit_sha"]
+            or proof.source_tree_sha != row["source_tree_sha"]
+        ):
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="runtime evidence binding mismatch",
+            )
+        if (
+            query.action_type == EntitlementActionType.REVIEW_EXACT_SHA
+            and query.ref != (team_target or proof.source_commit_sha)
+        ):
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="review ref is not the attested exact commit",
+            )
+        if row["build_digest"] != query.current_build_digest:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="build digest mismatch",
+            )
+        granted_capabilities = tuple(row["granted_capabilities"])
+        granted_capabilities_digest = document_digest(
+            {"capabilities": list(granted_capabilities)}
+        )
+        code_capabilities = tuple(
+            sorted(effective_capabilities(str(row["profile_template_id"])))
+        )
+        if (
+            granted_capabilities_digest != row["granted_capabilities_digest"]
+            or row["template_digest"] != composed_template_digest(
+                str(row["profile_template_id"])
+            )
+            or row["live_template_digest"] != row["template_digest"]
+            or tuple(row["live_template_capabilities"]) != code_capabilities
+            or granted_capabilities != code_capabilities
+            or row["registration_document_digest"]
+            != row["live_registration_document_digest"]
+            or row["template_owner_policy_digest"]
+            != row["registration_owner_policy_digest"]
+        ):
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="grant authority drift detected",
+            )
+        required_capability = ACTION_CAPABILITY[query.action_type]
+        if required_capability not in granted_capabilities:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="capability not entitled",
+            )
+        registration = row["registration_document"]
+        expected_destination: str | None = None
+        if query.action_type == EntitlementActionType.SLACK_WRITE:
+            expected_destination = str(registration["slack_destination_id"])
+            slack_authority = connection.execute(
+                f"""
+                SELECT verified, health_proof_expires_at
+                FROM {self._schema}.entitlement_slack_destination
+                WHERE destination_id = %s
+                FOR SHARE
+                """,
+                (expected_destination,),
+            ).fetchone()
+            if (
+                slack_authority is None
+                or not slack_authority["verified"]
+                or slack_authority["health_proof_expires_at"] <= trusted_now
+            ):
+                return EntitlementActionBoundaryResult(
+                    permitted=False,
+                    entitlement_generation=int(row["entitlement_generation"]),
+                    lifecycle_status=lifecycle,
+                    notice_delivery_state=notice_state,
+                    audit_event_ids=audit_ids,
+                    denial_reason="Slack destination health proof is stale",
+                )
+        elif query.action_type == EntitlementActionType.NOTION_WRITE:
+            expected_destination = str(registration["notion_destination_id"])
+        elif query.action_type == EntitlementActionType.N8N_WRITE:
+            if query.destination_id not in registration["n8n_workflow_ids"]:
+                expected_destination = "__denied__"
+            else:
+                expected_destination = query.destination_id
+        elif query.action_type == EntitlementActionType.PROVIDER_DISPATCH:
+            expected_destination = str(registration["state_namespace"])
+        if expected_destination is not None and query.destination_id != expected_destination:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="signed destination mismatch",
+            )
+        if query.action_type in SPEND_BEARING_ACTIONS and not spend_reserved:
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="shared budget ledger unavailable",
+            )
+        scopes = [
+            RepositoryScope(
+                repository=scope["repository"],
+                refs=tuple(scope["refs"]),
+                paths=tuple(scope["paths"]),
+            )
+            for scope in registration["repository_scopes"]
+        ]
+        if not all(any(scope.allows(repository=query.repository, ref=query.ref, path=path)
+                for scope in scopes) for path in (manifest_paths or (query.path,))):
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="repository scope mismatch",
+            )
+        authorization_document = {
+            "schema_version": "EntitlementAuthorizationBinding/v1",
+            "query": query.to_document(),
+            "manifest_paths": list(manifest_paths),
+            "team_target": team_target,
+            "runtime_proof_digest": proof.digest,
+            "project_profile_id": query.project_profile_id,
+            "provider_id": query.provider_id,
+            "subject_id": query.subject_id,
+            "installation_id": query.installation_id,
+            "repository": query.repository,
+            "ref": query.ref,
+            "path": query.path,
+            "action_type": query.action_type.value,
+            "destination_id": query.destination_id,
+            "effect_digest": query.effect_digest,
+            "build_digest": query.current_build_digest,
+            "source_commit_sha": proof.source_commit_sha,
+            "source_tree_sha": proof.source_tree_sha,
+            "registration_generation": int(row["registration_generation"]),
+            "registration_document_digest": str(
+                row["registration_document_digest"]
+            ),
+            "entitlement_generation": int(row["entitlement_generation"]),
+            "lifecycle_status": lifecycle.value,
+            "notice_id": str(row["notice_id"]),
+            "notice_delivery_state": notice_state.value,
+            "notice_deadline": deadline.isoformat(),
+            "profile_template_id": str(row["profile_template_id"]),
+            "template_digest": str(row["template_digest"]),
+        }
+        binding_digest = document_digest(authorization_document)
+        claimed = connection.execute(
+            f"""
+            INSERT INTO {self._schema}.entitlement_runtime_authorization_claim (
+                nonce_digest, installation_id, action_type, destination_id,
+                effect_digest, build_digest, source_commit_sha, source_tree_sha,
+                authorization_document, authorization_binding_digest
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+            ON CONFLICT (nonce_digest) DO NOTHING
+            RETURNING authorization_binding_digest
+            """,
+            (
+                proof.nonce_digest,
+                query.installation_id,
+                query.action_type.value,
+                query.destination_id,
+                query.effect_digest,
+                query.current_build_digest,
+                proof.source_commit_sha,
+                proof.source_tree_sha,
+                json.dumps(authorization_document),
+                binding_digest,
+            ),
+        ).fetchone()
+        if claimed is None:
+            prior_claim = connection.execute(
+                f"""
+                SELECT installation_id, action_type, destination_id, effect_digest,
+                       build_digest, source_commit_sha, source_tree_sha,
+                       authorization_document, authorization_binding_digest
+                FROM {self._schema}.entitlement_runtime_authorization_claim
+                WHERE nonce_digest = %s
+                """,
+                (proof.nonce_digest,),
+            ).fetchone()
+            expected_claim = (
+                query.installation_id,
+                query.action_type.value,
+                query.destination_id,
+                query.effect_digest,
+                query.current_build_digest,
+                proof.source_commit_sha,
+                proof.source_tree_sha,
+                binding_digest,
+            )
+            actual_claim = None if prior_claim is None else (
+                str(prior_claim["installation_id"]),
+                str(prior_claim["action_type"]),
+                prior_claim["destination_id"],
+                str(prior_claim["effect_digest"]),
+                str(prior_claim["build_digest"]),
+                str(prior_claim["source_commit_sha"]),
+                str(prior_claim["source_tree_sha"]),
+                dict(prior_claim["authorization_document"]),
+                str(prior_claim["authorization_binding_digest"]),
+            )
+            expected_claim = expected_claim[:-1] + (
+                authorization_document,
+                expected_claim[-1],
+            )
+            if actual_claim != expected_claim:
+                return EntitlementActionBoundaryResult(
+                    permitted=False,
+                    entitlement_generation=int(row["entitlement_generation"]),
+                    lifecycle_status=lifecycle,
+                    notice_delivery_state=notice_state,
+                    audit_event_ids=audit_ids,
+                    denial_reason="runtime authorization nonce binding mismatch",
+                )
+            return EntitlementActionBoundaryResult(
+                permitted=False,
+                entitlement_generation=int(row["entitlement_generation"]),
+                lifecycle_status=lifecycle,
+                notice_delivery_state=notice_state,
+                audit_event_ids=audit_ids,
+                denial_reason="runtime authorization already consumed",
+                authorization_binding_digest=str(
+                    prior_claim["authorization_binding_digest"]
+                ),
+            )
+        return EntitlementActionBoundaryResult(
+            permitted=True,
+            entitlement_generation=int(row["entitlement_generation"]),
+            lifecycle_status=lifecycle,
+            notice_delivery_state=notice_state,
+            audit_event_ids=audit_ids,
+            denial_reason=None,
+            authorization_binding_digest=binding_digest,
+        )
 
     def authoritative_capabilities(
         self, installation_id: str, *, runtime_proof: RuntimeEvidenceProofV1
@@ -3180,3 +3182,4 @@ def entitlement_store_from_handle(handle: EntitlementStoreHandle) -> Entitlement
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]

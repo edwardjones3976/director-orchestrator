@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
@@ -691,6 +692,7 @@ class Settings:
     gemini_api_base: str = os.getenv(
         "GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta"
     )
+    langgraph_primary_antigravity_team_enabled: bool = os.getenv("LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED", "false").lower() == "true"
     gemini_agent: str = os.getenv("GEMINI_AGENT", "antigravity-preview-05-2026")
     gemini_api_revision: str = os.getenv("GEMINI_API_REVISION", "2026-05-20")
     gemini_usage_model: str = os.getenv(
@@ -2034,3 +2036,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
