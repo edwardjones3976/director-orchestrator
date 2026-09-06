@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]]
@@ -16,7 +19,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("PrepareAcceptance", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
+    [ValidateSet("PrepareAcceptance", "BootstrapDatabaseIdentity", "SelectGeneration", "StageRuntime", "ValidateProviders", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
     [string]$Action,
     [string]$EnvironmentFile,
     [string]$ComposeProject,
@@ -26,6 +29,8 @@ param(
     [string]$IndependentReviewerAllowlistJson,
     [string]$BackupPath,
     [string]$AcceptanceArtifactPath,
+    [string]$GenerationManifestPath,
+    [string]$GenerationManifestSha256,
     [string]$GitHubRepository,
     [ValidateRange(1, [int]::MaxValue)][int]$PullRequestNumber,
     [int]$TimeoutSeconds = 180
@@ -34,6 +39,9 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 Set-Location (Split-Path -Parent $PSScriptRoot)
+if ($Action -cne "SelectGeneration" -and ($GenerationManifestPath -or $GenerationManifestSha256)) {
+    throw "Generation selection inputs are valid only for SelectGeneration."
+}
 
 function Read-DotEnv {
     param([string]$Path)
@@ -59,17 +67,52 @@ function Write-Switches {
     foreach ($entry in $Switches.GetEnumerator()) {
         $text = Set-DotEnvValue -Text $text -Name $entry.Key -Value ([string]$entry.Value)
     }
-    [IO.File]::WriteAllText(
-        $script:environmentPath,
-        $text,
-        [Text.UTF8Encoding]::new($false)
-    )
+    # Same-directory atomic replacement keeps generation pointers together.
+    $temporary = $script:environmentPath + "." + [Guid]::NewGuid().ToString("N") + ".tmp"
+    try {
+        [IO.File]::WriteAllText($temporary, $text, [Text.UTF8Encoding]::new($false))
+        [IO.File]::Replace($temporary, $script:environmentPath, [NullString]::Value)
+        foreach ($entry in $Switches.GetEnumerator()) {
+            $script:values[$entry.Key] = [string]$entry.Value
+            # Compose interpolation otherwise prefers an inherited process value
+            # over the newly selected --env-file (including the ASGI entry point).
+            [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary }
+    }
 }
 
 function Invoke-Compose {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     & docker compose --project-name $script:ComposeProject --env-file $script:environmentPath @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Docker Compose command failed." }
+}
+
+function Get-ResolvedDeploymentDigest {
+    $configuration = @(Invoke-Compose config --format json) -join [Environment]::NewLine
+    # Compute inside the exact candidate image with no network or host mounts.
+    # Resolved secrets stay on stdin; only the digest is returned.
+    $result = @($configuration | & docker run --rm -i --network none --entrypoint python $script:runtimeImageId `
+        -m director_orchestrator.primary_generation compose-digest --image-id $script:runtimeImageId)
+    $observed = [string]($result | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0 -or $observed -cnotmatch '^[0-9a-f]{64}$') { throw "Resolved deployment configuration is not verified." }
+    return $observed
+}
+
+function Assert-RunningCandidate {
+    param([string]$AsgiApp)
+    $containers = @(Invoke-Compose ps --status running -q orchestrator)
+    if ($containers.Count -ne 1) { throw "Expected one running candidate container." }
+    $raw = @(& docker inspect ([string]$containers[0])) -join [Environment]::NewLine
+    if ($LASTEXITCODE -ne 0) { throw "Candidate readback failed." }
+    $observed = @(ConvertFrom-Json -InputObject $raw)[0]
+    $expectedCommand = @("uvicorn", $AsgiApp, "--host", "0.0.0.0", "--port", "8080")
+    if ([string]$observed.Image -cne $script:runtimeImageId -or
+        (@($observed.Config.Cmd) -join "|") -cne ($expectedCommand -join "|")) {
+        throw "Running container image or command differs from the verified candidate."
+    }
 }
 
 function Wait-Health {
@@ -276,16 +319,18 @@ function Assert-CanonicalAcceptanceArtifact {
 }
 
 function Get-DatabaseBinding {
-    $output = @(Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
-        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); print(h.storage_identity+'|'+h.database_instance_id); h.close()")
+    param([switch]$Bootstrap)
+    $bootstrapValue = if ($Bootstrap) { "True" } else { "False" }
+    $output = @(Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
+        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import database_binding; s=Settings(); b=database_binding(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, bootstrap=$bootstrapValue); print('|'.join(b))")
     $binding = [string](@($output | Where-Object { $_ -match '^postgres:sha256:[0-9a-f]{64}\|[0-9a-f-]{36}$' }) | Select-Object -Last 1)
-    if ([string]::IsNullOrWhiteSpace($binding)) { throw "Primary database instance binding could not be established." }
+    if ([string]::IsNullOrWhiteSpace($binding)) { throw "Primary database identity is unavailable; use explicit BootstrapDatabaseIdentity first." }
     return $binding.Split('|')
 }
 
 function Get-LegacyInventory {
-    $output = @(Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
-        "import hashlib,json,sqlite3; from director_orchestrator.config import Settings; s=Settings(); c=sqlite3.connect(s.sqlite_path); rows=c.execute('SELECT task_id,status FROM tasks ORDER BY task_id').fetchall(); c.close(); payload=json.dumps(rows,separators=(',',':')); print(str(len(rows))+'|'+hashlib.sha256(payload.encode()).hexdigest())")
+    $output = @(Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
+        "import hashlib,json,sqlite3; from pathlib import Path; from director_orchestrator.config import Settings; s=Settings(); c=sqlite3.connect(Path(s.sqlite_path).resolve().as_uri()+'?mode=ro',uri=True); rows=c.execute('SELECT task_id,status FROM tasks ORDER BY task_id').fetchall(); c.close(); payload=json.dumps(rows,separators=(',',':')); print(str(len(rows))+'|'+hashlib.sha256(payload.encode()).hexdigest())")
     $inventory = [string](@($output | Where-Object { $_ -match '^\d+\|[0-9a-f]{64}$' }) | Select-Object -Last 1)
     if ([string]::IsNullOrWhiteSpace($inventory)) { throw "Legacy task ownership inventory could not be frozen." }
     return $inventory.Split('|')
@@ -293,8 +338,12 @@ function Get-LegacyInventory {
 
 function Stop-And-Prove-AllIntake {
     Invoke-Compose stop slackbot n8n orchestrator
+    Assert-AllIntakeStopped
+}
+
+function Assert-AllIntakeStopped {
     foreach ($service in @("slackbot", "n8n", "orchestrator")) {
-        $running = [string](@(Invoke-Compose ps -q $service) | Select-Object -Last 1)
+        $running = [string](@(Invoke-Compose ps --status running -q $service) | Select-Object -Last 1)
         if (-not [string]::IsNullOrWhiteSpace($running)) {
             throw "Authenticated intake surface remains active: $service"
         }
@@ -303,7 +352,7 @@ function Stop-And-Prove-AllIntake {
 
 function Invoke-Evidence {
     param(
-        [ValidateSet("record", "require-ready", "verify-backup", "bind-legacy-inventory", "challenge")][string]$Command,
+        [ValidateSet("record", "require-ready", "require-staged", "require-accepted", "verify-backup", "bind-legacy-inventory", "challenge")][string]$Command,
         [string]$Stage,
         [string]$FactsJson = "{}",
         [string]$AcceptanceArtifactPath,
@@ -342,12 +391,12 @@ function Invoke-Evidence {
         $arguments += @("--legacy-inventory-digest", $LegacyInventoryDigest, "--legacy-task-count", [string]$LegacyTaskCount)
     }
     if ($Command -eq "record" -and $Stage -eq "ACCEPTED") {
-        Invoke-Compose run --rm --no-deps -T `
+        Invoke-Compose run --rm --no-deps --pull never -T `
             -v "${AcceptanceArtifactPath}:/run/director-acceptance.json:ro" `
             --entrypoint python orchestrator @arguments
     }
     else {
-        Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator @arguments
+        Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator @arguments
     }
 }
 
@@ -487,23 +536,96 @@ $snapshot = [string]$values["REPOSITORY_SNAPSHOT_HOST_PATH"]
 
 $env:DIRECTOR_ENV_FILE = $environmentPath
 $env:DIRECTOR_COMPOSE_PROJECT_NAME = $ComposeProject
+foreach ($name in @("DIRECTOR_ASGI_APP", "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH",
+    "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH", "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256",
+    "DIRECTOR_RUNTIME_IMAGE", "DIRECTOR_RUNTIME_IMAGE_ID", "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256",
+    "ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_ENABLED", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED",
+    "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED", "LANGGRAPH_PARALLEL_KILL_SWITCH")) {
+    $selected = if ($values.ContainsKey($name)) { [string]$values[$name] } else { $null }
+    [Environment]::SetEnvironmentVariable($name, $selected, "Process")
+}
 Invoke-Compose config --quiet
 $candidateCommit = [string](@(& git rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
 $candidateTree = [string](@(& git rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)
 if ($candidateCommit -notmatch '^[0-9a-f]{40}$' -or $candidateTree -notmatch '^[0-9a-f]{40}$') {
     throw "The Director candidate commit/tree cannot be frozen."
 }
-Invoke-Compose build orchestrator
-# Establish the durable database-instance UUID before any activation evidence is
-# recorded. This is the only service Preflight may start.
-Invoke-Compose up -d langgraph-primary-db
+# Health observes the existing endpoint and never starts even a helper container.
+if ($Action -eq "Health") {
+    $health = Wait-Health
+    $health.langgraph_primary | ConvertTo-Json -Depth 8
+    return
+}
+# Image construction is an explicit preparatory operation, never a side effect
+# of observing state, bootstrapping identity, selecting a generation or staging.
+if (@(& git status --porcelain).Count -ne 0 -or $LASTEXITCODE -ne 0) {
+    throw "Runtime control requires a clean exact-candidate checkout."
+}
+$imageProof = @(& docker image inspect "$ComposeProject-orchestrator" --format '{{.Id}}|{{index .Config.Labels "org.director.candidate.commit"}}|{{index .Config.Labels "org.director.candidate.tree"}}|{{json .Config.Entrypoint}}')
+$imageParts = ([string]($imageProof | Select-Object -Last 1)).Split('|')
+if ($LASTEXITCODE -ne 0 -or $imageParts.Count -ne 4 -or $imageParts[0] -cnotmatch '^sha256:[0-9a-f]{64}$' -or
+    $imageParts[1] -cne $candidateCommit -or $imageParts[2] -cne $candidateTree -or $imageParts[3] -cnotin @("null", "[]")) {
+    throw "An existing exact-candidate image is required; build explicitly with DIRECTOR_CANDIDATE_COMMIT/TREE build arguments first."
+}
+$runtimeImageId = [string]$imageParts[0]
+$env:DIRECTOR_RUNTIME_IMAGE = $runtimeImageId
+$env:DIRECTOR_RUNTIME_IMAGE_ID = $runtimeImageId
+if ($candidateCommit -cne [string]$values["LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA"] -or
+    $candidateTree -cne [string]$values["LANGGRAPH_PRIMARY_PINNED_TREE_SHA"]) {
+    throw "Control checkout differs from the configured accepted candidate."
+}
+# Only this explicit action may establish pre-acceptance database metadata.
+if ($Action -eq "BootstrapDatabaseIdentity") {
+    $null = Get-DatabaseBinding -Bootstrap
+    Write-Host "Durable identity established; no application or checkpoint schema was initialized."
+    return
+}
 $databaseBinding = Get-DatabaseBinding
 $databaseIdentity = [string]$databaseBinding[0]
 $databaseInstanceId = [string]$databaseBinding[1]
 
+if ($Action -eq "SelectGeneration") {
+    if ($acceptanceMode -cne "provider-v2") { throw "SelectGeneration requires provider-v2 acceptance." }
+    if (-not $GenerationManifestPath -or $GenerationManifestSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "SelectGeneration requires the owner-provided manifest and exact SHA256."
+    }
+    $manifestSource = (Resolve-Path -LiteralPath $GenerationManifestPath).Path
+    if ((Get-FileHash -LiteralPath $manifestSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $GenerationManifestSha256) {
+        throw "Generation manifest digest does not match."
+    }
+    $manifest = Get-Content -LiteralPath $manifestSource -Raw | ConvertFrom-Json
+    $journalPath = [string]$manifest.journal_path
+    if ($journalPath -cnotmatch '^/data/[a-zA-Z0-9_-]+[.]sqlite3$') { throw "Invalid generation journal path." }
+    Stop-And-Prove-AllIntake
+    $env:LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH = $journalPath
+    $env:DIRECTOR_RESOLVED_DEPLOYMENT_SHA256 = Get-ResolvedDeploymentDigest
+    # Exclusive reservation preserves earlier journals/manifests, including any
+    # orphan left by interrupted selection. A retry needs a fresh generation.
+    Invoke-Compose run --rm --no-deps --pull never -T `
+        -v "${manifestSource}:/run/director-proposed-generation.json:ro" `
+        -e "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH=/run/director-proposed-generation.json" `
+        -e "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256=$GenerationManifestSha256" `
+        -e "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH=$journalPath" `
+        --entrypoint python orchestrator -m director_orchestrator.primary_generation reserve
+    Assert-AllIntakeStopped
+    Write-Switches @{
+        LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH = "/data/generation-$GenerationManifestSha256.json"
+        LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256 = $GenerationManifestSha256
+        LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH = $journalPath
+        DIRECTOR_RUNTIME_IMAGE = $runtimeImageId
+        DIRECTOR_RUNTIME_IMAGE_ID = $runtimeImageId
+        DIRECTOR_RESOLVED_DEPLOYMENT_SHA256 = $env:DIRECTOR_RESOLVED_DEPLOYMENT_SHA256
+    }
+    Write-Host "Fresh generation selected atomically; all mutating services remain stopped."
+    return
+}
+if ($acceptanceMode -ceq "provider-v2") {
+    $env:DIRECTOR_RESOLVED_DEPLOYMENT_SHA256 = Get-ResolvedDeploymentDigest
+    Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -m director_orchestrator.primary_generation verify
+}
 if ($Action -eq "Preflight") {
     Invoke-Evidence -Command record -Stage PREFLIGHT -FactsJson '{"compose_config_valid":true,"snapshot_exact":true}'
-    Write-Host "Primary preflight passed; the profile database was started; no provider was called."
+    Write-Host "Primary preflight passed against existing database identity; no service was started or schema initialized."
     return
 }
 if ($Action -eq "Challenge") {
@@ -526,17 +648,10 @@ if ($Action -eq "Accept") {
     Write-Host "Exact-head CI, security, and independent-review acceptance evidence was bound."
     return
 }
-if ($Action -eq "Health") {
-    $health = Wait-Health
-    $health.langgraph_primary | ConvertTo-Json -Depth 8
-    return
-}
-
 if ($Action -eq "Migrate") {
-    Invoke-Compose up -d langgraph-primary-db
-    Invoke-Compose build orchestrator
-    Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
-        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); print('schema_current=true'); h.close()"
+    Invoke-Evidence -Command require-accepted
+    Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
+        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$databaseIdentity', accepted_instance_id='$databaseInstanceId', initial_accepted_migration=True); print('schema_current=true'); h.close()"
     Invoke-Evidence -Command record -Stage MIGRATED -FactsJson '{"schema_current":true}'
     Write-Host "Primary Postgres schema migration/verification completed."
     return
@@ -607,14 +722,55 @@ if ($Action -eq "RestoreDrill") {
     return
 }
 
+if ($Action -eq "StageRuntime") {
+    # Authenticated acceptance and an exact restore proof precede service startup.
+    # Legacy inventory is intentionally deferred until the final stopped cutover.
+    Invoke-Evidence -Command require-staged
+    Stop-And-Prove-AllIntake
+    Write-Switches @{
+        DIRECTOR_ASGI_APP = "director_orchestrator.primary_staging:app"
+        ALLOW_PAID_RUNS = "false"
+        LANGGRAPH_PRIMARY_ENABLED = "false"
+        LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "false"
+        LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "false"
+        LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false"
+        LANGGRAPH_PARALLEL_KILL_SWITCH = "true"
+    }
+    try {
+        Invoke-Compose up -d --no-deps --no-build --force-recreate orchestrator
+        Assert-RunningCandidate -AsgiApp "director_orchestrator.primary_staging:app"
+        $primary = (Wait-Health).langgraph_primary
+        if (-not $primary.staged_ready -or -not $primary.evidence_only -or $primary.primary_runtime_active) {
+            throw "Staged evidence health was not established."
+        }
+    }
+    catch {
+        Invoke-Compose stop orchestrator
+        throw "StageRuntime failed; mutating services remain stopped."
+    }
+    Write-Host "Evidence-only service staged; intake, existing-task recovery, dispatch, effects and writer loops remain disabled."
+    return
+}
+
+if ($Action -eq "ValidateProviders") {
+    Assert-RunningCandidate -AsgiApp "director_orchestrator.primary_staging:app"
+    $primary = (Wait-Health).langgraph_primary
+    if (-not $primary.staged_ready -or -not $primary.evidence_only -or $primary.primary_runtime_active) {
+        throw "Provider validation requires the exact evidence-only staged service."
+    }
+    Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -m director_orchestrator.primary_generation validate-providers
+    return
+}
+
 if ($Action -eq "Activate") {
     Stop-And-Prove-AllIntake
     $legacyInventory = Get-LegacyInventory
     Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
     Invoke-Evidence -Command require-ready
     try {
-        Write-Switches @{ ALLOW_PAID_RUNS = "true"; LANGGRAPH_PRIMARY_ENABLED = "true"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "true"; LANGGRAPH_PARALLEL_KILL_SWITCH = "false" }
-        Invoke-Compose up -d --build --force-recreate orchestrator
+        Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; ALLOW_PAID_RUNS = "true"; LANGGRAPH_PRIMARY_ENABLED = "true"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "true"; LANGGRAPH_PARALLEL_KILL_SWITCH = "false" }
+        Invoke-Compose up -d --no-build --force-recreate orchestrator
+        Assert-RunningCandidate -AsgiApp "director_orchestrator.main:app"
         $primary = (Wait-Health).langgraph_primary
         foreach ($field in @("primary_graph_constructed", "primary_router_wired", "checkpoint_backend_postgres", "checkpoint_schema_current", "claim_store_ready", "effect_ledger_ready", "writer_lease_ready", "reconciliation_worker_ready", "primary_runtime_active", "legacy_new_intake_disabled")) {
             if (-not [bool]$primary.$field) { throw "Primary activation health failed at $field." }
@@ -641,10 +797,10 @@ if ($Action -eq "Rollback") {
         LANGGRAPH_PARALLEL_KILL_SWITCH = "true"
     }
     Start-Sleep -Seconds 65
-    Invoke-Compose run --rm --no-deps -T --entrypoint python orchestrator -c `
-        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); q=h.claim_store.primary_quiescence_metrics(); (_ for _ in ()).throw(RuntimeError('ambiguous effects block rollback')) if m.ambiguous_effect_count != 0 else None; (_ for _ in ()).throw(RuntimeError('active provider dispatches, assignments, writer claims, reconciliation, or claims block rollback')) if not q.rollback_safe else None; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); (_ for _ in ()).throw(RuntimeError('legacy intake CAS did not complete')) if n.legacy_new_intake_disabled else None; h.close()"
-    Write-Switches @{ LANGGRAPH_PRIMARY_ENABLED = "false" }
-    Invoke-Compose up -d --build --force-recreate orchestrator
+    Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
+        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$databaseIdentity', accepted_instance_id='$databaseInstanceId'); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); q=h.claim_store.primary_quiescence_metrics(); (_ for _ in ()).throw(RuntimeError('ambiguous effects block rollback')) if m.ambiguous_effect_count != 0 else None; (_ for _ in ()).throw(RuntimeError('active provider dispatches, assignments, writer claims, reconciliation, or claims block rollback')) if not q.rollback_safe else None; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); (_ for _ in ()).throw(RuntimeError('legacy intake CAS did not complete')) if n.legacy_new_intake_disabled else None; h.close()"
+    Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; LANGGRAPH_PRIMARY_ENABLED = "false" }
+    Invoke-Compose up -d --no-build --force-recreate orchestrator
     $null = Wait-Health
     Invoke-Compose up -d n8n slackbot
     Write-Host "Fenced rollback returned new intake to legacy; primary evidence was preserved."
@@ -668,3 +824,7 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]

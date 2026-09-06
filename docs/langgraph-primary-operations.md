@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
@@ -327,6 +328,10 @@ No model approves its own migration PR or accepts its own exact candidate.
 <!-- [[Cursor Agent | Composer | 2026-08-31 | 09:55 UTC | END]] -->
 
 ## Windows Docker activation tooling
+
+See [primary staging and generation controls](primary-staging-controls.md) for
+explicit image preparation, identity-only bootstrap, immutable generation
+selection, and the evidence-only service boundary.
 
 The following tools are operational mechanisms, not activation evidence by
 their mere presence:
@@ -658,3 +663,4 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->

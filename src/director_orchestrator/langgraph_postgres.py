@@ -1,5 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -4742,7 +4744,7 @@ def _first_value(row: Any) -> Any:
 
 
 def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str,
-                         accepted_instance_id: str | None = None) -> str:
+                         accepted_instance_id: str | None = None, initial_accepted_migration: bool = False) -> str:
     """Create or verify the versioned control plane under one advisory lock."""
 
     lock_key = _advisory_key("ddl", schema)
@@ -4756,12 +4758,29 @@ def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str,
                     _require_accepted_database(cursor, schema=schema,
                                                storage_identity=storage_identity,
                                                instance_id=accepted_instance_id)
-                    from .antigravity_team import verify_team_schema
-                    verify_team_schema(connection, schema)
+                    # Only identity bootstrap creates this durable phase. An
+                    # explicit accepted Migrate may consume it once, under this
+                    # UUID check and DDL transaction. Missing phase is never initial.
+                    initial_pending = False
+                    if initial_accepted_migration:
+                        cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_schema=%s "
+                            "AND table_name='director_primary_control_plane' AND column_name='initial_schema_pending'", (schema,))
+                        if cursor.fetchone() is not None:
+                            cursor.execute(f"SELECT initial_schema_pending FROM {schema}.director_primary_control_plane WHERE singleton FOR UPDATE")
+                            initial_pending = _first_value(cursor.fetchone()) is True
+                        if initial_pending:
+                            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=%s", (schema,))
+                            if {str(_first_value(row)) for row in cursor.fetchall()} != {"director_primary_control_plane"}:
+                                raise PostgresCheckpointConfigurationError("initial migration marker conflicts with existing runtime inventory")
+                    if not initial_pending:
+                        from .antigravity_team import verify_team_schema
+                        verify_team_schema(connection, schema)
                 for statement in _control_plane_ddl(schema):
                     cursor.execute(statement)
                 from .antigravity_team import verify_team_schema
                 verify_team_schema(connection, schema)
+                if accepted_instance_id is not None and initial_accepted_migration and initial_pending:
+                    cursor.execute(f"UPDATE {schema}.director_primary_control_plane SET initial_schema_pending=false WHERE singleton")
                 cursor.execute(
                     f"ALTER TABLE {schema}.director_primary_control_plane "
                     "ADD COLUMN IF NOT EXISTS database_instance_id text"
@@ -4824,6 +4843,55 @@ def _setup_control_plane(pool: Any, *, schema: str, storage_identity: str,
     return instance_id
 
 
+def database_binding(
+    dsn: str, *, schema: str = DEFAULT_CONTROL_PLANE_SCHEMA,
+    allow_insecure_local_transport: bool = False, bootstrap: bool = False,
+) -> tuple[str, str]:
+    """Read identity without DDL, or explicitly bootstrap only its singleton.
+
+    No pool, claim store, application tables or checkpoint saver is constructed.
+    Bootstrap shares the migration advisory lock and preserves an existing UUID.
+    """
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.rows import dict_row
+
+    schema = _require_schema(schema)
+    parsed = _parse_connection_target(dsn, conninfo_to_dict=conninfo_to_dict,
+        allow_insecure_local_transport=allow_insecure_local_transport)
+    identity = _storage_identity(parsed, schema=schema)
+    with psycopg.connect(dsn, connect_timeout=10, row_factory=dict_row) as connection:
+        with connection.cursor() as cursor:
+            if not bootstrap:
+                cursor.execute("SET TRANSACTION READ ONLY")
+            cursor.execute("SET LOCAL statement_timeout = '10s'")
+            if bootstrap:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", (_advisory_key("ddl", schema),))
+                # Only the schema container and identity metadata, never the
+                # application/checkpoint DDL sequence.
+                cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+                cursor.execute(f"""CREATE TABLE IF NOT EXISTS {schema}.director_primary_control_plane (
+                    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+                    control_plane_version text NOT NULL, storage_identity text NOT NULL,
+                    database_instance_id text NOT NULL,
+                    initial_schema_pending boolean NOT NULL DEFAULT true,
+                    created_at timestamptz NOT NULL DEFAULT now())""")
+                cursor.execute(f"INSERT INTO {schema}.director_primary_control_plane "
+                    "(singleton, control_plane_version, storage_identity, database_instance_id) "
+                    "VALUES (true,%s,%s,%s) ON CONFLICT (singleton) DO NOTHING",
+                    (CONTROL_PLANE_VERSION, identity, str(uuid.uuid4())))
+            cursor.execute(f"SELECT control_plane_version,storage_identity,database_instance_id "
+                f"FROM {schema}.director_primary_control_plane WHERE singleton")
+            row = cursor.fetchone()
+            if not row or row["control_plane_version"] != CONTROL_PLANE_VERSION or row["storage_identity"] != identity:
+                raise PostgresCheckpointConfigurationError("database identity metadata is absent or mismatched")
+            try:
+                instance = str(uuid.UUID(row["database_instance_id"]))
+            except (ValueError, TypeError, AttributeError):
+                raise PostgresCheckpointConfigurationError("database instance identity is invalid") from None
+    return identity, instance
+
+
 def open_postgres_control_plane(
     dsn: str,
     *,
@@ -4833,6 +4901,7 @@ def open_postgres_control_plane(
     completion_authority_verifier: "CompletionAuthorityVerifier | None" = None,
     accepted_storage_identity: str | None = None,
     accepted_instance_id: str | None = None,
+    initial_accepted_migration: bool = False,
 ) -> PostgresCheckpointHandle:
     """Open, bound, and initialize the strict production Postgres control plane.
 
@@ -4856,6 +4925,8 @@ def open_postgres_control_plane(
         allow_insecure_local_transport=allow_insecure_local_transport,
     )
     identity = _storage_identity(parsed, schema=schema)
+    if initial_accepted_migration and accepted_instance_id is None:
+        raise PostgresCheckpointConfigurationError("initial migration requires exact accepted database binding")
     if (accepted_storage_identity is None) != (accepted_instance_id is None):
         raise PostgresCheckpointConfigurationError("accepted database binding must be complete")
     if accepted_storage_identity is not None:
@@ -4891,6 +4962,7 @@ def open_postgres_control_plane(
         database_instance_id = _setup_control_plane(
             pool, schema=schema, storage_identity=identity,
             accepted_instance_id=accepted_instance_id,
+            initial_accepted_migration=initial_accepted_migration,
         )
         saver = dependencies.saver_type(pool, serde=serializer)
         saver.setup()
@@ -4954,5 +5026,8 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | END]]
