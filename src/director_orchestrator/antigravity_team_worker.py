@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -139,23 +140,58 @@ def _limits(timeout):
         raise RuntimeError("cannot enable no-new-privileges")
 
 
-def run_unprivileged(argv, *, uid, gid, cwd, home, timeout, input_bytes=b""):
-    """Bound output to inherited files, kill the process group even on success."""
+def require_cgroup_root(path):
+    root = protected_directory(path)
+    # Kernel-created control files distinguish a cgroup v2 hierarchy from an
+    # ordinary directory. The mount itself must be cgroup2, not a fixture tree.
+    mounts = Path("/proc/self/mountinfo").read_text().splitlines()
+    if not any(" - cgroup2 " in row and
+               (str(root) == row.split()[4] or str(root).startswith(row.split()[4] + "/"))
+               for row in mounts):
+        raise TeamAuthorizationError("protected cgroup v2 mount required")
+    for name in ("cgroup.procs", "cgroup.controllers", "cgroup.events"):
+        protected_bytes(root / name)
+    return root
+
+
+def run_unprivileged(argv, *, uid, gid, cwd, home, timeout, cgroup_root, input_bytes=b""):
+    """Join a protected cgroup before dropping identity or executing any code.
+
+    A setsid/double-fork descendant stays in this non-delegated kernel group.
+    Always kill the entire group and verify it is empty, including on success.
+    """
     if os.name != "posix" or sys.platform != "linux" or os.geteuid() != 0 or uid <= 0 or gid <= 0:
         raise TeamAuthorizationError("qualified Linux broker identity required")
+    root = require_cgroup_root(cgroup_root)
+    group = root / ("director-" + os.urandom(16).hex())
+    group.mkdir(mode=0o755)
+    if not (group / "cgroup.kill").is_file():
+        group.rmdir()
+        raise TeamAuthorizationError("kernel cgroup.kill support required")
+    def enter():
+        (group / "cgroup.procs").write_text(str(os.getpid()))
+        _limits(timeout)
+        os.setgroups([])
+        os.setgid(gid)
+        os.setuid(uid)
     env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-        process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
-            stdout=stdout, stderr=stderr, user=uid, group=gid, extra_groups=[],
-            umask=0o077, start_new_session=True, preexec_fn=lambda: _limits(timeout))
+        process = None
         try:
+            process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
+                stdout=stdout, stderr=stderr, umask=0o077,
+                start_new_session=True, preexec_fn=enter)
             process.communicate(input=input_bytes, timeout=timeout)
         finally:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait(timeout=5)
+            (group / "cgroup.kill").write_text("1")
+            if process is not None:
+                process.wait(timeout=5)
+            deadline = time.monotonic() + 5
+            while "populated 1" in (group / "cgroup.events").read_text():
+                if time.monotonic() >= deadline:
+                    raise TeamAuthorizationError("kernel execution group did not empty")
+                time.sleep(.01)
+            group.rmdir()
         stdout.seek(0)
         stderr.seek(0)
         return process.returncode, stdout.read(8 * 1024 * 1024 + 1), stderr.read(8 * 1024 * 1024 + 1)
@@ -172,6 +208,7 @@ class LinuxNativeTeamWorker:
     def qualify(self, grant):
         if sys.platform != "linux" or os.geteuid() != 0:
             raise TeamAuthorizationError("native team worker requires the enrolled Linux broker")
+        require_cgroup_root(self.config["cgroup_root"])
         qualification = authenticate(self.issuer_secret, json.loads(protected_bytes(self.config["qualification"])))
         now = datetime.now(timezone.utc)
         if (qualification.get("schema_version") != "director-team-linux-qualification/v1"
@@ -316,7 +353,7 @@ class LinuxNativeTeamWorker:
                 "--input-format", "stream-json", "--output-format", "stream-json", "--model", grant.model,
                 "--project",grant.native_project_id],
                 uid=self.config["native_uid"], gid=self.config["native_gid"], cwd=native_cwd,
-                home=self.config["native_home"], timeout=max(1, int(deadline-time.monotonic())),
+                home=self.config["native_home"], cgroup_root=self.config["cgroup_root"], timeout=max(1, int(deadline-time.monotonic())),
                 input_bytes=canonical_json_bytes({"event": "user", "message": {"content": canonical_json_bytes(prompt).decode()}})+b"\n")
             if code or len(stream) > 8 * 1024 * 1024:
                 raise TeamAuthorizationError("native execution failed or exceeded output limit")
@@ -343,7 +380,7 @@ class LinuxNativeTeamWorker:
                     raise TeamAuthorizationError("local command executable is not qualified")
                 before_local_command(argv)
                 code, output, errors = run_unprivileged([executable,*argv[1:]], uid=self.config["check_uid"],
-                    gid=self.config["check_gid"], cwd=checks_cwd, home=checks_cwd,
+                    gid=self.config["check_gid"], cwd=checks_cwd, home=checks_cwd, cgroup_root=self.config["cgroup_root"],
                     timeout=max(1, int(deadline-time.monotonic())))
                 commands.append(list(argv))
                 checks.append({"command": json.dumps(list(argv)), "result": "output-sha256:" + hashlib.sha256(output + errors).hexdigest(), "exit_code": code})
@@ -480,3 +517,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]

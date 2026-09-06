@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
@@ -373,6 +374,9 @@ def typed_external_effect_grant_kinds(settings: Settings) -> tuple[str, ...]:
         return ()
     if int(settings.langgraph_primary_external_effect_pull_number) < 1:
         return ()
+    if any(_SHA40.fullmatch(getattr(settings, name, "")) is None for name in (
+        "langgraph_primary_external_effect_base_sha", "langgraph_primary_external_effect_head_sha")):
+        return ()
     return (GITHUB_MARK_READY_EFFECT_KIND,)
 
 
@@ -385,7 +389,9 @@ def build_typed_external_effect_grant(
         return None
     pull_number = int(settings.langgraph_primary_external_effect_pull_number)
     repository = settings.repository_allowlist[0].removesuffix(".git").strip("/")
-    if _SHA40.fullmatch(authority.starting_sha) is None:
+    base_sha = settings.langgraph_primary_external_effect_base_sha
+    head_sha = settings.langgraph_primary_external_effect_head_sha
+    if _SHA40.fullmatch(base_sha) is None or _SHA40.fullmatch(head_sha) is None:
         return None
     return TypedExternalEffectGrant(
         kind=GITHUB_MARK_READY_EFFECT_KIND,
@@ -393,10 +399,10 @@ def build_typed_external_effect_grant(
         action=GITHUB_MARK_READY,
         repository=repository,
         pull_number=pull_number,
-        # The Director-verified head is the only revision a live mark-ready may
-        # touch. A provider-produced candidate that differs fails closed below.
-        base_sha=authority.starting_sha,
-        head_sha=authority.starting_sha,
+        # These owner-controlled PR coordinates enter the approval digest and
+        # are revalidated remotely by the gateway; deployment is a separate SHA.
+        base_sha=base_sha,
+        head_sha=head_sha,
     )
 
 
@@ -478,12 +484,6 @@ def _typed_effect_binding(
             raise RuntimeError(
                 "GitHub effect target is not the configured pull request"
             )
-        # The authenticated candidate must be the exact revision the owner
-        # approved. A different head is a different mutation, not this one.
-        if context.candidate_sha != grant.head_sha or (
-            context.starting_sha != grant.base_sha
-        ):
-            raise RuntimeError("GitHub effect head or base is outside Director authority")
         return ("github", GITHUB_MARK_READY, grant.target, {})
     raise RuntimeError("external effect action is unsupported")
 
@@ -2690,3 +2690,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]

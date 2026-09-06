@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 """Native-only worker capture. This module never loads a signing key."""
@@ -42,13 +43,13 @@ def _stop(proc):
     proc.wait(timeout=10)
 
 
-def run_bounded(command, *, cwd, env, stdin=b"", timeout=600, limit=MAX_CAPTURE):
+def run_bounded(command, *, cwd, env, stdin=b"", timeout=600, limit=MAX_CAPTURE, merge_stderr=False):
     """No pipe deadlock, output truncation or unbounded disk/timeout allowance."""
     with tempfile.TemporaryFile() as source, tempfile.TemporaryFile() as output:
         source.write(stdin)
         source.seek(0)
         proc = subprocess.Popen(command, cwd=cwd, env=env, stdin=source,
-                                stdout=output, stderr=subprocess.DEVNULL, shell=False)
+                                stdout=output, stderr=subprocess.STDOUT if merge_stderr else subprocess.DEVNULL, shell=False)
         deadline = time.monotonic() + timeout
         try:
             while proc.poll() is None:
@@ -112,6 +113,9 @@ def parse_capture(raw, *, provider, model, request, exit_code):
         return session
     if provider == "cursor":
         return parse_acp(capture, request=request, model=model)
+    if provider in {"openai", "gemini"}:
+        from .native_acceptance_streams import parse_additional
+        return parse_additional(capture, provider=provider, model=model, request=request)
     raise IssuerError("unsupported fixed native provider")
 
 
@@ -247,7 +251,7 @@ def work(cfg, job_id):
                  "--safe-mode", "--restricted", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                  "--no-session-persistence", "--permission-prompts", "none"], cwd=cwd, env=env, stdin=prompt_for(request).encode(), timeout=timeout)
             capture = canonical(dict(auth={k: auth_value.get(k) for k in ("loggedIn", "authMethod")}, events=[json.loads(l, object_pairs_hook=_pairs) for l in raw.splitlines() if l.strip()]))
-        else:
+        elif cfg.provider == "cursor":
             # Administrator-owned configuration must prevent built-in tools even
             # when ACP cannot broker a tool call. Enrollment verifies this pin.
             if read_json(cfg.root / "cursor-config" / "cli-config.json") != {"permissions": {"allow": [], "deny": CURSOR_DENY}}:
@@ -256,8 +260,43 @@ def work(cfg, job_id):
             env["USERPROFILE"] = str(cfg.root / "cursor-config")
             env["CURSOR_CONFIG_DIR"] = str(cfg.root / "cursor-config")
             code, capture = run_acp(command, cwd=cwd, env=env, prompt=prompt_for(request), model=cfg.model, timeout=timeout)
+        elif cfg.provider == "openai":
+            from .native_acceptance_streams import capture_document
+            code, auth = run_bounded([*command, "login", "status"], cwd=cwd, env=env, timeout=20, merge_stderr=True)
+            if code or auth.strip() != b"Logged in using ChatGPT":
+                raise IssuerError("owner must complete native ChatGPT login under worker identity")
+            argv = [*command, "exec", "--json", "--ephemeral", "--ignore-user-config", "--sandbox", "read-only",
+                    "--skip-git-repo-check", "--cd", cwd, "--model", cfg.model]
+            for setting in ('forced_login_method="chatgpt"', 'model_provider="openai"', 'approval_policy="never"',
+                            'features.shell_tool=false', 'features.multi_agent=false', 'features.multi_agent_v2=false',
+                            'agents.enabled=false', 'features.apps=false', 'features.plugins=false', 'features.hooks=false',
+                            'features.image_generation=false', 'features.browser_use=false', 'features.computer_use=false',
+                            'features.in_app_browser=false', 'features.goals=false', 'features.view_image=false',
+                            'features.skill_search=false', 'web_search="disabled"', 'tools.update_plan.enabled=false',
+                            'model_providers.openai.request_max_retries=0', 'model_providers.openai.stream_max_retries=0'):
+                argv.extend(("-c", setting))
+            code, raw = run_bounded([*argv, "-"], cwd=cwd, env=env, stdin=prompt_for(request).encode(), timeout=timeout)
+            capture = capture_document(raw, provider=cfg.provider, model=cfg.model, cwd=cwd, auth=auth.decode().strip())
+        elif cfg.provider == "gemini":
+            from .antigravity_team_worker import DENY_TOOLS
+            from .native_acceptance_streams import capture_document
+            policy = Path(cfg.native_home) / ".gemini/antigravity-cli"
+            settings = read_json(policy / "settings.json")
+            permissions = settings.get("permissions", {})
+            hooks = {"director-team-deny-all": {"PreToolUse": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": cfg.native_deny_hook, "timeout": 5}]}]}}
+            if permissions.get("allow") or not DENY_TOOLS.issubset(permissions.get("deny", [])) or read_json(policy / "hooks.json") != hooks:
+                raise IssuerError("protected AGY deny-all policy and wildcard hook required")
+            env["HOME"] = env["USERPROFILE"] = cfg.native_home
+            code, raw = run_bounded([*command, "--input-format", "stream-json", "--output-format", "stream-json",
+                "--model", cfg.model, "--project", cfg.native_project], cwd=cwd, env=env, timeout=timeout,
+                stdin=canonical({"event": "user", "message": {"content": prompt_for(request)}})+b"\n")
+            capture = capture_document(raw, provider=cfg.provider, model=cfg.model, cwd=cwd, auth="native-cached-credentials-requested")
+        else:
+            raise IssuerError("unsupported native provider")
         parse_capture(capture, provider=cfg.provider, model=cfg.model, request=request, exit_code=code)
         write_new(cfg.root / "responses" / (job_id + ".json"), dict(request_digest=digest(canonical(request)), worker_sid=cfg.worker_sid, exit_code=code, capture=base64.b64encode(capture).decode()))
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]

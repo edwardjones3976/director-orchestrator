@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
@@ -32,6 +33,8 @@ from .provider_acceptance_v2 import DOMAIN, VERSION, ReviewContext, canonical
 MAX_PACKET = 2_097_152  # full packet; never truncate a review
 MAX_CAPTURE = 1_048_576
 ROLE_PROVIDER = {"security": "claude", "independent_review": "cursor"}
+ROLE_PROVIDERS = {"security": frozenset({"claude", "openai", "gemini"}),
+                  "independent_review": frozenset({"cursor", "gemini"})}
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 
@@ -244,6 +247,10 @@ class Config:
     entrypoint_digest: str | None
     model: str
     runtime_roots: tuple = ()
+    native_home: str = ""
+    native_project: str = ""
+    native_deny_hook: str = ""
+    native_deny_hook_digest: str = ""
 
     @classmethod
     def load(cls, path: Path, expected_digest: str):
@@ -251,10 +258,16 @@ class Config:
             raise IssuerError("installed configuration digest mismatch")
         value = read_json(path)
         cfg = cls(**{**value, "root": Path(value["root"]), "mirror": Path(value["mirror"])})
-        if ROLE_PROVIDER.get(cfg.role) != cfg.provider or cfg.worker_sid == cfg.broker_sid:
+        if cfg.provider not in ROLE_PROVIDERS.get(cfg.role, ()) or cfg.worker_sid == cfg.broker_sid:
             raise IssuerError("fixed role or separate native worker identity missing")
         if not cfg.runtime_roots or any(not Path(p).is_absolute() for p in cfg.runtime_roots):
             raise IssuerError("complete protected runtime roots required")
+        if cfg.provider == "gemini":
+            if not cfg.native_project or not Path(cfg.native_home).is_absolute() or not Path(cfg.native_deny_hook).is_absolute() or not DIGEST.fullmatch(cfg.native_deny_hook_digest):
+                raise IssuerError("AGY requires protected native home, project and deny-all hook")
+            for native_path in (cfg.native_home, cfg.native_deny_hook):
+                if not any(Path(native_path).is_relative_to(Path(root)) for root in cfg.runtime_roots):
+                    raise IssuerError("AGY policy outside protected runtime roots")
         for sid in (cfg.worker_sid, cfg.broker_sid):
             if re.fullmatch(r"S-1-5-21-(?:\d+-){3}\d+", sid) is None:
                 raise IssuerError("dedicated local principal required")
@@ -276,13 +289,15 @@ class Config:
         paths = [(self.executable, self.executable_digest)]
         if self.entrypoint:
             paths.append((self.entrypoint, self.entrypoint_digest))
+        if self.provider == "gemini":
+            paths.append((self.native_deny_hook, self.native_deny_hook_digest))
         for name, expected in paths:
             p = Path(name)
             if not p.is_absolute() or p.is_symlink() or digest(p.read_bytes()) != expected:
                 raise IssuerError("native executable or entrypoint pin mismatch")
         if Path(self.executable).suffix.lower() != ".exe":
             raise IssuerError("native Windows executable required")
-        return [p[0] for p in paths]
+        return [self.executable] + ([self.entrypoint] if self.entrypoint else [])
 
 
 def claim(path: Path, identity: str):
@@ -401,3 +416,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]

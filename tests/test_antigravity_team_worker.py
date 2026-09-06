@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -88,7 +89,7 @@ class WorkerProtocolTests(unittest.TestCase):
             g=grant(packet_digest=document_digest(work),source=(SourceBlob(path="src/allowed.py",sha256=hashlib.sha256(b"old").hexdigest()),))
             worker=LinuxNativeTeamWorker({"claims_root":str(root/"claims"),"workspace_root":str(root/"work"),
                 "native_uid":1001,"native_gid":1001,"check_uid":1002,"check_gid":1002,
-                "native_home":str(root/"nativehome"),"executable":"/native/agy","command_binaries":{"python":"/usr/bin/python"}},
+                "native_home":str(root/"nativehome"),"cgroup_root":"/sys/fs/cgroup/director-fixture","executable":"/native/agy","command_binaries":{"python":"/usr/bin/python"}},
                 owner_secret=fixtures.OWNER_SECRET,issuer_secret=b"i"*32,worker_secret=b"w"*32)
             qualification={"grant_digest":g.digest,"native_state_manifest":{},"protected_files":{"/usr/bin/python":"d"*64},"expires_at":(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
             calls=[]
@@ -269,3 +270,4 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
