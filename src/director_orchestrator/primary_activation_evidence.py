@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
@@ -144,6 +145,9 @@ class ActivationEvidenceStore:
         *,
         acceptance_secrets: Mapping[str, str] | None = None,
     ) -> None:
+        from .acceptance_journal import journal_from_environment
+        self._journal = journal_from_environment()
+        self._revision = None
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._acceptance_secrets = (
@@ -151,6 +155,11 @@ class ActivationEvidenceStore:
         )
 
     def load(self) -> dict[str, Any] | None:
+        if self._journal is not None:
+            self._revision, value = self._journal.load()
+            if value is not None:
+                self._validate_history(value)
+            return value
         if not self.path.exists():
             return None
         try:
@@ -233,6 +242,11 @@ class ActivationEvidenceStore:
         identity: ActivationIdentity,
         artifact_path: str | Path,
     ) -> dict[str, Any]:
+        if self._journal is not None:
+            current = self.load()
+            if current is None or current.get("identity") != asdict(identity):
+                raise ActivationEvidenceError("v2 acceptance requires matching preflight")
+            return self._journal.accept(self._revision, current, Path(artifact_path).read_bytes())
         artifact = self._load_acceptance_artifact(artifact_path)
         facts_digest = self._validate_acceptance_artifact(identity, artifact)
         facts = artifact["facts"]
@@ -345,6 +359,9 @@ class ActivationEvidenceStore:
                     "activation stage evidence digest does not match canonical facts"
                 )
             if item.get("stage") == ActivationStage.ACCEPTED.value:
+                if self._journal is not None:
+                    self._journal.verify_record(identity, item)
+                    continue
                 artifact = item.get("source_artifact")
                 if not isinstance(artifact, dict) or artifact.get("facts") != item["facts"]:
                     raise ActivationEvidenceError(
@@ -623,6 +640,9 @@ class ActivationEvidenceStore:
         return current
 
     def _atomic_write(self, value: Mapping[str, Any]) -> None:
+        if self._journal is not None:
+            self._journal.write(self._revision, value)
+            return
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
         handle, temporary = tempfile.mkstemp(prefix=self.path.name + ".", dir=self.path.parent)
         try:
@@ -658,7 +678,7 @@ def _acceptance_secrets_from_environment() -> dict[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("record", "require-ready", "verify-backup", "bind-legacy-inventory"))
+    parser.add_argument("command", choices=("record", "require-ready", "verify-backup", "bind-legacy-inventory", "challenge"))
     parser.add_argument("--artifact", required=True)
     parser.add_argument("--candidate-commit", required=True)
     parser.add_argument("--candidate-tree", required=True)
@@ -681,6 +701,12 @@ def main() -> None:
         acceptance_secrets=_acceptance_secrets_from_environment(),
     )
     identity = _identity(arguments)
+    if arguments.command == "challenge":
+        if store._journal is None:
+            parser.error("challenge requires owner-configured provider-v2 mode")
+        store.load()
+        print(json.dumps(store._journal.challenge(identity), sort_keys=True, separators=(",", ":")))
+        return
     if arguments.command == "require-ready":
         store.require_ready(identity)
         print("activation_prerequisites_ready=true")
@@ -741,3 +767,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]

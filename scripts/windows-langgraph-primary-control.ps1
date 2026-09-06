@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -14,7 +15,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("PrepareAcceptance", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
+    [ValidateSet("PrepareAcceptance", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
     [string]$Action,
     [string]$EnvironmentFile,
     [string]$ComposeProject,
@@ -301,7 +302,7 @@ function Stop-And-Prove-AllIntake {
 
 function Invoke-Evidence {
     param(
-        [ValidateSet("record", "require-ready", "verify-backup", "bind-legacy-inventory")][string]$Command,
+        [ValidateSet("record", "require-ready", "verify-backup", "bind-legacy-inventory", "challenge")][string]$Command,
         [string]$Stage,
         [string]$FactsJson = "{}",
         [string]$AcceptanceArtifactPath,
@@ -489,7 +490,18 @@ if ($Action -eq "Preflight") {
     Write-Host "Primary preflight passed; the profile database was started; no provider was called."
     return
 }
+if ($Action -eq "Challenge") {
+    if (-not $values.ContainsKey("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE") -or $values["LANGGRAPH_PRIMARY_ACCEPTANCE_MODE"] -cne "provider-v2") { throw "Challenge requires provider-v2 mode." }
+    Invoke-Evidence -Command challenge
+    return
+}
 if ($Action -eq "Accept") {
+    if ($values.ContainsKey("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE") -and $values["LANGGRAPH_PRIMARY_ACCEPTANCE_MODE"] -ceq "provider-v2") {
+        $verifiedArtifactPath = (Resolve-Path -LiteralPath $AcceptanceArtifactPath).Path
+        Invoke-Evidence -Command record -Stage ACCEPTED -AcceptanceArtifactPath $verifiedArtifactPath
+        Write-Host "Provider-v2 signed acceptance atomically recorded."
+        return
+    }
     $facts = Get-GitHubAcceptanceFacts
     $verifiedArtifactPath = Assert-CanonicalAcceptanceArtifact `
         -Facts $facts -Path $AcceptanceArtifactPath
@@ -636,3 +648,5 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]

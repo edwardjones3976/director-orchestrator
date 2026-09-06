@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -302,6 +303,11 @@ class Settings:
     )
     # Optional immutable canary authority. Both values are required together;
     # ordinary deployments retain origin-tracking branch verification.
+    langgraph_primary_acceptance_mode: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1"))
+    langgraph_primary_acceptance_registry_path: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH", ""))
+    langgraph_primary_acceptance_registry_sha256: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256", ""))
+    langgraph_primary_acceptance_journal_path: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH", ""))
+
     langgraph_primary_pinned_commit_sha: str = field(
         default_factory=lambda: os.getenv(
             "LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA", ""
@@ -2026,3 +2032,5 @@ class Settings:
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]

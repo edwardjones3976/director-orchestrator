@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -1981,6 +1982,8 @@ class DefaultPrimaryActivation:
             if any(completion_secrets)
             else None
         )
+        from .acceptance_journal import require_runtime_acceptance
+        require_runtime_acceptance(settings)
         handle = open_postgres_control_plane(
             settings.langgraph_primary_postgres_dsn,
             schema=settings.langgraph_primary_postgres_schema,
@@ -1990,6 +1993,7 @@ class DefaultPrimaryActivation:
             completion_authority_verifier=completion_verifier,
         )
         try:
+            require_runtime_acceptance(settings, handle=handle)
             bindings = settings.primary_provider_activation_bindings()
             effect_executor = (
                 DeterministicExternalEffectExecutor(
@@ -2646,3 +2650,5 @@ class DefaultPrimaryActivation:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
