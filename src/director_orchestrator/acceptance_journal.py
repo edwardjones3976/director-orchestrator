@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
@@ -6,6 +7,7 @@ from __future__ import annotations
 import base64
 from contextlib import contextmanager
 from dataclasses import asdict
+from functools import wraps
 import hashlib
 import json
 import os
@@ -23,7 +25,19 @@ REQUIRED_ACTIVATION_CHECKS = frozenset({"Contribution attribution", "Python 3.12
     "Python 3.12 (windows-latest)", "Compose and container build", "Secret hygiene", "Cross-process recovery probe"})
 
 
+def _activation_errors(method):
+    """Translate expected input/storage failures after transaction unwinding."""
+    @wraps(method)
+    def guarded(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
+            raise ActivationEvidenceError("v2 acceptance evidence unavailable or invalid") from exc
+    return guarded
+
+
 class AcceptanceJournal:
+    @_activation_errors
     def __init__(self, path: str, registry_path: str, registry_sha256: str):
         self.path = Path(path)
         self.registry_path = Path(registry_path)
@@ -52,6 +66,7 @@ class AcceptanceJournal:
         finally:
             db.close()
 
+    @_activation_errors
     def policy(self):
         raw = self.registry_path.read_bytes()
         if len(raw) > 131072 or hashlib.sha256(raw).hexdigest() != self.pin:
@@ -97,6 +112,7 @@ class AcceptanceJournal:
             doc["pull_request_number"], doc["packet_digest"], challenge, issued_at, expires_at,
             frozenset(doc["material_author_providers"]))
 
+    @_activation_errors
     def load(self):
         self.policy()
         with self.connect() as db:
@@ -138,6 +154,7 @@ class AcceptanceJournal:
                        (context.challenge, canonical(context.document()), canonical(policy)))
         return context.document()
 
+    @_activation_errors
     def accept(self, revision, state, raw, now=None):
         now = int(time.time()) if now is None else now
         if len(raw) > 131072:
@@ -189,6 +206,7 @@ class AcceptanceJournal:
             self._write(db, revision, state)  # Failure rolls back consumption and acceptance together.
         return state
 
+    @_activation_errors
     def verify_record(self, identity, item):
         policy = self.policy()
         challenge = item["facts"].get("challenge")
@@ -294,3 +312,5 @@ def bind_runtime_database(identity, handle):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | END]]

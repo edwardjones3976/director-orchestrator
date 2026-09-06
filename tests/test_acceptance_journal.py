@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:13 UTC | BEGIN]]
@@ -129,7 +130,7 @@ class AcceptanceJournalTests(unittest.TestCase):
                 db.execute("UPDATE acceptance_challenge SET package=?,package_digest=? WHERE accepted_at IS NOT NULL", (canonical(source), digest))
                 db.commit()
             with patch("director_orchestrator.ci_acceptance_issuer._read_json", return_value=ci.jwks):
-                with self.assertRaises(ValueError): ActivationEvidenceStore(self.path).load()
+                with self.assertRaises(ActivationEvidenceError): ActivationEvidenceStore(self.path).load()
 
     def test_dynamic_ci_template_mismatch_is_rejected_even_if_only_effective_role_is_revoked(self):
         from tests.test_ci_acceptance_issuer import CIIssuerTests
@@ -168,6 +169,45 @@ class AcceptanceJournalTests(unittest.TestCase):
         loaded = ActivationEvidenceStore(self.path).load()
         self.assertEqual("ACCEPTED", loaded["stages"][-1]["stage"])
         with self.assertRaises(ActivationEvidenceError): self.accept()
+
+    def test_policy_input_failures_have_stable_activation_error(self):
+        journal = self.store._journal
+        with patch.object(Path, "read_bytes", side_effect=OSError("unreadable")):
+            with self.assertRaises(ActivationEvidenceError) as caught:
+                journal.policy()
+        self.assertIsInstance(caught.exception.__cause__, OSError)
+        for raw in (b"{", b'{"version": "invalid"}'):
+            with self.subTest(raw=raw):
+                self.registry.write_bytes(raw)
+                journal.pin = hashlib.sha256(raw).hexdigest()
+                with self.assertRaises(ActivationEvidenceError): journal.policy()
+
+    def test_malformed_persisted_state_blocks_readiness_with_activation_error(self):
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("UPDATE activation_state SET document=?", (b"{",))
+            db.commit()
+        with self.assertRaises(ActivationEvidenceError): self.store.load()
+
+    def test_invalid_packages_never_consume_challenge(self):
+        for raw in (b"{", b'{"context": {}}'):
+            with self.subTest(raw=raw):
+                self.artifact.write_bytes(raw)
+                with self.assertRaises(ActivationEvidenceError): self.accept()
+        self.fixture.package["receipts"]["security"]["signature"] = "invalid"
+        self.artifact.write_text(json.dumps(self.fixture.package))
+        with self.assertRaises(ActivationEvidenceError): self.accept()
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertIsNone(db.execute("SELECT accepted_at FROM acceptance_challenge").fetchone()[0])
+        self.assertEqual(1, len(self.store.load()["stages"]))
+
+    def test_translated_storage_failure_rolls_back_acceptance(self):
+        with patch.object(AcceptanceJournal, "_write", side_effect=sqlite3.OperationalError("storage failure")):
+            with self.assertRaises(ActivationEvidenceError) as caught: self.accept()
+        self.assertIsInstance(caught.exception.__cause__, sqlite3.OperationalError)
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertIsNone(db.execute("SELECT accepted_at FROM acceptance_challenge").fetchone()[0])
+        self.assertEqual(1, len(self.store.load()["stages"]))
+        self.accept()
 
     def test_post_consumption_failure_rolls_back_both_rows(self):
         with patch.object(AcceptanceJournal, "_write", side_effect=RuntimeError("simulated crash")):
@@ -245,3 +285,5 @@ if __name__ == "__main__": unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | END]]
