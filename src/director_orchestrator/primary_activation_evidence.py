@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -144,12 +145,15 @@ class ActivationEvidenceStore:
         path: str | Path,
         *,
         acceptance_secrets: Mapping[str, str] | None = None,
+        read_only: bool = False,
     ) -> None:
         from .acceptance_journal import journal_from_environment
-        self._journal = journal_from_environment()
+        self._read_only = read_only
+        self._journal = journal_from_environment(read_only=read_only)
         self._revision = None
         self.path = Path(path).resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         self._acceptance_secrets = (
             dict(acceptance_secrets) if acceptance_secrets is not None else None
         )
@@ -597,15 +601,28 @@ class ActivationEvidenceStore:
         cls._require_artifact_digest(digest)
         return str(digest)
 
-    def require_ready(self, identity: ActivationIdentity) -> dict[str, Any]:
+    def require_accepted(self, identity: ActivationIdentity) -> dict[str, Any]:
         current = self.load()
-        if current is None or current.get("identity_digest") != identity.digest:
+        if current is None or current.get("identity") != asdict(identity) or current.get("identity_digest") != identity.digest:
+            raise ActivationEvidenceError("accepted identity is unavailable or stale")
+        if [item.get("stage") for item in current.get("stages", [])] != ["PREFLIGHT", "ACCEPTED"]:
+            raise ActivationEvidenceError("migration requires exact accepted pre-migration state")
+        return current
+
+    def require_staged(self, identity: ActivationIdentity) -> dict[str, Any]:
+        """Validate authenticated acceptance and restore without adopting intake."""
+        current = self.load()
+        if current is None or current.get("identity_digest") != identity.digest or current.get("identity") != asdict(identity):
             raise ActivationEvidenceError("activation evidence identity is unavailable or stale")
         stages = current.get("stages", [])
         expected = [stage.value for stage in _ORDER[:-1]]
         observed = [item.get("stage") for item in stages]
         if observed != expected:
             raise ActivationEvidenceError("activation prerequisites are incomplete")
+        return current
+
+    def require_ready(self, identity: ActivationIdentity) -> dict[str, Any]:
+        current = self.require_staged(identity)
         inventory = current.get("legacy_inventory")
         if not isinstance(inventory, dict):
             raise ActivationEvidenceError("pre-cutover legacy ownership inventory is unavailable")
@@ -640,6 +657,8 @@ class ActivationEvidenceStore:
         return current
 
     def _atomic_write(self, value: Mapping[str, Any]) -> None:
+        if getattr(self, "_read_only", False):
+            raise ActivationEvidenceError("observational evidence store is read-only")
         if self._journal is not None:
             self._journal.write(self._revision, value)
             return
@@ -678,7 +697,7 @@ def _acceptance_secrets_from_environment() -> dict[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("record", "require-ready", "verify-backup", "bind-legacy-inventory", "challenge"))
+    parser.add_argument("command", choices=("record", "require-ready", "require-staged", "require-accepted", "verify-backup", "bind-legacy-inventory", "challenge"))
     parser.add_argument("--artifact", required=True)
     parser.add_argument("--candidate-commit", required=True)
     parser.add_argument("--candidate-tree", required=True)
@@ -699,8 +718,13 @@ def main() -> None:
     store = ActivationEvidenceStore(
         arguments.artifact,
         acceptance_secrets=_acceptance_secrets_from_environment(),
+        read_only=arguments.command in {"require-ready", "require-staged", "require-accepted", "verify-backup"},
     )
     identity = _identity(arguments)
+    if arguments.command in {"require-staged", "require-accepted"}:
+        getattr(store, arguments.command.replace("-", "_"))(identity)
+        print("prerequisites_verified=true")
+        return
     if arguments.command == "challenge":
         if store._journal is None:
             parser.error("challenge requires owner-configured provider-v2 mode")
@@ -769,3 +793,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]

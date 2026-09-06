@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
@@ -38,13 +39,19 @@ def _activation_errors(method):
 
 class AcceptanceJournal:
     @_activation_errors
-    def __init__(self, path: str, registry_path: str, registry_sha256: str):
+    def __init__(self, path: str, registry_path: str, registry_sha256: str, *, read_only: bool = False):
+        self.read_only = read_only
         self.path = Path(path)
         self.registry_path = Path(registry_path)
         self.pin = registry_sha256
         if not self.path.is_absolute() or not self.registry_path.is_absolute():
             raise ActivationEvidenceError("v2 journal and registry paths must be absolute")
         self.policy()  # Never create storage without authenticated configuration.
+        if read_only:
+            # mode=ro refuses absent storage and SQLite enforces every write ban.
+            with self.connect() as db:
+                db.execute("SELECT revision FROM activation_state WHERE id=1")
+            return
         with self.connect() as db:
             db.executescript("""
             CREATE TABLE IF NOT EXISTS activation_state (
@@ -58,9 +65,10 @@ class AcceptanceJournal:
 
     @contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=10)
+        db = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10) if self.read_only else sqlite3.connect(self.path, timeout=10)
         try:
-            db.execute("PRAGMA synchronous=FULL")
+            if not self.read_only:
+                db.execute("PRAGMA synchronous=FULL")
             with db:
                 yield db
         finally:
@@ -258,7 +266,7 @@ class AcceptanceJournal:
             raise ActivationEvidenceError("accepted package or projection was tampered")
 
 
-def journal_from_environment():
+def journal_from_environment(*, read_only=False):
     mode = os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1")
     if mode == "github-v1":
         return None
@@ -266,7 +274,7 @@ def journal_from_environment():
         raise ActivationEvidenceError("unknown acceptance mode")
     return AcceptanceJournal(os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH"],
         os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH"],
-        os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256"])
+        os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256"], read_only=read_only)
 
 
 def require_runtime_acceptance(settings):
@@ -277,7 +285,8 @@ def require_runtime_acceptance(settings):
     if mode != "provider-v2":
         raise ActivationEvidenceError("unknown acceptance mode")
     journal = AcceptanceJournal(settings.langgraph_primary_acceptance_journal_path,
-        settings.langgraph_primary_acceptance_registry_path, settings.langgraph_primary_acceptance_registry_sha256)
+        settings.langgraph_primary_acceptance_registry_path, settings.langgraph_primary_acceptance_registry_sha256,
+        read_only=True)
     from .primary_activation_evidence import ActivationEvidenceStore
     store = ActivationEvidenceStore.__new__(ActivationEvidenceStore)
     store._journal = journal
@@ -298,6 +307,8 @@ def require_runtime_acceptance(settings):
         identity.checkpoint_namespace != settings.langgraph_primary_checkpoint_namespace or
         identity.compose_project != os.environ.get("DIRECTOR_COMPOSE_PROJECT_NAME", "")):
         raise ActivationEvidenceError("runtime identity differs from accepted candidate")
+    from .primary_generation import require_generation
+    require_generation(settings, identity)
     return identity
 
 
@@ -314,3 +325,4 @@ def bind_runtime_database(identity, handle):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]

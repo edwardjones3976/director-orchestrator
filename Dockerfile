@@ -1,5 +1,10 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:35 UTC | BEGIN]]
 FROM python:3.12-slim@sha256:dd29372629eeba2dd003fd9e9d35a5b8236c44727875a0364254b5127af88e65
+ARG DIRECTOR_CANDIDATE_COMMIT=unverified
+ARG DIRECTOR_CANDIDATE_TREE=unverified
+LABEL org.director.candidate.commit=$DIRECTOR_CANDIDATE_COMMIT \
+      org.director.candidate.tree=$DIRECTOR_CANDIDATE_TREE
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -26,4 +31,4 @@ USER director
 EXPOSE 8080
 CMD ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:35 UTC | END]]
-
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
