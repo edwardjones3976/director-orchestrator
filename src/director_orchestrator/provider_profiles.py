@@ -392,7 +392,9 @@ def _table(headers: list[str], rows: list[list[Any]]) -> list[str]:
     return lines
 
 
-def _bullets(items: list[Any]) -> list[str]:
+def _bullets(items: list[Any] | str) -> list[str]:
+    if isinstance(items, str):
+        items = [items]
     if not items:
         return ["- (none)"]
     return [f"- {_cell(item)}" for item in items]

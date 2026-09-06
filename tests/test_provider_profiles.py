@@ -783,6 +783,10 @@ class HygieneTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
+    def test_scalar_description_is_one_complete_bullet(self):
+        self.assertEqual(pp._bullets("Bounded artifacts from a provider"), ["- Bounded artifacts from a provider"])
+        self.assertEqual(pp._bullets(["first", "second"]), ["- first", "- second"])
+
     def test_rendered_outputs_are_current_and_tagged(self):
         self.assertEqual(pp.check_outputs(), [])
         for path in list(PROFILE_ROOT.glob("*.md")) + list(PROFILE_ROOT.glob("*.yaml")):
