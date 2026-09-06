@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
@@ -821,7 +822,7 @@ def build_automatic_primary_live_dependencies(
     """
 
     bridge_secret = settings.langgraph_primary_host_bridge_secret
-    if settings.langgraph_primary_antigravity_team_enabled and team_routing is None:
+    if getattr(settings,"langgraph_primary_antigravity_team_enabled",False) and team_routing is None:
         raise ValueError("primary team mode requires explicitly enrolled worker, entitlement and artifact services")
     if bridge_secret and bridge_secret in {
         settings.shared_secret,
@@ -2688,3 +2689,4 @@ class DefaultPrimaryActivation:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | END]]
