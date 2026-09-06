@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-06 | 01:26 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
@@ -223,6 +224,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         mode: EnforcementMode = EnforcementMode.ENFORCED,
         effort_units: int = 1,
         assignment_id: str | None = None,
+        task_id: str | None = None,
         phase: str = "dispatch",
         kind: WorkKind = WorkKind.COORDINATION,
         size: WorkSize = WorkSize.SIMPLE,
@@ -233,7 +235,7 @@ class WorkloadLedgerTests(unittest.TestCase):
     ):
         return self.store.reserve_workload_assignment(
             reservation_key=key,
-            task_id=f"DIR-{key}",
+            task_id=task_id or f"DIR-{key}",
             assignment_id=assignment_id or f"DIR-{key}:1",
             phase=phase,
             provider=provider,
@@ -671,6 +673,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             Provider.CLAUDE,
             mode=EnforcementMode.SHADOW,
             assignment_id="DIR-SHADOW:1",
+            task_id="DIR-SHADOW",
         )
         self.assertEqual(first.decision.mode, EnforcementMode.SHADOW)
         self.store.finalize_workload_reservation(
@@ -682,6 +685,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             Provider.CLAUDE,
             mode=EnforcementMode.SHADOW,
             assignment_id="DIR-SHADOW:1",
+            task_id="DIR-SHADOW",
             phase="revision",
         )
         self.assertEqual(retry.decision.mode, EnforcementMode.SHADOW)
@@ -1284,3 +1288,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-06 | 01:26 UTC | END]]
