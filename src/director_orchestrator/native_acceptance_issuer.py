@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 """Fixed-role native acceptance issuer. Installed broker and worker SIDs differ.
 
@@ -140,12 +141,12 @@ def validate_acl_rows(rows, *, broker_sid, worker_sid=None):
     # NT access masks: read data/list, write data/add, append/add child, EA,
     # delete child, write attrs, delete, WRITE_DAC, WRITE_OWNER.
     write_mask = 2 | 4 | 16 | 64 | 256 | 65536 | 262144 | 524288
-    replace_mask = 64 | 262144 | 524288
+    replace_mask = 65536 | 64 | 262144 | 524288
     if not rows:
         raise IssuerError("Windows ACL evidence unavailable")
     for row in rows:
         private = row["kind"] == "private"
-        owners = trusted | ({broker_sid} if private else set())
+        owners = trusted | ({broker_sid} if private or row["kind"] in {"requests", "public"} else {worker_sid} if row["kind"] == "responses" else set())
         if row["owner"] not in owners or row["reparse"]:
             raise IssuerError("untrusted owner or reparse point in issuer boundary")
         for rule in row["rules"]:
@@ -158,7 +159,7 @@ def validate_acl_rows(rows, *, broker_sid, worker_sid=None):
                 raise IssuerError("issuer program or ancestor is replaceable")
 
 
-def verify_boundary(root: Path, *, broker_sid: str, worker_sid: str, worker: bool):
+def verify_boundary(root: Path, *, broker_sid: str, worker_sid: str, worker: bool, consumed=(), runtime_roots=(), full=True):
     if os.name != "nt":
         raise IssuerError("Windows ACL verification required")
     # Worker cannot inspect the private directory: that denial is the boundary.
@@ -168,9 +169,29 @@ $ErrorActionPreference='Stop'
 $root=Get-Item -LiteralPath $env:DIRECTOR_ISSUER_ROOT
 $items=@(@{item=$root;kind='protected'},@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'code'));kind='protected'},@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'issuer.json'));kind='protected'})
 foreach($name in @('requests','responses','cursor-config')){$items+=@{item=(Get-Item -LiteralPath (Join-Path $root.FullName $name));kind=$name}}
+if($env:DIRECTOR_FULL_AUDIT -eq '1'){
+$trees=@((Join-Path $root.FullName 'code'),(Join-Path $root.FullName 'cursor-config'))
+$runtimeRoots=$env:DIRECTOR_RUNTIME_ROOTS | ConvertFrom-Json
+foreach($runtimeRoot in $runtimeRoots){$trees+=[string]$runtimeRoot}
+foreach($tree in $trees) {
+ if($tree -isnot [string] -or -not $tree){continue}
+ $children=@(Get-ChildItem -LiteralPath $tree -Recurse -Force)
+ if($children.Count -gt 30000){throw 'Runtime inspection bound exceeded'}
+ $items+=@{item=(Get-Item -LiteralPath $tree);kind='protected'}
+ foreach($child in $children){$items+=@{item=$child;kind='protected'}}
+ $ancestor=(Get-Item -LiteralPath $tree).Parent
+ while($null -ne $ancestor){$items+=@{item=$ancestor;kind='ancestor'};$ancestor=$ancestor.Parent}
+}
+}
+$consumed=$env:DIRECTOR_CONSUMED | ConvertFrom-Json
+foreach($file in $consumed){
+ if(-not $file.path){continue}
+ $items+=@{item=(Get-Item -LiteralPath $file.path);kind=$file.kind}
+}
 $parent=$root.Parent
 while($null -ne $parent){$items+=@{item=$parent;kind='ancestor'};$parent=$parent.Parent}
 if($env:DIRECTOR_ISSUER_WORKER -ne '1'){
+ $items+=@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'authorizations'));kind='protected'}
  $items+=@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'public'));kind='public'}
  $items+=@{item=(Get-Item -LiteralPath (Join-Path $root.FullName 'broker'));kind='private'}
  $key=Join-Path $root.FullName 'broker\private.key'
@@ -187,10 +208,13 @@ ConvertTo-Json -InputObject $rows -Depth 6 -Compress
 '''
     exe = str(Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
     env = {"SystemRoot": os.environ["SystemRoot"], "DIRECTOR_ISSUER_ROOT": str(root),
-           "DIRECTOR_ISSUER_WORKER": "1" if worker else "0"}
+           "DIRECTOR_ISSUER_WORKER": "1" if worker else "0",
+           "PSModulePath": str(Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "Modules"),
+           "DIRECTOR_FULL_AUDIT": "1" if full else "0",
+           "DIRECTOR_CONSUMED": json.dumps(list(consumed)), "DIRECTOR_RUNTIME_ROOTS": json.dumps(list(runtime_roots))}
     result = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-Command", script], env=env,
-                            capture_output=True, timeout=15)
-    if result.returncode or len(result.stdout) > 131072:
+                            capture_output=True, timeout=60)
+    if result.returncode or len(result.stdout) > 32_000_000:
         raise IssuerError("Windows ACL inspection failed")
     validate_acl_rows(json.loads(result.stdout), broker_sid=broker_sid, worker_sid=worker_sid)
 
@@ -211,6 +235,7 @@ class Config:
     entrypoint: str | None
     entrypoint_digest: str | None
     model: str
+    runtime_roots: tuple = ()
 
     @classmethod
     def load(cls, path: Path, expected_digest: str):
@@ -220,6 +245,8 @@ class Config:
         cfg = cls(**{**value, "root": Path(value["root"]), "mirror": Path(value["mirror"])})
         if ROLE_PROVIDER.get(cfg.role) != cfg.provider or cfg.worker_sid == cfg.broker_sid:
             raise IssuerError("fixed role or separate native worker identity missing")
+        if not cfg.runtime_roots or any(not Path(p).is_absolute() for p in cfg.runtime_roots):
+            raise IssuerError("complete protected runtime roots required")
         for sid in (cfg.worker_sid, cfg.broker_sid):
             if re.fullmatch(r"S-1-5-21-(?:\d+-){3}\d+", sid) is None:
                 raise IssuerError("dedicated local principal required")
@@ -228,7 +255,14 @@ class Config:
     def identity(self, worker=False):
         if current_sid() != (self.worker_sid if worker else self.broker_sid):
             raise IssuerError("actual Windows principal does not match installed role")
-        verify_boundary(self.root, broker_sid=self.broker_sid, worker_sid=self.worker_sid, worker=worker)
+        verify_boundary(self.root, broker_sid=self.broker_sid, worker_sid=self.worker_sid, worker=worker, runtime_roots=self.runtime_roots)
+
+    def read(self, directory, name, limit=131072, *, worker=False):
+        path = self.root / directory / name
+        verify_boundary(self.root, broker_sid=self.broker_sid, worker_sid=self.worker_sid,
+                        worker=worker, consumed=[{"path": str(path), "kind": directory}],
+                        full=False)
+        return read_json(path, limit)
 
     def command(self):
         paths = [(self.executable, self.executable_digest)]
@@ -257,7 +291,7 @@ def claim(path: Path, identity: str):
 def _job(cfg: Config, job_id: str):
     if not DIGEST.fullmatch(job_id):
         raise IssuerError("invalid challenge ID")
-    value = read_json(cfg.root / "authorizations" / (job_id + ".json"))
+    value = cfg.read("authorizations", job_id + ".json")
     if set(value) != {"base", "context"}:
         raise IssuerError("job can contain only protected base and context")
     context = context_from(value["context"])
@@ -302,8 +336,8 @@ def initialize(cfg: Config):
 def collect(cfg: Config, job_id: str):
     cfg.identity()
     _, context = _job(cfg, job_id)
-    request = read_json(cfg.root / "requests" / (job_id + ".json"), MAX_PACKET * 2)
-    result = read_json(cfg.root / "responses" / (job_id + ".json"), MAX_CAPTURE * 2)
+    request = cfg.read("requests", job_id + ".json", MAX_PACKET * 2)
+    result = cfg.read("responses", job_id + ".json", MAX_CAPTURE * 2)
     # responses is writable only by the fixed worker SID and administrator;
     # unlike an imported session endpoint, the coordinator cannot write here.
     if set(result) != {"request_digest", "worker_sid", "capture", "exit_code"} or result["request_digest"] != digest(canonical(request)) or result["worker_sid"] != cfg.worker_sid:
@@ -353,3 +387,5 @@ def main():
 if __name__ == "__main__":
     main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]

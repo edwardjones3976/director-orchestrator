@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
 """Isolated fixture issuers only; no native login, provider or real signing key."""
 import base64
@@ -173,4 +174,99 @@ class IssuerTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class WindowsBoundaryTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows launcher and ACL behavior")
+    def test_launcher_ignores_caller_module_and_python_environment(self):
+        import sys
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "code" / "director_orchestrator").mkdir(parents=True)
+            (root / "code" / "director_orchestrator" / "__init__.py").write_text("")
+            (root / "code" / "director_orchestrator" / "native_acceptance_issuer.py").write_text("print('PROTECTED_MODULE')")
+            caller = root / "caller"
+            (caller / "director_orchestrator").mkdir(parents=True)
+            (caller / "director_orchestrator" / "__init__.py").write_text("raise RuntimeError('CALLER_IMPORTED')")
+            installer = Path(__file__).resolve().parents[1] / "scripts" / "windows-install-native-issuer.ps1"
+            template = installer.read_text().split('$launcher = @"', 1)[1].split('"@', 1)[0]
+            # Render the actual installed launcher template without installation.
+            for name, value in (("$PythonExecutable", sys.executable), ("$configPath", str(root / "issuer.json")), ("$configDigest", "a"*64), ("$root", str(root))):
+                template = template.replace(name, value)
+            launcher = root / "invoke.ps1"
+            launcher.write_text(template.replace('`$', '$'))
+            env = dict(os.environ, PYTHONPATH=str(caller), PYTHONHOME=str(caller), PYTHONUSERBASE=str(caller))
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(launcher), "-Action", "prepare"], cwd=caller, env=env, capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            self.assertEqual(result.stdout.strip(), b"PROTECTED_MODULE")
+
+    @unittest.skipUnless(os.name == "nt", "Windows ACL behavior")
+    def test_actual_acl_rejects_current_user_owned_installation(self):
+        from director_orchestrator.native_acceptance_issuer import verify_boundary
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("code", "requests", "responses", "cursor-config", "public", "broker", "authorizations"):
+                (root / name).mkdir()
+            (root / "issuer.json").write_text("{}")
+            with self.assertRaisesRegex(IssuerError, "untrusted owner"):
+                verify_boundary(root, broker_sid="S-1-5-21-1-2-3-1001", worker_sid="S-1-5-21-1-2-3-1002", worker=False)
+
+    @unittest.skipUnless(os.name == "nt", "Windows installer ACL behavior")
+    def test_installer_acl_function_rejects_actual_unprotected_runtime(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runtime = root / "runtime.exe"
+            runtime.write_bytes(b"fixture")
+            source = (Path(__file__).resolve().parents[1] / "scripts" / "windows-install-native-issuer.ps1").read_text()
+            function = source.split('function Assert-Protected', 1)[1].split('# Owner must provision', 1)[0]
+            script = root / "check.ps1"
+            script.write_text("$ErrorActionPreference='Stop'\nfunction Assert-Protected" + function + "\nAssert-Protected '" + str(runtime) + "'")
+            env = dict(os.environ, PSModulePath=str(Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "Modules"))
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], env=env, capture_output=True, timeout=20)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"Administrator-owned installation path required", result.stderr)
+
+    @unittest.skipUnless(os.name == "nt", "Windows immutable installer behavior")
+    def test_installer_excludes_ignored_bytecode_and_dirty_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo, destination = root / "repo", root / "installed"
+            repo.mkdir(); destination.mkdir()
+            package = repo / "src" / "director_orchestrator"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("# accepted")
+            (repo / ".gitignore").write_text("__pycache__/\n")
+            git = shutil.which("git")
+            def run(*args):
+                return subprocess.check_output([git, "-C", str(repo), *args], stderr=subprocess.DEVNULL).decode().strip()
+            run("init"); run("add", ".")
+            run("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")
+            head = run("rev-parse", "HEAD")
+            (package / "__pycache__").mkdir()
+            (package / "__pycache__" / "injected.pyc").write_bytes(b"untrusted")
+            (package / "__init__.py").write_text("# dirty")
+            source = (Path(__file__).resolve().parents[1] / "scripts" / "windows-install-native-issuer.ps1").read_text()
+            function = source.split('function Install-TrackedPackage', 1)[1].split('Install-TrackedPackage $GitExecutable', 1)[0]
+            script = root / "install-test.ps1"
+            script.write_text("$ErrorActionPreference='Stop'\nfunction Install-TrackedPackage" + function + "\nInstall-TrackedPackage '" + git + "' '" + str(repo) + "' '" + head + "' '" + str(destination) + "'")
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            self.assertEqual((destination / "director_orchestrator" / "__init__.py").read_text(), "# accepted")
+            self.assertFalse((destination / "director_orchestrator" / "__pycache__").exists())
+
+    def test_consumed_file_owners_and_ancestor_delete_are_enforced(self):
+        from director_orchestrator.native_acceptance_issuer import validate_acl_rows
+        broker, worker = "broker", "worker"
+        for kind, owner in (("requests", broker), ("responses", worker)):
+            row = dict(kind=kind, owner=owner, reparse=False, rules=[])
+            validate_acl_rows([row], broker_sid=broker, worker_sid=worker)
+            row["owner"] = "coordinator"
+            with self.assertRaises(IssuerError):
+                validate_acl_rows([row], broker_sid=broker, worker_sid=worker)
+        row = dict(kind="ancestor", owner="S-1-5-32-544", reparse=False,
+                   rules=[dict(allow=True, inherit_only=False, sid="coordinator", rights=65536)])
+        with self.assertRaises(IssuerError):
+            validate_acl_rows([row], broker_sid=broker, worker_sid=worker)
+
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
