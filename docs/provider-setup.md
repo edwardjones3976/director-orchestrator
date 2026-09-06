@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
@@ -122,6 +123,12 @@ Quota/unavailability and rejected findings are recorded as waste.
 A confirmed defect follows the normal correction path, and any substantive
 Copilot-authored fix makes Copilot a material author ineligible to independently
 review that candidate.
+
+Per-provider profile sheets in `docs/provider-profiles/` are rendered from YAML
+sources and list each lane's variable names, readiness booleans, transports, and
+routes. They mirror this document and the team operating charter, fail the drift
+tests when they diverge, and grant no authority; no value, credential, allowlist
+entry, endpoint, or path is ever recorded in a sheet.
 
 ## Grok primary Cursor-family profile
 
@@ -409,3 +416,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->

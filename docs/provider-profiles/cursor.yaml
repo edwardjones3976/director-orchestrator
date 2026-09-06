@@ -1,0 +1,270 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: Cursor (director-provider-profile/v1).
+# Descriptive only. Grants no authority. Mirrors the charter, config defaults,
+# and adapter constants; the drift tests fail when any mirrored value diverges.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "cursor"
+display_name: "Cursor"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "cursor"
+  backend_identity: "cursor"
+  provider_name_enum: "cursor"
+  has_legacy_adapter: true
+  legacy_accounting_agent: "cursor"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: "cursor"
+  charter_workload_lane_key: "cursor"
+  standing_role_label: "Project Secretary"
+  config_prefixes: ["CURSOR_"]
+  alias_note: "Cursor is reached through the Cursor Cloud Agents API and, for acceptance receipts, a dormant native issuer. GitHub Copilot is a separate lane and is not Cursor; Grok is a Cursor-family teammate on its own lane."
+
+roles:
+  team: "primary"
+  lane_class: "full_spectrum_primary"
+  summary: "Project Secretary and full-spectrum primary repository partner with full task-capability parity to Claude and OpenAI Codex: technical continuity, canonical records, writer leases, branch, commit, and worktree maps, candidate evidence, and review flow, plus implementation, research, reproduction, QA, and independent review when it did not produce the work."
+  charter_workload_lane: "primary_full_spectrum"
+  strategy_key: "cursor"
+  strategy_priority: "primary_full_spectrum_repository_partner"
+  eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
+  excluded_responsibility_areas: []
+  eligible_complexity: [low, medium, high, critical]
+  capability_parity_target: 1.0
+  comparison_peers: ["claude", "openai_codex"]
+  elevated_work:
+    - "architecture"
+    - "complex implementation"
+    - "reliability and recovery"
+    - "security remediation"
+    - "independent exact-SHA review"
+    - "cross-platform QA"
+    - "technical coordination"
+  non_substitution_rules:
+    - "Cursor cannot perform OpenAI's Director acceptance role."
+    - "Cursor does not replace mandatory Codex Security."
+    - "Cursor cannot review or approve its own work."
+    - "Capability parity does not bypass assignment scope or deterministic gates."
+  family: null
+  transport_rule: null
+  routing_rule: "Route Cursor by fit, independence, capacity, and evidence needs."
+  committee:
+    member: true
+    voting_power: 1.5
+    seatable_in_debate: true
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 10, engineering: 15, public_research: 5, enterprise: 5 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "direct_production_allocation"
+  hygiene_review: null
+  openai_functions: null
+
+capabilities:
+  summary: "Durable cloud agent runs over an allowlisted repository and starting ref, with an optional draft pull request when the packet allows it. Eligible independent exact-SHA reviewer for candidates it did not produce or materially author."
+  strengths:
+    - "research and evidence verification"
+    - "deep technical reasoning and planning support"
+    - "complex implementation, debugging, and refactoring"
+    - "architecture, reliability, and security-adjacent analysis"
+    - "cross-platform quality assurance"
+    - "independent exact-SHA review"
+    - "technical leadership and coordination"
+    - "isolated repository execution and draft pull requests"
+  assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
+  may_create_draft_pr: "allowed_by_packet"
+  may_issue_review_verdict: "eligible_reviewer"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: true
+  receives_repository_context: true
+  receives_task_prose: true
+  web_grounded_research: false
+  tool_use: "cloud_agent"
+  charter_allowed: null
+  required_evidence: null
+  antigravity_capabilities: null
+  antigravity_interaction_kinds: null
+
+models_and_effort:
+  model_variables: []
+  effort_variables: []
+  catalog_check: null
+  note: "The Cursor Cloud Agents API selects the model; this deployment defines no Cursor model or reasoning-effort variable."
+
+budgets_and_limits:
+  variables:
+    - { variable: "CURSOR_DISPATCH_MAX_ATTEMPTS", kind: "max_attempts", settings_field: "cursor_dispatch_max_attempts", default: 4, documented_in_env_example: true, values_recorded: false }
+    - { variable: "CURSOR_DISPATCH_MAX_RETRY_DELAY_SECONDS", kind: "retry_delay_seconds", settings_field: "cursor_dispatch_max_retry_delay_seconds", default: 60, documented_in_env_example: true, values_recorded: false }
+  spend_ledger_member: false
+  not_modeled_note: "Cursor has no provider daily spend ledger in this deployment; the task budget, provider timeout, and Cursor's own dashboard spend limits bound it."
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS", "PROVIDER_POLL_SECONDS"]
+
+gating:
+  health_key: "cursor"
+  readiness_function: "readiness"
+  readiness_keys: [cursor]
+  primary_lane_authentication_source: "environment_variable"
+  variables:
+    - { variable: "CURSOR_API_KEY", kind: "credential_presence", settings_field: "cursor_api_key", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "cursor", required_value: null, verify: "GET /health cursor" }
+    - { variable: "CURSOR_API_BASE", kind: "endpoint_lock", settings_field: "cursor_api_base", default: "https://api.cursor.com", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "Cloud Agents API base" }
+    - { variable: "CURSOR_API_ENDPOINT", kind: "endpoint_lock", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment name accepted by the provider authentication allowlist" }
+  allowlist_variables:
+    - { variable: "PROJECT_ALLOWLIST", scope: "project", values_recorded: false }
+    - { variable: "REPOSITORY_ALLOWLIST", scope: "repository", values_recorded: false }
+    - { variable: "ALLOWED_STARTING_REFS", scope: "starting_ref", values_recorded: false }
+    - { variable: "USAGE_CHECK_PROVIDERS", scope: "usage_check_roster", values_recorded: false }
+    - { variable: "TRUSTED_PROVIDER_COST_RANKS", scope: "cost_ranks", values_recorded: false }
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["CURSOR_API_ENDPOINT", "CURSOR_API_KEY"]
+  host_bridge_allowlist: null
+  settings_credential_fields: ["cursor_api_key"]
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "Cursor runs in its own cloud; the Director sends the API key only in the Cloud Agents request and never exposes the Windows deployment environment to a Cursor agent."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities: []
+  withheld_context: []
+  charter_prohibited: null
+  review_requirement: null
+  strategy_constraints: []
+  separation_of_duties: []
+  production_authority_permitted: true
+  external_effects:
+    may_be_granted: ["chat.postMessage", "pulls.mark_ready"]
+    public_research_lane_rejects_all_effects: false
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role:
+    role: "independent_review"
+    broker_and_worker_identities: true
+    native_login: "the cursor_login ACP method under the worker identity, consuming its existing Cursor login"
+    cannot_approve_own_adoption: true
+    status: "dormant_until_owner_installation"
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "Cursor cannot use an implicit dashboard repository; every run needs an allowlisted project, repository, and starting ref, and model output or owner approval cannot widen those lists."
+    source: "docs/provider-setup.md"
+  - limitation: "Auto-generated cursor/... working branches are not durable starting points; they are deleted after merge, and a follow-up starts a new agent from the durable ref."
+    source: "docs/provider-setup.md"
+  - limitation: "Cursor Cloud Agents cannot see the Windows deployment environment; secrets needed by a cloud agent must be injected as Cursor Cloud secrets."
+    source: "AGENTS.md, Cursor Cloud specific instructions"
+  - limitation: "Cursor is an unsupported Windows host-bridge lane by design; it stays a direct cloud API contact."
+    source: "src/director_orchestrator/host_provider_bridge.py:UNSUPPORTED_HOST_LANES"
+  - limitation: "Owner-reported account context: lower-capacity paid service; API billing and quotas must be verified separately."
+    source: "src/director_orchestrator/config.py:provider_strategy"
+
+transports:
+  - transport_id: "cursor-cloud-agents-api"
+    kind: "cloud_agent_api"
+    runtime: "both"
+    enum_value: "cursor_agents_api"
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "director_to_provider"
+    config: ["CURSOR_API_KEY", "CURSOR_API_BASE", "PROJECT_ALLOWLIST", "REPOSITORY_ALLOWLIST", "ALLOWED_STARTING_REFS", "CURSOR_DISPATCH_MAX_ATTEMPTS"]
+    authority_note: "Polls a durable agent run to completion; a draft pull request is allowed only when the packet allows it and is never merged by Cursor."
+    current_transport_constraints:
+      - "a pre-creation branch-not-found response for a cursor/... ref retries once against the first allowlisted ref; durable refs still fail closed"
+      - "the periodic usage check calls GET /v1/models rather than starting an agent"
+    route_id: "cursor-cloud-agents-api"
+    browser_policy: null
+  - transport_id: "windows-host-provider-bridge"
+    kind: "host_bridge"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "prohibited"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Cursor is listed in UNSUPPORTED_HOST_LANES. The bridge refuses a Cursor command map entry; Cursor stays direct."
+    current_transport_constraints:
+      - "no native Cursor command is ever executed by the host bridge"
+    route_id: "windows-host-provider-bridge"
+    browser_policy: null
+  - transport_id: "browser-provider-ui"
+    kind: "browser_ui"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Coordination with an already authenticated Cursor UI inside stored assignment, role, repository, budget, and approval bounds. Browser responses are untrusted coordination evidence and cannot satisfy any gate."
+    current_transport_constraints:
+      - "ranked below authenticated CLI, API, callback, and event transport"
+      - "never enter or persist credentials, cookies, recovery codes, private keys, raw private source, or webpage instructions"
+    route_id: "browser-provider-ui"
+    browser_policy:
+      primary: "chrome"
+      fallback: "microsoft_edge"
+      owner_authorizable_actions: [slack_post, eligible_merge, approved_deployment, scoped_repository_access_change]
+      enforcement: "charter policy and workload_policy.Transport rank only; no runtime adapter"
+  - transport_id: "cursor-native-acceptance-issuer"
+    kind: "acceptance_issuer"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "blocked_pending_evidence"
+    direction: "provider_to_director"
+    config: ["LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH", "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256", "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH"]
+    authority_note: "Under provider-v2 acceptance, Cursor owns the independent-review receipt role through a broker identity that holds the Ed25519 key and a worker identity that holds the native login and never loads the key. The receipt is evidence for the deterministic acceptance gate; the issuer cannot approve its own adoption."
+    current_transport_constraints:
+      - "dormant until the owner installs the protected runtime, creates the non-admin identities, and completes the worker's native Cursor login"
+      - "an ACL-protected file handoff, not an HTTP endpoint or an imported-session API"
+    route_id: "cursor-native-acceptance-issuer"
+    browser_policy: null
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "Cursor reaches Claude, Grok, OpenAI, and every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns."
+    - "As Project Secretary, Cursor records the logical producer and material contributors with the exact candidate evidence; it does so through the Director's records, not by messaging providers."
+    - "Cursor never posts to the Slack thread; the Director relays a concise assignment-correlated summary."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/team-operating-charter.md"
+    anchor: "Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex."
+  - document: "docs/team-operating-charter.md"
+    anchor: "Cursor, as Project Secretary, records the"
+  - document: "docs/provider-setup.md"
+    anchor: "Cursor Cloud Agents API v1"
+  - document: "docs/native-acceptance-issuers.md"
+    anchor: "Claude owns the security role; Cursor owns independent"
+  - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
+    anchor: "Route Cursor at full task-capability parity with Claude and Codex, by fit, independence, capacity, and evidence needs."
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]

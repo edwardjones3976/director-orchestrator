@@ -1,0 +1,235 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: GitHub Copilot (director-provider-profile/v1).
+# Descriptive only. Grants no authority. This lane has no charter role profile,
+# committee seat, standing role, or legacy adapter; the hygiene-review block
+# mirrors the charter's copilot_lite_hygiene_review directive field by field.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "github-copilot"
+display_name: "GitHub Copilot"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "github-copilot"
+  backend_identity: "github-copilot"
+  provider_name_enum: "github-copilot"
+  has_legacy_adapter: false
+  legacy_accounting_agent: "github-copilot"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: null
+  charter_workload_lane_key: null
+  standing_role_label: null
+  config_prefixes: ["COPILOT_", "GH_"]
+  alias_note: "GitHub Copilot is not Cursor and not the Codex security review. The enterprise-profile production lane is distinct from the Copilot Lite hygiene observation; Lite creates no production credit or independent acceptance authority."
+
+roles:
+  team: "lane_only"
+  lane_class: "supplemental_hygiene_reviewer"
+  summary: "Optional supplemental hygiene reviewer with no assigned workload share, range, or ceiling for Lite observations, plus an enterprise-profile production allocation that no legacy adapter can execute. The primary roster lists the lane among its implementers, but the capability validator refuses production authority for every Copilot lane, so the allocation is accounting, not live capability."
+  charter_workload_lane: null
+  strategy_key: null
+  strategy_priority: null
+  eligible_responsibility_areas: []
+  excluded_responsibility_areas: []
+  eligible_complexity: []
+  capability_parity_target: null
+  comparison_peers: []
+  elevated_work: []
+  non_substitution_rules:
+    - "GitHub Copilot Lite is not a team provider, committee member, production-credit lane, independent acceptance reviewer, security gate, or merge authority."
+    - "A confirmed defect blocks through the existing defect and evidence gates, not because Copilot has gating authority."
+  family: null
+  transport_rule: null
+  routing_rule: "Request it only after required checks are green and the exact candidate is frozen; never trigger it automatically on every push."
+  committee:
+    member: false
+    voting_power: null
+    seatable_in_debate: false
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 5, engineering: 0, public_research: 0, enterprise: 10 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "allocation_without_legacy_adapter"
+  hygiene_review:
+    provider_or_committee_member: false
+    workload_percentage: null
+    trigger: "request_after_checks_green_and_exact_candidate_freeze"
+    attempts: "conditional_maximum_three"
+    automatic_every_push: false
+    gating: false
+    authority_granted: []
+    unavailable_or_quota_failure: "record_waste_and_continue_without_inferred_verdict"
+    finding_rule: "validate_independently_block_only_confirmed_defect"
+    rejected_finding_rule: "record_as_waste"
+    candidate_change_rule: "invalidate_the_observation_do_not_auto_rerun"
+    material_fix_authorship_rule: "substantive_fix_makes_copilot_material_author_ineligible_to_review_candidate"
+  openai_functions: null
+
+capabilities:
+  summary: "One requested hygiene observation on a frozen exact candidate through a native, authenticated contact. Findings are validated independently; a rejected finding is waste, and a substantive Copilot-authored fix makes Copilot a material author ineligible to review that candidate."
+  strengths:
+    - "hygiene observations on a frozen exact candidate after required checks are green"
+  assignment_kinds: []
+  may_create_draft_pr: "never"
+  may_issue_review_verdict: "never"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: false
+  receives_repository_context: true
+  receives_task_prose: true
+  web_grounded_research: false
+  tool_use: "hygiene_review_cli"
+  charter_allowed: null
+  required_evidence: null
+  antigravity_capabilities: null
+  antigravity_interaction_kinds: null
+
+models_and_effort:
+  model_variables: []
+  effort_variables: []
+  catalog_check: null
+  note: "No model or reasoning-effort variable exists for GitHub Copilot in this deployment; the native contact uses its own account and model."
+
+budgets_and_limits:
+  variables: []
+  spend_ledger_member: false
+  not_modeled_note: "GitHub Copilot has no per-provider budget or daily spend ledger; quota exhaustion is recorded as waste and never blocks the candidate."
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS"]
+
+gating:
+  health_key: null
+  readiness_function: "none"
+  readiness_keys: []
+  primary_lane_authentication_source: "environment_variable"
+  variables:
+    - { variable: "COPILOT_GITHUB_TOKEN", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment name; presence is observed by transport discovery, never by GET /health" }
+    - { variable: "GH_TOKEN", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane and host-bridge environment name; never recorded here" }
+    - { variable: "GITHUB_TOKEN", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane and host-bridge environment name; never recorded here" }
+    - { variable: "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", kind: "enable_switch", settings_field: "langgraph_primary_live_provider_dispatch_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "GET /health langgraph_primary.live_provider_dispatch_requested" }
+  allowlist_variables:
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+    - { variable: "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", scope: "activation_bindings", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
+  host_bridge_allowlist: ["GH_TOKEN", "GITHUB_TOKEN"]
+  settings_credential_fields: []
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "A native command receives only the base child environment plus the lane's allowlisted credential names; without an authenticated contact the lane fails closed as unavailable."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities: []
+  withheld_context: []
+  charter_prohibited:
+    - "approve, merge, deploy, publish, change permissions, or waive any deterministic evidence"
+  review_requirement: "Independently validate each finding; a confirmed underlying defect blocks through the existing defect and evidence gates."
+  strategy_constraints: []
+  separation_of_duties:
+    - "a substantive Copilot-authored fix makes Copilot a material author ineligible to independently review or accept that candidate"
+  production_authority_permitted: false
+  external_effects:
+    may_be_granted: []
+    public_research_lane_rejects_all_effects: false
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role: null
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "Without an authenticated contact the lane fails closed as unavailable; unavailability or quota exhaustion records no verdict and counts as waste."
+    source: "docs/team-operating-charter.md, GitHub Copilot Lite hygiene review"
+  - limitation: "No provider adapter or automatic routing exists; the legacy registry has no Copilot adapter and the primary capability validator refuses production authority for this lane."
+    source: "src/director_orchestrator/primary_transports.py:PrimaryProviderCapability"
+  - limitation: "A new commit invalidates the observation without automatically requesting a new run."
+    source: "docs/team-operating-charter.md, GitHub Copilot Lite hygiene review"
+  - limitation: "No Copilot variable appears in .env.example or docs/provider-setup.md; the credential names exist only in the primary transport and host-bridge authentication maps."
+    source: "src/director_orchestrator/primary_transports.py:_PROVIDER_AUTH_ENVIRONMENT"
+
+transports:
+  - transport_id: "github-copilot-lite-review"
+    kind: "native_cli"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
+    authority_note: "One requested hygiene observation bound to a frozen exact candidate. Advisory evidence only; it cannot approve, merge, deploy, publish, change permissions, or waive deterministic evidence."
+    current_transport_constraints:
+      - "at most three conditional attempt slots; stop on success, recovery needs temporary failure, a third attempt needs materially new information or a different transport"
+      - "live dispatch stays off until the primary activation gates pass"
+    route_id: "github-copilot-lite-review"
+    browser_policy: null
+  - transport_id: "windows-host-provider-bridge"
+    kind: "host_bridge"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"]
+    authority_note: "GitHub Copilot is a supported host lane for its packet-wrapper command. Configuration alone never makes the lane callable, and production authority is refused regardless of the bridge."
+    current_transport_constraints:
+      - "child environment carries the base safe subset plus GH_TOKEN and GITHUB_TOKEN only"
+    route_id: "windows-host-provider-bridge"
+    browser_policy: null
+  - transport_id: "browser-provider-ui"
+    kind: "browser_ui"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "prohibited"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "GitHub Copilot is not among the charter's eligible browser providers; no browser coordination exists for this lane."
+    current_transport_constraints:
+      - "not in the charter's eligible browser providers"
+    route_id: "browser-provider-ui"
+    browser_policy: null
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "A Copilot finding reaches the producer only as a Director-relayed, independently validated observation; Copilot never addresses another provider."
+    - "Copilot never posts to the Slack thread; the Director records the attempt, format, quota state, validated findings, and any material authorship."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/team-operating-charter.md"
+    anchor: "GitHub Copilot Lite is an optional supplemental hygiene reviewer with no"
+  - document: "docs/provider-setup.md"
+    anchor: "GitHub Copilot Lite is not another provider bridge."
+  - document: "docs/provider-allocation-profiles.md"
+    anchor: "GitHub Copilot's production lane is distinct from Copilot Lite hygiene observations;"
+  - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
+    anchor: "github_copilot_lite:"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]

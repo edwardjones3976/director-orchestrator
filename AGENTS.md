@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
@@ -100,6 +101,16 @@ Before changing orchestration, read `docs/langgraph-transition-plan.md` and `doc
 Gate 0 was accepted by the owner on 2026-08-16 against the checkpoint recorded in Project Uppercut Issue #48. Transition phases remain individually gated: first merge only the accepted documentation/schema authority, then prove adapter fixture conformance, then add a disabled graph skeleton with a separate checkpoint namespace and zero provider dispatch or external write paths. Gate 0 acceptance alone does not start LangGraph or change the current Director's sole-writer authority.
 
 During dual operation, exactly one engine may own provider dispatch and GitHub/Slack side effects for a task. Models cannot remove deterministic policy gates, approve their own work, or treat checkpoint rollback as reversal of an external action.
+
+## Provider profile sheets
+
+`docs/provider-profiles/` holds one descriptive sheet per LangGraph primary lane, rendered from the YAML source beside it (`<lane>.yaml`) and the single route catalog `routes.yaml`, validated by `docs/schemas/director-provider-profile-v1.schema.json`. A sheet describes identity and aliases, roles and allocation, capabilities, models and effort, budgets, gating variables, credential names, authority limits, platform limitations, transports, and every route by which a lane reaches the Director, the owner, or another lane.
+
+- The sheets grant no authority. The charter, configuration defaults, adapter constants, and deterministic policy win whenever a sheet disagrees, and the drift tests fail on that disagreement.
+- Every route and transport carries a status of `authorized | prohibited | proposed` bound to the charter or policy text that decides it, plus a default configuration state that records explicit switches and code blockers, never credential presence; documenting a route never authorizes it.
+- No direct provider-to-provider channel exists. Every exchange between lanes is brokered by the Director through packets, declared dependency outcomes, review handoffs, moderated debate, and the Slack relay.
+- Never write allowlist, key, token, endpoint, path, or owner-identifier values into a sheet; variable names and readiness booleans only.
+- Edit only the YAML, then regenerate with `PYTHONPATH=src python scripts/render_provider_profiles.py --write --contributor <name> --system <system> --at <ISO-8601 UTC>`; verify with `scripts/render_provider_profiles.py --check` and `python -m unittest tests.test_provider_profiles`. Never hand-edit a rendered sheet.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
@@ -107,3 +118,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->

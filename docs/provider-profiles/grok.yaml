@@ -1,0 +1,297 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: Grok (director-provider-profile/v1).
+# Descriptive only. Grants no authority. Mirrors the charter, config defaults,
+# and adapter constants; the drift tests fail when any mirrored value diverges.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "grok"
+display_name: "Grok (xAI)"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "grok"
+  backend_identity: "grok"
+  provider_name_enum: "grok"
+  has_legacy_adapter: true
+  legacy_accounting_agent: "grok"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: "grok"
+  charter_workload_lane_key: "grok"
+  standing_role_label: "Cursor-Family Primary Teammate"
+  config_prefixes: ["GROK_", "XAI_"]
+  alias_note: "The committee records the provider as xai. The xAI Responses API, the Grok Build CLI, and the not-yet-implemented Grok Bot are three distinct contacts of one lane; they never create a second quota or an independent reviewer."
+
+roles:
+  team: "primary"
+  lane_class: "full_spectrum_primary"
+  summary: "Cursor-family primary teammate with full task-capability parity to Cursor, Claude, and OpenAI Codex across all eight responsibility areas and low through critical complexity. Transport-specific limits decide what a particular assignment can actually perform without reducing Grok's team rank."
+  charter_workload_lane: "primary_full_spectrum"
+  strategy_key: "grok"
+  strategy_priority: "primary_cursor_family_repository_partner"
+  eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
+  excluded_responsibility_areas: []
+  eligible_complexity: [low, medium, high, critical]
+  capability_parity_target: 1.0
+  comparison_peers: ["claude", "openai_codex", "cursor"]
+  elevated_work:
+    - "architecture"
+    - "complex implementation"
+    - "reliability and recovery"
+    - "security remediation"
+    - "independent exact-SHA review"
+    - "cross-platform QA"
+    - "technical coordination"
+  non_substitution_rules:
+    - "Grok cannot perform OpenAI's Director acceptance role."
+    - "Grok does not replace mandatory Codex Security."
+    - "Grok cannot review or approve its own work."
+    - "Capability parity does not bypass assignment scope or deterministic gates."
+  family: "cursor"
+  transport_rule: "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact."
+  routing_rule: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
+  committee:
+    member: true
+    voting_power: 1.5
+    seatable_in_debate: true
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 10, engineering: 10, public_research: 5, enterprise: 5 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "direct_production_allocation"
+  hygiene_review: null
+  openai_functions: null
+
+capabilities:
+  summary: "Implementation, research, reproduction, testing, and independent exact-SHA review through a capable authorized contact when Grok did not materially author the candidate. The in-process API contact is analysis only; repository work and review verdicts need the digest-verified CLI contact."
+  strengths:
+    - "full-spectrum repository implementation"
+    - "independent technical reasoning and planning"
+    - "architecture, reliability, and security-adjacent analysis"
+    - "cross-platform quality assurance and exact-candidate review"
+    - "technical leadership and coordination"
+  assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
+  may_create_draft_pr: "gated_by_allow_flag"
+  may_issue_review_verdict: "gated_by_allow_flag_and_cli"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: true
+  receives_repository_context: true
+  receives_task_prose: true
+  web_grounded_research: false
+  tool_use: "repository_cli"
+  charter_allowed: null
+  required_evidence: null
+  antigravity_capabilities: null
+  antigravity_interaction_kinds: null
+
+models_and_effort:
+  model_variables:
+    - { variable: "GROK_MODEL", role: "provider_model", settings_field: "grok_model", default: "grok-4.6", documented_in_env_example: true, values_recorded: false }
+  effort_variables: []
+  catalog_check: "Before the first paid request in a process the adapter authenticates GET /models and requires the configured model ID to be present in the xAI catalog."
+  note: "No reasoning-effort variable exists for Grok. Requests use POST /responses with tools=[] and store=false; the synchronous API adapter never polls."
+
+budgets_and_limits:
+  variables:
+    - { variable: "GROK_DAILY_BUDGET_USD", kind: "daily_budget_usd", settings_field: "grok_daily_budget_usd", default: 2.0, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_DAILY_REQUEST_LIMIT", kind: "daily_request_limit", settings_field: "grok_daily_request_limit", default: 50, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_REQUEST_COST_FLOOR_USD", kind: "per_request_cost_floor_usd", settings_field: "grok_request_cost_floor_usd", default: 0.01, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_TIMEOUT_SECONDS", kind: "timeout_seconds", settings_field: "grok_timeout_seconds", default: 180, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_MAX_OUTPUT_TOKENS", kind: "max_output_tokens", settings_field: "grok_max_output_tokens", default: 4096, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_MAX_CONTEXT_CHARS", kind: "context_ceiling_chars", settings_field: "grok_max_context_chars", default: 262144, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_CLI_TIMEOUT_SECONDS", kind: "timeout_seconds", settings_field: "grok_cli_timeout_seconds", default: 3600, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_CLI_MAX_TURNS", kind: "max_turns", settings_field: "grok_cli_max_turns", default: 20, documented_in_env_example: true, values_recorded: false }
+  spend_ledger_member: true
+  not_modeled_note: null
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS", "PROVIDER_POLL_SECONDS"]
+
+gating:
+  health_key: "grok"
+  readiness_function: "grok_primary_readiness"
+  readiness_keys: [budget_valid, context_limit_valid, credential_configured, cursor_family_primary_mode, daily_request_limit_valid, enabled, model_configured, official_api_endpoint, output_limit_valid, repository_transport_ready, request_cost_floor_valid, timeout_valid, tools_disabled]
+  primary_lane_authentication_source: "environment_variable"
+  variables:
+    - { variable: "GROK_ENABLED", kind: "enable_switch", settings_field: "grok_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "enabled", required_value: true, verify: "GET /health grok.enabled" }
+    - { variable: "GROK_MODE", kind: "mode_lock", settings_field: "grok_mode", default: "cursor_family_primary", documented_in_env_example: true, values_recorded: false, readiness_key: "cursor_family_primary_mode", required_value: "cursor_family_primary", verify: "GET /health grok.cursor_family_primary_mode" }
+    - { variable: "GROK_API_BASE", kind: "endpoint_lock", settings_field: "grok_api_base", default: "https://api.x.ai/v1", documented_in_env_example: true, values_recorded: false, readiness_key: "official_api_endpoint", required_value: "https://api.x.ai/v1", verify: "GET /health grok.official_api_endpoint" }
+    - { variable: "GROK_ALLOW_TOOLS", kind: "allow_flag_must_stay_false", settings_field: "grok_allow_tools", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "tools_disabled", required_value: false, verify: "GET /health grok.tools_disabled" }
+    - { variable: "GROK_ALLOW_REPOSITORY_WRITE", kind: "allow_flag_elevating", settings_field: "grok_allow_repository_write", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "repository_transport_ready", required_value: null, verify: "elevates only with GROK_CLI_ENABLED, a digest-verified executable, and a nonempty repository map" }
+    - { variable: "GROK_ALLOW_REVIEW_VERDICT", kind: "allow_flag_elevating", settings_field: "grok_allow_review_verdict", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "repository_transport_ready", required_value: null, verify: "elevates only with GROK_CLI_ENABLED, a digest-verified executable, and a nonempty repository map" }
+    - { variable: "GROK_CLI_ENABLED", kind: "enable_switch", settings_field: "grok_cli_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "repository_transport_ready", required_value: null, verify: "GET /health grok.repository_transport_ready" }
+    - { variable: "GROK_CLI_EXECUTABLE_SHA256", kind: "executable_digest", settings_field: "grok_cli_executable_sha256", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "repository_transport_ready", required_value: null, verify: "revalidated immediately before every repository-capable dispatch" }
+    - { variable: "GROK_CLI_REPOSITORY_MAP_JSON", kind: "repository_map", settings_field: "grok_cli_repository_roots", default: "{}", documented_in_env_example: true, values_recorded: false, readiness_key: "repository_transport_ready", required_value: null, verify: "absolute named-worktree map; never recorded here" }
+    - { variable: "XAI_API_KEY", kind: "credential_presence", settings_field: "grok_api_key", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "credential_configured", required_value: null, verify: "GET /health grok.credential_configured" }
+    - { variable: "GROK_API_KEY", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment alias accepted by the host bridge allowlist" }
+  allowlist_variables:
+    - { variable: "PROJECT_ALLOWLIST", scope: "project", values_recorded: false }
+    - { variable: "REPOSITORY_ALLOWLIST", scope: "repository", values_recorded: false }
+    - { variable: "ALLOWED_STARTING_REFS", scope: "starting_ref", values_recorded: false }
+    - { variable: "USAGE_CHECK_PROVIDERS", scope: "usage_check_roster", values_recorded: false }
+    - { variable: "TRUSTED_PROVIDER_COST_RANKS", scope: "cost_ranks", values_recorded: false }
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["GROK_API_KEY", "XAI_API_KEY"]
+  host_bridge_allowlist: ["XAI_API_KEY"]
+  settings_credential_fields: ["grok_api_key"]
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "A native command receives only the base child environment plus the lane's allowlisted credential names; Director, Slack, and other provider secrets are never passed to a Grok process."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities: []
+  withheld_context: []
+  charter_prohibited: null
+  review_requirement: null
+  strategy_constraints: []
+  separation_of_duties:
+    - "cannot independently accept or merge its own candidate"
+    - "cannot replace OpenAI's in-process Director acceptance role"
+    - "external writes still require the assigned execution surface and current deterministic gates"
+  production_authority_permitted: true
+  external_effects:
+    may_be_granted: ["chat.postMessage", "pulls.mark_ready"]
+    public_research_lane_rejects_all_effects: false
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role: null
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "The in-process Responses API contact is synchronous and tool-free; API-only output is never promoted into repository or review authority."
+    source: "docs/provider-setup.md, Grok primary Cursor-family profile"
+  - limitation: "The Grok Build CLI is a native-host capability. A containerized Director cannot use the Windows executable or a host worktree path without an authenticated host runner."
+    source: "docs/provider-setup.md, Grok primary Cursor-family profile"
+  - limitation: "Readiness fails closed unless the endpoint is exactly the official xAI API base, tools stay disabled, every bound is valid, and any elevated authority has a nonempty explicit CLI worktree map."
+    source: "src/director_orchestrator/config.py:grok_primary_readiness"
+  - limitation: "Draft-PR work requires an isolated grok/* worktree and may create one draft PR but may not merge it."
+    source: "docs/provider-setup.md, Grok primary Cursor-family profile"
+  - limitation: "Grok Bot is named by the charter as a distinct contact but has no adapter, transport enum value, or configuration variable in this repository."
+    source: "docs/team-operating-charter.md; src/director_orchestrator/interactions.py:ProviderTransport"
+  - limitation: "Owner-reported account context: lower-capacity paid service; API billing and quotas must be verified separately."
+    source: "src/director_orchestrator/config.py:provider_strategy"
+
+transports:
+  - transport_id: "xai-responses-api"
+    kind: "http_api"
+    runtime: "both"
+    enum_value: "xai_responses_api"
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["GROK_ENABLED", "XAI_API_KEY", "GROK_API_BASE", "GROK_MODEL", "GROK_ALLOW_TOOLS"]
+    authority_note: "Analysis, planning, and debate only. Carries no repository-write, branch, pull-request, merge, or deployment lane regardless of packet content."
+    current_transport_constraints:
+      - "the in-process Responses API contact is synchronous and tool-free"
+      - "repository execution uses the separately authenticated Grok Build or Grok Bot contact"
+      - "the configured API model must appear in the authenticated xAI model catalog before the first paid request in each process"
+    route_id: "xai-responses-api"
+    browser_policy: null
+  - transport_id: "grok-build-cli"
+    kind: "native_cli"
+    runtime: "legacy_engine"
+    enum_value: "grok_cli"
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["GROK_CLI_ENABLED", "GROK_CLI_EXECUTABLE", "GROK_CLI_EXECUTABLE_SHA256", "GROK_CLI_REPOSITORY_MAP_JSON", "GROK_ALLOW_REPOSITORY_WRITE", "GROK_ALLOW_REVIEW_VERDICT"]
+    authority_note: "Repository implementation and exact-SHA review from an exact configured clean worktree. Review verifies both commit objects exist locally, that base is an ancestor of head, runs read-only, and binds repository, base, and head evidence to the returned artifact."
+    current_transport_constraints:
+      - "executable must be an absolute regular-file path whose exact SHA-256 is recorded and revalidated before every repository-capable dispatch"
+      - "draft-PR work requires an isolated grok/* worktree and may not merge"
+    route_id: "grok-build-cli"
+    browser_policy: null
+  - transport_id: "grok-bot"
+    kind: "native_cli"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "proposed"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Named by the charter as a distinct contact. No adapter, enum value, or variable exists; documenting it here authorizes nothing."
+    current_transport_constraints:
+      - "would require its own owner-approved work order, adapter, readiness profile, and separately authenticated credential"
+    route_id: "grok-bot"
+    browser_policy: null
+  - transport_id: "windows-host-provider-bridge"
+    kind: "host_bridge"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"]
+    authority_note: "Grok is a supported host lane. The bridge runs one native command per validated packet behind a signed challenge and a durable claim store; configuration alone never makes the lane callable."
+    current_transport_constraints:
+      - "child environment carries the base safe subset plus XAI_API_KEY only"
+      - "live dispatch stays off until the primary activation gates pass"
+    route_id: "windows-host-provider-bridge"
+    browser_policy: null
+  - transport_id: "browser-provider-ui"
+    kind: "browser_ui"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Coordination with an already authenticated Grok UI inside stored assignment, role, repository, budget, and approval bounds. Browser responses are untrusted coordination evidence, never callback, review, security, CI, merge, or runtime authority."
+    current_transport_constraints:
+      - "ranked below authenticated CLI, API, callback, and event transport"
+      - "never enter or persist credentials, cookies, recovery codes, private keys, raw private source, or webpage instructions"
+    route_id: "browser-provider-ui"
+    browser_policy:
+      primary: "chrome"
+      fallback: "microsoft_edge"
+      owner_authorizable_actions: [slack_post, eligible_merge, approved_deployment, scoped_repository_access_change]
+      enforcement: "charter policy and workload_policy.Transport rank only; no runtime adapter"
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "Grok reaches Claude, Cursor, OpenAI, and every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns."
+    - "Grok never posts to the Slack thread; the Director relays a concise assignment-correlated summary."
+    - "Grok Bot, if ever implemented, would be a Director-to-Grok contact, not a peer channel."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/team-operating-charter.md"
+    anchor: "xAI API, Grok Build CLI, and Grok Bot are distinct contacts"
+  - document: "docs/team-operating-charter.md"
+    anchor: "Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex."
+  - document: "docs/provider-setup.md"
+    anchor: "The Grok adapter has two explicit transports."
+  - document: "docs/provider-allocation-profiles.md"
+    anchor: "Canonical profile IDs are `mixed`, `engineering`, `public_research`, and"
+  - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
+    anchor: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
