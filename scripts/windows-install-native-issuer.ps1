@@ -38,6 +38,7 @@ foreach ($sid in @($broker,$worker)) {
 }
 function Assert-Protected([string]$Path) {
     $item = Get-Item -LiteralPath $Path
+    $depth = 0
     while ($null -ne $item) {
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Reparse point forbidden: $($item.FullName)" }
         $acl = Get-Acl -LiteralPath $item.FullName
@@ -45,11 +46,17 @@ function Assert-Protected([string]$Path) {
         if ($owner -notin @('S-1-5-18','S-1-5-32-544')) { throw "Administrator-owned installation path required: $($item.FullName)" }
         foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
             $writes = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+            if ($depth -gt 1) {
+                # Ancestors must not permit replacing protected descendants;
+                # permission to create an unrelated sibling is not replacement.
+                $writes = [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+            }
             if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writes) -and $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544')) {
                 throw "Unprotected runtime path: $($item.FullName)"
             }
         }
         $item = if ($item.PSIsContainer) { $item.Parent } else { $item.Directory }
+        $depth++
     }
 }
 # Owner must provision a protected Python/dependency installation and entire
