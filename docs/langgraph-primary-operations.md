@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]] -->
@@ -562,13 +563,19 @@ packet adapter.
 Each wave concurrently consumes every dependency-ready assignment allowed by
 the configured task, provider, deployment, and write-surface caps. A dependent
 packet is built only after all named upstream result packets are durably accepted.
-Provider exceptions are ambiguous and are never resent. Restart recovery may
-consume still-pending rows but does not redispatch a reserved or settled row.
-For a definitive outcome, each assignment invokes and records exactly three
-attempts. Every configured format/transport pair is used once before deterministic
-reuse. An ambiguous paid dispatch consumes its current attempt and stops the
-assignment immediately for reconciliation; the exact-three rule never authorizes
-a blind resend of an unknown external outcome.
+Unknown provider exceptions are ambiguous and are never resent. Only the trusted
+transport's typed pre-dispatch temporary failure permits recovery. Each assignment
+has at most three attempts and stops immediately on authenticated success. Attempt
+two may reuse a transport after that temporary failure. Attempt three requires a
+different underlying transport category; format changes and HTTP bridge wrappers
+around the same native command do not qualify. The live path has no trusted new
+information input and therefore cannot use that alternative as retry authority.
+The writer-fenced Postgres reservation rechecks the stored prior outcome and
+transport before inserting the next STARTED event, before provider I/O. A prior
+success, active or ambiguous attempt cannot be redispatched after restart. Three
+recorded failures exhaust the assignment route; the assignment fails closed for
+configured fallback or owner routing rather than silently selecting another paid
+provider. An ambiguous paid dispatch stops immediately for reconciliation.
 The graph task is successful only when the deterministic aggregate proves every
 assignment succeeded; a pending, active, ambiguous, failed, or dependency-blocked
 member cannot be reported as successful completion.
@@ -610,3 +617,5 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

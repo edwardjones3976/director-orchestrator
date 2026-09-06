@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -339,7 +340,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             directive["copilot_lite_hygiene_review"]["attempts"],
-            "three_each_configured_format_before_reuse",
+            "conditional_maximum_three",
         )
         self.assertTrue(
             directive["pre_staging"]["required_before_provider_dispatch"]
@@ -1104,7 +1105,7 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
             "distinct deployment profile/state namespace",
             "blocks slack gateway activation",
             "assignment-specific `retry_limit`",
-            "positive expected information gain",
+            "recovery requires temporary failure",
             "never retry an ambiguous slack side effect",
             "do not borrow another deployment's slack app",
             "activation evidence",
@@ -1129,7 +1130,7 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
         profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
         for field in (
             "retry_limit: 3",
-            'additional_attempt_requires: "classified_failure_positive_expected_information_gain_and_new_evidence_corrected_approach_or_different_transport"',
+            'additional_attempt_requires: "second_temporary_failure_third_new_information_or_different_transport"',
             "resource_budget_required: true",
             'ambiguous_slack_side_effect: "do_not_retry_reconcile_first"',
             'exhausted_route: "same_project_durable_transport_never_borrow_another_deployment_surface"',
@@ -1145,8 +1146,8 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
             normalized = " ".join(self.read(surface).split()).lower()
             for phrase in (
                 "assignment-specific `retry_limit`",
-                "positive expected information gain",
-                "corrected approach",
+                "recovery requires temporary failure",
+                "third attempt requires materially new information",
                 "different transport",
                 "never retry an ambiguous slack side effect",
                 "same project's prior durable",
@@ -1234,3 +1235,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

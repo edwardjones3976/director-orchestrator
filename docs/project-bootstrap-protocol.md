@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]] -->
@@ -185,7 +186,7 @@ project-local fit here and link back for authority boundaries.
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
 | Codex Security | independent security evidence for eligible repository changes | product direction, acceptance, merge, or deployment authority |
-| GitHub Copilot Lite | post-green, exact-candidate-frozen unscored reporting-only hygiene observation with exactly three attempt slots | a provider role, production credit, gate, every-push trigger, independent acceptance, or merge authority |
+| GitHub Copilot Lite | post-green, exact-candidate-frozen unscored reporting-only hygiene observation with at most three conditional attempt slots | a provider role, production credit, gate, every-push trigger, independent acceptance, or merge authority |
 
 Each row summarizes the canonical role definitions in
 [`team-operating-charter.md`](team-operating-charter.md#roles).
@@ -261,9 +262,8 @@ external-action authority. Use no skill merely because it exists; select it
 only when its workflow materially improves the active module.
 
 Availability is not a reason to fabricate coverage. Each safe provider contact
-is bounded and recorded under an immutable exact three-attempt assignment
-budget. Invoke each configured provider format/transport once before reuse and
-fail closed when more than three formats are required. Persist every child
+is bounded and recorded under an immutable maximum three-attempt assignment
+budget. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch. Persist every child
 attempt in the append-only Postgres ledger. Resource and cancellation bounds
 remain mandatory. Do not repeat an ambiguous paid dispatch; reconcile the run
 first, and never promote failed output into the final result artifact.
@@ -296,9 +296,7 @@ analysis-only and block Slack gateway activation; they do not justify borrowing
 another deployment's Slack surface.
 
 Slack delivery obeys its immutable assignment-specific `retry_limit` of exactly
-3. Every additional attempt requires a classified failure, positive
-expected information gain, new evidence, a corrected approach, or a different
-transport, and remaining resource budget. Never retry an ambiguous Slack side
+3. Stop on success. Recovery requires temporary failure; a third attempt requires materially new information or substantially different transport, with remaining resource budget. Never retry an ambiguous Slack side
 effect; reconcile it first. When the bounded route is exhausted,
 continue through the same project's prior durable SQLite/API state and
 provider-native evidence. Do not route through another deployment's app,
@@ -391,9 +389,8 @@ merge gates. A changed candidate restarts this evidence chain.
 After required checks are green and the exact candidate is frozen, the Director
 may request a GitHub Copilot Lite hygiene observation. It has no assigned
 workload share, range, or ceiling, no provider adapter or automatic routing,
-and no production credit, gate, or action authority. A request binds exactly
-three attempt slots and exercises each configured eligible format once before
-reuse. Without
+and no production credit, gate, or action authority. A request binds
+at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch. Without
 an authenticated contact it fails closed as unavailable; do not automate it on every push. A quota or
 availability failure and every rejected finding count as waste. Validate each
 finding independently and block only for a confirmed underlying defect. A new
@@ -411,7 +408,7 @@ failures. Never invent or blend missing cost telemetry.
 ## Minimal integration fix lane
 
 Before opening a new correction assignment, check whether the defect qualifies
-for the exactly-three-attempt minimal-fix procedure in
+for the up-to-three-attempt minimal-fix procedure in
 [`team-operating-charter.md`](team-operating-charter.md#minimal-integration-fix-procedure).
 Use it only for a tiny, unambiguous, reversible, mechanically correctable
 surface with an already-established expected result and an existing focused
@@ -515,3 +512,5 @@ project-specific control.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

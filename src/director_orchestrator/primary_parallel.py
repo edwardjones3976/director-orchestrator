@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -36,6 +37,9 @@ from .langgraph_postgres import (
 )
 
 
+from .workload_policy import FailureKind, RetryRequest, Transport, evaluate_retry
+
+
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _SAFE_SURFACE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$")
@@ -44,6 +48,112 @@ _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 
 class ParallelDispatchError(RuntimeError):
     """The plan or durable dispatch state failed closed."""
+
+
+class ProviderTransientDispatchError(RuntimeError):
+    """Trusted temporary rejection known to occur before any paid dispatch.
+
+    Never use for timeouts or errors with uncertain provider acceptance.
+    """
+
+
+PROVIDER_TRANSIENT_TRANSPORT_FAILURE = "provider_transient_transport_failure"
+PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE = "provider_retry_requires_transient_failure"
+PROVIDER_RETRY_EVIDENCE_INSUFFICIENT = "provider_retry_evidence_insufficient"
+PROVIDER_ATTEMPT_BUDGET_EXHAUSTED = "provider_attempt_budget_exhausted"
+
+_TRANSPORT_BY_ID = {
+    "api": Transport.PROVIDER_API,
+    "responses-api": Transport.PROVIDER_API,
+    "work-iq-rest-production": Transport.PROVIDER_API,
+    "cli": Transport.LOCAL_CLI,
+    "native-cli": Transport.LOCAL_CLI,
+    "public-search-cli": Transport.LOCAL_CLI,
+    # The authenticated bridge executes the same configured Windows command.
+    # Its HTTP envelope is not a different underlying provider execution mode.
+    "authenticated-windows-host-bridge": Transport.LOCAL_CLI,
+    "browser": Transport.BROWSER,
+    "packet-boundary-adapter": Transport.DIRECTOR_ADAPTER,
+}
+
+
+def provider_transport_kind(transport_id: str) -> Transport:
+    """Map a roster transport id to the shared workload transport vocabulary."""
+
+    try:
+        return _TRANSPORT_BY_ID[transport_id]
+    except KeyError as exc:
+        raise ParallelDispatchError("provider_retry_transport_unknown") from exc
+
+
+def classify_provider_dispatch_exception(exc: BaseException) -> FailureKind:
+    """Classify dispatch exceptions without treating provider prose as authority."""
+
+    if isinstance(exc, ProviderTransientDispatchError):
+        return FailureKind.TRANSIENT
+    return FailureKind.AMBIGUOUS_PAID_DISPATCH
+
+
+def classify_provider_result_failure(result: Mapping[str, Any]) -> FailureKind:
+    """Classify authenticated packet results; non-success is terminal."""
+
+    if result.get("status") == "SUCCEEDED":
+        return FailureKind.NONE
+    return FailureKind.TERMINAL
+
+
+def authorize_provider_retry(
+    *,
+    attempt_number: int,
+    previous_failure: FailureKind,
+    transport_id: str,
+    previous_transport_id: str | None,
+) -> tuple[bool, str]:
+    """Fail closed unless typed evidence authorizes the next roster slot."""
+
+    if attempt_number <= 1:
+        return False, "primary_attempt_has_no_recovery_predecessor"
+    if previous_failure is FailureKind.AMBIGUOUS_PAID_DISPATCH:
+        return False, "ambiguous_paid_dispatch_must_not_be_repeated"
+    if previous_failure is not FailureKind.TRANSIENT:
+        return False, PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE
+    try:
+        transport = provider_transport_kind(transport_id)
+        previous_transport = (
+            provider_transport_kind(previous_transport_id)
+            if previous_transport_id is not None
+            else None
+        )
+    except ParallelDispatchError:
+        return False, "provider_retry_transport_unknown"
+    transport_changed = (
+        previous_transport is not None and transport != previous_transport
+    )
+    decision = evaluate_retry(
+        RetryRequest(
+            attempt_number=attempt_number,
+            retry_limit=3,
+            previous_failure=previous_failure,
+            transport=transport,
+            previous_transport=previous_transport,
+            materially_new_information=False,
+            corrected_approach=False,
+            positive_expected_information_gain=transport_changed,
+        )
+    )
+    if not decision.allowed:
+        code = (
+            decision.violations[0]
+            if decision.violations
+            else "provider_retry_not_authorized"
+        )
+        return False, code
+    # Browser priority ranks transport preference; it does not invalidate
+    # otherwise sufficient retry evidence. Every other advisory stays closed.
+    if any(advisory != "browser_transport_enabled_at_lowest_priority"
+           for advisory in decision.advisories):
+        return False, PROVIDER_RETRY_EVIDENCE_INSUFFICIENT
+    return True, "provider_retry_authorized"
 
 
 class ParallelAssignmentStatus(StrEnum):
@@ -652,7 +762,7 @@ class PostgresParallelDispatch:
                 held = self._row(
                     connection,
                     f"""
-                    SELECT provider_id, status, attempt_digest
+                    SELECT provider_id, status, attempt_digest, reason_code, transport_id
                     FROM {schema}.director_primary_provider_attempt
                     WHERE task_id = %(task_id)s
                       AND assignment_id = %(assignment_id)s
@@ -667,6 +777,8 @@ class PostgresParallelDispatch:
                 if held is not None:
                     if str(held["provider_id"]) != reservation.provider_id:
                         raise ParallelDispatchError("provider attempt identity changed")
+                    if str(held["status"]) == "SUCCEEDED":
+                        raise ParallelDispatchError("successful provider attempt must not be repeated")
                     if str(held["status"]) == "STARTED":
                         raise ParallelDispatchError(
                             "provider attempt reconciliation required before redispatch"
@@ -691,6 +803,20 @@ class PostgresParallelDispatch:
                         maximum = int(cursor.fetchone()["ordinal"])
                     if attempt_ordinal != maximum + 1:
                         raise ParallelDispatchError("provider attempt ordinal is not next")
+                    previous_failure = (
+                        FailureKind.TRANSIENT
+                        if str(held["status"]) == "FAILED"
+                        and str(held["reason_code"]) == PROVIDER_TRANSIENT_TRANSPORT_FAILURE
+                        else FailureKind.TERMINAL
+                    )
+                    authorized, reason = authorize_provider_retry(
+                        attempt_number=attempt_ordinal,
+                        previous_failure=previous_failure,
+                        transport_id=transport_id,
+                        previous_transport_id=str(held["transport_id"]),
+                    )
+                    if not authorized:
+                        raise ParallelDispatchError(reason)
                 elif attempt_ordinal != 1:
                     raise ParallelDispatchError("first provider attempt ordinal must be one")
                 binding = self._row(
@@ -1327,3 +1453,5 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

@@ -1,10 +1,10 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | BEGIN]] -->
 # Minimal integration fix record
 
 Use only for a trivial, unambiguous, reversible correction whose expected state
 is already established and whose correctness an existing focused check can
-prove. Pre-stage exactly three attempts and exercise each configured eligible
-correction format once before reuse. If an attempt expands or requires
+prove. Pre-stage at most three conditional attempts. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch. If an attempt expands or requires
 interpretation, stop and use the normal bounded assignment workflow.
 
 ```text
@@ -29,3 +29,5 @@ serious-safety signal. A changed reviewable candidate invalidates all evidence
 bound to its predecessor and must continue through fresh independent review,
 security, CI, and merge gates.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:05 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

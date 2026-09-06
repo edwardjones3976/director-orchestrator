@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
@@ -90,9 +91,7 @@ project profile. Evidence is recorded without secret values.
 ## Communication fallback
 
 Each Slack delivery obeys its immutable assignment-specific `retry_limit` of
-exactly 3. Every additional attempt requires a classified failure, positive
-expected information gain, new evidence, a corrected approach, or a different
-transport, plus remaining resource budget. Never retry an ambiguous Slack side
+exactly 3. Stop on success. Recovery requires temporary failure; a third attempt requires materially new information or substantially different transport, with remaining resource budget. Never retry an ambiguous Slack side
 effect; reconcile it first. When the bounded route is exhausted, use
 the same project's prior durable communication path—SQLite/API task state and
 provider-native run/session evidence. Do not borrow another deployment's Slack
@@ -117,3 +116,5 @@ app, channel, thread, credentials, profile, or state namespace as a fallback.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

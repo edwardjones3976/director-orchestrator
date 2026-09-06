@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
@@ -311,7 +312,7 @@ class PostgresAdmissionTests(unittest.TestCase):
         first = self.attempt(reservation, task[1])
         self.parallel.record_provider_attempt(attempt=first, writer=task[1],
             status=ParallelAssignmentStatus.FAILED, result_digest=DIGEST,
-            reason_code="authenticated_failure")
+            reason_code="provider_transient_transport_failure")
         self.parallel = PostgresParallelDispatch(self.handle.claim_store)
         second = self.attempt(reservation, task[1], 2)
         self.assertEqual(self.count("director_primary_workload_assignment"), 20)
@@ -357,3 +358,5 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

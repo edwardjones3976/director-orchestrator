@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:28 UTC | BEGIN]]
@@ -6,8 +7,13 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from director_orchestrator.primary_parallel import (
+    authorize_provider_retry,
+    ProviderTransientDispatchError,
+    provider_transport_kind,
     canonical_write_surface,
     ParallelAssignment,
     ParallelDispatchError,
@@ -18,6 +24,8 @@ from director_orchestrator.primary_parallel import (
     write_surfaces_overlap,
 )
 
+
+from director_orchestrator.workload_policy import FailureKind, Transport
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -173,6 +181,146 @@ class ParallelPlanValidationTests(unittest.TestCase):
         self.assertEqual(assignments, validate_assignment_dag(assignments))
 
 
+class ProviderRetryAuthorizationTests(unittest.TestCase):
+    def test_browser_priority_does_not_block_supported_transport_change(self) -> None:
+        for ordinal in (2, 3):
+            with self.subTest(ordinal=ordinal):
+                allowed, reason = authorize_provider_retry(
+                    attempt_number=ordinal, previous_failure=FailureKind.TRANSIENT,
+                    previous_transport_id="api", transport_id="browser")
+                self.assertTrue(allowed)
+                self.assertEqual(reason, "provider_retry_authorized")
+
+    def test_browser_priority_does_not_supply_missing_evidence(self) -> None:
+        for ordinal in (3,):
+            for previous, failure, expected in (
+                ("browser", FailureKind.TRANSIENT, "provider_retry_evidence_insufficient"),
+                ("api", FailureKind.AMBIGUOUS_PAID_DISPATCH,
+                 "ambiguous_paid_dispatch_must_not_be_repeated"),
+            ):
+                with self.subTest(ordinal=ordinal, failure=failure):
+                    allowed, reason = authorize_provider_retry(
+                        attempt_number=ordinal, previous_failure=failure,
+                        previous_transport_id=previous, transport_id="browser")
+                    self.assertFalse(allowed)
+                    self.assertEqual(reason, expected)
+
+    def test_unknown_retry_advisory_remains_blocking(self) -> None:
+        with patch("director_orchestrator.primary_parallel.evaluate_retry",
+                   return_value=SimpleNamespace(allowed=True, violations=(), advisories=(
+                       "browser_transport_enabled_at_lowest_priority", "unknown_advisory"))):
+            allowed, reason = authorize_provider_retry(
+                attempt_number=3, previous_failure=FailureKind.TRANSIENT,
+                previous_transport_id="api", transport_id="browser")
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "provider_retry_evidence_insufficient")
+
+    def test_transient_failure_with_changed_transport_authorizes_recovery(self) -> None:
+        allowed, reason = authorize_provider_retry(
+            attempt_number=2,
+            previous_failure=FailureKind.TRANSIENT,
+            transport_id="cli",
+            previous_transport_id="api",
+        )
+        self.assertTrue(allowed)
+        self.assertEqual("provider_retry_authorized", reason)
+
+    def test_terminal_failure_and_ambiguity_never_authorize_retry(self) -> None:
+        for failure in (FailureKind.TERMINAL, FailureKind.AMBIGUOUS_PAID_DISPATCH):
+            with self.subTest(failure=failure):
+                allowed, reason = authorize_provider_retry(
+                    attempt_number=2,
+                    previous_failure=failure,
+                    transport_id="cli",
+                    previous_transport_id="api",
+                )
+                self.assertFalse(allowed)
+                if failure is FailureKind.AMBIGUOUS_PAID_DISPATCH:
+                    self.assertEqual(
+                        "ambiguous_paid_dispatch_must_not_be_repeated", reason
+                    )
+                else:
+                    self.assertEqual(
+                        "provider_retry_requires_transient_failure", reason
+                    )
+
+    def test_third_attempt_requires_transport_change(self) -> None:
+        allowed, reason = authorize_provider_retry(
+            attempt_number=3,
+            previous_failure=FailureKind.TRANSIENT,
+            transport_id="api",
+            previous_transport_id="api",
+        )
+        self.assertFalse(allowed)
+        self.assertEqual("provider_retry_evidence_insufficient", reason)
+
+    def test_unknown_transport_ids_never_authorize_recovery(self) -> None:
+        for ordinal in (2, 3):
+            for previous, current in (
+                ("unknown-a", "unknown-b"),
+                ("api", "unknown-b"),
+                ("unknown-a", "cli"),
+            ):
+                with self.subTest(ordinal=ordinal, previous=previous, current=current):
+                    allowed, reason = authorize_provider_retry(
+                        attempt_number=ordinal,
+                        previous_failure=FailureKind.TRANSIENT,
+                        transport_id=current,
+                        previous_transport_id=previous,
+                    )
+                    self.assertFalse(allowed)
+                    self.assertEqual("provider_retry_transport_unknown", reason)
+
+    def test_live_transport_kinds_use_underlying_execution_categories(self) -> None:
+        for name, expected in (
+            ("responses-api", Transport.PROVIDER_API),
+            ("work-iq-rest-production", Transport.PROVIDER_API),
+            ("native-cli", Transport.LOCAL_CLI),
+            ("public-search-cli", Transport.LOCAL_CLI),
+            ("authenticated-windows-host-bridge", Transport.LOCAL_CLI),
+        ):
+            with self.subTest(name=name):
+                self.assertIs(provider_transport_kind(name), expected)
+        for ordinal in (2, 3):
+            allowed, reason = authorize_provider_retry(
+                attempt_number=ordinal, previous_failure=FailureKind.TRANSIENT,
+                previous_transport_id="responses-api", transport_id="native-cli")
+            self.assertTrue(allowed)
+            self.assertEqual(reason, "provider_retry_authorized")
+
+    def test_live_aliases_and_bridge_wrappers_do_not_supply_new_evidence(self) -> None:
+        for aliases in (
+            ("api", "responses-api", "work-iq-rest-production"),
+            ("cli", "native-cli", "public-search-cli", "authenticated-windows-host-bridge"),
+        ):
+            for previous in aliases:
+                for current in aliases:
+                    for ordinal in (3,):
+                        with self.subTest(previous=previous, current=current, ordinal=ordinal):
+                            allowed, reason = authorize_provider_retry(
+                                attempt_number=ordinal,
+                                previous_failure=FailureKind.TRANSIENT,
+                                previous_transport_id=previous, transport_id=current)
+                            self.assertFalse(allowed)
+                            self.assertEqual(reason, "provider_retry_evidence_insufficient")
+
+    def test_third_attempt_accepts_distinct_supported_transport_only(self) -> None:
+        allowed, reason = authorize_provider_retry(
+            attempt_number=3,
+            previous_failure=FailureKind.TRANSIENT,
+            transport_id="cli",
+            previous_transport_id="api",
+        )
+        self.assertTrue(allowed)
+        self.assertEqual("provider_retry_authorized", reason)
+
+    def test_transient_dispatch_error_is_a_typed_recovery_signal(self) -> None:
+        self.assertIsInstance(
+            ProviderTransientDispatchError("temporary outage"),
+            ProviderTransientDispatchError,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -183,3 +331,5 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
