@@ -1,0 +1,56 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]]
+name: Isolated CI acceptance issuer
+on:
+  workflow_dispatch:
+    inputs:
+      context_json:
+        description: Complete issued v2 ReviewContext JSON (data only)
+        required: true
+        type: string
+      candidate_run_id:
+        required: true
+        type: string
+      candidate_run_attempt:
+        required: true
+        type: string
+permissions: {}
+jobs:
+  issue:
+    # Adoption requires separately reviewed immutable workflow/source pins and
+    # protected environment provisioning. No candidate checkout or dependencies.
+    if: vars.CI_ISSUER_ADOPTED == 'true'
+    environment: ci-acceptance-issuer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ vars.CI_ISSUER_SOURCE_SHA }}
+          persist-credentials: false
+      - name: Check separately adopted issuer source
+        env:
+          TRUSTED_SOURCE: ${{ vars.CI_ISSUER_SOURCE_SHA }}
+        run: |
+          [[ "$TRUSTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SOURCE"
+      - name: Install issuer dependencies only
+        run: python -m pip install 'PyJWT==2.10.1' 'cryptography==45.0.6'
+      - name: Observe CI and issue ephemeral receipt
+        env:
+          PYTHONPATH: src
+          CI_ISSUER_POLICY_JSON: ${{ vars.CI_ISSUER_POLICY_JSON }}
+          CI_REVIEW_CONTEXT_JSON: ${{ inputs.context_json }}
+          CI_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CI_CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m director_orchestrator.ci_acceptance_issuer --output ci-receipt.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-acceptance-receipt
+          path: ci-receipt.json
+          retention-days: 1
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]]
