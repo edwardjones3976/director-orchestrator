@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
@@ -53,9 +54,12 @@ def _pairs(pairs):
 
 
 def read_json(path: Path, limit=131072):
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
-        raise IssuerError("invalid bounded input")
-    return json.loads(path.read_bytes(), object_pairs_hook=_pairs)
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+            raise IssuerError("invalid bounded input")
+        return json.loads(path.read_bytes(), object_pairs_hook=_pairs)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise IssuerError("invalid bounded input") from None
 
 
 def write_new(path: Path, value):
@@ -395,3 +399,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]

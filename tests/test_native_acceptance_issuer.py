@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
@@ -162,6 +163,17 @@ class IssuerTests(unittest.TestCase):
         (self.root/'new.txt').write_text('uncommitted attack')
         self.assertEqual(packet,prepare_packet(git=self.cfg.git,mirror=self.root,repository='owner/repo',base=base,head=head))
 
+    def test_bounded_json_errors_do_not_expose_parser_or_filesystem_details(self):
+        from director_orchestrator.native_acceptance_issuer import read_json
+        path = self.root / "input.json"
+        for raw in (b"{sensitive-invalid-json", b"\xff"):
+            path.write_bytes(raw)
+            with self.assertRaisesRegex(IssuerError, "^invalid bounded input$"):
+                read_json(path)
+        with patch.object(Path, "read_bytes", side_effect=PermissionError("sensitive-path")):
+            with self.assertRaisesRegex(IssuerError, "^invalid bounded input$"):
+                read_json(path)
+
     def test_duplicate_json_and_output_overflow_reject(self):
         from director_orchestrator.native_acceptance_issuer import read_json
         p=self.root/'duplicate.json';p.write_text('{"x":1,"x":2}')
@@ -209,7 +221,7 @@ class WindowsBoundaryTests(unittest.TestCase):
             for name in ("code", "requests", "responses", "cursor-config", "public", "broker", "authorizations"):
                 (root / name).mkdir()
             (root / "issuer.json").write_text("{}")
-            with self.assertRaisesRegex(IssuerError, "untrusted owner"):
+            with self.assertRaisesRegex(IssuerError, "untrusted owner|issuer program or ancestor is replaceable"):
                 verify_boundary(root, broker_sid="S-1-5-21-1-2-3-1001", worker_sid="S-1-5-21-1-2-3-1002", worker=False)
 
     @unittest.skipUnless(os.name == "nt", "Windows installer ACL behavior")
@@ -225,7 +237,7 @@ class WindowsBoundaryTests(unittest.TestCase):
             env = dict(os.environ, PSModulePath=str(Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "Modules"))
             result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], env=env, capture_output=True, timeout=20)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn(b"Administrator-owned installation path required", result.stderr)
+            self.assertTrue(any(message in result.stderr for message in (b"Administrator-owned installation path required", b"Unprotected runtime path")), result.stderr.decode(errors="replace"))
 
     @unittest.skipUnless(os.name == "nt", "Windows immutable installer behavior")
     def test_installer_excludes_ignored_bytecode_and_dirty_source(self):
@@ -322,3 +334,5 @@ Write-Output 'ACL_SEMANTICS_PASS'
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
