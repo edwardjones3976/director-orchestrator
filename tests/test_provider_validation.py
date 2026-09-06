@@ -1,4 +1,5 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict,replace
@@ -46,6 +47,17 @@ def raw_native():
 
 
 class NativeCaptureTests(unittest.TestCase):
+    def test_installed_runtime_inventory_detects_nested_dependency_change(self):
+        from director_orchestrator.provider_validation import pinned_path_manifest
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/"lib").mkdir();dep=root/"lib/adapter.py"
+            dep.write_text("before")
+            before=pinned_path_manifest(directory)
+            dep.write_text("after")
+            self.assertNotEqual(before,pinned_path_manifest(directory))
+            (root/"lib/new.py").write_text("new")
+            self.assertEqual(len(pinned_path_manifest(directory)),2)
+
     def test_generic_antigravity_capture_cannot_qualify_team_worker(self):
         with self.assertRaisesRegex(ValidationError,"team SSH"):
             normalize_capture("antigravity",work_packet(),raw_native())
@@ -107,6 +119,67 @@ class PostgresValidationTests(unittest.TestCase):
         evidence=self.store.settle(admission,raw,capture)
         verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
         return admission,capture,evidence,verifier
+
+    def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
+        import time
+        from types import SimpleNamespace
+        from tests.test_antigravity_team import grant
+        from tests import test_entitlement_control_plane as fixtures
+        from director_orchestrator.antigravity_team import SourceBlob
+        from director_orchestrator.antigravity_team_worker import sign,DENIED
+        from director_orchestrator.entitlement_contracts import document_digest
+        from director_orchestrator.provider_validation_team import TeamValidationRoute,SYNTHETIC_SOURCE
+        work=work_packet()
+        work["project"]="uppercut"
+        g=grant(task_id=work["task_id"],assignment_id=work["assignment_id"],project_id=work["project"],
+            repository=work["repository"],commit=CANDIDATE,tree=TREE,packet_digest=digest(canonical_json_bytes(work)),
+            operation="review",review_base=CANDIDATE,writable_paths=(),commands=(),
+            binding_digest=digest(canonical_json_bytes(asdict(binding("antigravity")))) ,
+            source=tuple(SourceBlob(path=p,sha256=digest(b)) for p,b in SYNTHETIC_SOURCE.items()))
+        worker_key=b"w"*32
+        calls=[]
+        class Worker:
+            def prepare(inner,**kw):
+                inner.prepared=dict(kw,binding_digest=g.binding_digest,workspace_id=g.workspace_id,
+                    containment_evidence_digest="d"*64,expires_at=g.expires_at.isoformat(),
+                    denied_access=sorted(DENIED),authentication_mode="native-account")
+                return sign(worker_key,inner.prepared)
+            def exchange(inner,**kw):
+                self.assertEqual(kw["source"],SYNTHETIC_SOURCE)
+                kw["before_execute"]();calls.append(True)
+                result=normalize_capture("claude",work,raw_native())
+                result.update(provider="antigravity",checks=[])
+                stream=[{"event":"init","conversation_id":"native-fixture","init":{"cwd":"/isolated/native","model":g.model}},
+                    {"event":"result","result":{"conversation_id":"native-fixture","status":"SUCCESS",
+                    "structured_output":{"packet":result,"returned_files":[]},"usage":{"total_tokens":1}}}]
+                evidence={k:getattr(g,k) for k in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id")}
+                evidence.update(grant_digest=g.digest,attempt_digest=inner.prepared["attempt_digest"],packet_digest=g.packet_digest,
+                    native_project_id=g.native_project_id,native_identity_observations={"requested_project_id":g.native_project_id,"observed_project_id":None,"observed_account_id":None},
+                    authentication_mode="native-account",cwd="/isolated/native",source_manifest_digest=document_digest({"source":[b.model_dump() for b in g.source]}),
+                    containment_evidence_digest="d"*64,native_stream="\n".join(json.dumps(e) for e in stream),exit_code=0,
+                    challenge=kw["challenge"],changed_files=[],returned_files=[],executed_commands=[],checks=[],
+                    completed_at=datetime.now(timezone.utc).isoformat(),native_state_manifest_after={})
+                return sign(worker_key,evidence)
+            def close(inner):pass
+        route=TeamValidationRoute(grant=g,owner_secret=fixtures.OWNER_SECRET,worker_secret=worker_key,
+            worker_factory=lambda g:Worker(),configuration_digest=lambda:"c"*64)
+        generation=secrets.token_hex(32)
+        self.store.create_generation(generation=generation,candidate=CANDIDATE,tree=TREE,owner_token=OWNER,
+            expires_at=int(time.time())+600,budget_units=2,lanes={"antigravity":{
+            "binding":asdict(binding("antigravity")),"configuration_digest":"c"*64,"cost_units":2,"work_packet":work}})
+        service=ValidationBridgeService(store=self.store,production_executor=None,capture_key=KEY,owner_token=OWNER,
+            account_files={},team_route=route)
+        request=ValidationRequest(generation=generation,provider="antigravity")
+        result=service.run(request,OWNER)
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation,team_route=route)
+        self.assertTrue(verifier.verify(binding("antigravity"),result["evidence_digest"]))
+        with self.assertRaisesRegex(ValidationError,"already admitted"):service.run(request,OWNER)
+        self.assertEqual(len(calls),1)
+        stored=self.store.load_capture(result["evidence_digest"])
+        with self.assertRaisesRegex(ValidationError,"another reservation"):
+            make_capture({"provider":"antigravity","packet":bytes(stored[1]),"reservation":"f"*64},bytes(stored[2]),capture_key=KEY,team_route=route)
+        with patch.object(route,"worker_secret",b"bad"*12):
+            self.assertFalse(verifier.verify(binding("antigravity"),result["evidence_digest"]))
 
     def test_capture_valid_and_reusable_for_two_surfaces_without_second_execution(self):
         admission,capture,evidence,verifier=self.completed()
@@ -218,4 +291,6 @@ class PostgresValidationTests(unittest.TestCase):
 
 
 if __name__=="__main__":unittest.main()
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
+
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]

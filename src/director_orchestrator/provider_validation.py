@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 """Dedicated provider canaries: durable admission and captured execution evidence.
 
@@ -151,8 +152,9 @@ class PostgresValidationStore:
             reservation, nonce = secrets.token_hex(32), secrets.token_hex(32)
             work = dict(spec["work_packet"])
             # Unique canary identity prevents accidental reuse of a production task.
-            work.update(task_id="VALIDATION-"+reservation, assignment_id="VALIDATION-"+reservation,
-                        idempotency_key="VALIDATION-"+reservation)
+            if request.provider != "antigravity":
+                work.update(task_id="VALIDATION-"+reservation, assignment_id="VALIDATION-"+reservation,
+                            idempotency_key="VALIDATION-"+reservation)
             raw = canonical_json_bytes(work)
             db.execute(f"UPDATE {SCHEMA}.generations SET reserved_units=reserved_units+%s WHERE generation=%s",
                        (spec["cost_units"],request.generation))
@@ -225,10 +227,11 @@ class PostgresValidationStore:
 
 class CaptureVerifier:
     def __init__(self, store: PostgresValidationStore, *, capture_key: str,
-                 candidate: str, generation: str):
+                 candidate: str, generation: str, team_route=None):
         if len(capture_key) < 32:
             raise ValueError("dedicated bridge capture key is required")
         self.store,self.key,self.candidate,self.generation=store,capture_key,candidate,generation
+        self.team_route=team_route
 
     def verify(self, binding: ProviderActivationBinding, evidence_digest: str, *, expires_at=None) -> bool:
         try:
@@ -244,7 +247,9 @@ class CaptureVerifier:
                     or digest(canonical_json_bytes(asdict(capture))) != evidence_digest
                     or (expires_at is not None and expires_at.timestamp() > capture.expires_at)):
                 return False
-            result = normalize_capture(capture.provider,json.loads(bytes(row[1])),bytes(row[2]))
+            if capture.provider == "antigravity" and json.loads(bytes(row[2])).get("attempt_digest") != "sha256:"+capture.reservation:
+                return False
+            result = normalize_capture(capture.provider,json.loads(bytes(row[1])),bytes(row[2]),team_route=self.team_route)
             if digest(canonical_json_bytes(result)) != capture.result_digest or result["run_reference"] != capture.native_session:
                 return False
             expected = hmac.new(self.key.encode(),canonical_json_bytes(capture.payload()),hashlib.sha256).hexdigest()
@@ -262,18 +267,21 @@ def capture_verifier_from_environment(*, candidate: str = "", tree: str = ""):
         raise ValidationError("validation candidate differs from runtime pin")
     if not tree or tree != os.environ["DIRECTOR_PROVIDER_VALIDATION_TREE"]:
         raise ValidationError("validation tree differs from runtime pin")
+    from .provider_validation_team import team_route_from_environment
     return CaptureVerifier(PostgresValidationStore(os.environ["DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN"]),
         capture_key=os.environ["DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"],
         candidate=os.environ["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"],
-        generation=os.environ["DIRECTOR_PROVIDER_VALIDATION_GENERATION"])
+        generation=os.environ["DIRECTOR_PROVIDER_VALIDATION_GENERATION"],team_route=team_route_from_environment())
 
 
-def make_capture(admission: dict, output: bytes, *, capture_key: str) -> ValidationCapture:
+def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route=None) -> ValidationCapture:
     """Only the bridge calls this after configured native execution returns."""
     if len(capture_key) < 32 or not output or len(output) > MAX_CAPTURE_BYTES:
         raise ValidationError("missing bounded execution capture")
     work = validate_packet("work", json.loads(admission["packet"]))
-    result = normalize_capture(admission["provider"],work,output)
+    if admission["provider"] == "antigravity" and json.loads(output).get("attempt_digest") != "sha256:"+admission["reservation"]:
+        raise ValidationError("team capture belongs to another reservation")
+    result = normalize_capture(admission["provider"],work,output,team_route=team_route)
     from .packet_contracts import build_replay_run
     build_replay_run(work,result)
     if result["provider"] != admission["provider"] or result["status"] != "SUCCEEDED" or result["side_effects"]:
@@ -290,10 +298,12 @@ def make_capture(admission: dict, output: bytes, *, capture_key: str) -> Validat
     return ValidationCapture(**fields,signature=signature)
 
 
-def normalize_capture(provider: str, work: dict, raw: bytes) -> dict:
+def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None) -> dict:
     """Require native terminal capture, never a caller-authored result packet."""
     if provider == "antigravity":
-        raise ValidationError("Antigravity team SSH capture qualification is not implemented by the generic bridge")
+        if team_route is None:
+            raise ValidationError("Antigravity team SSH capture verifier is unbound")
+        return team_route.normalize(work,raw)
     if not raw or len(raw) > MAX_CAPTURE_BYTES:
         raise ValidationError("native capture size invalid")
     if provider == "openai":
@@ -318,6 +328,39 @@ def normalize_capture(provider: str, work: dict, raw: bytes) -> dict:
     return validate_packet("result",normalize_native_provider_envelope(provider,work,native))
 
 
+
+def pinned_path_manifest(value: str) -> dict:
+    """Inventory a configured installed runtime tree without following aliases."""
+    import stat
+    from pathlib import Path
+    root=Path(value)
+    if not root.is_absolute() or not root.exists():
+        raise ValidationError("absolute pinned runtime/account path unavailable")
+    paths=[root]
+    manifest={}
+    total=0
+    while paths:
+        path=paths.pop()
+        info=path.lstat()
+        if path.is_symlink() or getattr(info,"st_file_attributes",0)&1024:
+            raise ValidationError("pinned runtime contains an alias")
+        if stat.S_ISDIR(info.st_mode):
+            paths.extend(path.iterdir())
+            if len(paths)+len(manifest)>50000:
+                raise ValidationError("pinned runtime inventory exceeds file bound")
+        elif stat.S_ISREG(info.st_mode) and info.st_nlink==1:
+            total+=info.st_size
+            if total>2*1024**3:
+                raise ValidationError("pinned runtime inventory exceeds byte bound")
+            with path.open("rb") as handle:
+                hasher=hashlib.sha256()
+                for chunk in iter(lambda:handle.read(1024*1024),b""):
+                    hasher.update(chunk)
+            manifest[str(path.resolve())]=hasher.hexdigest()
+        else:
+            raise ValidationError("pinned runtime contains a special file or hardlink")
+    return manifest
+
 def production_configuration_digest(executor, provider: str, *, account_files: tuple[str,...]) -> str:
     """Pin the real executable, argv files, workspace, adapter and auth material.
 
@@ -332,10 +375,7 @@ def production_configuration_digest(executor, provider: str, *, account_files: t
     argv=executor.commands[provider]
     files={}
     for value in (argv[0],*account_files):
-        path=Path(value)
-        if not path.is_absolute() or not path.is_file() or path.is_symlink():
-            raise ValidationError("pinned runtime/account file unavailable")
-        files[str(path.resolve())]=digest(path.read_bytes())
+        files.update(pinned_path_manifest(value))
     for value in argv[1:]:
         path=Path(value)
         if path.is_absolute() and path.is_file():
@@ -354,17 +394,20 @@ def production_configuration_digest(executor, provider: str, *, account_files: t
 class ValidationBridgeService:
     """Dedicated endpoint; the production executor configuration is reused exactly."""
     def __init__(self, *, store: PostgresValidationStore, production_executor,
-                 capture_key: str, owner_token: str, account_files: Mapping[str,tuple[str,...]]):
+                 capture_key: str, owner_token: str, account_files: Mapping[str,tuple[str,...]], team_route=None):
         if len(capture_key)<32 or len(owner_token)<32 or hmac.compare_digest(capture_key,owner_token):
             raise ValueError("distinct validation owner and capture keys required")
         self.store,self.production,self.capture_key,self.owner_token=store,production_executor,capture_key,owner_token
         self.account_files=dict(account_files)
+        self.team_route=team_route
 
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
         if not hmac.compare_digest(owner_token,self.owner_token):
             raise ValidationError("validation owner authentication failed")
         if request.provider == "antigravity":
-            raise ValidationError("Antigravity team SSH validation route is unavailable; no native call admitted")
+            if self.team_route is None:
+                raise ValidationError("Antigravity team SSH validation route is unbound")
+            return self.team_route.run(self,request,owner_token)
         admission=self.store.admit(request,owner_token)
         raw_captures=[]
         try:
@@ -402,3 +445,5 @@ class ValidationBridgeService:
             self.store.fail(admission["reservation"])
             raise
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]

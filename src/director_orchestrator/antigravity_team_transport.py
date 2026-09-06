@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
@@ -154,18 +155,7 @@ class NativeTeamPacketTransport:
         # exported. This is not a user-configured boolean or provider self-report.
         prepared=self._authenticated_evidence(self.worker.prepare(grant_digest=grant.digest,
             attempt_digest=self.attempt_digest,challenge=challenge))
-        if set(prepared)!={"grant_digest","attempt_digest","challenge","binding_digest","workspace_id",
-                "containment_evidence_digest","expires_at","denied_access","authentication_mode"}:
-            raise TeamAuthorizationError("worker qualification contract mismatch")
-        if (prepared["grant_digest"]!=grant.digest or prepared["attempt_digest"]!=self.attempt_digest
-                or prepared["challenge"]!=challenge or prepared["binding_digest"]!=grant.binding_digest
-                or prepared["workspace_id"]!=grant.workspace_id or prepared["authentication_mode"]!="native-account"
-                or not isinstance(prepared["containment_evidence_digest"],str)
-                or not re.fullmatch(r"[0-9a-f]{64}",prepared["containment_evidence_digest"])
-                or set(prepared["denied_access"])!={"unassigned_source","git_history","coordinator_credentials",
-                    "broker_keys","launcher_mutation","production_network"}
-                or datetime.fromisoformat(prepared["expires_at"])<=datetime.now(timezone.utc)):
-            raise TeamAuthorizationError("worker containment qualification invalid")
+        verify_team_prepared(prepared,grant=grant,attempt_digest=self.attempt_digest,challenge=challenge)
         if self.artifacts is None or self.integrator is None or not self.writer_owner_token:
             raise TeamAuthorizationError("protected durable candidate integration is unbound")
         # Do not disclose even the packet until its durable STARTED attempt exists.
@@ -199,71 +189,16 @@ class NativeTeamPacketTransport:
             before_local_command=before_command)
         if len(execution_callbacks)!=1:
             raise TeamAuthorizationError("worker did not authorize immediate execution")
-        if not isinstance(capture,dict) or set(capture)!={"evidence","signature"}:
-            raise TeamAuthorizationError("authenticated native capture required")
-        evidence=capture["evidence"]
-        expected=hmac.new(self.secret,canonical_json_bytes(evidence),hashlib.sha256).hexdigest()
-        if not isinstance(capture["signature"],str) or not hmac.compare_digest(expected,capture["signature"]):
-            raise TeamAuthorizationError("native capture authentication failed")
-        required={"grant_digest","attempt_digest","packet_digest","installation_id","executable_digest",
-            "runtime_digest","adapter_digest","binding_digest","native_account_id","authentication_mode",
-            "workspace_id","cwd","source_manifest_digest","containment_evidence_digest","native_stream","exit_code","challenge",
-            "changed_files","returned_files","executed_commands","checks","completed_at","native_project_id","native_identity_observations","native_state_manifest_after"}
-        if set(evidence)!=required:
-            raise TeamAuthorizationError("native capture contract mismatch")
-        if not isinstance(evidence["native_state_manifest_after"],dict) or len(evidence["native_state_manifest_after"])>10000:
-            raise TeamAuthorizationError("native state capture invalid")
-        for path,digest in evidence["native_state_manifest_after"].items():
-            safe_path(path)
-            if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
-                raise TeamAuthorizationError("native state capture digest invalid")
-        if evidence["native_project_id"]!=grant.native_project_id or evidence["native_identity_observations"]!={
-            "requested_project_id":grant.native_project_id,"observed_project_id":None,"observed_account_id":None}:
-            raise TeamAuthorizationError("native project invocation binding or observation provenance changed")
-        for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id"):
-            if evidence[key]!=getattr(grant,key):
-                raise TeamAuthorizationError("native installation binding mismatch")
-        if (evidence["grant_digest"]!=grant.digest or evidence["attempt_digest"]!=self.attempt_digest
-                or evidence["packet_digest"]!=grant.packet_digest or evidence["authentication_mode"]!="native-account"
-                or evidence["challenge"]!=challenge or evidence["containment_evidence_digest"]!=prepared["containment_evidence_digest"]
-                or evidence["exit_code"]!=0 or not evidence["containment_evidence_digest"]
-                or evidence["source_manifest_digest"]!=document_digest({"source":[item.model_dump() for item in grant.source]})):
-            raise TeamAuthorizationError("native capture authority mismatch")
-        proposal,session,native_usage=parse_native_stream(evidence["native_stream"].encode(),grant=grant,expected_cwd=evidence["cwd"])
-        if set(proposal)!={"packet","returned_files"} or proposal["returned_files"]!=evidence["returned_files"]:
-            raise TeamAuthorizationError("native proposal differs from captured returned bytes")
-        result=dict(proposal["packet"])
-        if any(result.get(key)!=work.get(key) for key in ("task_id","assignment_id","idempotency_key","authority_snapshot_digest","correlation")) or result.get("provider")!="antigravity":
-            raise TeamAuthorizationError("native result identity differs from assignment")
-        if not isinstance(native_usage,dict) or type(native_usage.get("total_tokens")) is not int or not 0<=native_usage["total_tokens"]<=grant.max_tokens:
-            raise TeamAuthorizationError("native usage missing or exceeds authorized ceiling")
-        result["run_reference"]=session
-        result["usage"]={"model":"unknown","input_tokens":native_usage.get("input_tokens"),
-            "output_tokens":native_usage.get("output_tokens"),"total_tokens":native_usage["total_tokens"],"cost_usd":None}
-        if result.get("checks"):
-            raise TeamAuthorizationError("native packet cannot impersonate independently executed checks")
-        result["checks"]=evidence["checks"]
-        from .antigravity_team_artifacts import decode_returned_files
-        files=decode_returned_files(grant,evidence["returned_files"])
-        if evidence["changed_files"] != [{"path":p,"sha256":hashlib.sha256(data).hexdigest()} for p,data in files.items()]:
-            raise TeamAuthorizationError("changed-file inventory differs from returned bytes")
-        if evidence["executed_commands"]!=authorized_commands:
-            raise TeamAuthorizationError("worker command log differs from authorized commands")
-        for entry in evidence["changed_files"]:
-            if (not isinstance(entry,dict) or set(entry)!={"path","sha256"}
-                    or safe_path(entry["path"]) not in grant.writable_paths
-                    or not isinstance(entry["sha256"],str) or not re.fullmatch(r"[0-9a-f]{64}",entry["sha256"])):
-                raise TeamAuthorizationError("worker changed an ungranted path")
-        if grant.operation=="review" and (evidence["changed_files"] or authorized_commands):
-            raise TeamAuthorizationError("review worker changed immutable state")
-        if datetime.fromisoformat(prepared["expires_at"])<=datetime.now(timezone.utc):
-            raise TeamAuthorizationError("worker qualification expired before result admission")
-        if any(check.get("exit_code")!=0 for check in evidence["checks"]) or result.get("side_effects"):
-            raise TeamAuthorizationError("provider checks/effects lack independent worker evidence")
+        result=verify_team_capture(capture,worker_secret=self.secret,grant=grant,work=work,
+            attempt_digest=self.attempt_digest,challenge=challenge,prepared=prepared,
+            authorized_commands=authorized_commands)
         self._boundary("result")
         validated=validate_packet("result",result)
         if self.artifacts is None or self.integrator is None:
             raise TeamAuthorizationError("durable team artifact integration is unbound")
+        observer=getattr(context,"execution_observer",None)
+        if observer is not None:
+            observer("antigravity",canonical_json_bytes(capture),validated)
         capture_digest=self.artifacts.put(capture)
         candidate=self.integrator.integrate(grant=grant,attempt_digest=self.attempt_digest,
             capture_digest=capture_digest,query=self.query_factory("result",None),
@@ -274,6 +209,88 @@ class NativeTeamPacketTransport:
         return validate_packet("result",validated)
 
 
+
+
+def verify_team_prepared(prepared, *, grant, attempt_digest, challenge):
+    if set(prepared)!={"grant_digest","attempt_digest","challenge","binding_digest","workspace_id",
+            "containment_evidence_digest","expires_at","denied_access","authentication_mode"}:
+        raise TeamAuthorizationError("worker qualification contract mismatch")
+    if (prepared["grant_digest"]!=grant.digest or prepared["attempt_digest"]!=attempt_digest
+            or prepared["challenge"]!=challenge or prepared["binding_digest"]!=grant.binding_digest
+            or prepared["workspace_id"]!=grant.workspace_id or prepared["authentication_mode"]!="native-account"
+            or not isinstance(prepared["containment_evidence_digest"],str)
+            or not re.fullmatch(r"[0-9a-f]{64}",prepared["containment_evidence_digest"])
+            or set(prepared["denied_access"])!={"unassigned_source","git_history","coordinator_credentials",
+                "broker_keys","launcher_mutation","production_network"}
+            or datetime.fromisoformat(prepared["expires_at"])<=datetime.now(timezone.utc)):
+        raise TeamAuthorizationError("worker containment qualification invalid")
+    return prepared
+
+def verify_team_capture(capture, *, worker_secret, grant, work, attempt_digest, challenge, prepared, authorized_commands):
+    """Pure authenticated capture verification shared by production and canaries."""
+    if not isinstance(capture,dict) or set(capture)!={"evidence","signature"}:
+        raise TeamAuthorizationError("authenticated native capture required")
+    evidence=capture["evidence"]
+    expected=hmac.new(worker_secret,canonical_json_bytes(evidence),hashlib.sha256).hexdigest()
+    if not isinstance(capture["signature"],str) or not hmac.compare_digest(expected,capture["signature"]):
+        raise TeamAuthorizationError("native capture authentication failed")
+    required={"grant_digest","attempt_digest","packet_digest","installation_id","executable_digest",
+        "runtime_digest","adapter_digest","binding_digest","native_account_id","authentication_mode",
+        "workspace_id","cwd","source_manifest_digest","containment_evidence_digest","native_stream","exit_code","challenge",
+        "changed_files","returned_files","executed_commands","checks","completed_at","native_project_id","native_identity_observations","native_state_manifest_after"}
+    if set(evidence)!=required:
+        raise TeamAuthorizationError("native capture contract mismatch")
+    if not isinstance(evidence["native_state_manifest_after"],dict) or len(evidence["native_state_manifest_after"])>10000:
+        raise TeamAuthorizationError("native state capture invalid")
+    for path,digest in evidence["native_state_manifest_after"].items():
+        safe_path(path)
+        if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
+            raise TeamAuthorizationError("native state capture digest invalid")
+    if evidence["native_project_id"]!=grant.native_project_id or evidence["native_identity_observations"]!={
+        "requested_project_id":grant.native_project_id,"observed_project_id":None,"observed_account_id":None}:
+        raise TeamAuthorizationError("native project invocation binding or observation provenance changed")
+    for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id"):
+        if evidence[key]!=getattr(grant,key):
+            raise TeamAuthorizationError("native installation binding mismatch")
+    if (evidence["grant_digest"]!=grant.digest or evidence["attempt_digest"]!=attempt_digest
+            or evidence["packet_digest"]!=grant.packet_digest or evidence["authentication_mode"]!="native-account"
+            or evidence["challenge"]!=challenge or evidence["containment_evidence_digest"]!=prepared["containment_evidence_digest"]
+            or evidence["exit_code"]!=0 or not evidence["containment_evidence_digest"]
+            or evidence["source_manifest_digest"]!=document_digest({"source":[item.model_dump() for item in grant.source]})):
+        raise TeamAuthorizationError("native capture authority mismatch")
+    proposal,session,native_usage=parse_native_stream(evidence["native_stream"].encode(),grant=grant,expected_cwd=evidence["cwd"])
+    if set(proposal)!={"packet","returned_files"} or proposal["returned_files"]!=evidence["returned_files"]:
+        raise TeamAuthorizationError("native proposal differs from captured returned bytes")
+    result=dict(proposal["packet"])
+    if any(result.get(key)!=work.get(key) for key in ("task_id","assignment_id","idempotency_key","authority_snapshot_digest","correlation")) or result.get("provider")!="antigravity":
+        raise TeamAuthorizationError("native result identity differs from assignment")
+    if not isinstance(native_usage,dict) or type(native_usage.get("total_tokens")) is not int or not 0<=native_usage["total_tokens"]<=grant.max_tokens:
+        raise TeamAuthorizationError("native usage missing or exceeds authorized ceiling")
+    result["run_reference"]=session
+    result["usage"]={"model":"unknown","input_tokens":native_usage.get("input_tokens"),
+        "output_tokens":native_usage.get("output_tokens"),"total_tokens":native_usage["total_tokens"],"cost_usd":None}
+    if result.get("checks"):
+        raise TeamAuthorizationError("native packet cannot impersonate independently executed checks")
+    result["checks"]=evidence["checks"]
+    from .antigravity_team_artifacts import decode_returned_files
+    files=decode_returned_files(grant,evidence["returned_files"])
+    if evidence["changed_files"] != [{"path":p,"sha256":hashlib.sha256(data).hexdigest()} for p,data in files.items()]:
+        raise TeamAuthorizationError("changed-file inventory differs from returned bytes")
+    if evidence["executed_commands"]!=authorized_commands:
+        raise TeamAuthorizationError("worker command log differs from authorized commands")
+    for entry in evidence["changed_files"]:
+        if (not isinstance(entry,dict) or set(entry)!={"path","sha256"}
+                or safe_path(entry["path"]) not in grant.writable_paths
+                or not isinstance(entry["sha256"],str) or not re.fullmatch(r"[0-9a-f]{64}",entry["sha256"])):
+            raise TeamAuthorizationError("worker changed an ungranted path")
+    if grant.operation=="review" and (evidence["changed_files"] or authorized_commands):
+        raise TeamAuthorizationError("review worker changed immutable state")
+    if datetime.fromisoformat(prepared["expires_at"])<=datetime.now(timezone.utc):
+        raise TeamAuthorizationError("worker qualification expired before result admission")
+    if any(check.get("exit_code")!=0 for check in evidence["checks"]) or result.get("side_effects"):
+        raise TeamAuthorizationError("provider checks/effects lack independent worker evidence")
+    return validate_packet("result",result)
+
 def team_packet_adapter(settings, **transport_arguments):
     """Explicit per-assignment route; never replace the closed subordinate lane."""
     from .langgraph_runtime import PacketBoundaryAdapter
@@ -283,3 +300,5 @@ def team_packet_adapter(settings, **transport_arguments):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
