@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
@@ -145,6 +146,32 @@ class PrimaryProviderActivationServiceTests(unittest.TestCase):
         self.assertFalse(self.service.provider_ready("claude", live=True))
         self.assertFalse(self.service.health()["combined_live_ready"])
 
+    def test_disabled_lane_placeholder_mirrors_live_health_keys(self):
+        # While the primary lane is disabled, /health emits a literal
+        # placeholder instead of this service. Its key set must equal the live
+        # key set so an operator can tell the two apart only by value, never by
+        # a missing key, and every placeholder value must be False.
+        import re
+        from pathlib import Path
+
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "director_orchestrator"
+            / "main.py"
+        ).read_text(encoding="utf-8")
+        block = re.search(
+            r'"provider_activation": \{(?P<body>.*?)\n\s*\},', source, re.DOTALL
+        )
+        self.assertIsNotNone(block)
+        placeholder = dict(
+            re.findall(r'"([a-z_]+)": (False|True)', block.group("body"))
+        )
+
+        self.assertEqual(set(placeholder), set(self.service.health()))
+        self.assertEqual(set(placeholder.values()), {"False"})
+        self.assertIn("core_live_ready", placeholder)
+
     def test_record_advances_only_a_required_provider(self):
         evidence = self.service.record(
             provider_id="openai",
@@ -206,3 +233,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | BEGIN]]
@@ -497,6 +498,7 @@ def health() -> dict:
                 "graph_task_count": 0,
                 "ambiguous_effect_count": 0,
                 "provider_activation": {
+                    "core_live_ready": False,
                     "app_dry_run_ready": False,
                     "app_live_ready": False,
                     "runtime_adapter_dry_run_ready": False,
@@ -1584,3 +1586,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | END]]
