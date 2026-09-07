@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | BEGIN]] -->
@@ -91,7 +92,7 @@ reviewable) → (`DECISION` | `OWNER_DECISION_REQUIRED`) → (`COMPLETE` |
 1. Director posts the correlated assignment to the project Slack thread.
 2. Provider executes through its bounded local CLI/API lane.
 3. Director relays concise `WORKING` or `EVIDENCE` updates.
-4. After three safe nonresponses, mark the provider unavailable and reshape
+4. After the assignment-specific retry budget is exhausted, mark the provider unavailable and reshape
    scope, confidence, timing, and coverage.
 5. A completed reviewable artifact emits `REVIEW_READY` to a different
    eligible provider.
@@ -150,3 +151,4 @@ use the commit, pull-request, or `REVIEW_READY` envelope instead.
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->

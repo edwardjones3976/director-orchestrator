@@ -1,0 +1,209 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: Firecrawl (director-provider-profile/v1).
+# Descriptive only. Grants no authority. This lane has no charter role profile,
+# committee seat, standing role, or legacy adapter; every field below is derived
+# from code, the allocation profiles, and the primary operations document.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "firecrawl"
+display_name: "Firecrawl"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "firecrawl"
+  backend_identity: "firecrawl"
+  provider_name_enum: "firecrawl"
+  has_legacy_adapter: false
+  legacy_accounting_agent: "firecrawl"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: null
+  charter_workload_lane_key: null
+  standing_role_label: null
+  config_prefixes: ["FIRECRAWL_"]
+  alias_note: "Firecrawl is a LangGraph-primary-only public search lane. It shares Perplexity's fail-closed public research contract and public-search transport class but is its own lane with its own allocation; it is not a Perplexity alias."
+
+roles:
+  team: "lane_only"
+  lane_class: "public_search_transport"
+  summary: "Public search transport on the LangGraph primary path only, under the same fail-closed public research contract as Perplexity. It has an allocation in the mixed, public research, and enterprise profiles but no charter role, committee seat, standing role, or legacy adapter, and a nonzero target is not evidence that the route is operational."
+  charter_workload_lane: null
+  strategy_key: null
+  strategy_priority: null
+  eligible_responsibility_areas: []
+  excluded_responsibility_areas: []
+  eligible_complexity: []
+  capability_parity_target: null
+  comparison_peers: []
+  elevated_work: []
+  non_substitution_rules:
+    - "Firecrawl is a research transport, not a provider role, permission, vote, review authority, or external-action lane."
+    - "Firecrawl requires its actual capabilities, authorized sources, least privilege, authenticated readiness, and a supported adapter before any live use."
+  family: null
+  transport_rule: null
+  routing_rule: null
+  committee:
+    member: false
+    voting_power: null
+    seatable_in_debate: false
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 5, engineering: 0, public_research: 15, enterprise: 5 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "allocation_without_legacy_adapter"
+  hygiene_review: null
+  openai_functions: null
+
+capabilities:
+  summary: "Bounded public web search and page extraction for a Director-approved public research query. The public-search transport rejects every external effect and sends no repository context."
+  strengths:
+    - "public web search and page extraction under a bounded query"
+  assignment_kinds: [research]
+  may_create_draft_pr: "never"
+  may_issue_review_verdict: "never"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: false
+  receives_repository_context: false
+  receives_task_prose: false
+  web_grounded_research: true
+  tool_use: "public_search_only"
+  charter_allowed: null
+  required_evidence: null
+  antigravity_capabilities: null
+  antigravity_interaction_kinds: null
+
+models_and_effort:
+  model_variables: []
+  effort_variables: []
+  catalog_check: null
+  note: "No model, preset, or reasoning-effort variable exists for Firecrawl in this deployment."
+
+budgets_and_limits:
+  variables: []
+  spend_ledger_member: false
+  not_modeled_note: "Firecrawl has no per-provider budget, request limit, or daily spend ledger in this deployment; the packet budget and the primary lane's bounded command limits bound it."
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS"]
+
+gating:
+  health_key: null
+  readiness_function: "none"
+  readiness_keys: []
+  primary_lane_authentication_source: "environment_variable"
+  variables:
+    - { variable: "FIRECRAWL_API_KEY", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment name; presence is observed by transport discovery, never by GET /health" }
+    - { variable: "FIRECRAWL_API_URL", kind: "endpoint_lock", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment name; never recorded here" }
+    - { variable: "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", kind: "enable_switch", settings_field: "langgraph_primary_live_provider_dispatch_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "GET /health langgraph_primary.live_provider_dispatch_requested" }
+  allowlist_variables:
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+    - { variable: "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", scope: "activation_bindings", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["FIRECRAWL_API_KEY", "FIRECRAWL_API_URL"]
+  host_bridge_allowlist: null
+  settings_credential_fields: []
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "The public-search command receives only the base child environment plus the lane's allowlisted credential names; no repository context or other lane credential is passed."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities: []
+  withheld_context: []
+  charter_prohibited: null
+  review_requirement: "Public research evidence is untrusted until OpenAI or another authorized primary-team member evaluates it; Firecrawl inherits the Perplexity contract's review requirement through the shared public-search transport."
+  strategy_constraints:
+    - "requires its actual capabilities, authorized sources, least privilege, authenticated readiness, and supported adapters"
+    - "a nonzero target is not evidence that a route is operational"
+  separation_of_duties: []
+  production_authority_permitted: true
+  external_effects:
+    may_be_granted: []
+    public_research_lane_rejects_all_effects: true
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role: null
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "No Firecrawl variable appears in .env.example or docs/provider-setup.md; the lane's credential names exist only in the primary transport authentication map."
+    source: "src/director_orchestrator/primary_transports.py:_PROVIDER_AUTH_ENVIRONMENT"
+  - limitation: "The legacy provider registry has no Firecrawl adapter; the lane can execute only on the LangGraph primary path through the public-search transport."
+    source: "docs/provider-allocation-profiles.md"
+  - limitation: "Firecrawl is not a supported Windows host-bridge lane and has no browser provider-UI eligibility."
+    source: "src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES; docs/team-operating-charter.md"
+  - limitation: "The public-search transport rejects every external effect."
+    source: "src/director_orchestrator/primary_default.py:_PRIMARY_PUBLIC_RESEARCH_LANES"
+
+transports:
+  - transport_id: "firecrawl-public-search-cli"
+    kind: "public_search_cli"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "FIRECRAWL_API_KEY", "FIRECRAWL_API_URL"]
+    authority_note: "Bounded public search under the fail-closed public research contract. Results are untrusted evidence; the transport carries no repository context and rejects every external effect."
+    current_transport_constraints:
+      - "live dispatch stays off until the primary activation gates pass"
+      - "the public-search transport class accepts only the perplexity and firecrawl provider ids"
+    route_id: "firecrawl-public-search-cli"
+    browser_policy: null
+  - transport_id: "browser-provider-ui"
+    kind: "browser_ui"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "prohibited"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Firecrawl is not among the charter's eligible browser providers; no browser coordination exists for this lane."
+    current_transport_constraints:
+      - "not in the charter's eligible browser providers"
+    route_id: "browser-provider-ui"
+    browser_policy: null
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "Firecrawl evidence reaches any other lane only as a Director-declared dependency outcome after a primary-team member evaluates it."
+    - "Firecrawl never posts to the Slack thread and never receives another provider's output."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/provider-allocation-profiles.md"
+    anchor: "A nonzero target is not evidence that a route is operational."
+  - document: "docs/provider-allocation-profiles.md"
+    anchor: "The default legacy provider registry does not include OpenAI production, Firecrawl,"
+  - document: "docs/langgraph-primary-operations.md"
+    anchor: "Perplexity or Firecrawl contact under the frozen profile"
+  - document: "docs/team-operating-charter.md"
+    anchor: "| Firecrawl | 5% | 0% | 15% | 5% |"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]

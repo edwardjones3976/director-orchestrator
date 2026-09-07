@@ -1,0 +1,299 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: OpenAI (director-provider-profile/v1).
+# Descriptive only. Grants no authority. Mirrors the charter, config defaults,
+# and adapter constants; the drift tests fail when any mirrored value diverges.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "openai"
+display_name: "OpenAI (Director and Codex production)"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "openai"
+  backend_identity: "openai"
+  provider_name_enum: "openai"
+  has_legacy_adapter: false
+  legacy_accounting_agent: "openai"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: "openai"
+  charter_workload_lane_key: "openai"
+  standing_role_label: "Director"
+  config_prefixes: ["OPENAI_", "CHATGPT_"]
+  alias_note: "The Director control plane, separately assigned Codex production, the ChatGPT Slack alias bridge, the native Codex host transport, and the label-triggered Codex security review all map to the openai lane. The legacy provider registry has no OpenAI production adapter; Director planning calls the Responses API directly."
+
+roles:
+  team: "primary"
+  lane_class: "director_control_plane"
+  summary: "Owns the full Director control-plane function: intake interpretation, planning, decomposition, neutral coordination, evidence collection, routing, recovery decisions, acceptance review, milestone reporting, and bounded escalation. Production may be separately assigned through an authorized capable runtime adapter under the frozen allocation profile; control-plane duties create no production credit."
+  charter_workload_lane: "control_plane_and_authorized_production"
+  strategy_key: "openai"
+  strategy_priority: "director_planning_and_acceptance_review"
+  eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
+  excluded_responsibility_areas: []
+  eligible_complexity: [low, medium, high, critical]
+  capability_parity_target: null
+  comparison_peers: []
+  elevated_work: []
+  non_substitution_rules:
+    - "Control-plane duties create no production credit."
+    - "Actual material authorship requires different-provider exact-candidate review and removes OpenAI/Director merge independence."
+    - "The Director may not independently accept or merge code it actually materially authored."
+  family: null
+  transport_rule: "The Responses API and the native Codex host are distinct transports selected by LANGGRAPH_PRIMARY_OPENAI_TRANSPORT; native Codex is packet-only and never falls back to the API silently."
+  routing_rule: null
+  committee:
+    member: true
+    voting_power: 2.0
+    seatable_in_debate: true
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 30, engineering: 35, public_research: 25, enterprise: 30 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "control_plane_telemetry_and_authorized_production"
+  hygiene_review: null
+  openai_functions:
+    - id: "moderator"
+      votes: false
+      vote_count: null
+      vote_weight: null
+      duties:
+        - "frame the question and bounded options neutrally"
+        - "request positions without leading language"
+        - "prevent premature cross-exposure"
+        - "run the counter-bias pass against the favored view"
+      boundary: "Moderation does not cast a vote."
+    - id: "participant"
+      votes: true
+      vote_count: 1
+      vote_weight: 2.0
+      duties:
+        - "record an independently formed initial position before specialist conclusions are exposed"
+        - "cast the single existing OpenAI advisory vote during synthesis"
+      boundary: "Participant is the one authenticated OpenAI position and vote. It receives no additional vote for planning, moderation, synthesis, or acceptance."
+    - id: "director"
+      votes: false
+      vote_count: null
+      vote_weight: null
+      duties: [plan, decompose, route, coordinate, synthesize, acceptance_review, review_handoff, milestone_reporting]
+      boundary: "Director authority does not create a vote or a participation record that did not actually occur."
+
+capabilities:
+  summary: "Structured planning, acceptance review, and debate moderation through the Responses API; packet-only Codex analysis under the primary lane. No repository execution lane exists for OpenAI in this deployment, so production is analysis and review bound to a separately authorized surface."
+  strengths:
+    - "orchestration"
+    - "planning"
+    - "structured acceptance review"
+  assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
+  may_create_draft_pr: "never"
+  may_issue_review_verdict: "eligible_reviewer"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: true
+  receives_repository_context: true
+  receives_task_prose: true
+  web_grounded_research: false
+  tool_use: "tool_free_api"
+  charter_allowed: null
+  required_evidence: null
+  antigravity_capabilities: null
+  antigravity_interaction_kinds: null
+
+models_and_effort:
+  model_variables:
+    - { variable: "OPENAI_DIRECTOR_MODEL", role: "director_model", settings_field: "openai_model", default: "gpt-5.6", documented_in_env_example: true, values_recorded: false }
+    - { variable: "OPENAI_CHATGPT_BRIDGE_MODEL", role: "bridge_model", settings_field: "chatgpt_bridge_model", default: "gpt-5.6", documented_in_env_example: false, values_recorded: false }
+  effort_variables:
+    - { variable: "OPENAI_REASONING_EFFORT", settings_field: "openai_reasoning_effort", default: "medium", allowed_values: ["values accepted by the Responses API reasoning effort field"], documented_in_env_example: true, values_recorded: false }
+  catalog_check: null
+  note: "The native Codex host takes its explicit model from the host command map entry, not from a Director variable; the JSONL stream does not attest the actual model or cost."
+
+budgets_and_limits:
+  variables:
+    - { variable: "OPENAI_DEBATE_TURN_ESTIMATED_COST_USD", kind: "estimated_cost_usd", settings_field: "openai_debate_turn_estimated_cost_usd", default: 0.05, documented_in_env_example: true, values_recorded: false }
+    - { variable: "OPENAI_PLAN_ESTIMATED_COST_USD", kind: "estimated_cost_usd", settings_field: "openai_plan_estimated_cost_usd", default: 0.0, documented_in_env_example: false, values_recorded: false }
+    - { variable: "OPENAI_REVIEW_ESTIMATED_COST_USD", kind: "estimated_cost_usd", settings_field: "openai_review_estimated_cost_usd", default: 0.01, documented_in_env_example: false, values_recorded: false }
+    - { variable: "CHATGPT_BRIDGE_DAILY_BUDGET_USD", kind: "daily_budget_usd", settings_field: "chatgpt_bridge_daily_budget_usd", default: 2.0, documented_in_env_example: true, values_recorded: false }
+    - { variable: "CHATGPT_BRIDGE_ESTIMATED_COST_USD", kind: "estimated_cost_usd", settings_field: "chatgpt_bridge_estimated_cost_usd", default: 0.1, documented_in_env_example: true, values_recorded: false }
+    - { variable: "CHATGPT_BRIDGE_MAX_OUTPUT_TOKENS", kind: "max_output_tokens", settings_field: "chatgpt_bridge_max_output_tokens", default: 600, documented_in_env_example: true, values_recorded: false }
+    - { variable: "CHATGPT_BRIDGE_MAX_PROMPT_CHARS", kind: "prompt_chars", settings_field: "chatgpt_bridge_max_prompt_chars", default: 4000, documented_in_env_example: true, values_recorded: false }
+    - { variable: "CHATGPT_BRIDGE_REQUESTS_PER_MINUTE", kind: "requests_per_minute", settings_field: "chatgpt_bridge_requests_per_minute", default: 4, documented_in_env_example: true, values_recorded: false }
+  spend_ledger_member: false
+  not_modeled_note: "OpenAI has no provider daily spend ledger; Director calls carry explicit estimated costs reserved against the task budget, and a paid debate turn reserves the greater of the provider estimate and the operator setting."
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS"]
+
+gating:
+  health_key: "openai_director"
+  readiness_function: "readiness"
+  readiness_keys: [openai_director]
+  primary_lane_authentication_source: "environment_variable"
+  variables:
+    - { variable: "OPENAI_API_KEY", kind: "credential_presence", settings_field: "openai_api_key", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "openai_director", required_value: null, verify: "GET /health openai_director" }
+    - { variable: "LANGGRAPH_PRIMARY_OPENAI_TRANSPORT", kind: "transport_selector", settings_field: "langgraph_primary_openai_transport", default: "responses-api", documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "responses-api or native-codex-host; switching back to Responses is an explicit operator decision" }
+    - { variable: "CHATGPT_BRIDGE_ENABLED", kind: "enable_switch", settings_field: "chatgpt_bridge_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "bridge activates only with ALLOW_PAID_RUNS, a valid key, the configured owner, and an allowlisted channel" }
+  allowlist_variables:
+    - { variable: "CHATGPT_BRIDGE_CHANNEL_IDS", scope: "slack_channel", values_recorded: false }
+    - { variable: "CHATGPT_BRIDGE_SLACK_USER_ID", scope: "slack_user", values_recorded: false }
+    - { variable: "USAGE_CHECK_PROVIDERS", scope: "usage_check_roster", values_recorded: false }
+    - { variable: "TRUSTED_PROVIDER_COST_RANKS", scope: "cost_ranks", values_recorded: false }
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["OPENAI_API_KEY"]
+  host_bridge_allowlist: []
+  settings_credential_fields: ["openai_api_key"]
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "The native Codex host receives no API or Director secret at all; it consumes the account's protected native auth store through the Codex CLI and the child environment carries operating-system essentials only."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities: []
+  withheld_context: []
+  charter_prohibited: null
+  review_requirement: null
+  strategy_constraints: []
+  separation_of_duties:
+    - "Moderator, Participant, and Director functions stay separate; only Participant casts the single OpenAI vote"
+    - "reviewing or merging a candidate never makes the Director one of its authors"
+    - "the materially authoring OpenAI lane cannot review or merge its own candidate"
+  production_authority_permitted: true
+  external_effects:
+    may_be_granted: ["chat.postMessage", "pulls.mark_ready"]
+    public_research_lane_rejects_all_effects: false
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role: null
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "The Responses API route is separately billed; the owner's OpenAI Pro 20x subscription does not fund it."
+    source: "docs/provider-allocation-profiles.md, Capacity, roles, and authority"
+  - limitation: "The legacy provider registry contains no OpenAI production adapter; the lane's allocation exists in accounting but cannot execute there without a real authenticated adapter."
+    source: "docs/provider-allocation-profiles.md"
+  - limitation: "The native Codex host transport is packet-only analysis with read-only sandboxing and no repository inspection; a timeout, nonzero exit, oversized output, or invalid terminal stream is ambiguous and never redispatched."
+    source: "docs/native-codex-packet-transport.md"
+  - limitation: "The isolated CI acceptance issuer is a separate GitHub OIDC workflow that is dormant until owner adoption; it is not an OpenAI contact."
+    source: "docs/ci-acceptance-issuer.md"
+  - limitation: "Director oversight of the repository is read-only; any write requires exact stored owner authorization and every current deterministic gate."
+    source: "docs/team-operating-charter.md, Purpose"
+  - limitation: "OPENAI_ACCOUNT_CONTEXT holds the owner-reported account context string surfaced in the provider strategy; it is informational and never an entitlement, quota, or budget."
+    source: "src/director_orchestrator/config.py:provider_strategy"
+
+transports:
+  - transport_id: "openai-responses-api"
+    kind: "http_api"
+    runtime: "both"
+    enum_value: "openai_responses_api"
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "director_to_provider"
+    config: ["OPENAI_API_KEY", "OPENAI_DIRECTOR_MODEL", "OPENAI_REASONING_EFFORT", "LANGGRAPH_PRIMARY_OPENAI_TRANSPORT"]
+    authority_note: "Director planning and review with Structured Outputs, and packet-only analysis under the primary lane's default transport. Model output can add approval requirements but can never remove one."
+    current_transport_constraints:
+      - "tool-free; no repository execution"
+      - "every paid debate turn reserves an explicit estimated cost before the call"
+    route_id: "openai-responses-api"
+    browser_policy: null
+  - transport_id: "openai-native-codex-host"
+    kind: "host_bridge"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_OPENAI_TRANSPORT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON"]
+    authority_note: "One codex exec run per validated packet in a fresh temporary directory with read-only sandboxing and every tool disabled. Selected only by native-codex-host; missing bridge evidence or account auth never causes an API fallback."
+    current_transport_constraints:
+      - "the signed host challenge includes OpenAI only after the native login status command reports a ChatGPT login"
+      - "input and output capped at 1 MiB; runtime capped by the packet deadline, host deadline, and 900 seconds"
+    route_id: "openai-native-codex-host"
+    browser_policy: null
+  - transport_id: "windows-host-provider-bridge"
+    kind: "host_bridge"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"]
+    authority_note: "OpenAI is a supported host lane, served by the native Codex command above. The bridge's host-lane credential allowlist for openai is empty because the Codex CLI authenticates through its own native login store."
+    current_transport_constraints:
+      - "no credential name is passed to the native Codex child environment"
+      - "live dispatch stays off until the primary activation gates pass"
+    route_id: "windows-host-provider-bridge"
+    browser_policy: null
+  - transport_id: "chatgpt-slack-alias-bridge"
+    kind: "slack_alias"
+    runtime: "legacy_engine"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "owner_to_director"
+    config: ["CHATGPT_BRIDGE_ENABLED", "CHATGPT_BRIDGE_CHANNEL_IDS", "OPENAI_CHATGPT_BRIDGE_MODEL", "CHATGPT_BRIDGE_DAILY_BUDGET_USD", "CHATGPT_BRIDGE_REQUESTS_PER_MINUTE"]
+    authority_note: "An owner convenience that answers a bounded owner question in an allowlisted channel. It cannot create Director work orders, write repositories, delegate providers, or perform any external action."
+    current_transport_constraints:
+      - "intercepts only the configured owner in an allowlisted channel; other alias mentions are ignored"
+    route_id: "chatgpt-slack-alias-bridge"
+    browser_policy: null
+  - transport_id: "codex-security-review"
+    kind: "github_actions"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "github_to_director"
+    config: []
+    authority_note: "A label-triggered advisory security review on a same-repository pull request. Codex cannot edit, push, merge, deploy, or authorize the deterministic Oracle merge gate; a separate publisher job posts the bounded result."
+    current_transport_constraints:
+      - "uses a project-scoped GitHub Actions secret, never the Windows Director environment"
+      - "a new head commit requires the label to be removed and reapplied"
+    route_id: "codex-security-review-comment"
+    browser_policy: null
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "OpenAI is the Director: every packet, dependency outcome, review handoff, debate turn, and Slack relay passes through it, and as Participant it is also one seated voice among the committee."
+    - "OpenAI production, when assigned, is a provider like any other: its candidate needs different-provider exact-candidate review and it cannot merge its own work."
+    - "The ChatGPT alias bridge reaches the owner only; it never delegates to or addresses another provider."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/team-operating-charter.md"
+    anchor: "OpenAI owns the full Director/control-plane function: intake interpretation,"
+  - document: "docs/team-operating-charter.md"
+    anchor: "OpenAI keeps three functions separate throughout that process:"
+  - document: "docs/provider-setup.md"
+    anchor: "OpenAI Responses API with Structured Outputs"
+  - document: "docs/native-codex-packet-transport.md"
+    anchor: "The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`"
+  - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
+    anchor: "OpenAI keeps Moderator, Participant, and Director separate in every project-local record; they are never collapsed or renamed into duty buckets."
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]

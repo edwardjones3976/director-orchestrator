@@ -1,0 +1,988 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Director provider route catalog (director-provider-routes/v1).
+#
+# Every route by which a provider reaches the Director, the owner, or another
+# provider, whether the route exists in code, is drafted, or is forbidden.
+# Documenting a route never authorizes it. Each route carries a status bound to
+# the charter or policy text that decides it, and a default configuration state
+# that records explicit switches and code blockers, never credential presence.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier
+# values appear here.
+schema_version: "director-provider-routes/v1"
+document_type: "director-provider-route-catalog"
+authority_granted: "none"
+
+lanes: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+
+endpoints:
+  - id: "openai"
+    description: "OpenAI lane: Director control plane plus separately assigned production."
+  - id: "claude"
+    description: "Claude lane: full-spectrum primary, Chief Programmer."
+  - id: "cursor"
+    description: "Cursor lane: full-spectrum primary, Project Secretary."
+  - id: "grok"
+    description: "Grok lane: Cursor-family primary teammate on xAI."
+  - id: "antigravity"
+    description: "Antigravity lane: Gemini-backed subordinate specialist."
+  - id: "perplexity"
+    description: "Perplexity lane: evidence-only public research."
+  - id: "firecrawl"
+    description: "Firecrawl lane: public search transport under the research contract."
+  - id: "github-copilot"
+    description: "GitHub Copilot lane: supplemental hygiene reviewer, no production authority."
+  - id: "microsoft-365-copilot"
+    description: "Microsoft 365 Copilot lane: blocked pending Work IQ capability evidence."
+  - id: "director"
+    description: "The OpenAI-backed Director control plane inside the orchestrator."
+  - id: "owner"
+    description: "The human owner, reached only through Slack and signed owner commands."
+  - id: "slack_thread"
+    description: "The Director-owned Slack thread for one task in its private project channel."
+  - id: "github"
+    description: "GitHub pull requests, reviews, checks, and label events."
+  - id: "n8n"
+    description: "The local n8n intake workflow that forwards owner Slack intake."
+  - id: "host_bridge"
+    description: "The Windows host provider bridge that runs native provider commands."
+  - id: "browser_ui"
+    description: "An already authenticated provider UI driven under the browser transport policy."
+  - id: "acceptance_registry"
+    description: "The owner-pinned provider-v2 acceptance registry and SQLite journal."
+  - id: "all_providers"
+    description: "Every provider lane at once; used only by the prohibited peer rule."
+
+routes:
+  # ------------------------------------------------------------------ mediated
+  - route_id: "work-packet-dispatch"
+    name: "Work packet dispatch"
+    kind: "mediated"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "all_providers" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    carries:
+      - "one immutable pre-staged work packet revision per assignment"
+      - "task text, acceptance checks, owned and prohibited paths, budgets, timeouts, and retry limits for prose-bearing lanes"
+      - "closed-vocabulary directive only for the Antigravity lane"
+    withheld_context:
+      - "credentials and raw secrets"
+      - "owner or Slack identifiers"
+      - "unrelated task context"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "The Director sends the initial packet once"
+      - document: "docs/team-operating-charter.md"
+        anchor: "The pre-stage packet binds `packet_id`, goal, terminal condition, exact"
+    enforced_by:
+      - "src/director_orchestrator/packet_routing.py:DirectorPacketTaskRouter"
+      - "src/director_orchestrator/policy.py"
+    prohibition_quote: null
+    config: [ALLOW_PAID_RUNS, PROJECT_ALLOWLIST, REPOSITORY_ALLOWLIST, ALLOWED_STARTING_REFS]
+    notes: "The packet is the only channel by which a provider learns about work. Provider output can never enlarge its own eligibility or the packet's scope."
+
+  - route_id: "result-packet-return"
+    name: "Result packet return"
+    kind: "mediated"
+    direction: "provider_to_director"
+    initiation: "provider_response_to_dispatch"
+    endpoints: { from: "all_providers", to: "director" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    carries:
+      - "one structured result packet bound to the dispatched packet identity"
+      - "provider-native run or session identifiers and returned usage telemetry when present"
+    withheld_context:
+      - "nothing is forwarded to another provider without a new Director-authored packet"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/slack-collaboration-bus.md"
+        anchor: "provider-native run/session evidence"
+      - document: "docs/team-operating-charter.md"
+        anchor: "Provider identity never grants authority. No model may approve its own work."
+    enforced_by:
+      - "src/director_orchestrator/packet_results.py"
+      - "src/director_orchestrator/packet_contracts.py"
+    prohibition_quote: null
+    config: []
+    notes: "Results are untrusted evidence. Completion never advances a gate by itself; acceptance evidence arrives on its own signed routes."
+
+  - route_id: "slack-collaboration-relay"
+    name: "Slack collaboration relay"
+    kind: "mediated"
+    direction: "director_to_owner"
+    initiation: "director"
+    endpoints: { from: "director", to: "slack_thread" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    carries:
+      - "concise, assignment-correlated status relayed by the Director on behalf of every provider"
+    withheld_context:
+      - "raw private source"
+      - "credentials"
+      - "provider prose that is not decision-relevant"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/slack-collaboration-bus.md"
+        anchor: "then relays only a concise"
+      - document: "prompts/director-system.md"
+        anchor: "Providers communicate through the Director rather than posting freely."
+    enforced_by:
+      - "src/director_orchestrator/engine.py"
+      - "src/director_orchestrator/slack_bot.py"
+    prohibition_quote: null
+    config: [SLACK_BOT_TOKEN, SLACK_OWNER_USER_ID, SLACK_CHANNEL_ALLOWLIST]
+    notes: "No provider posts to Slack itself. The Director is the only writer on the thread, and the thread is the owner's window into every lane."
+
+  - route_id: "dependency-outcome-forwarding"
+    name: "Dependency outcome forwarding"
+    kind: "mediated"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "all_providers" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    carries:
+      - "bounded outcomes of declared upstream assignments, embedded by the Director into the dependent packet"
+    withheld_context:
+      - "outcomes of assignments the packet did not declare as dependencies"
+      - "oversized results beyond the engine's per-outcome limit"
+      - "any dependency outcome for the Antigravity work lane"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "prompts/director-system.md"
+        anchor: "the Director delegates, relays, collects, and records concise structured updates"
+      - document: "docs/team-operating-charter.md"
+        anchor: "The Director sends the initial packet once"
+    enforced_by:
+      - "src/director_orchestrator/engine.py"
+      - "src/director_orchestrator/antigravity.py"
+    prohibition_quote: null
+    config: []
+    notes: "This is how one provider's work reaches another: through the Director, as a declared dependency, never as a message between providers."
+
+  - route_id: "review-to-merge-handoff"
+    name: "Review-to-merge handoff"
+    kind: "mediated"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "all_providers" }
+    providers_involved: [openai, claude, cursor, grok]
+    carries:
+      - "assignment ID, logical producer, material authors, exact base and head SHA or artifact digest, changed files, test evidence, known limitations, acceptance checks, security context"
+    withheld_context:
+      - "the producer's own review of its own candidate"
+    authority: "evidence_for_deterministic_gate"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "Every requested draft PR or other reviewable implementation must reserve a"
+      - document: "docs/team-operating-charter.md"
+        anchor: "The reviewer returns `ACCEPT`, `CHANGES_REQUIRED`, or"
+    enforced_by:
+      - "src/director_orchestrator/review_handoff.py"
+      - "src/director_orchestrator/primary_roster.py"
+    prohibition_quote: null
+    config: []
+    notes: "The reviewer must differ from the logical producer and every material author. A verdict is evidence for the deterministic merge gate, never authority to merge."
+
+  - route_id: "advisory-debate"
+    name: "Advisory debate and weighted vote"
+    kind: "mediated"
+    direction: "bidirectional"
+    initiation: "director"
+    endpoints: { from: "director", to: "all_providers" }
+    providers_involved: [openai, claude, cursor, grok, antigravity]
+    carries:
+      - "the neutrally framed question and bounded options"
+      - "independent positions, evidence, counterarguments, confidence, unknowns"
+      - "one advisory vote per seated member at the configured weight"
+    withheld_context:
+      - "other members' conclusions before independent positions are recorded, when practical"
+    authority: "advisory_evidence_only"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "Debate is recommended for medium, high, and critical complexity."
+      - document: "docs/team-operating-charter.md"
+        anchor: "No tally can expand scope or access, waive owner approval, make a producer its"
+    enforced_by:
+      - "src/director_orchestrator/team_charter.py:tally_advisory_votes"
+    prohibition_quote: null
+    config: [OPENAI_DEBATE_TURN_ESTIMATED_COST_USD]
+    notes: "The configured denominator is 8.5 and immutable. Positions are exchanged only through the Director as moderator; members never address one another."
+
+  - route_id: "antigravity-invited-debate"
+    name: "Antigravity invited debate turn"
+    kind: "mediated"
+    direction: "bidirectional"
+    initiation: "director_invitation_only"
+    endpoints: { from: "director", to: "antigravity" }
+    providers_involved: [antigravity]
+    carries:
+      - "the sanitized bounded question and vote options"
+      - "accepted declared-dependency contributions"
+      - "one bounded Director revision request"
+    withheld_context:
+      - "task text, acceptance criteria, dependency outcomes, and repository context"
+      - "source blocks and credential-shaped values"
+    authority: "advisory_evidence_only"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "Antigravity may hold a debate seat, but only one the Director gave it"
+      - document: "prompts/director-system.md"
+        anchor: "Antigravity may participate in debate only after the Director persists and dispatches a matching bounded invitation."
+    enforced_by:
+      - "src/director_orchestrator/antigravity.py:build_debate_request"
+      - "src/director_orchestrator/policy.py"
+    prohibition_quote: null
+    config: [GEMINI_MODE]
+    notes: "Admitted only by a persisted Director invitation whose assignment sequence, phase, and round match the dispatched assignment; self-initiation is impossible by construction."
+
+  - route_id: "antigravity-closed-work-directive"
+    name: "Antigravity closed-vocabulary work directive"
+    kind: "mediated"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "antigravity" }
+    providers_involved: [antigravity]
+    carries:
+      - "one AntigravityFixtureLane selection plus bounded enum and integer parameters"
+      - "fixed repository-owned strings only"
+    withheld_context:
+      - "acceptance_criteria"
+      - "assignment_task_text"
+      - "dependency_outcomes"
+      - "owner_objective"
+      - "owner_or_slack_identifiers"
+      - "primary_team_handoff_context"
+      - "private_project_data"
+      - "repository_paths_diffs_or_source"
+      - "reviewer_revision_text"
+      - "run_session_or_task_identifiers"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "Ordinary Antigravity *work* is sent no"
+      - document: "docs/provider-setup.md"
+        anchor: "Ordinary Antigravity work dispatch sends no model-authored prose."
+    enforced_by:
+      - "src/director_orchestrator/antigravity.py"
+      - "src/director_orchestrator/primary_transports.py:antigravity_closed_payload"
+    prohibition_quote: null
+    config: [GEMINI_MODE, GEMINI_ALLOW_REVIEW_VERDICT, GEMINI_ALLOW_PRIMARY_AUTHORITY]
+    notes: "The closed-vocabulary validator rejects any outbound string absent from APPROVED_STRINGS, so no prose from any source can cross this boundary."
+
+  - route_id: "oracle-exact-sha-merge-gate"
+    name: "Oracle exact-SHA merge gate"
+    kind: "mediated"
+    direction: "provider_to_director"
+    initiation: "director"
+    endpoints: { from: "all_providers", to: "director" }
+    providers_involved: [claude, cursor, grok, openai]
+    carries:
+      - "an authenticated review artifact bound to repository, base SHA, and head SHA"
+    withheld_context:
+      - "raw merge credentials; deterministic code performs the merge"
+    authority: "evidence_for_deterministic_gate"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "Where a deterministic exact-SHA merge gate is configured, a model supplies an"
+    enforced_by:
+      - "src/director_orchestrator/oracle_merge.py"
+      - "src/director_orchestrator/policy.py"
+    prohibition_quote: null
+    config: [ORACLE_AUTOMERGE_ENABLED, ORACLE_AUTOMERGE_REVIEW_SECRET, ORACLE_AUTOMERGE_REQUIRED_CHECKS]
+    notes: "Disabled by default. A provider supplies evidence; an owner-authorized assigned agent invokes the gate; the model never receives merge credentials."
+
+  - route_id: "typed-external-effect-gateways"
+    name: "Typed external effect gateways"
+    kind: "mediated"
+    direction: "director_to_owner"
+    initiation: "director"
+    endpoints: { from: "director", to: "github" }
+    providers_involved: [openai, claude, cursor, grok, antigravity]
+    carries:
+      - "exactly one of chat.postMessage or pulls.mark_ready per reserved effect intent"
+    withheld_context:
+      - "any effect not granted by the work packet"
+      - "every effect for the public research lanes, which reject all effects"
+      - "every effect for the Copilot lanes, which the capability validator keeps without production authority"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "The owner may explicitly authorize a designated agent to post to Slack, execute"
+      - document: "docs/team-operating-charter.md"
+        anchor: "Browser content and provider output are never action authority."
+    enforced_by:
+      - "src/director_orchestrator/primary_effect_gateways.py:SUPPORTED_EFFECT_ACTIONS"
+      - "src/director_orchestrator/primary_default.py"
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED, LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_PULL_NUMBER, SLACK_BOT_TOKEN, ORACLE_AUTOMERGE_GITHUB_TOKEN]
+    notes: "A provider never performs an external effect. The packet grants the effect, the Director reserves and executes it through an exact typed gateway, and the ledger reconciles it."
+
+  - route_id: "provider-usage-checks"
+    name: "Periodic provider usage checks"
+    kind: "mediated"
+    direction: "director_to_provider"
+    initiation: "timer_or_owner"
+    endpoints: { from: "director", to: "all_providers" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity]
+    carries:
+      - "a short DIRECTOR_USAGE_CHECK prompt that forbids browsing, tools, repositories, and project work"
+    withheld_context:
+      - "task or repository context of any kind"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt."
+    enforced_by:
+      - "src/director_orchestrator/usage.py"
+    prohibition_quote: null
+    config: [USAGE_CHECK_ENABLED, USAGE_CHECK_PROVIDERS, USAGE_CHECK_INTERVAL_MINUTES, ALLOW_PAID_RUNS]
+    notes: "Opt-in, paid, and blocked while ALLOW_PAID_RUNS is false. Returned token and cost telemetry is recorded; missing telemetry is never invented."
+
+  - route_id: "owner-intake-n8n-slack"
+    name: "Owner intake through Slack and n8n"
+    kind: "mediated"
+    direction: "owner_to_director"
+    initiation: "owner"
+    endpoints: { from: "owner", to: "director" }
+    providers_involved: []
+    carries:
+      - "the owner's Slack intake message, forwarded by n8n as a signed SlackIntake"
+    withheld_context:
+      - "messages from non-owner users or non-allowlisted channels"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/slack-collaboration-bus.md"
+        anchor: "Slack is the Director's primary human-visible coordination room."
+    enforced_by:
+      - "src/director_orchestrator/slack_bot.py"
+      - "src/director_orchestrator/main.py"
+    prohibition_quote: null
+    config: [ORCHESTRATOR_SHARED_SECRET, SLACK_OWNER_USER_ID, SLACK_CHANNEL_ALLOWLIST]
+    notes: "Owner input is the only thing that starts work. Providers never receive intake directly."
+
+  - route_id: "owner-manual-recovery"
+    name: "Owner manual recovery of an ambiguous dispatch"
+    kind: "mediated"
+    direction: "owner_to_director"
+    initiation: "owner"
+    endpoints: { from: "owner", to: "director" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    carries:
+      - "provider run or session identifiers supplied by the owner to reconcile an ambiguous paid dispatch"
+    withheld_context:
+      - "any review, security, CI, or merge verdict; recovery text binds identifiers only"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "for owner reconciliation of the provider identifiers"
+      - document: "docs/team-operating-charter.md"
+        anchor: "text cannot become exact-SHA review or merge authority."
+    enforced_by:
+      - "src/director_orchestrator/callbacks.py"
+      - "src/director_orchestrator/engine.py"
+    prohibition_quote: null
+    config: [ORCHESTRATOR_SHARED_SECRET]
+    notes: "Result evidence must still arrive from the authenticated provider API or callback."
+
+  # -------------------------------------------------------------------- direct
+  - route_id: "openai-responses-api"
+    name: "OpenAI Responses API (Director planning and review)"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "openai" }
+    providers_involved: [openai]
+    carries:
+      - "Director planning, acceptance review, and debate-turn requests with Structured Outputs"
+      - "packet-only analysis under the LangGraph primary responses-api transport"
+    withheld_context:
+      - "repository execution; this contact is tool-free"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "OpenAI Responses API with Structured Outputs"
+      - document: "docs/native-codex-packet-transport.md"
+        anchor: "The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`"
+    enforced_by:
+      - "src/director_orchestrator/director.py"
+      - "src/director_orchestrator/primary_transports.py:OpenAIResponsesPacketTransport"
+    prohibition_quote: null
+    config: [OPENAI_API_KEY, OPENAI_DIRECTOR_MODEL, OPENAI_REASONING_EFFORT, LANGGRAPH_PRIMARY_OPENAI_TRANSPORT]
+    notes: "Separately billed API usage; the owner's OpenAI Pro 20x subscription does not fund this route."
+
+  - route_id: "openai-native-codex-host"
+    name: "OpenAI native Codex host transport"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "host_bridge", to: "openai" }
+    providers_involved: [openai]
+    carries:
+      - "one validated packet executed by a single read-only codex exec run on the Windows host"
+    withheld_context:
+      - "API and Director secrets; the native child environment holds operating-system essentials only"
+      - "repository inspection or modification; packet-only analysis"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/native-codex-packet-transport.md"
+        anchor: "packet-only analysis"
+      - document: "docs/provider-allocation-profiles.md"
+        anchor: "The default LangGraph primary OpenAI transport uses the separately billed Responses"
+    enforced_by:
+      - "src/director_orchestrator/native_codex_transport.py"
+      - "src/director_orchestrator/host_provider_bridge.py"
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_OPENAI_TRANSPORT, LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT, LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET, DIRECTOR_HOST_PROVIDER_COMMANDS_JSON]
+    notes: "Selected only by LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=native-codex-host. Requires a ChatGPT login reported by the native login status command; no silent API fallback."
+
+  - route_id: "claude-routine-dispatch-and-callback"
+    name: "Claude Code Routine trigger and signed callback"
+    kind: "direct"
+    direction: "bidirectional"
+    initiation: "director"
+    endpoints: { from: "director", to: "claude" }
+    providers_involved: [claude]
+    carries:
+      - "a Routine API trigger carrying the work packet"
+      - "the only inbound provider-initiated HTTP route: a bearer-authenticated completion callback"
+    withheld_context:
+      - "callback evidence replaces no pre-work evidence and grants no gate"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "The supported programmable bridge here is a **Claude Code Routine** with an API trigger."
+      - document: "docs/provider-setup.md"
+        anchor: "`CLAUDE_CALLBACK_SECRET`: a dedicated callback bearer secret"
+    enforced_by:
+      - "src/director_orchestrator/providers.py:ClaudeAdapter"
+      - "src/director_orchestrator/callbacks.py"
+    prohibition_quote: null
+    config: [CLAUDE_ROUTINE_URL, CLAUDE_ROUTINE_TOKEN, CLAUDE_CALLBACK_SECRET, CLAUDE_ROUTINE_BETA]
+    notes: "Claude Cowork has no inbound API trigger; the Routine is the supported bridge and reports through the callback or a manual owner report."
+
+  - route_id: "cursor-cloud-agents-api"
+    name: "Cursor Cloud Agents API"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "cursor" }
+    providers_involved: [cursor]
+    carries:
+      - "a durable cloud agent run over an allowlisted repository and starting ref, polled to completion"
+      - "an optional draft pull request when the packet allows it"
+    withheld_context:
+      - "any repository, project, or starting ref outside the allowlists"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "Cursor Cloud Agents API v1"
+      - document: "docs/provider-setup.md"
+        anchor: "Cursor cannot use an implicit dashboard repository, and model output or owner approval cannot widen these target lists."
+    enforced_by:
+      - "src/director_orchestrator/providers.py:CursorAdapter"
+      - "src/director_orchestrator/policy.py"
+    prohibition_quote: null
+    config: [CURSOR_API_KEY, CURSOR_API_BASE, PROJECT_ALLOWLIST, REPOSITORY_ALLOWLIST, ALLOWED_STARTING_REFS]
+    notes: "Cursor stays a direct API contact; it is deliberately outside the Windows host bridge."
+
+  - route_id: "xai-responses-api"
+    name: "xAI Responses API (Grok analysis and debate)"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "grok" }
+    providers_involved: [grok]
+    carries:
+      - "synchronous, tool-free analysis, planning, and debate turns"
+    withheld_context:
+      - "repository write, branch, pull-request, merge, or deployment lanes"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "The Grok adapter has two explicit transports."
+      - document: "docs/team-operating-charter.md"
+        anchor: "xAI API, Grok Build CLI, and Grok Bot are distinct contacts"
+    enforced_by:
+      - "src/director_orchestrator/providers.py:GrokAdapter"
+    prohibition_quote: null
+    config: [GROK_ENABLED, XAI_API_KEY, GROK_API_BASE, GROK_MODEL, GROK_ALLOW_TOOLS]
+    notes: "The configured model must appear in the authenticated xAI catalog before the first paid request in each process."
+
+  - route_id: "grok-build-cli"
+    name: "Grok Build CLI (repository work and exact-SHA review)"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "grok" }
+    providers_involved: [grok]
+    carries:
+      - "repository implementation in an operator-mapped clean named worktree"
+      - "exact-SHA review bound to repository, base, and head evidence"
+    withheld_context:
+      - "any worktree outside the explicit repository map"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "Repository implementation and"
+      - document: "docs/team-operating-charter.md"
+        anchor: "xAI API, Grok Build CLI, and Grok Bot are distinct contacts"
+    enforced_by:
+      - "src/director_orchestrator/providers.py:GrokAdapter"
+    prohibition_quote: null
+    config: [GROK_CLI_ENABLED, GROK_CLI_EXECUTABLE, GROK_CLI_EXECUTABLE_SHA256, GROK_CLI_REPOSITORY_MAP_JSON, GROK_ALLOW_REPOSITORY_WRITE, GROK_ALLOW_REVIEW_VERDICT]
+    notes: "A native-host capability: a containerized Director cannot use the Windows executable or host worktree without an authenticated host runner."
+
+  - route_id: "grok-bot"
+    name: "Grok Bot contact"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "grok" }
+    providers_involved: [grok]
+    carries:
+      - "nothing yet; no adapter, transport enum value, or configuration variable exists in this repository"
+    withheld_context: []
+    authority: "none"
+    status: "proposed"
+    default_config_state: "not_applicable"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "xAI API, Grok Build CLI, and Grok Bot are distinct contacts"
+    enforced_by: []
+    prohibition_quote: null
+    config: []
+    notes: "Named by the charter as a distinct contact. Documenting it here does not authorize it; an adapter would need its own owner-approved work order."
+
+  - route_id: "gemini-interactions-api"
+    name: "Gemini Interactions API (Antigravity managed agent)"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "antigravity" }
+    providers_involved: [antigravity]
+    carries:
+      - "the closed-vocabulary work directive or the typed debate envelope as a stored background Interaction"
+    withheld_context:
+      - "every prose field named by WITHHELD_CONTEXT"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "The Gemini adapter uses the REST Interactions API"
+    enforced_by:
+      - "src/director_orchestrator/providers.py:GeminiAdapter"
+      - "src/director_orchestrator/antigravity.py"
+    prohibition_quote: null
+    config: [GEMINI_API_KEY, GEMINI_AGENT, GEMINI_API_REVISION, GEMINI_MODE]
+    notes: "Availability probes use the low-cost usage model statelessly and never provision an Antigravity sandbox."
+
+  - route_id: "perplexity-search-api"
+    name: "Perplexity Search API"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "perplexity" }
+    providers_involved: [perplexity]
+    carries:
+      - "one owner-approved bounded public research query and a result limit"
+    withheld_context:
+      - "repository context, acceptance authority, credentials, and Slack state"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "Normal assignments use `POST /search`."
+      - document: "docs/team-operating-charter.md"
+        anchor: "Perplexity may receive only a bounded public research query."
+    enforced_by:
+      - "src/director_orchestrator/providers.py:PerplexityAdapter"
+      - "src/director_orchestrator/policy.py"
+    prohibition_quote: null
+    config: [PERPLEXITY_ENABLED, PERPLEXITY_API_KEY, PERPLEXITY_MODE, PERPLEXITY_MAX_RESULTS]
+    notes: "Every Perplexity assignment needs an owner approval bound to the digest of the exact query; a later mutation invalidates it."
+
+  - route_id: "pplx-cli-public-search"
+    name: "pplx-cli public search (primary lane)"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "host_bridge", to: "perplexity" }
+    providers_involved: [perplexity]
+    carries:
+      - "bounded public web search and public-page snippets under the research-only contract"
+    withheld_context:
+      - "repository context and every external effect"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "`pplx-cli` supplies terminal-based live web results and public-page snippets"
+      - document: "prompts/director-system.md"
+        anchor: "Use `pplx-cli` only as the terminal transport for bounded public web search"
+    enforced_by:
+      - "src/director_orchestrator/primary_transports.py:PublicSearchCommandTransport"
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED, PERPLEXITY_API_KEY, PPLX_API_KEY]
+    notes: "A research transport, not a new provider role, permission, vote, review authority, or external-action lane."
+
+  - route_id: "firecrawl-public-search-cli"
+    name: "Firecrawl public search transport (primary lane)"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "host_bridge", to: "firecrawl" }
+    providers_involved: [firecrawl]
+    carries:
+      - "bounded public search under the same fail-closed research contract as Perplexity"
+    withheld_context:
+      - "repository context and every external effect"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/provider-allocation-profiles.md"
+        anchor: "A nonzero target is not evidence that a route is operational."
+      - document: "docs/langgraph-primary-operations.md"
+        anchor: "Perplexity or Firecrawl contact under the frozen profile"
+    enforced_by:
+      - "src/director_orchestrator/primary_transports.py:PublicSearchCommandTransport"
+      - "src/director_orchestrator/primary_default.py"
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED, FIRECRAWL_API_KEY, FIRECRAWL_API_URL]
+    notes: "Exists only on the LangGraph primary path. The legacy registry has no Firecrawl adapter."
+
+  - route_id: "github-copilot-lite-review"
+    name: "GitHub Copilot Lite hygiene review"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "host_bridge", to: "github-copilot" }
+    providers_involved: [github-copilot]
+    carries:
+      - "one requested hygiene observation after checks are green and the exact candidate is frozen"
+    withheld_context:
+      - "production authority; the capability validator refuses it for this lane"
+    authority: "advisory_evidence_only"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "GitHub Copilot Lite is an optional supplemental hygiene reviewer with no"
+      - document: "docs/provider-setup.md"
+        anchor: "GitHub Copilot Lite is not another provider bridge."
+    enforced_by:
+      - "src/director_orchestrator/primary_transports.py:PrimaryProviderCapability"
+      - "src/director_orchestrator/host_provider_bridge.py"
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED, COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN]
+    notes: "Not gating. A rejected finding is waste; a confirmed defect blocks through the existing defect gates, not through Copilot."
+
+  - route_id: "microsoft-365-copilot-work-iq"
+    name: "Microsoft 365 Copilot Work IQ"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "microsoft-365-copilot" }
+    providers_involved: [microsoft-365-copilot]
+    carries:
+      - "nothing today; discovery hard-codes this lane unauthenticated with a typed external blocker"
+    withheld_context:
+      - "production authority; the capability validator refuses it for this lane"
+    authority: "none"
+    status: "proposed"
+    default_config_state: "blocked"
+    charter_basis:
+      - document: "docs/langgraph-primary-operations.md"
+        anchor: "the production Work IQ REST endpoint"
+      - document: "docs/provider-setup.md"
+        anchor: "Microsoft Work IQ requires the tenant, a protected non-symlink token file, and"
+    enforced_by: []
+    prohibition_quote: null
+    config: [MICROSOFT_365_COPILOT_TENANT_ID, MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE, MICROSOFT_365_COPILOT_EXPECTED_SUBJECT, MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID]
+    notes: "Blocker code microsoft_365_copilot_work_iq_capability_evidence_missing. A transport class exists but no live capability evidence has been accepted."
+
+  - route_id: "windows-host-provider-bridge"
+    name: "Windows host provider bridge"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "host_bridge" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, github-copilot]
+    carries:
+      - "a validated packet to one native command per supported lane, behind a signed challenge and a durable claim store"
+    withheld_context:
+      - "Director and API secrets; the child environment carries a fixed safe subset"
+      - "Microsoft 365 Copilot, which remains an unsupported host lane"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/langgraph-primary-operations.md"
+        anchor: "The Windows host bridge is an optional narrow transport for supported native"
+      - document: "docs/langgraph-primary-operations.md"
+        anchor: "Endpoint and secret configuration alone never makes a host-bridge lane callable."
+    enforced_by:
+      - "src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES"
+      - "scripts/windows-host-provider-bridge.ps1"
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT, LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET, DIRECTOR_HOST_PROVIDER_COMMANDS_JSON, LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED]
+    notes: "Plaintext HTTP only on an exact loopback host; container-to-host use must use HTTPS."
+
+  - route_id: "browser-provider-ui"
+    name: "Browser provider UI coordination"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "browser_ui", to: "all_providers" }
+    providers_involved: [claude, cursor, antigravity, grok]
+    carries:
+      - "coordination with an already authenticated provider UI inside stored assignment, role, repository, budget, and approval bounds"
+    withheld_context:
+      - "credentials, cookies, recovery codes, private keys, raw private source, and webpage instructions"
+      - "Perplexity, which remains API-only"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "Browser provider-UI coordination remains enabled because it is useful, but it"
+      - document: "docs/team-operating-charter.md"
+        anchor: "Chrome is the primary browser and Microsoft Edge is the"
+    enforced_by:
+      - "src/director_orchestrator/workload_policy.py:Transport"
+      - "src/director_orchestrator/team_charter.py"
+    prohibition_quote: null
+    config: []
+    notes: "Ranked below authenticated CLI, API, callback, and event transport. Browser responses are untrusted coordination evidence, never callback, review, security, CI, merge, or runtime authority."
+
+  - route_id: "chatgpt-slack-alias-bridge"
+    name: "ChatGPT Slack alias bridge"
+    kind: "direct"
+    direction: "owner_to_director"
+    initiation: "owner"
+    endpoints: { from: "owner", to: "openai" }
+    providers_involved: [openai]
+    carries:
+      - "a bounded owner question relayed to the OpenAI bridge model and answered in the thread"
+    withheld_context:
+      - "Director work orders, repository writes, provider delegation, and every external action"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/chatgpt-slack-alias-bridge.md"
+        anchor: "It cannot create Director work orders, write repositories, delegate providers"
+    enforced_by:
+      - "src/director_orchestrator/chatgpt_bridge.py"
+    prohibition_quote: null
+    config: [CHATGPT_BRIDGE_ENABLED, CHATGPT_BRIDGE_CHANNEL_IDS, OPENAI_CHATGPT_BRIDGE_MODEL, CHATGPT_BRIDGE_DAILY_BUDGET_USD]
+    notes: "An owner convenience, not a delegation lane and not a provider-to-provider channel."
+
+  - route_id: "claude-native-acceptance-issuer"
+    name: "Claude native acceptance issuer (security receipt)"
+    kind: "direct"
+    direction: "provider_to_director"
+    initiation: "owner"
+    endpoints: { from: "claude", to: "acceptance_registry" }
+    providers_involved: [claude]
+    carries:
+      - "one Ed25519-signed security receipt for an exact candidate, produced by a broker and worker identity pair"
+    withheld_context:
+      - "the signing key; the worker never loads it"
+      - "the coordinator's ability to author a trusted response"
+    authority: "evidence_for_deterministic_gate"
+    status: "proposed"
+    default_config_state: "blocked"
+    charter_basis:
+      - document: "docs/native-acceptance-issuers.md"
+        anchor: "Claude owns the security role; Cursor owns independent"
+      - document: "docs/native-acceptance-issuers.md"
+        anchor: "It does not activate LangGraph or approve its own release."
+    enforced_by: []
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_ACCEPTANCE_MODE, LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH, LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256, LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH]
+    notes: "Dormant until the owner installs the protected runtime, four non-admin identities, and the native claude.ai login. The issuer cannot approve its own adoption."
+
+  - route_id: "cursor-native-acceptance-issuer"
+    name: "Cursor native acceptance issuer (independent review receipt)"
+    kind: "direct"
+    direction: "provider_to_director"
+    initiation: "owner"
+    endpoints: { from: "cursor", to: "acceptance_registry" }
+    providers_involved: [cursor]
+    carries:
+      - "one Ed25519-signed independent-review receipt for an exact candidate, produced by a broker and worker identity pair"
+    withheld_context:
+      - "the signing key; the worker never loads it"
+      - "the coordinator's ability to author a trusted response"
+    authority: "evidence_for_deterministic_gate"
+    status: "proposed"
+    default_config_state: "blocked"
+    charter_basis:
+      - document: "docs/native-acceptance-issuers.md"
+        anchor: "Claude owns the security role; Cursor owns independent"
+      - document: "docs/native-acceptance-issuers.md"
+        anchor: "It does not activate LangGraph or approve its own release."
+    enforced_by: []
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_ACCEPTANCE_MODE, LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH, LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256, LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH]
+    notes: "Dormant until the owner installs the protected runtime and completes the worker's native Cursor login. The issuer cannot approve its own adoption."
+
+  # ------------------------------------------------------------------ external
+  - route_id: "codex-security-review-comment"
+    name: "Label-triggered Codex security review"
+    kind: "external"
+    direction: "github_to_director"
+    initiation: "github_label_event"
+    endpoints: { from: "github", to: "openai" }
+    providers_involved: [openai]
+    carries:
+      - "a bounded advisory security review comment on a same-repository pull request after a maintainer applies the label"
+    withheld_context:
+      - "edit, push, merge, deploy, and Oracle merge-gate authority"
+    authority: "advisory_evidence_only"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "The optional `.github/workflows/codex-security-review.yml` lane runs only when"
+    enforced_by:
+      - ".github/workflows/codex-security-review.yml"
+    prohibition_quote: null
+    config: []
+    notes: "Uses a project-scoped key stored as a GitHub Actions secret; the Windows Director environment is never reused."
+
+  - route_id: "ci-acceptance-issuer"
+    name: "Isolated CI acceptance issuer (CI receipt)"
+    kind: "external"
+    direction: "github_to_director"
+    initiation: "github_push_event"
+    endpoints: { from: "github", to: "acceptance_registry" }
+    providers_involved: []
+    carries:
+      - "one OIDC-bound CI receipt for a successful same-repository push run of the pinned check workflow"
+    withheld_context:
+      - "candidate code, dependencies, and artifacts, which never execute in the issuer jobs"
+    authority: "evidence_for_deterministic_gate"
+    status: "proposed"
+    default_config_state: "blocked"
+    charter_basis:
+      - document: "docs/ci-acceptance-issuer.md"
+        anchor: "This implementation can issue only the CI receipt."
+    enforced_by: []
+    prohibition_quote: null
+    config: [LANGGRAPH_PRIMARY_ACCEPTANCE_MODE]
+    notes: "Dormant until CI_ISSUER_ADOPTED is owner-provisioned after separate exact review. Not a provider lane; listed because the acceptance registry pairs it with the two provider issuers."
+
+  - route_id: "shared-workflow-skills"
+    name: "Shared provider workflow skills catalog"
+    kind: "external"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "all_providers" }
+    providers_involved: [cursor, antigravity, perplexity]
+    carries:
+      - "a stable catalog name selected by the Director after the active session discovers it"
+    withheld_context:
+      - "scope, data exposure, repository or credential access, spending, roles, self-review eligibility, Slack authority, merge, deployment, publication, or permissions"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "enabled"
+    charter_basis:
+      - document: "docs/team-operating-charter.md"
+        anchor: "The shared provider catalog may expose `cursor-agent-workflow`,"
+      - document: "docs/team-operating-charter.md"
+        anchor: "A skill is a workflow overlay, not new authority."
+    enforced_by:
+      - "src/director_orchestrator/director.py"
+    prohibition_quote: null
+    config: []
+    notes: "Local absolute installation paths are not project contracts."
+
+  # ---------------------------------------------------------------- prohibited
+  - route_id: "direct-provider-to-provider"
+    name: "Direct provider-to-provider channel"
+    kind: "direct"
+    direction: "provider_to_provider"
+    initiation: "none"
+    endpoints: { from: "all_providers", to: "all_providers" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    carries: []
+    withheld_context:
+      - "everything; no such channel exists in the transport enums, the host bridge lane sets, or the typed effect actions"
+    authority: "none"
+    status: "prohibited"
+    default_config_state: "not_applicable"
+    charter_basis:
+      - document: "docs/slack-collaboration-bus.md"
+        anchor: "They do not post directly or converse forever."
+      - document: "docs/model-interoperability-contract.md"
+        anchor: "Agents do not address each other through uncontrolled chat loops."
+      - document: "docs/templates/project-bootstrap/project-profile.yaml"
+        anchor: "provider_messages_relay_through_director: true"
+      - document: "prompts/director-system.md"
+        anchor: "Providers communicate through the Director rather than posting freely."
+    enforced_by:
+      - "src/director_orchestrator/interactions.py:ProviderTransport"
+      - "src/director_orchestrator/workload_policy.py:Transport"
+      - "src/director_orchestrator/primary_transports.py:PrimaryProviderCapability"
+    prohibition_quote: "They do not post directly or converse forever."
+    config: []
+    notes: "Every exchange between two providers is brokered by the Director through work-packet-dispatch, dependency-outcome-forwarding, review-to-merge-handoff, advisory-debate, or slack-collaboration-relay."
+
+provider_to_provider_rule:
+  status: "prohibited"
+  basis:
+    - document: "docs/slack-collaboration-bus.md"
+      anchor: "They do not post directly or converse forever."
+    - document: "docs/model-interoperability-contract.md"
+      anchor: "Agents do not address each other through uncontrolled chat loops."
+    - document: "docs/templates/project-bootstrap/project-profile.yaml"
+      anchor: "provider_messages_relay_through_director: true"
+    - document: "prompts/director-system.md"
+      anchor: "Providers communicate through the Director rather than posting freely."
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]

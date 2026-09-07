@@ -1,3 +1,13 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -10,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
+from .allocation_profiles import ALLOCATION_PROFILES, DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest, LANES
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -136,80 +147,104 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "milestone_reporting",
         ],
         "duties_excluded_from_openai_direct_production_share": True,
-        "direct_workload_percent": {
-            "claude": 60,
-            "cursor": 14,
-            "grok": 14,
-            "gemini": 7,
-            "perplexity": 4,
-            "external_openai": 1,
-        },
-        "overall_effort_percent": {
-            "claude": 36,
-            "cursor": 20,
-            "grok": 20,
-            "openai": 8,
-            "gemini": 11,
-            "perplexity": 5,
-        },
+        "direct_workload_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
+        "overall_effort_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
         "workload_lanes": {
-            "claude": "all_medium_or_long_programming",
-            "cursor": "primary_review_qa_and_bounded_non_programming",
-            "grok": "primary_review_qa_and_bounded_non_programming",
+            "claude": "primary_full_spectrum",
+            "cursor": "primary_full_spectrum",
+            "grok": "primary_full_spectrum",
             "antigravity": "bounded_subordinate_specialist",
             "perplexity": "public_research_evidence_only",
-            "openai": "control_plane_and_truly_simple_local_overall_effort_external_owner_authorized_direct_production",
+            "openai": "control_plane_and_authorized_production",
         },
         "workload_accounting": {
-            "unit_basis": "immutable_prestaged_effort_points",
+            "unit_basis": "real_reserved_assignment_once",
             "workload_size_values": ["simple", "short", "medium", "long"],
             "effort_points": {"minimum": 1, "maximum": 100},
             "windows": ["assignment", "rolling_20_completed_assignments"],
             "ledgers": {
-                "direct_production": "authenticated_accepted_production_only_against_direct_workload_percent",
-                "overall_effort": "all_authenticated_or_directly_observed_provider_effort_against_overall_effort_percent",
+                "direct_production": "accepted_productive_work_allocation",
+                "overall_effort": "prospective_observed_effort_guard",
             },
-            "failed_attempt_rule": "overall_effort_only_not_direct_production_credit",
-            "control_plane_rule": "openai_control_plane_counts_only_in_overall_effort",
+            "failed_attempt_rule": "retain_admission_without_productive_credit",
+            "control_plane_rule": "openai_control_plane_counts_only_in_historical_overall_effort",
+            "accepted_production_ledger": "direct_production",
+            "usage_guard_ledger": "overall_effort",
         },
         "workload_enforcement": {
+            "enforced_measure": "admitted_assignment_count",
             "normal_tolerance_percentage_points": 3,
-            "hard_overage_percentage_points": 5,
-            "absolute_non_claude_cap_percent": 27,
-            "claude_cap_percent_with_two_other_primary_available": 45,
-            "hard_thresholds_percent": {
-                "claude": 45,
-                "cursor": 25,
-                "grok": 25,
-                "openai": 13,
-                "gemini": 16,
-                "perplexity": 10,
-            },
-            "primary_caps_percent": {
-                "claude": 45,
-                "cursor": 27,
-                "grok": 27,
-                "openai": 27,
-            },
-            "primary_providers": ["claude", "cursor", "grok", "openai"],
-            "evaluate": ["assignment_plan", "rolling_20_projected_overall_effort"],
+            "startup_denominator": "twenty_slots_real_assignments_only",
+            "evaluate": [
+                "prospective_last20_assignment_count",
+            ],
             "soft_action": "route_next_eligible_work_to_an_under_target_provider",
-            "hard_action": "block_dispatch_and_reshape",
+            "share_pressure_action": "block_above_direct_target_plus_five",
             "automatic_drift_correction": True,
             "automatic_enforcement_after_shadow": True,
-            "openai_overage_exception": False,
-            "degraded_team_rule": "never_relax_a_cap_or_spill_work_to_openai_implicitly",
+            "overall_effort_can_block_or_route": False,
+            "overall_effort_normal_bands_percent": {lane: [max(0,target-3), min(100,target+3)] for lane,target in ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE].items()},
+            "degraded_team_rule": "no_threshold_relaxation_or_implicit_external_openai_spill",
             "filler_work_prohibited": True,
         },
         "coding_routing": {
-            "medium_or_long_programming_provider": "claude",
-            "minimum_model_profile": "FABLE 5 ULTRA/MAX",
-            "required_assignment_model_label": "FABLE 5 ULTRA/MAX",
-            "downgrade_allowed": False,
+            "selection_policy": "cheap_capable_model_first",
+            "selection_order": [
+                "exact_scope_allowlists_transport_and_readiness",
+                "task_capability_tools_context_risk_and_independence",
+                "direct_allocation_compliance_and_under_target_preference",
+                "total_effort_eligibility_and_corrective_under_band_preference",
+                "lowest_trusted_estimated_cost",
+                "deterministic_tie_breaker",
+            ],
+            "trusted_cost_rule": "use_only_authenticated_or_operator_configured_comparable_cost_evidence",
+            "missing_cost_rule": "unknown_cost_never_becomes_zero_or_cheapest",
+            "claude_exact_requirement_rule": "exact_trusted_requirement_may_select_claude_and_model_label",
+            "unconditional_claude_medium_or_long_requirement": False,
+            "model_output_cannot_expand_eligibility": True,
             "unavailable_action": "stop_and_reshape_without_silent_substitution",
             "one_writer_lease_per_file_or_error_surface": True,
-            "reviewer_rotation": "least_recent_eligible_under_cap_non_author",
+            "reviewer_rotation": "least_recent_eligible_non_author",
             "reviewer_must_differ_from_producer_and_material_authors": True,
+        },
+        "roi_and_waste": {
+            "accepted_productive_unit": "authenticated_accepted_direct_production_effort_point",
+            "historical_effort_unit": "authenticated_observed_attempt_or_recovery_effort_point",
+            "estimated_roi": "accepted_productive_units_divided_by_recorded_estimated_cost",
+            "reported_cost_roi_rule": "compute_only_from_correlated_reported_cost_never_invent_missing_telemetry",
+            "first_pass_yield": "accepted_on_primary_attempt_divided_by_primary_attempts",
+            "correction_rate": "reviewable_candidates_requiring_correction_divided_by_reviewable_candidates",
+            "waste_unit": "invoked_effort_without_accepted_productive_credit",
+            "waste_categories": [
+                "rejected_or_unusable_output",
+                "quota_or_unavailable_invocation",
+                "duplicate_dispatch",
+                "duplicate_validation",
+                "recovery_attempt",
+                "ambiguous_dispatch",
+                "rejected_copilot_finding",
+            ],
+            "selection_record_requires": [
+                "eligible_candidate_set",
+                "exclusion_reasons",
+                "trusted_comparable_costs",
+                "selected_provider_and_model",
+                "deterministic_tie_break_reason",
+            ],
+        },
+        "copilot_lite_hygiene_review": {
+            "provider_or_committee_member": False,
+            "workload_percentage": None,
+            "trigger": "request_after_checks_green_and_exact_candidate_freeze",
+            "attempts": "conditional_maximum_three",
+            "automatic_every_push": False,
+            "gating": False,
+            "authority_granted": [],
+            "unavailable_or_quota_failure": "record_waste_and_continue_without_inferred_verdict",
+            "finding_rule": "validate_independently_block_only_confirmed_defect",
+            "rejected_finding_rule": "record_as_waste",
+            "candidate_change_rule": "invalidate_the_observation_do_not_auto_rerun",
+            "material_fix_authorship_rule": "substantive_fix_makes_copilot_material_author_ineligible_to_review_candidate",
         },
         "team_first": {
             "default": True,
@@ -252,7 +287,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "candidate_binding": "new_canonical_packet_revision_then_relay_delta_before_review",
             "provider_updates": "initial_packet_once_then_relevant_deltas_only",
             "authority_change": "new_owner_authorized_revision",
-            "execution_limits": "fixed_v1_defaults",
+            "execution_limits": "immutable_assignment_retry_and_resource_budgets",
             "digest": "canonical_by_enforcer",
             "invalid_or_missing_action": "PRESTAGE_REQUIRED_no_dispatch",
         },
@@ -274,7 +309,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             ],
         },
         "openai_direct_production_boundary": {
-            "runtime_assignment_target_allowed": False,
+            "runtime_assignment_target_allowed": True,
             "surface": "owner_authorized_external_codex_openai",
             "counts": "authenticated_production_only",
             "review": "different_provider_exact_candidate",
@@ -339,7 +374,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "objective_bounded_scope_and_categorized_status",
                 "starting_and_current_refs_shas_and_artifact_digests",
                 "authenticated_provider_participation_unavailable_abstaining_and_labels",
-                "target_and_actual_direct_production_and_overall_effort_by_provider_deviations_and_rationale",
+                "target_and_actual_enforced_direct_production_by_provider_deviations_and_rationale",
+                "prospective_total_effort_soft_bands_and_share_advisories",
                 "prestage_packet_digest_workload_size_effort_points_and_deltas",
                 "status_validation_action_counts_reduction_baselines_and_browser_use",
                 "openai_moderator_participant_director_actions_and_vote",
@@ -347,6 +383,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "exact_tests_trusted_ci_security_independent_review_and_verdict",
                 "unresolved_risks_limitations_blockers_and_confidence",
                 "measured_cost_token_usage_elapsed_time_and_unavailable_telemetry",
+                "roi_first_pass_yield_correction_rate_and_categorized_waste_with_missing_telemetry",
+                "copilot_lite_result_attempt_formats_quota_state_validated_findings_and_material_authorship",
                 "rolling_commit_baseline_current_measurement_delta_and_exclusions",
                 "scope_or_authority_changes_and_exact_stored_owner_authorization",
                 "recovery_state_rollback_and_restart_evidence_integrity",
@@ -358,11 +396,16 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "participation_source": "authenticated_provider_response_only",
         },
         "availability": {
-            "attempts": 3,
-            "primary_attempts": 1,
-            "transient_recovery_attempts": 1,
-            "third_attempt_requires": "materially_different_transport_or_new_information",
-            "after": "record_unavailable_and_reshape",
+            "attempts": "conditional_maximum_three",
+            "format_roster": "conditional_roster_maximum_three",
+            "attempt_ledger": "append_only_postgres_child_events",
+            "additional_attempt_requires": [
+                "second_requires_temporary_failure",
+                "third_requires_new_information_or_different_transport",
+                "stop_on_success",
+                "resource_budgets_remaining",
+            ],
+            "after": "unavailable_and_reshape",
             "partial": "untrusted",
             "ambiguous": "no_duplicate_dispatch",
         },
@@ -454,18 +497,16 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     "availability_policy": {
         "nonresponse_attempt_limit": 3,
         "requirements": [
-            "Make one primary attempt and one recovery attempt only for a plausibly transient failure.",
-            "A third attempt requires materially different transport or new information; after it, mark the route unavailable.",
-            "Preserve partial output as untrusted evidence.",
+            "Every assignment has at most three conditional attempt slots.",
+            "Stop on success; second needs temporary failure; third needs new information or different transport.",
             "Never duplicate an ambiguous paid dispatch.",
-            "Continue safe independent work; record effects on scope, confidence, timing, and coverage.",
             "Ambiguous reconciliation binds IDs only; results need provider authentication, and owner recovery text cannot authorize exact-SHA review or merge.",
         ],
     },
     "efficiency_policy": {
         "concise_evidence_first": True,
         "repeat_requires_new_information": True,
-        "minimal_fix_attempt_limit": 1,
+        "minimal_fix_attempt_limit": 3,
         "minimal_fix_invalidates_evidence": True,
         "event_driven_status": True,
         "browser_enabled_lower_priority": True,
@@ -564,6 +605,24 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "When evidence is incomplete or authority is missing, preserve the blocker and stop at OWNER_DECISION_REQUIRED.",
     ],
 }
+
+# One canonical capacity authority feeds generated manifests and provider prompts.
+_directive = _TEAM_OPERATING_CHARTER["director_operating_directive"]
+_directive["workload_policy_version"] = "capacity-allocation-v1"
+_directive["default_allocation_profile"] = DEFAULT_ALLOCATION_PROFILE
+_directive["allocation_profiles"] = {"lane_order": list(LANES), "weights": {name: list(targets.values()) for name, targets in ALLOCATION_PROFILES.items()}}
+_directive.pop("direct_workload_percent", None)
+_directive.pop("overall_effort_percent", None)
+_directive["overall_effort_policy"] = "telemetry_only_no_separate_allocation"
+_directive["capacity_context"] = {"openai": "owner_reported_Pro_20x", "claude": "owner_reported_Max_5x", "multipliers_are_not_api_entitlements": True}
+_directive["workload_accounting"].update({"unit_basis": "real_reserved_assignment_once", "windows": ["rolling_20_real_assignments"], "failed_attempt_rule": "retain_admission_without_productive_credit", "control_plane_rule": "usage_telemetry_only_not_production_credit"})
+_directive["workload_enforcement"].update({"enforced_measure": "admitted_assignment_count", "zero_target_rule": "ineligible", "profile_changes": "preserve_history_and_require_fresh_approval", "overall_effort_normal_bands_percent": {lane: [max(0,target-3), min(100,target+3)] for lane,target in ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE].items()}})
+
+# Derived bands and duplicate aliases do not need a second wire representation.
+_directive["workload_enforcement"].pop("overall_effort_normal_bands_percent", None)
+_directive["workload_accounting"].pop("usage_guard_ledger", None)
+_directive["workload_accounting"].pop("accepted_production_ledger", None)
+_directive["capacity_context"] = "owner_Pro20x_Max5x_not_API_entitlements"
 
 
 def team_operating_charter() -> dict[str, Any]:
@@ -768,3 +827,15 @@ def tally_advisory_votes(
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

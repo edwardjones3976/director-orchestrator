@@ -1,0 +1,13 @@
+{
+  "schema_version": "primary-provider-budget/v1",
+  "grant_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "provider_id": "antigravity",
+  "project_id": "example-project",
+  "task_id": "example-task",
+  "day": "2026-01-01",
+  "task_limit_microusd": 1000000,
+  "daily_limit_microusd": 2000000,
+  "attempt_reservation_microusd": 100000,
+  "token_limit": 1000,
+  "owner_signature": "0000000000000000000000000000000000000000000000000000000000000000"
+}

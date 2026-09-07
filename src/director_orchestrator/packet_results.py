@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
@@ -22,6 +23,7 @@ from .interactions import (
 from .langgraph_runtime import RuntimeExecutionOutcome, RuntimeExecutionStatus
 from .models import Assignment, ProviderName, ProviderRun, TaskRecord, TaskStatus
 from .packet_contracts import (
+    PROHIBITED_EXTERNAL_EFFECT_KINDS,
     PacketContractError,
     build_replay_run,
     document_digest,
@@ -65,14 +67,16 @@ class DirectorPacketResultConsumer:
         work_packet: dict[str, object], result_packet: dict[str, object]
     ) -> None:
         allowed = set(work_packet["allowed_external_effects"])
+        # There is no status bypass. A NOT_ATTEMPTED proposal is what drives the
+        # typed effect gateway, so every reported kind - proposed or performed -
+        # must already be granted by this exact work packet.
         for effect in result_packet["side_effects"]:
-            if effect["status"] == "NOT_ATTEMPTED":
-                continue
-            if effect["kind"] not in allowed:
+            kind = effect["kind"]
+            if kind not in allowed:
                 raise PacketResultConsumptionError(
                     "provider result reports an external effect outside packet authority"
                 )
-            if effect["kind"] in {"MERGE_PULL_REQUEST", "DEPLOY", "PUBLISH"}:
+            if kind in PROHIBITED_EXTERNAL_EFFECT_KINDS:
                 raise PacketResultConsumptionError(
                     "provider result reports a prohibited external effect"
                 )
@@ -288,3 +292,4 @@ class DirectorPacketResultConsumer:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

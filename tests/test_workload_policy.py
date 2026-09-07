@@ -1,3 +1,13 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | BEGIN]]
@@ -11,11 +21,10 @@ import unittest
 
 from director_orchestrator.workload_policy import (
     DEFAULT_POLICY,
+    COPILOT_LITE_NORMAL_BAND,
     DIRECT_PRODUCTION_TARGETS,
     FABLE_MODEL_FLOOR,
-    HARD_THRESHOLDS,
     OVERALL_TARGETS,
-    PRIMARY_CAPS,
     PRIMARY_PROVIDERS,
     AssignmentRequest,
     DecisionOutcome,
@@ -25,13 +34,12 @@ from director_orchestrator.workload_policy import (
     EfficiencySnapshot,
     EnforcementMode,
     FailureKind,
-    HardThreshold,
     OverallTarget,
     PrestagePacket,
-    PrimaryCap,
     Provider,
     RetryRequest,
     Transport,
+    TrustedProviderProfile,
     WorkKind,
     WorkSize,
     WorkloadPolicy,
@@ -39,9 +47,12 @@ from director_orchestrator.workload_policy import (
     WorkloadRecord,
     direct_production_provider,
     evaluate_assignment,
+    evaluate_copilot_lite_effort,
     evaluate_efficiency,
     evaluate_retry,
+    is_accepted_productive_kind,
     is_direct_production_kind,
+    select_cheapest_capable_provider,
 )
 
 
@@ -92,10 +103,7 @@ def balanced_direct_history(
             for index, record_provider in enumerate(record_providers)
             if record_provider is provider
         ]
-        capacity = (
-            DEFAULT_POLICY.direct_production_hard_threshold(provider)
-            - len(provider_indices)
-        )
+        capacity = total_units
         added = min(remaining, capacity)
         efforts[provider_indices[0]] += added
         remaining -= added
@@ -146,12 +154,13 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                Provider.CLAUDE: 36,
-                Provider.CURSOR: 20,
-                Provider.GROK: 20,
-                Provider.OPENAI: 8,
-                Provider.GEMINI: 11,
-                Provider.PERPLEXITY: 5,
+                Provider.CLAUDE: 30,
+                Provider.CURSOR: 15,
+                Provider.GROK: 10,
+                Provider.OPENAI: 35,
+                Provider.GEMINI: 10,
+                Provider.PERPLEXITY: 0,
+                Provider.FIRECRAWL: 0, Provider.GITHUB_COPILOT: 0, Provider.MICROSOFT_365_COPILOT: 0,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
@@ -164,66 +173,36 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                DirectProductionProvider.CLAUDE: 60,
-                DirectProductionProvider.CURSOR: 14,
-                DirectProductionProvider.GROK: 14,
-                DirectProductionProvider.GEMINI: 7,
-                DirectProductionProvider.PERPLEXITY: 4,
-                DirectProductionProvider.EXTERNAL_OPENAI: 1,
+                DirectProductionProvider.CLAUDE: 30,
+                DirectProductionProvider.CURSOR: 15,
+                DirectProductionProvider.GROK: 10,
+                DirectProductionProvider.GEMINI: 10,
+                DirectProductionProvider.PERPLEXITY: 0,
+                DirectProductionProvider.FIRECRAWL: 0, DirectProductionProvider.GITHUB_COPILOT: 0, DirectProductionProvider.MICROSOFT_365_COPILOT: 0,
+                DirectProductionProvider.EXTERNAL_OPENAI: 35,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
         self.assertNotIn(DirectProductionProvider.EXTERNAL_OPENAI, Provider)
 
-    def test_primary_caps_are_exact(self):
-        actual = {cap.provider: cap.percent for cap in PRIMARY_CAPS}
-        self.assertEqual(
-            actual,
-            {
-                Provider.CLAUDE: 45,
-                Provider.CURSOR: 27,
-                Provider.GROK: 27,
-                Provider.OPENAI: 27,
-            },
-        )
-
-    def test_hard_thresholds_are_exact_target_overages_with_claude_special_case(self):
-        actual = {
-            threshold.provider: threshold.percent for threshold in HARD_THRESHOLDS
-        }
-        self.assertEqual(
-            actual,
-            {
-                Provider.CLAUDE: 45,
-                Provider.CURSOR: 25,
-                Provider.GROK: 25,
-                Provider.OPENAI: 13,
-                Provider.GEMINI: 16,
-                Provider.PERPLEXITY: 10,
-            },
-        )
-        for provider in (
-            Provider.CURSOR,
-            Provider.GROK,
-            Provider.OPENAI,
-            Provider.GEMINI,
-            Provider.PERPLEXITY,
-        ):
-            self.assertEqual(
-                actual[provider], DEFAULT_POLICY.overall_target(provider) + 5
-            )
-
     def test_default_policy_exposes_machine_readable_targets(self):
-        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.CLAUDE), 36)
+        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.CLAUDE), 30)
         self.assertEqual(
             DEFAULT_POLICY.direct_production_target(
                 DirectProductionProvider.CLAUDE
             ),
-            60,
+            30,
         )
-        self.assertEqual(DEFAULT_POLICY.primary_cap(Provider.CLAUDE), 45)
-        self.assertEqual(DEFAULT_POLICY.hard_threshold(Provider.OPENAI), 13)
-        self.assertIsNone(DEFAULT_POLICY.primary_cap(Provider.GEMINI))
+        self.assertEqual(
+            DEFAULT_POLICY.direct_production_soft_band(
+                DirectProductionProvider.CLAUDE
+            ),
+            (27, 33),
+        )
+        self.assertEqual(DEFAULT_POLICY.overall_normal_band(Provider.PERPLEXITY), (0, 3))
+        self.assertEqual(COPILOT_LITE_NORMAL_BAND, (0, 4))
+        self.assertTrue(evaluate_copilot_lite_effort(current_units=0, total_units=99))
+        self.assertTrue(evaluate_copilot_lite_effort(current_units=6, total_units=99))
 
     def test_target_ledgers_reject_duplicates_or_incomplete_sets(self):
         with self.assertRaisesRegex(WorkloadPolicyError, "duplicate providers"):
@@ -235,7 +214,10 @@ class WorkloadTargetTests(unittest.TestCase):
 
     def test_target_ledgers_must_total_one_hundred(self):
         changed = tuple(
-            OverallTarget(item.provider, item.percent + (1 if item.provider is Provider.CLAUDE else 0))
+            dataclasses.replace(
+                item,
+                percent=item.percent + (1 if item.provider is Provider.CLAUDE else 0),
+            )
             for item in OVERALL_TARGETS
         )
         with self.assertRaisesRegex(WorkloadPolicyError, "must total 100"):
@@ -251,33 +233,6 @@ class WorkloadTargetTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(WorkloadPolicyError, "must total 100"):
             WorkloadPolicy(direct_production_targets=changed_direct)
-
-    def test_only_claude_may_have_a_cap_above_twenty_seven(self):
-        unsafe = tuple(
-            PrimaryCap(item.provider, 28 if item.provider is Provider.CURSOR else item.percent)
-            for item in PRIMARY_CAPS
-        )
-        with self.assertRaisesRegex(WorkloadPolicyError, "only Claude"):
-            WorkloadPolicy(primary_caps=unsafe)
-
-    def test_nonclaude_primary_caps_cannot_be_silently_lowered_or_relaxed(self):
-        changed = tuple(
-            PrimaryCap(item.provider, 26 if item.provider is Provider.GROK else item.percent)
-            for item in PRIMARY_CAPS
-        )
-        with self.assertRaisesRegex(WorkloadPolicyError, "must be 27"):
-            WorkloadPolicy(primary_caps=changed)
-
-    def test_hard_thresholds_reject_policy_drift(self):
-        changed = tuple(
-            HardThreshold(
-                item.provider,
-                item.percent + (1 if item.provider is Provider.OPENAI else 0),
-            )
-            for item in HARD_THRESHOLDS
-        )
-        with self.assertRaisesRegex(WorkloadPolicyError, "do not match owner policy"):
-            WorkloadPolicy(hard_thresholds=changed)
 
     def test_browser_remains_enabled_at_lowest_priority(self):
         self.assertIn(Transport.BROWSER, DEFAULT_POLICY.enabled_transports)
@@ -298,47 +253,17 @@ class WorkloadTargetTests(unittest.TestCase):
 
 
 class AssignmentRoutingTests(unittest.TestCase):
-    def test_medium_and_long_implementation_require_claude_and_model_floor(self):
+    def test_claude_model_requirement_is_explicit_not_size_derived(self):
         for size in (WorkSize.MEDIUM, WorkSize.LONG):
-            with self.subTest(size=size):
-                allowed = evaluate_assignment(
-                    assignment(
-                        Provider.CLAUDE,
-                        kind=WorkKind.IMPLEMENTATION,
-                        size=size,
-                        model_label=FABLE_MODEL_FLOOR,
-                    )
-                )
-                self.assertTrue(allowed.allowed)
-                self.assertEqual(allowed.outcome, DecisionOutcome.ALLOW)
+            history = balanced_direct_history(DirectProductionProvider.CLAUDE, total_units=19)
+            request = assignment(Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION,
+                                 size=size, model_label="owner-choice")
+            self.assertTrue(evaluate_assignment(request, direct_production_history=history).allowed)
+            denied = evaluate_assignment(request, direct_production_history=history,
+                                         trusted_required_model_label=FABLE_MODEL_FLOOR)
+            self.assertFalse(denied.allowed)
+            self.assertIn("trusted_required_model_label_mismatch", denied.violations)
 
-                wrong_provider = evaluate_assignment(
-                    assignment(
-                        Provider.CURSOR,
-                        kind=WorkKind.IMPLEMENTATION,
-                        size=size,
-                        model_label=FABLE_MODEL_FLOOR,
-                    )
-                )
-                self.assertFalse(wrong_provider.allowed)
-                self.assertIn(
-                    "medium_long_implementation_requires_claude",
-                    wrong_provider.violations,
-                )
-
-                wrong_model = evaluate_assignment(
-                    assignment(
-                        Provider.CLAUDE,
-                        kind=WorkKind.IMPLEMENTATION,
-                        size=size,
-                        model_label="FABLE 5 HIGH",
-                    )
-                )
-                self.assertFalse(wrong_model.allowed)
-                self.assertIn(
-                    f"medium_long_implementation_requires_model_floor:{FABLE_MODEL_FLOOR}",
-                    wrong_model.violations,
-                )
 
     def test_short_implementation_does_not_require_claude(self):
         result = evaluate_assignment(
@@ -350,7 +275,7 @@ class AssignmentRoutingTests(unittest.TestCase):
         )
         self.assertTrue(result.allowed)
 
-    def test_claude_is_allowed_at_exactly_forty_five_percent(self):
+    def test_overall_history_reports_prospective_share(self):
         history = records(
             *([Provider.CLAUDE] * 8),
             *([Provider.CURSOR] * 4),
@@ -362,19 +287,21 @@ class AssignmentRoutingTests(unittest.TestCase):
 
         self.assertTrue(result.allowed)
         self.assertIn("prospective_rolling_share:claude:9/20", result.advisories)
+        self.assertIn("total_effort_provider_above_normal_band:claude:33", result.advisories)
 
-    def test_claude_is_blocked_above_forty_five_percent(self):
+    def test_skewed_total_effort_history_blocks_new_overage(self):
         history = records(
             *([Provider.CLAUDE] * 9),
             *([Provider.GEMINI] * 10),
         )
         result = evaluate_assignment(assignment(Provider.CLAUDE), history=history)
 
-        self.assertFalse(result.allowed)
-        self.assertIn("overall_hard_threshold_exceeded:claude:45", result.violations)
-        self.assertIn("absolute_primary_ceiling_exceeded:claude:45", result.violations)
+        self.assertTrue(result.allowed)
+        self.assertIn("total_effort_prospective_usage_guard", result.advisories)
+        self.assertIn("prospective_rolling_share:claude:10/20", result.advisories)
+        self.assertFalse(any("overall" in item for item in result.violations))
 
-    def test_complete_window_checks_warmup_providers_not_only_final_provider(self):
+    def test_skewed_other_provider_prefers_corrective_cursor(self):
         history = tuple(
             WorkloadRecord(f"CLAUDE-{index:02d}", Provider.CLAUDE)
             for index in range(19)
@@ -385,11 +312,11 @@ class AssignmentRoutingTests(unittest.TestCase):
             history=history,
         )
 
-        self.assertFalse(result.allowed)
-        self.assertIn("overall_hard_threshold_exceeded:claude:45", result.violations)
-        self.assertIn("absolute_primary_ceiling_exceeded:claude:45", result.violations)
+        self.assertTrue(result.allowed)
+        self.assertIn("total_effort_prospective_usage_guard", result.advisories)
+        self.assertFalse(any("overall" in item for item in result.violations))
 
-    def test_cursor_and_grok_are_allowed_at_twenty_five_and_blocked_at_thirty(self):
+    def test_cursor_25_is_allowed_but_grok_inherited_overage_blocks(self):
         for provider in (Provider.CURSOR, Provider.GROK):
             with self.subTest(provider=provider, share="25"):
                 other_primary = (
@@ -413,18 +340,19 @@ class AssignmentRoutingTests(unittest.TestCase):
                     *([provider] * 5),
                     *([Provider.GEMINI] * 14),
                 )
-                blocked = evaluate_assignment(assignment(provider), history=history)
-                self.assertFalse(blocked.allowed)
+                reported = evaluate_assignment(assignment(provider), history=history)
+                self.assertTrue(reported.allowed)
                 self.assertIn(
-                    f"overall_hard_threshold_exceeded:{provider.value}:{DEFAULT_POLICY.hard_threshold(provider)}",
-                    blocked.violations,
+                    f"prospective_rolling_share:{provider.value}:6/20",
+                    reported.advisories,
                 )
-                self.assertIn(
-                    f"absolute_primary_ceiling_exceeded:{provider.value}:27",
-                    blocked.violations,
-                )
+                if provider is Provider.GROK:
+                    self.assertIn(
+                        "total_effort_provider_above_normal_band:grok:13",
+                        reported.advisories,
+                    )
 
-    def test_openai_hard_threshold_blocks_before_its_absolute_ceiling(self):
+    def test_openai_total_effort_ceiling_is_enforced(self):
         allowed_history = records(
             Provider.OPENAI,
             *([Provider.CLAUDE] * 8),
@@ -446,75 +374,40 @@ class AssignmentRoutingTests(unittest.TestCase):
             assignment(Provider.OPENAI), history=blocked_history
         )
 
-        self.assertTrue(allowed.allowed)  # 2/20 = 10%, below the 13% threshold.
-        self.assertFalse(blocked.allowed)  # 3/20 = 15%, above the threshold.
-        self.assertIn(
-            "overall_hard_threshold_exceeded:openai:13", blocked.violations
-        )
-        self.assertNotIn(
-            "absolute_primary_ceiling_exceeded:openai:27", blocked.violations
-        )
+        self.assertTrue(allowed.allowed)
+        self.assertTrue(blocked.allowed)
+        self.assertIn("prospective_rolling_share:openai:3/20", blocked.advisories)
+        self.assertFalse(any("overall" in item for item in blocked.violations))
 
-    def test_cap_uses_effort_weight_within_twenty_assignments(self):
+    def test_total_effort_weight_is_enforced(self):
         history = records(*([Provider.GEMINI] * 19))
         result = evaluate_assignment(
             assignment(Provider.CURSOR, effort_units=20), history=history
         )
 
-        self.assertFalse(result.allowed)
+        self.assertTrue(result.allowed)
         self.assertIn("prospective_rolling_share:cursor:20/39", result.advisories)
 
-    def test_all_provider_hard_thresholds_apply_at_exact_boundary(self):
+    def test_all_provider_total_effort_overages_are_soft_only(self):
         for provider in Provider:
-            threshold = DEFAULT_POLICY.hard_threshold(provider)
-            with self.subTest(provider=provider, state="exact"):
+            with self.subTest(provider=provider):
                 history = tuple(
-                    WorkloadRecord(
-                        f"OTHER-{index}",
-                        Provider.GEMINI if provider is not Provider.GEMINI else Provider.PERPLEXITY,
-                        effort_units=(100 - threshold if index == 0 else 1),
-                    )
+                    WorkloadRecord(f"OVER-{index}", provider)
                     for index in range(19)
                 )
-                # The eighteen unit-one records above add 18, so offset the
-                # first record to keep total effort at exactly 100.
-                history = (
-                    dataclasses.replace(
-                        history[0], effort_units=100 - threshold - 18
-                    ),
-                ) + history[1:]
-                exact = evaluate_assignment(
-                    assignment(provider, effort_units=threshold), history=history
+                result = evaluate_assignment(
+                    assignment(provider, effort_units=20), history=history
                 )
-                self.assertNotIn(
-                    f"overall_hard_threshold_exceeded:{provider.value}:{threshold}",
-                    exact.violations,
-                )
-
-            with self.subTest(provider=provider, state="over"):
-                other = (
-                    Provider.GEMINI
-                    if provider is not Provider.GEMINI
-                    else Provider.PERPLEXITY
-                )
-                history = tuple(
-                    WorkloadRecord(
-                        f"OVER-{index}",
-                        other,
-                        effort_units=(100 - (threshold + 1) - 18 if index == 0 else 1),
-                    )
-                    for index in range(19)
-                )
-                over = evaluate_assignment(
-                    assignment(provider, effort_units=threshold + 1),
-                    history=history,
-                )
+                self.assertTrue(result.allowed)
                 self.assertIn(
-                    f"overall_hard_threshold_exceeded:{provider.value}:{threshold}",
-                    over.violations,
+                    f"prospective_rolling_share:{provider.value}:39/39",
+                    result.advisories,
+                )
+                self.assertTrue(
+                    any("total_effort_provider_above_normal_band" in item for item in result.advisories)
                 )
 
-    def test_primary_ceiling_requires_two_other_available_primaries(self):
+    def test_primary_availability_requires_two_other_available_primaries(self):
         result = evaluate_assignment(
             assignment(Provider.CLAUDE),
             available_primary_providers=frozenset(
@@ -581,21 +474,30 @@ class AssignmentRoutingTests(unittest.TestCase):
         self.assertTrue(result.allowed)
         self.assertIn("rolling_window_warming_up:6/20", result.advisories)
 
-    def test_duplicate_assignment_in_window_fails_closed(self):
+    def test_duplicate_overall_assignment_identity_does_not_relabel_history(self):
         history = (WorkloadRecord("ASSIGN-20", Provider.GEMINI),)
         result = evaluate_assignment(assignment(), history=history)
 
-        self.assertFalse(result.allowed)
-        self.assertIn("rolling_window_assignment_ids_not_unique", result.violations)
+        self.assertTrue(result.allowed)
+        self.assertIn(
+            "overall_effort_assignment_ids_not_unique", result.advisories
+        )
+        self.assertEqual(result.violations, ())
 
-    def test_shadow_mode_records_a_would_block_without_blocking(self):
+    def test_shadow_mode_keeps_share_pressure_advisory(self):
+        direct_history = tuple(
+            DirectProductionRecord(
+                f"CLAUDE-SHADOW-{index}", DirectProductionProvider.CLAUDE
+            )
+            for index in range(19)
+        )
         result = evaluate_assignment(
             assignment(
-                Provider.GROK,
+                Provider.CLAUDE,
                 kind=WorkKind.IMPLEMENTATION,
-                size=WorkSize.LONG,
-                model_label="GROK",
+                model_label=FABLE_MODEL_FLOOR,
             ),
+            direct_production_history=direct_history,
             mode=EnforcementMode.SHADOW,
         )
 
@@ -614,58 +516,48 @@ class DirectProductionRoutingTests(unittest.TestCase):
         (Provider.PERPLEXITY, DirectProductionProvider.PERPLEXITY),
     )
 
-    def test_direct_production_thresholds_are_target_plus_five(self):
-        for _, direct_provider in self.PROVIDER_CASES:
+    @staticmethod
+    def _mature_corrective_history() -> tuple[DirectProductionRecord, ...]:
+        providers = (
+            (DirectProductionProvider.CLAUDE, 7),
+            (DirectProductionProvider.CURSOR, 3),
+            (DirectProductionProvider.GROK, 1),
+            (DirectProductionProvider.GEMINI, 3),
+            (DirectProductionProvider.PERPLEXITY, 1),
+            (DirectProductionProvider.EXTERNAL_OPENAI, 4),
+        )
+        return tuple(
+            DirectProductionRecord(
+                f"MATURE-{provider.value.upper()}-{index:02d}", provider
+            )
+            for provider, count in providers
+            for index in range(count)
+        )
+
+    def test_direct_production_soft_bands_are_target_plus_or_minus_three(self):
+        for direct_provider in DirectProductionProvider:
             with self.subTest(provider=direct_provider):
+                target = DEFAULT_POLICY.direct_production_target(direct_provider)
                 self.assertEqual(
-                    DEFAULT_POLICY.direct_production_hard_threshold(
-                        direct_provider
-                    ),
-                    DEFAULT_POLICY.direct_production_target(direct_provider) + 5,
+                    DEFAULT_POLICY.direct_production_soft_band(direct_provider),
+                    (max(0, target - 3), target + 3),
                 )
 
-    def test_direct_production_thresholds_apply_to_twenty_assignment_window(self):
+    def test_direct_production_count_ceiling_applies_to_twenty_assignment_window(self):
         for runtime_provider, direct_provider in self.PROVIDER_CASES:
-            threshold = DEFAULT_POLICY.direct_production_hard_threshold(
-                direct_provider
-            )
-            exact_history = balanced_direct_history(
-                direct_provider, total_units=100 - threshold
-            )
-            with self.subTest(provider=direct_provider, state="exact"):
-                exact = evaluate_assignment(
-                    assignment(
-                        runtime_provider,
-                        kind=WorkKind.IMPLEMENTATION,
-                        effort_units=threshold,
-                    ),
-                    direct_production_history=exact_history,
-                )
-                self.assertTrue(exact.allowed)
-                self.assertIn(
-                    "prospective_direct_production_share:"
-                    f"{direct_provider.value}:{threshold}/100",
-                    exact.advisories,
-                )
+            ceiling = DEFAULT_POLICY.direct_production_target(direct_provider) + 5
+            maximum = ceiling * 20 // 100
+            other = DirectProductionProvider.EXTERNAL_OPENAI
+            for prospective_count, allowed in ((maximum, DEFAULT_POLICY.direct_production_target(direct_provider) > 0), (maximum + 1, False)):
+                providers = [direct_provider] * (prospective_count - 1) + [other] * (20 - prospective_count)
+                history = tuple(DirectProductionRecord(str(i), provider, 100 if provider is other else 1)
+                                for i, provider in enumerate(providers))
+                result = evaluate_assignment(assignment(runtime_provider, kind=WorkKind.IMPLEMENTATION,
+                                                        effort_units=999), direct_production_history=history)
+                self.assertEqual(result.allowed, allowed, (direct_provider, result.violations))
+                self.assertIn(f"prospective_direct_production_share:{direct_provider.value}:{prospective_count}/20",
+                              result.advisories)
 
-            over_history = balanced_direct_history(
-                direct_provider, total_units=100 - (threshold + 1)
-            )
-            with self.subTest(provider=direct_provider, state="over"):
-                over = evaluate_assignment(
-                    assignment(
-                        runtime_provider,
-                        kind=WorkKind.IMPLEMENTATION,
-                        effort_units=threshold + 1,
-                    ),
-                    direct_production_history=over_history,
-                )
-                self.assertFalse(over.allowed)
-                self.assertIn(
-                    "direct_production_hard_threshold_exceeded:"
-                    f"{direct_provider.value}:{threshold}",
-                    over.violations,
-                )
 
     def test_same_provider_direct_history_adds_prospective_pressure(self):
         history = tuple(
@@ -683,7 +575,11 @@ class DirectProductionRoutingTests(unittest.TestCase):
         )
 
         result = evaluate_assignment(
-            assignment(Provider.CURSOR, kind=WorkKind.IMPLEMENTATION),
+            assignment(
+                Provider.CURSOR,
+                kind=WorkKind.IMPLEMENTATION,
+                effort_units=2,
+            ),
             direct_production_history=history,
         )
 
@@ -693,15 +589,57 @@ class DirectProductionRoutingTests(unittest.TestCase):
             result.advisories,
         )
         self.assertIn(
-            "direct_production_hard_threshold_exceeded:cursor:19",
-            result.violations,
+            "direct_production_above_soft_band:cursor:18",
+            result.advisories,
         )
 
-    def test_complete_direct_window_checks_warmup_providers(self):
-        history = tuple(
+    def test_above_band_other_provider_is_advisory_for_corrective_candidates(self):
+        history = self._mature_corrective_history()
+
+        for runtime_provider in (Provider.CURSOR, Provider.GROK):
+            with self.subTest(provider=runtime_provider):
+                result = evaluate_assignment(
+                    assignment(
+                        runtime_provider,
+                        assignment_id=f"CORRECTIVE-{runtime_provider.value.upper()}-20",
+                        kind=WorkKind.IMPLEMENTATION,
+                    ),
+                    direct_production_history=history,
+                )
+
+                self.assertTrue(result.allowed)
+                self.assertEqual(result.violations, ())
+                self.assertNotIn("claude", " ".join(result.advisories))
+
+    def test_above_band_candidate_provider_is_hard_blocked_with_soft_advisory(self):
+        result = evaluate_assignment(
+            assignment(
+                Provider.CLAUDE,
+                assignment_id="CLAUDE-OVER-CAP-20",
+                kind=WorkKind.IMPLEMENTATION,
+                model_label=FABLE_MODEL_FLOOR,
+            ),
+            direct_production_history=self._mature_corrective_history(),
+        )
+
+        self.assertFalse(result.allowed)
+        self.assertIn(
+            "direct_production_above_soft_band:claude:33",
+            result.advisories,
+        )
+        self.assertIn(
+            "direct_production_above_soft_band:claude:33",
+            result.advisories,
+        )
+
+    def test_total_effort_guard_does_not_create_direct_production_credit(self):
+        overall_history = tuple(
+            WorkloadRecord(f"OVERALL-CLAUDE-{index}", Provider.CLAUDE)
+            for index in range(19)
+        )
+        direct_history = tuple(
             DirectProductionRecord(
-                f"CLAUDE-DIRECT-{index:02d}",
-                DirectProductionProvider.CLAUDE,
+                f"DIRECT-CURSOR-{index}", DirectProductionProvider.CURSOR
             )
             for index in range(19)
         )
@@ -709,17 +647,20 @@ class DirectProductionRoutingTests(unittest.TestCase):
         result = evaluate_assignment(
             assignment(
                 Provider.CURSOR,
-                assignment_id="CURSOR-DIRECT-20",
+                assignment_id="CURSOR-PRODUCTIVE-20",
                 kind=WorkKind.IMPLEMENTATION,
             ),
-            direct_production_history=history,
+            history=overall_history,
+            direct_production_history=direct_history,
         )
 
         self.assertFalse(result.allowed)
+        self.assertIn("total_effort_prospective_usage_guard", result.advisories)
         self.assertIn(
-            "direct_production_hard_threshold_exceeded:claude:65",
-            result.violations,
+            "direct_production_above_soft_band:cursor:18",
+            result.advisories,
         )
+        self.assertIn("direct_production_hard_cap_exceeded:cursor:20", result.violations)
 
     def test_only_implementation_enters_prospective_direct_production(self):
         history = tuple(
@@ -742,11 +683,22 @@ class DirectProductionRoutingTests(unittest.TestCase):
                     " ".join(result.advisories),
                 )
                 self.assertFalse(is_direct_production_kind(kind))
+                self.assertFalse(
+                    is_accepted_productive_kind(Provider.CURSOR, kind)
+                )
 
         self.assertTrue(is_direct_production_kind(WorkKind.IMPLEMENTATION))
 
+    def test_perplexity_research_is_prospectively_direct_relevant(self):
+        request = assignment(Provider.PERPLEXITY, kind=WorkKind.RESEARCH)
+        self.assertFalse(evaluate_assignment(request).allowed)
+        policy = WorkloadPolicy.for_profile("public_research")
+        self.assertTrue(evaluate_assignment(request, policy=policy).allowed)
+        history = tuple(DirectProductionRecord(str(i), DirectProductionProvider.PERPLEXITY) for i in range(6))
+        self.assertFalse(evaluate_assignment(request, policy=policy, direct_production_history=history).allowed)
+
     def test_ordinary_openai_does_not_map_to_external_openai_production(self):
-        self.assertIsNone(direct_production_provider(Provider.OPENAI))
+        self.assertIs(direct_production_provider(Provider.OPENAI), DirectProductionProvider.EXTERNAL_OPENAI)
         for runtime_provider, direct_provider in self.PROVIDER_CASES:
             with self.subTest(provider=runtime_provider):
                 self.assertIs(
@@ -767,38 +719,327 @@ class DirectProductionRoutingTests(unittest.TestCase):
             "prospective_direct_production_share", " ".join(result.advisories)
         )
         self.assertNotIn(
-            "direct_production_hard_threshold_exceeded",
+            "direct_production_above_soft_band",
             " ".join(result.violations),
         )
 
 
+class TrustedProviderSelectionTests(unittest.TestCase):
+    @staticmethod
+    def _profiles() -> tuple[TrustedProviderProfile, ...]:
+        return (
+            TrustedProviderProfile(
+                Provider.CURSOR,
+                frozenset({WorkKind.IMPLEMENTATION, WorkKind.REVIEW}),
+                1,
+            ),
+            TrustedProviderProfile(
+                Provider.CLAUDE,
+                frozenset({WorkKind.IMPLEMENTATION, WorkKind.REVIEW}),
+                4,
+            ),
+            TrustedProviderProfile(
+                Provider.GROK,
+                frozenset({WorkKind.REVIEW}),
+                2,
+            ),
+            TrustedProviderProfile(
+                Provider.PERPLEXITY,
+                frozenset({WorkKind.RESEARCH}),
+                0,
+            ),
+        )
+
+    @staticmethod
+    def _eligible() -> frozenset[Provider]:
+        return frozenset(
+            {Provider.CURSOR, Provider.CLAUDE, Provider.GROK, Provider.PERPLEXITY}
+        )
+
+    def test_shadow_selector_observes_caps_without_changing_trusted_routing(self):
+        history = tuple(DirectProductionRecord(f"shadow-{i}",
+            DirectProductionProvider.CURSOR) for i in range(19))
+        common = dict(assignment_id="SHADOW-CAPPED", kind=WorkKind.IMPLEMENTATION,
+            effort_units=1, trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(), in_scope_providers=self._eligible(),
+            reviewer_independent_providers=self._eligible(),
+            direct_production_history=history, explicit_required_provider=Provider.CURSOR)
+        with self.assertRaises(WorkloadPolicyError):
+            select_cheapest_capable_provider(**common)
+        self.assertIs(select_cheapest_capable_provider(**common, mode=EnforcementMode.SHADOW),
+                      Provider.CURSOR)
+        common["ready_providers"] = frozenset({Provider.CURSOR})
+        with self.assertRaises(WorkloadPolicyError):
+            select_cheapest_capable_provider(**common, mode=EnforcementMode.SHADOW)
+
+    def test_cheapest_capable_provider_wins_after_trusted_filters(self):
+        selected = select_cheapest_capable_provider(
+            direct_production_history=tuple(
+                DirectProductionRecord(f"fixture-{i}", provider)
+                for i, provider in enumerate(
+                    [DirectProductionProvider.CLAUDE]*4 + [DirectProductionProvider.CURSOR]*3
+                    + [DirectProductionProvider.GEMINI] + [DirectProductionProvider.GROK]*2
+                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*8
+                )
+            ),
+            assignment_id="SELECT-IMPLEMENTATION-1",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(),
+            in_scope_providers=self._eligible(),
+            reviewer_independent_providers=self._eligible(),
+        )
+
+        self.assertIs(selected, Provider.CLAUDE)
+
+    def test_subordinate_producer_scope_uses_separate_independent_reviewer_scope(self):
+        profiles = (
+            TrustedProviderProfile(
+                Provider.GEMINI,
+                frozenset({WorkKind.IMPLEMENTATION}),
+                1,
+            ),
+            TrustedProviderProfile(
+                Provider.CLAUDE,
+                frozenset({WorkKind.IMPLEMENTATION, WorkKind.REVIEW}),
+                2,
+            ),
+        )
+
+        selected = select_cheapest_capable_provider(
+            direct_production_history=tuple(
+                DirectProductionRecord(f"fixture-{i}", provider)
+                for i, provider in enumerate(
+                    [DirectProductionProvider.CLAUDE]*4 + [DirectProductionProvider.CURSOR]*3
+                    + [DirectProductionProvider.GEMINI] + [DirectProductionProvider.GROK]*2
+                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*8
+                )
+            ),
+            assignment_id="SELECT-SUBORDINATE-GEMINI",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=profiles,
+            ready_providers=frozenset({Provider.GEMINI, Provider.CLAUDE}),
+            in_scope_providers=frozenset({Provider.GEMINI}),
+            reviewer_independent_providers=frozenset({Provider.CLAUDE}),
+        )
+
+        self.assertIs(selected, Provider.GEMINI)
+
+    def test_antigravity_is_preferred_while_below_its_normal_minimum(self):
+        profiles = (
+            TrustedProviderProfile(
+                Provider.GEMINI,
+                frozenset({WorkKind.IMPLEMENTATION}),
+                5,
+            ),
+            TrustedProviderProfile(
+                Provider.CURSOR,
+                frozenset({WorkKind.IMPLEMENTATION, WorkKind.REVIEW}),
+                1,
+            ),
+            TrustedProviderProfile(
+                Provider.CLAUDE,
+                frozenset({WorkKind.IMPLEMENTATION, WorkKind.REVIEW}),
+                2,
+            ),
+        )
+        history = records(
+            *([Provider.GEMINI] * 2),
+            *([Provider.CURSOR] * 5),
+            *([Provider.CLAUDE] * 7),
+            *([Provider.GROK] * 2),
+            Provider.OPENAI,
+            *([Provider.PERPLEXITY] * 2),
+        )
+        selected = select_cheapest_capable_provider(
+            direct_production_history=tuple(
+                DirectProductionRecord(f"fixture-{i}", provider)
+                for i, provider in enumerate(
+                    [DirectProductionProvider.CLAUDE]*4 + [DirectProductionProvider.CURSOR]*3
+                    + [DirectProductionProvider.GEMINI] + [DirectProductionProvider.GROK]*2
+                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*8
+                )
+            ),
+            assignment_id="SELECT-UNDER-TARGET-ANTIGRAVITY",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=profiles,
+            ready_providers=frozenset({Provider.GEMINI, Provider.CURSOR, Provider.CLAUDE}),
+            in_scope_providers=frozenset({Provider.GEMINI, Provider.CURSOR, Provider.CLAUDE}),
+            reviewer_independent_providers=frozenset({Provider.CURSOR, Provider.CLAUDE}),
+            overall_effort_history=history,
+        )
+        self.assertIs(selected, Provider.CLAUDE)
+        self.assertEqual(history[0].provider, Provider.GEMINI)
+
+    def test_trusted_explicit_provider_requirement_precedes_cost(self):
+        selected = select_cheapest_capable_provider(
+            direct_production_history=tuple(
+                DirectProductionRecord(f"fixture-{i}", provider)
+                for i, provider in enumerate(
+                    [DirectProductionProvider.CLAUDE]*4 + [DirectProductionProvider.CURSOR]*3
+                    + [DirectProductionProvider.GEMINI] + [DirectProductionProvider.GROK]*2
+                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*8
+                )
+            ),
+            assignment_id="SELECT-IMPLEMENTATION-2",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(),
+            in_scope_providers=self._eligible(),
+            reviewer_independent_providers=self._eligible(),
+            explicit_required_provider=Provider.CLAUDE,
+        )
+
+        self.assertIs(selected, Provider.CLAUDE)
+
+    def test_missing_or_model_shaped_routing_facts_fail_closed(self):
+        common = {
+            "assignment_id": "SELECT-FAIL-CLOSED",
+            "kind": WorkKind.IMPLEMENTATION,
+            "effort_units": 1,
+            "ready_providers": self._eligible(),
+            "in_scope_providers": self._eligible(),
+            "reviewer_independent_providers": self._eligible(),
+        }
+        with self.assertRaisesRegex(WorkloadPolicyError, "profiles are required"):
+            select_cheapest_capable_provider(trusted_profiles=(), **common)
+        with self.assertRaisesRegex(WorkloadPolicyError, "profiles are required"):
+            select_cheapest_capable_provider(
+                trusted_profiles=(
+                    {"provider": "cursor", "trusted_cost_rank": 0},  # type: ignore[arg-type]
+                ),
+                **common,
+            )
+        with self.assertRaisesRegex(WorkloadPolicyError, "no trusted capable"):
+            select_cheapest_capable_provider(
+                trusted_profiles=self._profiles(),
+                in_scope_providers=frozenset(),
+                **{
+                    key: value
+                    for key, value in common.items()
+                    if key != "in_scope_providers"
+                },
+            )
+
+    def test_direct_share_pressure_excludes_over_cap_cheapest_provider(self):
+        history = tuple(
+            DirectProductionRecord(f"CURSOR-{index}", DirectProductionProvider.CURSOR)
+            for index in range(5)
+        ) + tuple(
+            DirectProductionRecord(f"CLAUDE-{index}", DirectProductionProvider.CLAUDE)
+            for index in range(5)
+        ) + tuple(
+            DirectProductionRecord(f"GROK-{index}", DirectProductionProvider.GROK)
+            for index in range(3)
+        ) + tuple(
+            DirectProductionRecord(f"GEMINI-{index}", DirectProductionProvider.GEMINI)
+            for index in range(4)
+        ) + (
+            DirectProductionRecord("PERPLEXITY-0", DirectProductionProvider.PERPLEXITY),
+            DirectProductionRecord("EXTERNAL-0", DirectProductionProvider.EXTERNAL_OPENAI),
+        )
+
+        selected = select_cheapest_capable_provider(
+            assignment_id="SELECT-SOFT-SHARE",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(),
+            in_scope_providers=self._eligible(),
+            reviewer_independent_providers=self._eligible(),
+            direct_production_history=history,
+        )
+
+        self.assertIs(selected, Provider.CLAUDE)
+        with self.assertRaises(WorkloadPolicyError):
+            select_cheapest_capable_provider(
+                assignment_id="SELECT-SOFT-SHARE-EXPLICIT",
+                kind=WorkKind.IMPLEMENTATION,
+                effort_units=1,
+                trusted_profiles=self._profiles(),
+                ready_providers=self._eligible(),
+                in_scope_providers=self._eligible(),
+                reviewer_independent_providers=self._eligible(),
+                direct_production_history=history,
+                explicit_required_provider=Provider.CURSOR,
+            )
+
+    def test_selector_chooses_corrective_provider_when_another_is_above_band(self):
+        history = DirectProductionRoutingTests._mature_corrective_history()
+
+        selected = select_cheapest_capable_provider(
+            assignment_id="SELECT-CORRECTIVE-CURSOR",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(),
+            in_scope_providers=self._eligible(),
+            reviewer_independent_providers=self._eligible(),
+            direct_production_history=history,
+        )
+
+        self.assertIs(selected, Provider.CURSOR)
+        with self.assertRaises(WorkloadPolicyError):
+            select_cheapest_capable_provider(
+                assignment_id="SELECT-OVER-CAP-CLAUDE",
+                kind=WorkKind.IMPLEMENTATION,
+                effort_units=1,
+                trusted_profiles=self._profiles(),
+                ready_providers=self._eligible(),
+                in_scope_providers=self._eligible(),
+                reviewer_independent_providers=self._eligible(),
+                direct_production_history=history,
+                explicit_required_provider=Provider.CLAUDE,
+            )
+
+    def test_reviewer_independence_filters_the_cheapest_reviewer(self):
+        selected = select_cheapest_capable_provider(
+            assignment_id="SELECT-REVIEW",
+            kind=WorkKind.REVIEW,
+            effort_units=1,
+            trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(),
+            in_scope_providers=self._eligible(),
+            reviewer_independent_providers=frozenset({Provider.CLAUDE}),
+        )
+
+        self.assertIs(selected, Provider.CLAUDE)
+        with self.assertRaisesRegex(WorkloadPolicyError, "no trusted capable"):
+            select_cheapest_capable_provider(
+                assignment_id="SELECT-REVIEW-NONE",
+                kind=WorkKind.REVIEW,
+                effort_units=1,
+                trusted_profiles=self._profiles(),
+                ready_providers=self._eligible(),
+                in_scope_providers=self._eligible(),
+                reviewer_independent_providers=frozenset(),
+            )
+
+
 class RetryPolicyTests(unittest.TestCase):
     def test_primary_attempt_is_allowed(self):
-        result = evaluate_retry(RetryRequest(attempt_number=1))
+        result = evaluate_retry(RetryRequest(attempt_number=1, retry_limit=3))
         self.assertTrue(result.allowed)
 
-    def test_second_attempt_requires_a_transient_failure(self):
-        allowed = evaluate_retry(
-            RetryRequest(
-                attempt_number=2,
-                previous_failure=FailureKind.TRANSIENT,
-            )
-        )
-        blocked = evaluate_retry(
-            RetryRequest(
-                attempt_number=2,
-                previous_failure=FailureKind.TERMINAL,
-            )
-        )
-
-        self.assertTrue(allowed.allowed)
-        self.assertFalse(blocked.allowed)
-        self.assertIn("second_attempt_requires_transient_failure", blocked.violations)
+    def test_recovery_requires_temporary_failure_even_with_corrected_approach(self):
+        for failure, expected in ((FailureKind.TRANSIENT, True),
+                                  (FailureKind.TERMINAL, False),
+                                  (FailureKind.NONE, False)):
+            with self.subTest(failure=failure):
+                result = evaluate_retry(RetryRequest(
+                    attempt_number=2, retry_limit=3, previous_failure=failure,
+                    corrected_approach=True, positive_expected_information_gain=True))
+                self.assertEqual(expected, result.allowed)
 
     def test_third_attempt_requires_new_information_or_changed_transport(self):
         no_change = evaluate_retry(
             RetryRequest(
                 attempt_number=3,
+                retry_limit=3,
                 previous_failure=FailureKind.TRANSIENT,
                 transport=Transport.PROVIDER_API,
                 previous_transport=Transport.PROVIDER_API,
@@ -807,24 +1048,28 @@ class RetryPolicyTests(unittest.TestCase):
         new_information = evaluate_retry(
             RetryRequest(
                 attempt_number=3,
+                retry_limit=3,
                 previous_failure=FailureKind.TERMINAL,
                 transport=Transport.PROVIDER_API,
                 previous_transport=Transport.PROVIDER_API,
                 materially_new_information=True,
+                positive_expected_information_gain=True,
             )
         )
         changed_transport = evaluate_retry(
             RetryRequest(
                 attempt_number=3,
+                retry_limit=3,
                 previous_failure=FailureKind.TRANSIENT,
                 transport=Transport.BROWSER,
                 previous_transport=Transport.PROVIDER_API,
+                positive_expected_information_gain=True,
             )
         )
 
         self.assertFalse(no_change.allowed)
         self.assertIn(
-            "third_attempt_requires_new_information_or_transport",
+            "provider_retry_evidence_insufficient",
             no_change.violations,
         )
         self.assertTrue(new_information.allowed)
@@ -838,6 +1083,7 @@ class RetryPolicyTests(unittest.TestCase):
         result = evaluate_retry(
             RetryRequest(
                 attempt_number=4,
+                retry_limit=3,
                 previous_failure=FailureKind.TRANSIENT,
                 materially_new_information=True,
                 previous_transport=Transport.LOCAL_CLI,
@@ -853,6 +1099,7 @@ class RetryPolicyTests(unittest.TestCase):
                 result = evaluate_retry(
                     RetryRequest(
                         attempt_number=attempt_number,
+                        retry_limit=3,
                         previous_failure=FailureKind.AMBIGUOUS_PAID_DISPATCH,
                         materially_new_information=True,
                         previous_transport=Transport.LOCAL_CLI,
@@ -867,11 +1114,15 @@ class RetryPolicyTests(unittest.TestCase):
 
     def test_retry_violation_can_run_in_shadow_mode(self):
         result = evaluate_retry(
-            RetryRequest(attempt_number=2, previous_failure=FailureKind.TERMINAL),
+            RetryRequest(
+                attempt_number=2,
+                retry_limit=3,
+                previous_failure=FailureKind.TERMINAL,
+            ),
             mode=EnforcementMode.SHADOW,
         )
         self.assertTrue(result.allowed)
-        self.assertEqual(result.outcome, DecisionOutcome.SHADOW_WOULD_BLOCK)
+        self.assertIn("recovery_requires_transient_failure", result.violations)
 
 
 class EfficiencyPolicyTests(unittest.TestCase):
@@ -1053,7 +1304,7 @@ class PrestagePacketTests(unittest.TestCase):
                     prestage(**{field_name: ()})
 
     def test_packet_retry_limit_cannot_exceed_policy_maximum(self):
-        with self.assertRaisesRegex(WorkloadPolicyError, "cannot exceed 3"):
+        with self.assertRaisesRegex(WorkloadPolicyError, "exactly 3"):
             prestage(retry_limit=4)
 
 
@@ -1072,9 +1323,21 @@ class InputValidationTests(unittest.TestCase):
 
     def test_retry_attempt_number_must_be_positive(self):
         with self.assertRaisesRegex(WorkloadPolicyError, "positive integer"):
-            RetryRequest(attempt_number=0)
+            RetryRequest(attempt_number=0, retry_limit=3)
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 03:56 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

@@ -1,3 +1,11 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | BEGIN]]
@@ -298,35 +306,41 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
         directive = charter["director_operating_directive"]
+        self.assertEqual(directive["default_allocation_profile"], "engineering")
+        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [35, 30, 15, 10, 10, 0, 0, 0, 0])
+        self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 9)
         self.assertEqual(
-            directive["direct_workload_percent"],
-            {
-                "claude": 60,
-                "cursor": 14,
-                "grok": 14,
-                "gemini": 7,
-                "perplexity": 4,
-                "external_openai": 1,
-            },
+            directive["workload_accounting"]["ledgers"]["overall_effort"],
+            "prospective_observed_effort_guard",
         )
         self.assertEqual(
-            directive["overall_effort_percent"],
-            {
-                "claude": 36,
-                "cursor": 20,
-                "grok": 20,
-                "openai": 8,
-                "gemini": 11,
-                "perplexity": 5,
-            },
+            directive["coding_routing"]["selection_policy"],
+            "cheap_capable_model_first",
+        )
+        self.assertFalse(
+            directive["coding_routing"][
+                "unconditional_claude_medium_or_long_requirement"
+            ]
+        )
+        self.assertFalse(
+            directive["workload_enforcement"]["overall_effort_can_block_or_route"]
+        )
+        self.assertIn("estimated_roi", directive["roi_and_waste"])
+        self.assertFalse(directive["copilot_lite_hygiene_review"]["gating"])
+        self.assertIsNone(
+            directive["copilot_lite_hygiene_review"]["workload_percentage"]
         )
         self.assertEqual(
-            directive["coding_routing"]["minimum_model_profile"],
-            "FABLE 5 ULTRA/MAX",
+            directive["coding_routing"]["selection_order"][2],
+            "direct_allocation_compliance_and_under_target_preference",
+        )
+        self.assertNotIn(
+            "github_copilot_cli_lite",
+            directive["allocation_profiles"]["lane_order"],
         )
         self.assertEqual(
-            directive["coding_routing"]["required_assignment_model_label"],
-            "FABLE 5 ULTRA/MAX",
+            directive["copilot_lite_hygiene_review"]["attempts"],
+            "conditional_maximum_three",
         )
         self.assertTrue(
             directive["pre_staging"]["required_before_provider_dispatch"]
@@ -394,7 +408,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("information gain" in rule for rule in efficiency["rules"]))
         self.assertTrue(any("safety evidence" in rule for rule in efficiency["rules"]))
         self.assertTrue(any("dependencies" in rule for rule in efficiency["rules"]))
-        self.assertEqual(efficiency["minimal_fix_attempt_limit"], 1)
+        self.assertEqual(efficiency["minimal_fix_attempt_limit"], 3)
         self.assertTrue(efficiency["minimal_fix_invalidates_evidence"])
 
     async def test_repeated_plans_inject_one_bounded_immutable_charter_each(self):
@@ -519,13 +533,68 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             / "project-state-report.md"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("must never emit OpenAI as an assignment target", charter)
-        self.assertIn("Never emit OpenAI as a specialist assignment target", prompt)
-        self.assertIn("never emits OpenAI as a", readme)
+        self.assertIn("OpenAI production may be separately assigned", charter)
+        self.assertIn("OpenAI production may be separately assigned", prompt)
+        self.assertIn("OpenAI production uses a separately assigned", readme)
         self.assertIn("different-provider exact-candidate review", charter)
         self.assertIn("different-provider exact-candidate review", prompt)
-        self.assertIn("different-provider exact-candidate review", readme)
-        self.assertIn("different-provider exact-candidate review", report)
+        self.assertIn("Different-provider exact-candidate review", readme)
+        self.assertIn("non-author review/merge", report)
+
+    def test_balanced_allocation_selection_and_copilot_are_synchronized(self):
+        root = Path(__file__).resolve().parents[1]
+        surfaces = {
+            "charter": root / "docs" / "team-operating-charter.md",
+            "prompt": root / "prompts" / "director-system.md",
+            "readme": root / "README.md",
+            "setup": root / "docs" / "provider-setup.md",
+            "protocol": root / "docs" / "project-bootstrap-protocol.md",
+            "report": root
+            / "docs"
+            / "templates"
+            / "project-bootstrap"
+            / "project-state-report.md",
+            "roles": root
+            / "docs"
+            / "templates"
+            / "project-bootstrap"
+            / "provider-roles-contract.yaml",
+        }
+        content = {
+            name: path.read_text(encoding="utf-8") for name, path in surfaces.items()
+        }
+
+        for name, text in content.items():
+            with self.subTest(surface=name):
+                normalized = " ".join(text.split()).lower()
+                self.assertIn("allocation", normalized)
+                self.assertIn("profile", normalized)
+                self.assertIn("copilot", normalized)
+                self.assertIn("waste", normalized)
+
+        for name in ("charter", "prompt", "readme", "setup", "protocol", "roles"):
+            with self.subTest(cheap_capable_surface=name):
+                normalized_policy = (
+                    content[name].lower().replace("_", " ").replace("-", " ")
+                )
+                self.assertTrue(
+                    "cheap capable" in normalized_policy
+                    or "cheapest capable" in normalized_policy,
+                    name,
+                )
+
+        directive = team_operating_charter()["director_operating_directive"]
+        self.assertEqual(set(directive["allocation_profiles"]["weights"]), {"engineering", "mixed", "public_research", "enterprise"})
+        for weights in directive["allocation_profiles"]["weights"].values():
+            self.assertEqual(sum(weights), 100)
+        self.assertEqual(
+            directive["workload_accounting"]["unit_basis"],
+            "real_reserved_assignment_once",
+        )
+        self.assertEqual(
+            directive["overall_effort_policy"],
+            "telemetry_only_no_separate_allocation",
+        )
 
     def test_antigravity_work_and_debate_boundaries_are_synchronized(self):
         root = Path(__file__).resolve().parents[1]
@@ -593,7 +662,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             root / "docs" / "templates" / "project-bootstrap" / "project-profile.yaml"
         ).read_text(encoding="utf-8")
         self.assertIn("minimal_fix:", profile)
-        self.assertIn("attempt_limit: 1", profile)
+        self.assertIn("attempt_limit: 3", profile)
         self.assertIn("changed_candidate_invalidates_evidence: true", profile)
 
     def test_pplx_cli_skill_is_installed_and_research_only_across_surfaces(self):
@@ -640,7 +709,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             team_operating_charter()["efficiency_policy"]["minimal_fix_attempt_limit"],
-            1,
+            3,
         )
         with self.assertRaises(ValueError):
             AdvisoryVote.model_validate(
@@ -742,6 +811,22 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
             with self.subTest(area=area["name"]):
                 self.assertIn(f'- name: "{area["name"]}"', contract)
                 self.assertIn(f'expectation: "{area["expectation"]}"', contract)
+
+    def test_contract_mirrors_prospective_total_effort_controls(self):
+        contract = self.contract()
+        for field in (
+            'default_profile: "engineering"',
+            'engineering: [35, 30, 15, 10, 10, 0, 0, 0, 0]',
+            'mixed: [30, 25, 10, 10, 5, 5, 5, 5, 5]',
+            'public_research: [25, 20, 5, 5, 5, 25, 15, 0, 0]',
+            'enterprise: [30, 25, 5, 5, 5, 0, 5, 10, 15]',
+            'total_effort_status: "separate_telemetry_not_production_credit"',
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, contract)
+
+        self.assertNotIn("historical_overall_effort_percent:", contract)
+        self.assertNotIn("historical_overall_effort_status:", contract)
 
     def test_contract_encodes_the_cursor_boundary(self):
         contract = self.contract()
@@ -1019,9 +1104,8 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
             "distinct project channel",
             "distinct deployment profile/state namespace",
             "blocks slack gateway activation",
-            "one primary attempt",
-            "second attempt",
-            "third attempt",
+            "assignment-specific `retry_limit`",
+            "recovery requires temporary failure",
             "never retry an ambiguous slack side effect",
             "do not borrow another deployment's slack app",
             "activation evidence",
@@ -1045,9 +1129,9 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
     def test_slack_retry_policy_is_synchronized(self):
         profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
         for field in (
-            "primary_attempt_limit: 1",
-            'second_attempt_requires: "plausibly_transient_failure"',
-            'third_attempt_requires: "materially_different_transport_or_new_information"',
+            "retry_limit: 3",
+            'additional_attempt_requires: "second_temporary_failure_third_new_information_or_different_transport"',
+            "resource_budget_required: true",
             'ambiguous_slack_side_effect: "do_not_retry_reconcile_first"',
             'exhausted_route: "same_project_durable_transport_never_borrow_another_deployment_surface"',
         ):
@@ -1061,11 +1145,10 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
         ):
             normalized = " ".join(self.read(surface).split()).lower()
             for phrase in (
-                "one primary attempt",
-                "second attempt",
-                "plausibly transient",
-                "third attempt",
-                "materially different transport or new information",
+                "assignment-specific `retry_limit`",
+                "recovery requires temporary failure",
+                "third attempt requires materially new information",
+                "different transport",
                 "never retry an ambiguous slack side effect",
                 "same project's prior durable",
                 "another deployment",
@@ -1144,3 +1227,13 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:58 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

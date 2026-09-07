@@ -1,3 +1,13 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | BEGIN]]
@@ -549,7 +559,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.directive = self.charter["director_operating_directive"]
 
     def test_director_duties_are_separate_from_direct_production_share(self):
-        self.assertEqual(self.directive["workload_policy_version"], "v1")
+        self.assertEqual(self.directive["workload_policy_version"], "capacity-allocation-v1")
         self.assertEqual(self.directive["director"], "openai")
         self.assertTrue(
             self.directive["duties_excluded_from_openai_direct_production_share"]
@@ -564,45 +574,27 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "review_handoff",
             "milestone_reporting",
         ])
-        targets = self.directive["direct_workload_percent"]
+        profiles = self.directive["allocation_profiles"]
+        self.assertEqual(profiles["weights"]["engineering"], [35,30,15,10,10,0,0,0,0])
+        self.assertEqual(len(profiles["lane_order"]), 9)
+        for targets in profiles["weights"].values():
+            self.assertEqual(sum(targets), 100)
         self.assertEqual(
-            targets,
-            {
-                "claude": 60,
-                "cursor": 14,
-                "grok": 14,
-                "gemini": 7,
-                "perplexity": 4,
-                "external_openai": 1,
-            },
+            self.directive["workload_accounting"]["ledgers"]["overall_effort"],
+            "prospective_observed_effort_guard",
         )
-        self.assertEqual(sum(targets.values()), 100)
-        self.assertEqual(targets["external_openai"], 1)
-        overall = self.directive["overall_effort_percent"]
-        self.assertEqual(
-            overall,
-            {
-                "claude": 36,
-                "cursor": 20,
-                "grok": 20,
-                "openai": 8,
-                "gemini": 11,
-                "perplexity": 5,
-            },
-        )
-        self.assertEqual(sum(overall.values()), 100)
         self.assertEqual(
             self.directive["workload_lanes"]["perplexity"],
             "public_research_evidence_only",
         )
         self.assertEqual(
             self.directive["workload_lanes"]["openai"],
-            "control_plane_and_truly_simple_local_overall_effort_external_owner_authorized_direct_production",
+            "control_plane_and_authorized_production",
         )
         self.assertEqual(
             self.directive["openai_direct_production_boundary"],
             {
-                "runtime_assignment_target_allowed": False,
+                "runtime_assignment_target_allowed": True,
                 "surface": "owner_authorized_external_codex_openai",
                 "counts": "authenticated_production_only",
                 "review": "different_provider_exact_candidate",
@@ -611,9 +603,9 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             },
         )
 
-    def test_dual_ledgers_and_hard_caps_prevent_openai_dominance(self):
+    def test_direct_and_total_effort_ledgers_are_independently_enforced(self):
         accounting = self.directive["workload_accounting"]
-        self.assertEqual(accounting["unit_basis"], "immutable_prestaged_effort_points")
+        self.assertEqual(accounting["unit_basis"], "real_reserved_assignment_once")
         self.assertEqual(
             accounting["workload_size_values"],
             ["simple", "short", "medium", "long"],
@@ -621,66 +613,56 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertEqual(accounting["effort_points"], {"minimum": 1, "maximum": 100})
         self.assertEqual(
             accounting["windows"],
-            ["assignment", "rolling_20_completed_assignments"],
+            ["rolling_20_real_assignments"],
         )
         self.assertEqual(
             accounting["failed_attempt_rule"],
-            "overall_effort_only_not_direct_production_credit",
+            "retain_admission_without_productive_credit",
         )
-        self.assertIn("accepted", accounting["ledgers"]["direct_production"])
-        self.assertIn("overall_effort_percent", accounting["ledgers"]["overall_effort"])
+        self.assertEqual(
+            accounting["ledgers"]["direct_production"],
+            "accepted_productive_work_allocation",
+        )
+        self.assertIn("prospective", accounting["ledgers"]["overall_effort"])
+        self.assertEqual(self.directive["overall_effort_policy"], "telemetry_only_no_separate_allocation")
         self.assertEqual(
             accounting["control_plane_rule"],
-            "openai_control_plane_counts_only_in_overall_effort",
+            "usage_telemetry_only_not_production_credit",
         )
 
         enforcement = self.directive["workload_enforcement"]
+        self.assertEqual(enforcement["enforced_measure"], "admitted_assignment_count")
         self.assertEqual(enforcement["normal_tolerance_percentage_points"], 3)
-        self.assertEqual(enforcement["hard_overage_percentage_points"], 5)
         self.assertEqual(
-            enforcement["primary_providers"],
-            ["claude", "cursor", "grok", "openai"],
+            enforcement["evaluate"],
+            [
+                "prospective_last20_assignment_count",
+            ],
         )
-        self.assertEqual(
-            enforcement["hard_thresholds_percent"],
-            {
-                "claude": 45,
-                "cursor": 25,
-                "grok": 25,
-                "openai": 13,
-                "gemini": 16,
-                "perplexity": 10,
-            },
-        )
-        self.assertEqual(
-            enforcement["primary_caps_percent"],
-            {"claude": 45, "cursor": 27, "grok": 27, "openai": 27},
-        )
-        self.assertEqual(
-            enforcement["claude_cap_percent_with_two_other_primary_available"],
-            45,
-        )
-        self.assertTrue(
-            all(
-                cap <= enforcement["absolute_non_claude_cap_percent"]
-                for provider, cap in enforcement["primary_caps_percent"].items()
-                if provider != "claude"
-            )
-        )
-        self.assertFalse(enforcement["openai_overage_exception"])
+        self.assertFalse(enforcement["overall_effort_can_block_or_route"])
         self.assertTrue(enforcement["automatic_drift_correction"])
         self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
-        self.assertEqual(enforcement["hard_action"], "block_dispatch_and_reshape")
+        self.assertEqual(enforcement["share_pressure_action"], "block_above_direct_target_plus_five")
+        self.assertEqual(enforcement["startup_denominator"], "twenty_slots_real_assignments_only")
 
-    def test_claude_coding_team_first_and_prestaging_are_fail_closed(self):
+    def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
         coding = self.directive["coding_routing"]
-        self.assertEqual(coding["medium_or_long_programming_provider"], "claude")
-        self.assertEqual(coding["minimum_model_profile"], "FABLE 5 ULTRA/MAX")
+        self.assertEqual(coding["selection_policy"], "cheap_capable_model_first")
         self.assertEqual(
-            coding["required_assignment_model_label"],
-            "FABLE 5 ULTRA/MAX",
+            coding["selection_order"],
+            [
+                "exact_scope_allowlists_transport_and_readiness",
+                "task_capability_tools_context_risk_and_independence",
+                "direct_allocation_compliance_and_under_target_preference",
+                "total_effort_eligibility_and_corrective_under_band_preference",
+                "lowest_trusted_estimated_cost",
+                "deterministic_tie_breaker",
+            ],
         )
-        self.assertFalse(coding["downgrade_allowed"])
+        self.assertFalse(coding["unconditional_claude_medium_or_long_requirement"])
+        self.assertIn("exact_trusted", coding["claude_exact_requirement_rule"])
+        self.assertIn("unknown", coding["missing_cost_rule"])
+        self.assertTrue(coding["model_output_cannot_expand_eligibility"])
         self.assertTrue(coding["one_writer_lease_per_file_or_error_surface"])
         self.assertTrue(
             coding["reviewer_must_differ_from_producer_and_material_authors"]
@@ -723,13 +705,58 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "PRESTAGE_REQUIRED_no_dispatch",
         )
 
+    def test_roi_waste_and_copilot_lite_are_bounded(self):
+        value = self.directive["roi_and_waste"]
+        self.assertIn("accepted_productive_units", value["estimated_roi"])
+        self.assertIn("never_invent", value["reported_cost_roi_rule"])
+        self.assertEqual(
+            value["first_pass_yield"],
+            "accepted_on_primary_attempt_divided_by_primary_attempts",
+        )
+        self.assertEqual(
+            value["correction_rate"],
+            "reviewable_candidates_requiring_correction_divided_by_reviewable_candidates",
+        )
+        self.assertIn("quota_or_unavailable_invocation", value["waste_categories"])
+        self.assertIn("duplicate_validation", value["waste_categories"])
+        self.assertEqual(
+            value["selection_record_requires"],
+            [
+                "eligible_candidate_set",
+                "exclusion_reasons",
+                "trusted_comparable_costs",
+                "selected_provider_and_model",
+                "deterministic_tie_break_reason",
+            ],
+        )
+
+        copilot = self.directive["copilot_lite_hygiene_review"]
+        self.assertFalse(copilot["provider_or_committee_member"])
+        self.assertIsNone(copilot["workload_percentage"])
+        self.assertNotIn(
+            "github_copilot_cli_lite",
+            self.directive["allocation_profiles"]["lane_order"],
+        )
+        self.assertEqual(
+            copilot["attempts"],
+            "conditional_maximum_three",
+        )
+        self.assertFalse(copilot["automatic_every_push"])
+        self.assertFalse(copilot["gating"])
+        self.assertEqual(copilot["authority_granted"], [])
+        self.assertIn("checks_green", copilot["trigger"])
+        self.assertIn("record_waste", copilot["unavailable_or_quota_failure"])
+        self.assertIn("material_author", copilot["material_fix_authorship_rule"])
+
     def test_retries_reductions_shadow_mode_and_evidence_are_exact(self):
         availability = self.directive["availability"]
-        self.assertEqual(availability["primary_attempts"], 1)
-        self.assertEqual(availability["transient_recovery_attempts"], 1)
         self.assertEqual(
-            availability["third_attempt_requires"],
-            "materially_different_transport_or_new_information",
+            availability["attempts"],
+            "conditional_maximum_three",
+        )
+        self.assertIn(
+            "second_requires_temporary_failure",
+            availability["additional_attempt_requires"],
         )
         self.assertEqual(availability["ambiguous"], "no_duplicate_dispatch")
 
@@ -844,7 +871,8 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 "objective_bounded_scope_and_categorized_status",
                 "starting_and_current_refs_shas_and_artifact_digests",
                 "authenticated_provider_participation_unavailable_abstaining_and_labels",
-                "target_and_actual_direct_production_and_overall_effort_by_provider_deviations_and_rationale",
+                "target_and_actual_enforced_direct_production_by_provider_deviations_and_rationale",
+                "prospective_total_effort_soft_bands_and_share_advisories",
                 "prestage_packet_digest_workload_size_effort_points_and_deltas",
                 "status_validation_action_counts_reduction_baselines_and_browser_use",
                 "openai_moderator_participant_director_actions_and_vote",
@@ -852,6 +880,8 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 "exact_tests_trusted_ci_security_independent_review_and_verdict",
                 "unresolved_risks_limitations_blockers_and_confidence",
                 "measured_cost_token_usage_elapsed_time_and_unavailable_telemetry",
+                "roi_first_pass_yield_correction_rate_and_categorized_waste_with_missing_telemetry",
+                "copilot_lite_result_attempt_formats_quota_state_validated_findings_and_material_authorship",
                 "rolling_commit_baseline_current_measurement_delta_and_exclusions",
                 "scope_or_authority_changes_and_exact_stored_owner_authorization",
                 "recovery_state_rollback_and_restart_evidence_integrity",
@@ -868,7 +898,10 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
         self.assertEqual(
             self.directive["availability"]["attempts"],
-            self.charter["availability_policy"]["nonresponse_attempt_limit"],
+            "conditional_maximum_three",
+        )
+        self.assertEqual(
+            self.charter["availability_policy"]["nonresponse_attempt_limit"], 3
         )
         self.assertEqual(self.directive["availability"]["partial"], "untrusted")
         self.assertEqual(
@@ -1557,12 +1590,6 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
             async def poll(self, run):
                 raise AssertionError("persisted attempt cap must stop before another poll")
 
-        assignment = Assignment(
-            sequence=1,
-            agent=ProviderName.CLAUDE,
-            task="bounded work",
-            acceptance=["evidence"],
-        )
         run = ProviderRun(
             provider=ProviderName.CLAUDE,
             assignment_sequence=1,
@@ -1570,35 +1597,45 @@ class NonresponseContinuationTests(unittest.IsolatedAsyncioTestCase):
             status="RUNNING",
             result="partial",
         )
-        record = TaskRecord(
-            task_id="DIR-PERSISTED-ATTEMPTS",
-            status=TaskStatus.RUNNING,
-            intake=SlackIntake(
-                source_event_id="evt-persisted",
-                channel_id="C1",
-                thread_ts="1.4",
-                user_id="U1",
-                text="DIRECTOR Project: demo Outcome: bounded work",
-            ),
-            provider_contact_attempts=[
-                ProviderContactAttempt(
-                    assignment_sequence=1,
-                    provider=ProviderName.CLAUDE,
-                    ordinal=ordinal,
-                    phase="poll",
-                    outcome="no_response",
-                    run_id="persisted-run",
-                    partial_output="partial",
-                    error="ReadTimeout: unavailable",
-                )
-                for ordinal in (1, 2, 3)
-            ],
-        )
         engine = OrchestrationEngine(replace(Settings(), provider_poll_seconds=0), None)
-
-        with self.assertRaises(ProviderUnavailableError):
-            await engine._wait(MustNotPoll(), run, record, assignment)
-        self.assertEqual(len(record.provider_contact_attempts), 3)
+        for retry_limit in (3,):
+            with self.subTest(retry_limit=retry_limit):
+                assignment = Assignment(
+                    sequence=1,
+                    agent=ProviderName.CLAUDE,
+                    retry_limit=retry_limit,
+                    task="bounded work",
+                    acceptance=["evidence"],
+                )
+                record = TaskRecord(
+                    task_id=f"DIR-PERSISTED-ATTEMPTS-{retry_limit}",
+                    status=TaskStatus.RUNNING,
+                    intake=SlackIntake(
+                        source_event_id=f"evt-persisted-{retry_limit}",
+                        channel_id="C1",
+                        thread_ts="1.4",
+                        user_id="U1",
+                        text="DIRECTOR Project: demo Outcome: bounded work",
+                    ),
+                    provider_contact_attempts=[
+                        ProviderContactAttempt(
+                            assignment_sequence=1,
+                            provider=ProviderName.CLAUDE,
+                            ordinal=ordinal,
+                            phase="poll",
+                            outcome="no_response",
+                            run_id="persisted-run",
+                            partial_output="partial",
+                            error="ReadTimeout: unavailable",
+                        )
+                        for ordinal in range(1, retry_limit + 1)
+                    ],
+                )
+                with self.assertRaises(ProviderUnavailableError):
+                    await engine._wait(MustNotPoll(), run, record, assignment)
+                self.assertEqual(
+                    len(record.provider_contact_attempts), retry_limit
+                )
 
     async def test_three_safe_poll_failures_defer_lane_and_continue_independent_work(self):
         class NonresponsiveAdapter:
@@ -2073,3 +2110,15 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:11 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:37 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:39 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]

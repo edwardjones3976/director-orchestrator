@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -11,6 +12,7 @@ import math
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -342,7 +344,13 @@ class UsageMonitor:
         try:
             delay = float(retry_after)
         except (TypeError, ValueError):
-            return None
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                return None
         if not math.isfinite(delay) or not 0 <= delay <= 60:
             return None
         return delay
@@ -392,20 +400,20 @@ class UsageMonitor:
                     ) from exc
                 try:
                     payload = response.json()
-                except ValueError as exc:
+                    return ProviderRun(
+                        provider=ProviderName.OPENAI,
+                        run_id=payload["id"],
+                        status=payload.get("status", "completed"),
+                        result=_output_text(payload),
+                        raw=payload,
+                        attempt_count=attempt_count,
+                    )
+                except (ValueError, KeyError, TypeError, AttributeError) as exc:
                     raise ProviderError(
                         "OpenAI usage check returned an invalid response",
                         code="invalid_response",
                         attempt_count=attempt_count,
                     ) from exc
-                return ProviderRun(
-                    provider=ProviderName.OPENAI,
-                    run_id=payload["id"],
-                    status=payload.get("status", "completed"),
-                    result=_output_text(payload),
-                    raw=payload,
-                    attempt_count=attempt_count,
-                )
         raise AssertionError("OpenAI usage recovery loop exited unexpectedly")
 
     async def _wait(self, adapter: ProviderAdapter, run: ProviderRun) -> ProviderRun:
@@ -690,3 +698,4 @@ class UsageMonitor:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]

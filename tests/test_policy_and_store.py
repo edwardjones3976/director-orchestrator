@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -5,6 +9,8 @@
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from __future__ import annotations
 
+import json
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -19,6 +25,7 @@ from director_orchestrator.models import (
     AssignmentKind,
     DirectorPlan,
     DiscussionPhase,
+    LeanExecutionLimits,
     ProviderName,
     RiskLevel,
     SlackIntake,
@@ -38,7 +45,7 @@ from director_orchestrator.store import TaskStore
 
 
 class PolicyTests(unittest.TestCase):
-    def test_openai_runtime_cannot_be_an_assignment_target(self):
+    def test_separately_assigned_openai_production_is_a_policy_target(self):
         settings = replace(
             Settings(),
             project_allowlist=("demo",),
@@ -56,7 +63,7 @@ class PolicyTests(unittest.TestCase):
                 Assignment(
                     sequence=1,
                     agent=ProviderName.OPENAI,
-                    task="Duplicate the Director planning phase",
+                    task="Implement the bounded repository change",
                     acceptance=["Plan exists"],
                     repository="example/demo",
                 )
@@ -64,10 +71,7 @@ class PolicyTests(unittest.TestCase):
             final_acceptance=["Accepted"],
         )
 
-        self.assertIn(
-            "assignment 1: OpenAI is the Director runtime and cannot be an assignment target",
-            execution_policy_errors(plan, settings),
-        )
+        self.assertEqual(execution_policy_errors(plan, settings), [])
 
     def setUp(self):
         self.settings = replace(Settings(), max_agent_hops=4, max_revisions=1, max_task_budget_usd=1.0)
@@ -87,6 +91,7 @@ class PolicyTests(unittest.TestCase):
         )
         self.assertLessEqual(plan.max_hops, 4)
         self.assertLessEqual(plan.max_revisions, 1)
+        self.assertTrue(plan.assignments[0].requires_approval)
 
     def test_dry_run_research_plan_does_not_copy_intake_into_the_search_query(self):
         text = (
@@ -664,6 +669,51 @@ class PolicyTests(unittest.TestCase):
 
 
 class StoreTests(unittest.TestCase):
+    @staticmethod
+    def _replace_execution_limits(
+        database: str,
+        task_id: str,
+        execution_limits: dict[str, object],
+        *,
+        omit_assignment_retry_limits: bool = False,
+    ) -> str:
+        with sqlite3.connect(database) as connection:
+            stored_json = connection.execute(
+                "SELECT record_json FROM tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()[0]
+            stored = json.loads(stored_json)
+            stored["plan"]["execution_limits"] = execution_limits
+            if omit_assignment_retry_limits:
+                for assignment in stored["plan"]["assignments"]:
+                    assignment.pop("retry_limit")
+            replacement = json.dumps(stored, sort_keys=True)
+            connection.execute(
+                "UPDATE tasks SET record_json = ? WHERE task_id = ?",
+                (replacement, task_id),
+            )
+        return replacement
+
+    @staticmethod
+    def _legacy_execution_limits() -> dict[str, object]:
+        limits = LeanExecutionLimits().model_dump(mode="json")
+        for field in (
+            "retry_limit_source",
+            "additional_attempt_requires_classified_failure",
+            "additional_attempt_requires_positive_information_gain",
+            "additional_attempt_requires_changed_basis",
+            "token_cost_timeout_and_cancellation_budgets_enforced",
+        ):
+            limits.pop(field)
+        limits.update(
+            {
+                "primary_attempt_limit": 1,
+                "transient_recovery_attempt_limit": 1,
+                "total_route_attempt_limit": 3,
+                "third_attempt_requires_new_information_or_transport": True,
+            }
+        )
+        return limits
+
     def test_source_event_is_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
@@ -701,6 +751,196 @@ class StoreTests(unittest.TestCase):
                 {"DIR-0", "DIR-1"},
             )
 
+    def test_restart_get_and_recovery_load_exact_legacy_execution_limits(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            record = TaskRecord(
+                task_id="DIR-LEGACY-LIMITS",
+                status=TaskStatus.RUNNING,
+                intake=SlackIntake(
+                    source_event_id="evt-legacy-limits",
+                    channel_id="C123",
+                    thread_ts="123.legacy",
+                    user_id="U123",
+                    text="DIRECTOR Project: demo Outcome: test",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="test",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=3,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.OPENAI,
+                            task="test",
+                            acceptance=["accepted"],
+                            retry_limit=3,
+                        )
+                    ],
+                    final_acceptance=["accepted"],
+                ),
+            )
+            store.create(record)
+            stored_json = self._replace_execution_limits(
+                database,
+                record.task_id,
+                self._legacy_execution_limits(),
+                omit_assignment_retry_limits=True,
+            )
+
+            restarted = TaskStore(database)
+            loaded = restarted.get(record.task_id)
+            recovered = {item.task_id: item for item in restarted.list_recoverable()}[
+                record.task_id
+            ]
+
+            for candidate in (loaded, recovered):
+                self.assertEqual(3, candidate.plan.assignments[0].retry_limit)
+                self.assertEqual(
+                    "immutable_assignment_prestage",
+                    candidate.plan.execution_limits.retry_limit_source,
+                )
+                self.assertTrue(
+                    candidate.plan.execution_limits.additional_attempt_requires_changed_basis
+                )
+                self.assertFalse(
+                    candidate.plan.execution_limits.ambiguous_paid_dispatch_retry_allowed
+                )
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    stored_json,
+                    connection.execute(
+                        "SELECT record_json FROM tasks WHERE task_id = ?",
+                        (record.task_id,),
+                    ).fetchone()[0],
+                )
+
+    def test_legacy_execution_limit_mixes_and_malformed_authority_fail_closed(self):
+        current = LeanExecutionLimits().model_dump(mode="json")
+        partial_current = dict(current)
+        partial_current.pop("additional_attempt_requires_changed_basis")
+        bare_legacy = {
+            "primary_attempt_limit": 1,
+            "transient_recovery_attempt_limit": 1,
+            "total_route_attempt_limit": 3,
+            "third_attempt_requires_new_information_or_transport": True,
+        }
+        missing_common = self._legacy_execution_limits()
+        missing_common.pop("major_action_limit")
+        extra = self._legacy_execution_limits()
+        extra["unexpected_authority"] = True
+        mixed = self._legacy_execution_limits()
+        mixed["retry_limit_source"] = "immutable_assignment_prestage"
+        altered = self._legacy_execution_limits()
+        altered["total_route_attempt_limit"] = 4
+        wrong_type = self._legacy_execution_limits()
+        wrong_type["primary_attempt_limit"] = True
+        malformed_limits = (
+            ("empty", {}, False),
+            ("partial-current", partial_current, False),
+            ("bare-legacy", bare_legacy, True),
+            ("missing-common", missing_common, True),
+            ("extra", extra, True),
+            ("mixed", mixed, True),
+            ("altered", altered, True),
+            ("wrong-type", wrong_type, True),
+            ("current-assignment-omits-retry", current, True),
+        )
+
+        for index, (case, limits, omit_assignment_retry) in enumerate(
+            malformed_limits
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory(
+                ignore_cleanup_errors=True
+            ) as directory:
+                database = str(Path(directory) / "tasks.sqlite3")
+                store = TaskStore(database)
+                record = TaskRecord(
+                    task_id=f"DIR-MALFORMED-{index}",
+                    status=TaskStatus.RUNNING,
+                    intake=SlackIntake(
+                        source_event_id=f"evt-malformed-{index}",
+                        channel_id="C123",
+                        thread_ts=f"123.{index}",
+                        user_id="U123",
+                        text="DIRECTOR Project: demo Outcome: test",
+                    ),
+                    plan=DirectorPlan(
+                        project="demo",
+                        normalized_outcome="test",
+                        risk_level=RiskLevel.LOW,
+                        approval_required=False,
+                        max_hops=1,
+                        max_revisions=0,
+                        assignments=[
+                            Assignment(
+                                sequence=1,
+                                agent=ProviderName.OPENAI,
+                                task="test",
+                                acceptance=["accepted"],
+                            )
+                        ],
+                        final_acceptance=["accepted"],
+                    ),
+                )
+                store.create(record)
+                self._replace_execution_limits(
+                    database,
+                    record.task_id,
+                    limits,
+                    omit_assignment_retry_limits=omit_assignment_retry,
+                )
+
+                with self.assertRaises(ValueError):
+                    TaskStore(database).get(record.task_id)
+                with self.assertRaises(ValueError):
+                    TaskStore(database).list_recoverable()
+
+    def test_current_execution_limits_round_trip_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            record = TaskRecord(
+                task_id="DIR-CURRENT-LIMITS",
+                status=TaskStatus.RUNNING,
+                intake=SlackIntake(
+                    source_event_id="evt-current-limits",
+                    channel_id="C123",
+                    thread_ts="123.current",
+                    user_id="U123",
+                    text="DIRECTOR Project: demo Outcome: test",
+                ),
+                plan=DirectorPlan(
+                    project="demo",
+                    normalized_outcome="test",
+                    risk_level=RiskLevel.LOW,
+                    approval_required=False,
+                    max_hops=1,
+                    max_revisions=0,
+                    assignments=[
+                        Assignment(
+                            sequence=1,
+                            agent=ProviderName.OPENAI,
+                            task="test",
+                            acceptance=["accepted"],
+                        )
+                    ],
+                    final_acceptance=["accepted"],
+                ),
+            )
+            expected = record.plan.execution_limits.model_dump(mode="json")
+            store.create(record)
+
+            loaded = TaskStore(database).get(record.task_id)
+
+            self.assertEqual(
+                expected, loaded.plan.execution_limits.model_dump(mode="json")
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -709,3 +949,7 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 07:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:03 UTC | END]]

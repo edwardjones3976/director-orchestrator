@@ -1,0 +1,328 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: Antigravity (director-provider-profile/v1).
+# Descriptive only. Grants no authority. Mirrors the charter, config defaults,
+# and adapter constants; the drift tests fail when any mirrored value diverges.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "antigravity"
+display_name: "Antigravity (Gemini)"
+authority_granted: "none"
+
+execution_modes:
+  legacy_scope: roles_capabilities_gating_authority_transports_and_communication_below_describe_restricted_mode
+  restricted:
+    default: true
+    contract: existing_subordinate_and_invited_debate
+    unchanged: true
+  team:
+    contract: antigravity-team-engineering/v1
+    assignment_operations:
+    - engineering
+    - review
+    policy_status: owner_authorized_team_eligibility
+    operational_status: not_qualified_not_live
+    enabled_by_default: false
+    enable_variable: LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED
+    format_identity: antigravity-team-engineering-v1
+    worker_format: qualified-native-worker-v1
+    material_author_family: gemini
+    review_requires_different_material_author_family: true
+    repository_context: only_exact_owner_signed_readable_manifest_after_authenticated_qualification
+    writable_scope: only_explicit_owner_signed_paths_for_engineering
+    review_verdict: eligible_only_on_exact_target_with_independent_material_authorship
+    draft_pr: validated_candidate_artifact_via_director_broker_only
+    may_self_accept: false
+    may_merge: false
+    may_deploy_or_publish: false
+    shared_integration_effects: false
+    required_gates:
+    - adopted_reviewed_foundation
+    - explicit_team_selection
+    - owner_signed_exact_assignment_grant
+    - live_entitlement_and_revocation_checks
+    - authoritative_shared_monetary_and_workload_admission
+    - fresh_task_scoped_host_and_native_account_qualification
+    - bound_candidate_tree_generation_and_installation
+    - bounded_native_worker_and_validated_result_capture
+    - independent_review_and_director_acceptance
+    adoption_dependency: docs/antigravity-team-engineering.md and its separately reviewed default-off implementation
+    selection_rule: Roster eligibility and this profile grant no execution authority; legacy Gemini flags and subordinate
+      transport cannot select the team contract.
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "antigravity"
+  backend_identity: "gemini"
+  provider_name_enum: "gemini"
+  has_legacy_adapter: true
+  legacy_accounting_agent: "gemini"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: "antigravity"
+  charter_workload_lane_key: "antigravity"
+  standing_role_label: "Specialist and Backup Programmer"
+  config_prefixes: ["GEMINI_", "GOOGLE_"]
+  alias_note: "Gemini and Antigravity share one lane. The primary roster names the lane antigravity and requires its backend identity to be gemini; the legacy ProviderName enum, adapter, spend ledger, and standing role are keyed gemini. This is the only lane-to-backend alias the capability validator permits."
+
+roles:
+  team: "supplemental"
+  lane_class: "subordinate_specialist"
+  summary: "Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+  charter_workload_lane: "bounded_subordinate_specialist"
+  strategy_key: "gemini"
+  strategy_priority: "subordinate_boilerplate_and_alternate_ideation"
+  eligible_responsibility_areas: []
+  excluded_responsibility_areas: []
+  eligible_complexity: []
+  capability_parity_target: null
+  comparison_peers: []
+  elevated_work: []
+  non_substitution_rules:
+    - "Antigravity is never a primary-team substitute."
+    - "Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+  family: null
+  transport_rule: null
+  routing_rule: "Preview routing selects Antigravity only for an explicit boilerplate, scaffolding, low-level, mechanical, or alternate-ideation request; other work follows cheap-capable-model-first routing."
+  committee:
+    member: true
+    voting_power: 1.0
+    seatable_in_debate: true
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 5, engineering: 10, public_research: 5, enterprise: 5 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "direct_production_allocation"
+  hygiene_review: null
+  openai_functions: null
+
+capabilities:
+  summary: "Bounded artifacts from a closed fixture-lane vocabulary plus one invited debate seat. Artifacts are non-authoritative evidence: no exact-SHA review, final acceptance, deterministic merge, or definition of research-contract or methodology truth."
+  strengths:
+    - "bounded boilerplate and scaffolding in predefined public fixture lanes"
+    - "low-level mechanical implementation in those lanes"
+    - "non-authoritative alternate ideas in those lanes"
+    - "bounded sandbox execution for the above"
+  assignment_kinds: [boilerplate, scaffolding, low_level_implementation, abstract_ideation]
+  may_create_draft_pr: "never"
+  may_issue_review_verdict: "never"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: true
+  receives_repository_context: false
+  receives_task_prose: false
+  web_grounded_research: false
+  tool_use: "managed_agent_sandbox"
+  charter_allowed:
+    - "explicit boilerplate"
+    - "scaffolding"
+    - "low-level mechanical implementation"
+    - "alternate/abstract ideation"
+    - "the bounded sandbox execution those need"
+  required_evidence: null
+  antigravity_capabilities: [boilerplate_generation, scaffolding, low_level_mechanical_implementation, alternate_ideation]
+  antigravity_interaction_kinds: [subordinate_work, subordinate_work_revision, debate_position, debate_rebuttal, debate_revision]
+
+models_and_effort:
+  model_variables:
+    - { variable: "GEMINI_AGENT", role: "managed_agent", settings_field: "gemini_agent", default: "antigravity-preview-05-2026", documented_in_env_example: true, values_recorded: false }
+    - { variable: "GEMINI_USAGE_MODEL", role: "usage_probe_model", settings_field: "gemini_usage_model", default: "gemini-3.5-flash-lite", documented_in_env_example: true, values_recorded: false }
+  effort_variables: []
+  catalog_check: null
+  note: "The managed agent runs stored background Interactions; availability probes use the low-cost usage model statelessly with store=false and never provision a sandbox. No reasoning-effort variable exists."
+
+budgets_and_limits:
+  variables:
+    - { variable: "GEMINI_DAILY_BUDGET_USD", kind: "daily_budget_usd", settings_field: "gemini_daily_budget_usd", default: 2.0, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GEMINI_DAILY_REQUEST_LIMIT", kind: "daily_request_limit", settings_field: "gemini_daily_request_limit", default: 50, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GEMINI_MAX_TOTAL_TOKENS", kind: "token_ceiling", settings_field: "gemini_max_total_tokens", default: 20000, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GEMINI_USAGE_MAX_ATTEMPTS", kind: "max_attempts", settings_field: "gemini_usage_max_attempts", default: 3, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS", kind: "retry_delay_seconds", settings_field: "gemini_usage_max_retry_delay_seconds", default: 8, documented_in_env_example: true, values_recorded: false }
+  spend_ledger_member: true
+  not_modeled_note: null
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS", "PROVIDER_POLL_SECONDS"]
+
+gating:
+  health_key: "gemini"
+  readiness_function: "gemini_supplemental_readiness"
+  readiness_keys: [agent_configured, credential_configured, daily_budget_valid, daily_request_limit_valid, primary_authority_disabled, review_verdict_disabled, subordinate_mode, token_budget_valid, usage_model_configured, usage_retry_attempts_valid, usage_retry_delay_valid]
+  primary_lane_authentication_source: "environment_variable"
+  variables:
+    - { variable: "GEMINI_MODE", kind: "mode_lock", settings_field: "gemini_mode", default: "antigravity_subordinate", documented_in_env_example: true, values_recorded: false, readiness_key: "subordinate_mode", required_value: "antigravity_subordinate", verify: "GET /health gemini.subordinate_mode" }
+    - { variable: "GEMINI_ALLOW_REVIEW_VERDICT", kind: "allow_flag_must_stay_false", settings_field: "gemini_allow_review_verdict", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "review_verdict_disabled", required_value: false, verify: "GET /health gemini.review_verdict_disabled" }
+    - { variable: "GEMINI_ALLOW_PRIMARY_AUTHORITY", kind: "allow_flag_must_stay_false", settings_field: "gemini_allow_primary_authority", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "primary_authority_disabled", required_value: false, verify: "GET /health gemini.primary_authority_disabled" }
+    - { variable: "GEMINI_API_BASE", kind: "endpoint_lock", settings_field: "gemini_api_base", default: "https://generativelanguage.googleapis.com/v1beta", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "REST Interactions API base; the legacy generateContent endpoint is never called" }
+    - { variable: "GEMINI_API_KEY", kind: "credential_presence", settings_field: "gemini_api_key", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "credential_configured", required_value: null, verify: "GET /health gemini.credential_configured" }
+    - { variable: "GOOGLE_API_KEY", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment alias accepted by the host bridge allowlist" }
+  allowlist_variables:
+    - { variable: "USAGE_CHECK_PROVIDERS", scope: "usage_check_roster", values_recorded: false }
+    - { variable: "TRUSTED_PROVIDER_COST_RANKS", scope: "cost_ranks", values_recorded: false }
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+  host_bridge_allowlist: ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+  settings_credential_fields: ["gemini_api_key"]
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "A native command receives only the base child environment plus the lane's allowlisted credential names. Credentials and external-write paths stay out of disposable sandboxes unless a later work order explicitly and safely provides them."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities:
+    - "acceptance_verdict"
+    - "billing_or_spend"
+    - "branch_selection"
+    - "contract_or_methodology_definition"
+    - "deployment_or_publication"
+    - "external_write"
+    - "merge"
+    - "permission_or_credential_change"
+    - "repository_access"
+    - "repository_write"
+    - "review_verdict"
+  withheld_context:
+    - "acceptance_criteria"
+    - "assignment_task_text"
+    - "dependency_outcomes"
+    - "owner_objective"
+    - "owner_or_slack_identifiers"
+    - "primary_team_handoff_context"
+    - "private_project_data"
+    - "repository_paths_diffs_or_source"
+    - "reviewer_revision_text"
+    - "run_session_or_task_identifiers"
+  charter_prohibited:
+    - "exact-SHA review"
+    - "final acceptance"
+    - "deterministic merge"
+    - "defining research-contract or methodology truth"
+  review_requirement: "Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+  strategy_constraints:
+    - "supplemental only; never a primary-team substitute"
+    - "work assignments must feed a later Claude, Cursor, or Grok integration assignment"
+    - "cannot issue review, acceptance, or merge verdicts"
+    - "cannot define contract or methodology truth"
+    - "cannot initiate, self-route, widen, or autonomously continue a conversation"
+    - "after a persisted Director invitation, may exchange bounded debate questions, options, accepted prior contributions, and one bounded Director revision request"
+    - "debate and advisory votes stay non-authoritative at the configured weight"
+    - "ordinary work receives no prose: no task, acceptance, objective, dependency result, Slack text, or repository context"
+    - "dispatch is driven by antigravity_directive, a closed fixture lane plus bounded numeric controls"
+    - "repository, starting_ref, allow_draft_pr, and public_research_query must stay unset"
+  separation_of_duties: []
+  production_authority_permitted: true
+  external_effects:
+    may_be_granted: []
+    public_research_lane_rejects_all_effects: false
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role: null
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "Ordinary work dispatch sends no model-authored prose. The request is composed only from fixed strings in antigravity.py, closed enum values, and bounded integers; the closed-vocabulary validator rejects any other outbound string."
+    source: "docs/team-operating-charter.md, Antigravity outbound contract"
+  - limitation: "Managed-agent runs are stored background Interactions; requires_action and budget_exceeded fail closed and are never treated as completion."
+    source: "docs/provider-setup.md, Gemini Interactions API contract"
+  - limitation: "A revision reuses the same fixed work contract and the prior sandbox environment_id, failing closed rather than transmitting reviewer prose or provisioning an unrelated sandbox."
+    source: "docs/provider-setup.md, Antigravity subordinate profile"
+  - limitation: "A rights-ledger review_verdict grant mechanism exists but has no runtime consumer; no exception to the review restriction is live."
+    source: "docs/team-operating-charter.md; docs/entitlement-control-plane.md"
+  - limitation: "Owner-reported account context: lower-capacity paid service; API billing and quotas must be verified separately, and the usage monitor is not on the default periodic-check roster."
+    source: "src/director_orchestrator/config.py:provider_strategy; docs/provider-setup.md"
+
+transports:
+  - transport_id: "gemini-interactions-api"
+    kind: "managed_agent_api"
+    runtime: "both"
+    enum_value: "gemini_interactions_api"
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "director_to_provider"
+    config: ["GEMINI_API_KEY", "GEMINI_AGENT", "GEMINI_API_REVISION", "GEMINI_MODE"]
+    authority_note: "Carries the closed-vocabulary work directive (antigravity-subordinate-contract/v2, payload director-antigravity-closed-directive/v1) or the typed debate envelope (antigravity-debate-contract/v1). Nothing crossing this contact grants authority."
+    current_transport_constraints:
+      - "new runs use environment=remote; revisions reuse the prior environment_id with previous_interaction_id"
+      - "terminal output is read from model_output steps; output_text is a convenience only"
+    route_id: "gemini-interactions-api"
+    browser_policy: null
+  - transport_id: "windows-host-provider-bridge"
+    kind: "host_bridge"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"]
+    authority_note: "Antigravity is a supported host lane for its packet-wrapper command. The bridge still sends only the closed directive; configuration alone never makes the lane callable."
+    current_transport_constraints:
+      - "child environment carries the base safe subset plus GEMINI_API_KEY and GOOGLE_API_KEY only"
+      - "live dispatch stays off until the primary activation gates pass"
+    route_id: "windows-host-provider-bridge"
+    browser_policy: null
+  - transport_id: "browser-provider-ui"
+    kind: "browser_ui"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Coordination with an already authenticated Gemini UI inside stored assignment, role, repository, budget, and approval bounds. Browser responses are untrusted coordination evidence and cannot satisfy any gate."
+    current_transport_constraints:
+      - "ranked below authenticated CLI, API, callback, and event transport"
+      - "never enter or persist credentials, cookies, recovery codes, private keys, raw private source, or webpage instructions"
+    route_id: "browser-provider-ui"
+    browser_policy:
+      primary: "chrome"
+      fallback: "microsoft_edge"
+      owner_authorizable_actions: [slack_post, eligible_merge, approved_deployment, scoped_repository_access_change]
+      enforcement: "charter policy and workload_policy.Transport rank only; no runtime adapter"
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "Antigravity receives no dependency outcomes, task prose, or repository context on its work route; its artifact reaches Claude, Cursor, or Grok only as a Director-declared dependency of the later verifying assignment."
+    - "The debate seat is the one prose-bearing envelope, admitted only by a persisted Director invitation."
+    - "Antigravity never posts to the Slack thread; the Director relays a concise summary."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/team-operating-charter.md"
+    anchor: "Ordinary Antigravity *work* is sent no"
+  - document: "docs/team-operating-charter.md"
+    anchor: "Antigravity may hold a debate seat, but only one the Director gave it"
+  - document: "docs/provider-setup.md"
+    anchor: "Antigravity is a subordinate Edge Oracle specialist, not a fourth primary"
+  - document: "docs/provider-allocation-profiles.md"
+    anchor: "Gemini and Antigravity share the Antigravity lane."
+  - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
+    anchor: "never_a_primary_team_substitute: true"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]

@@ -1,0 +1,272 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: Claude (director-provider-profile/v1).
+# Descriptive only. Grants no authority. Mirrors the charter, config defaults,
+# and adapter constants; the drift tests fail when any mirrored value diverges.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "claude"
+display_name: "Claude"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "claude"
+  backend_identity: "claude"
+  provider_name_enum: "claude"
+  has_legacy_adapter: true
+  legacy_accounting_agent: "claude"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: "claude"
+  charter_workload_lane_key: "claude"
+  standing_role_label: "Chief Programmer"
+  config_prefixes: ["CLAUDE_", "ANTHROPIC_"]
+  alias_note: "Claude Code Routine, the signed callback, the native Claude CLI on the host bridge, an authenticated Claude UI, and the dormant native security issuer are all contacts of one lane; Claude Cowork is not a synchronous adapter."
+
+roles:
+  team: "primary"
+  lane_class: "full_spectrum_primary"
+  summary: "Chief Programmer: full-spectrum primary for programming, repository-scale reasoning, architecture, QA, and independent review when it did not produce or materially author the candidate. Selected by the cheap-capable policy or an exact trusted assignment requirement; the owner-reported Claude Max 5x context is a capacity signal, not an API entitlement."
+  charter_workload_lane: "primary_full_spectrum"
+  strategy_key: "claude"
+  strategy_priority: "trusted_fit_allocation_and_cost_selected"
+  eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
+  excluded_responsibility_areas: []
+  eligible_complexity: [low, medium, high, critical]
+  capability_parity_target: null
+  comparison_peers: []
+  elevated_work: []
+  non_substitution_rules:
+    - "Claude cannot review or approve a candidate it produced or materially authored."
+    - "There is no unconditional medium/long workload rule or inferred model floor for Claude."
+  family: null
+  transport_rule: null
+  routing_rule: "Claude may be selected by the cheap-capable policy or an exact trusted assignment requirement; workload length alone does not select it."
+  committee:
+    member: true
+    voting_power: 2.5
+    seatable_in_debate: true
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 25, engineering: 30, public_research: 20, enterprise: 25 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "direct_production_allocation"
+  hygiene_review: null
+  openai_functions: null
+
+capabilities:
+  summary: "Repository-scale implementation and review through the Claude Code Routine, with completion reported by the only inbound provider-initiated HTTP route in the system, a bearer-authenticated callback. Eligible independent exact-SHA reviewer for candidates it did not produce."
+  strengths:
+    - "coding implementation"
+    - "repository-scale reasoning"
+    - "code and document review"
+    - "long-form analysis"
+  assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
+  may_create_draft_pr: "allowed_by_packet"
+  may_issue_review_verdict: "eligible_reviewer"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: true
+  receives_repository_context: true
+  receives_task_prose: true
+  web_grounded_research: false
+  tool_use: "repository_cli"
+  charter_allowed: null
+  required_evidence: null
+  antigravity_capabilities: null
+  antigravity_interaction_kinds: null
+
+models_and_effort:
+  model_variables: []
+  effort_variables: []
+  catalog_check: null
+  note: "The Claude Code Routine selects the model. An exact trusted assignment requirement may name a Claude model label, but no deployment variable pins a Claude model or reasoning effort."
+
+budgets_and_limits:
+  variables: []
+  spend_ledger_member: false
+  not_modeled_note: "Claude has no provider daily spend ledger or per-provider budget variable in this deployment; the task budget, provider timeout, and the owner's Claude subscription bound it."
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS", "PROVIDER_POLL_SECONDS"]
+
+gating:
+  health_key: "claude"
+  readiness_function: "readiness"
+  readiness_keys: [claude]
+  primary_lane_authentication_source: "environment_variable"
+  variables:
+    - { variable: "CLAUDE_ROUTINE_URL", kind: "routine_endpoint", settings_field: "claude_routine_url", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "claude", required_value: null, verify: "GET /health claude" }
+    - { variable: "CLAUDE_ROUTINE_TOKEN", kind: "credential_presence", settings_field: "claude_routine_token", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "claude", required_value: null, verify: "GET /health claude" }
+    - { variable: "CLAUDE_CALLBACK_SECRET", kind: "callback_secret", settings_field: "claude_callback_secret", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "required for live dispatch; compared in constant time on every callback" }
+    - { variable: "ANTHROPIC_API_KEY", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment name accepted by the provider and host-bridge allowlists" }
+    - { variable: "CLAUDE_CODE_OAUTH_TOKEN", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment name accepted by the provider and host-bridge allowlists" }
+  allowlist_variables:
+    - { variable: "PROJECT_ALLOWLIST", scope: "project", values_recorded: false }
+    - { variable: "REPOSITORY_ALLOWLIST", scope: "repository", values_recorded: false }
+    - { variable: "ALLOWED_STARTING_REFS", scope: "starting_ref", values_recorded: false }
+    - { variable: "USAGE_CHECK_PROVIDERS", scope: "usage_check_roster", values_recorded: false }
+    - { variable: "TRUSTED_PROVIDER_COST_RANKS", scope: "cost_ranks", values_recorded: false }
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_ROUTINE_TOKEN"]
+  host_bridge_allowlist: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+  settings_credential_fields: ["claude_routine_token", "claude_callback_secret"]
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "A native command receives only the base child environment plus the lane's allowlisted credential names; the callback secret and every other lane's credential are never passed to a Claude process."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities: []
+  withheld_context: []
+  charter_prohibited: null
+  review_requirement: null
+  strategy_constraints: []
+  separation_of_duties: []
+  production_authority_permitted: true
+  external_effects:
+    may_be_granted: ["chat.postMessage", "pulls.mark_ready"]
+    public_research_lane_rejects_all_effects: false
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role:
+    role: "security"
+    broker_and_worker_identities: true
+    native_login: "a native claude.ai sign-in under the worker identity, not an API key"
+    cannot_approve_own_adoption: true
+    status: "dormant_until_owner_installation"
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "Claude Cowork exposes no on-demand inbound API trigger for a real-time Slack loop; the supported programmable bridge is a Claude Code Routine with an API trigger, and Cowork tasks report into Slack rather than acting as a synchronous adapter."
+    source: "docs/provider-setup.md, Important Claude Cowork boundary"
+  - limitation: "The Routine trigger returns a session URL; completion arrives through the signed callback or a manual owner report, and callback evidence never substitutes for pre-work evidence or any gate."
+    source: "docs/provider-setup.md; src/director_orchestrator/callbacks.py"
+  - limitation: "Live dispatch requires a dedicated callback bearer secret stored only by the orchestrator and the trusted callback sender."
+    source: "docs/provider-setup.md"
+  - limitation: "Owner-reported account context is Claude Max 5x. It is a capacity signal for allocation, not an API entitlement, and never proves remaining quota or zero cost."
+    source: "docs/provider-allocation-profiles.md, Capacity, roles, and authority"
+  - limitation: "The native security issuer is dormant: it needs the owner-installed protected runtime, separate broker and worker identities, and a native claude.ai login before it can sign a receipt."
+    source: "docs/native-acceptance-issuers.md"
+  - limitation: "CLAUDE_ACCOUNT_CONTEXT holds the owner-reported account context string surfaced in the provider strategy; it is informational and never an entitlement, quota, or budget."
+    source: "src/director_orchestrator/config.py:provider_strategy"
+
+transports:
+  - transport_id: "claude-routine-trigger"
+    kind: "http_api"
+    runtime: "legacy_engine"
+    enum_value: "claude_routine"
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "director_to_provider"
+    config: ["CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN", "CLAUDE_ROUTINE_BETA"]
+    authority_note: "Carries the work packet to a Claude Code Routine. The session it starts holds only the packet's scope; nothing about the trigger grants review, merge, or external-action authority."
+    current_transport_constraints:
+      - "returns a session URL; completion is reported by callback or manual owner report"
+    route_id: "claude-routine-dispatch-and-callback"
+    browser_policy: null
+  - transport_id: "claude-callback"
+    kind: "callback"
+    runtime: "legacy_engine"
+    enum_value: "claude_callback"
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "provider_to_director"
+    config: ["CLAUDE_CALLBACK_SECRET"]
+    authority_note: "The only inbound provider-initiated HTTP route. Bearer-authenticated with constant-time comparison; it delivers completion evidence and cannot advance a gate, approve work, or override a stored decision."
+    current_transport_constraints:
+      - "a conflicting or replayed callback is rejected rather than merged"
+    route_id: "claude-routine-dispatch-and-callback"
+    browser_policy: null
+  - transport_id: "windows-host-provider-bridge"
+    kind: "host_bridge"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"]
+    authority_note: "Claude is a supported host lane for its native CLI packet-wrapper command. The bridge runs one native command per validated packet behind a signed challenge and a durable claim store; configuration alone never makes the lane callable."
+    current_transport_constraints:
+      - "child environment carries the base safe subset plus ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN only"
+      - "live dispatch stays off until the primary activation gates pass"
+    route_id: "windows-host-provider-bridge"
+    browser_policy: null
+  - transport_id: "browser-provider-ui"
+    kind: "browser_ui"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "implemented"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Coordination with an already authenticated Claude UI inside stored assignment, role, repository, budget, and approval bounds. Browser responses are untrusted coordination evidence and cannot satisfy any gate."
+    current_transport_constraints:
+      - "ranked below authenticated CLI, API, callback, and event transport"
+      - "never enter or persist credentials, cookies, recovery codes, private keys, raw private source, or webpage instructions"
+    route_id: "browser-provider-ui"
+    browser_policy:
+      primary: "chrome"
+      fallback: "microsoft_edge"
+      owner_authorizable_actions: [slack_post, eligible_merge, approved_deployment, scoped_repository_access_change]
+      enforcement: "charter policy and workload_policy.Transport rank only; no runtime adapter"
+  - transport_id: "claude-native-acceptance-issuer"
+    kind: "acceptance_issuer"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "blocked_pending_evidence"
+    direction: "provider_to_director"
+    config: ["LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH", "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256", "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH"]
+    authority_note: "Under provider-v2 acceptance, Claude owns the security receipt role through a broker identity that holds the Ed25519 key and a worker identity that holds the native login and never loads the key. The receipt is evidence for the deterministic acceptance gate; the issuer cannot approve its own adoption."
+    current_transport_constraints:
+      - "dormant until the owner installs the protected runtime, creates the non-admin identities, and completes the worker's native claude.ai login"
+      - "an ACL-protected file handoff, not an HTTP endpoint or an imported-session API"
+    route_id: "claude-native-acceptance-issuer"
+    browser_policy: null
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "Claude reaches Cursor, Grok, OpenAI, and every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns."
+    - "The callback is provider-to-Director only; it never addresses another provider or the owner directly."
+    - "Claude never posts to the Slack thread; the Director relays a concise assignment-correlated summary."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/team-operating-charter.md"
+    anchor: "full-spectrum primary for programming,"
+  - document: "docs/team-operating-charter.md"
+    anchor: "no unconditional medium/long workload rule or inferred model floor."
+  - document: "docs/provider-setup.md"
+    anchor: "The supported programmable bridge here is a **Claude Code Routine** with an API trigger."
+  - document: "docs/provider-allocation-profiles.md"
+    anchor: "The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers"
+  - document: "docs/native-acceptance-issuers.md"
+    anchor: "Claude owns the security role; Cursor owns independent"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]

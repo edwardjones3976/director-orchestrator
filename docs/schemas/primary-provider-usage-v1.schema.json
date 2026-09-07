@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "primary-provider-usage/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "attempt_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Attempt Digest",
+      "type": "string"
+    },
+    "authority_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Authority Digest",
+      "type": "string"
+    },
+    "provider_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Provider Id",
+      "type": "string"
+    },
+    "actual_microusd": {
+      "minimum": 0,
+      "title": "Actual Microusd",
+      "type": "integer"
+    },
+    "observed_tokens": {
+      "minimum": 0,
+      "title": "Observed Tokens",
+      "type": "integer"
+    },
+    "complete": {
+      "const": true,
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "meter_signature": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Meter Signature",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "attempt_digest",
+    "authority_digest",
+    "provider_id",
+    "actual_microusd",
+    "observed_tokens",
+    "complete",
+    "meter_signature"
+  ],
+  "title": "ProviderUsageReceipt",
+  "type": "object"
+}

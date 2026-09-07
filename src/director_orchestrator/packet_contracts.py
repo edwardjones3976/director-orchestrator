@@ -1,3 +1,4 @@
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -23,6 +24,10 @@ PacketKind = Literal["work", "result"]
 JsonObject = dict[str, Any]
 
 MAX_DOCUMENT_BYTES = 1_048_576
+# Kinds no work packet may ever grant, whatever a result packet reports.
+PROHIBITED_EXTERNAL_EFFECT_KINDS = frozenset(
+    {"MERGE_PULL_REQUEST", "DEPLOY", "PUBLISH"}
+)
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SCHEMA_FILENAMES = {
     "work": "model-work-packet-v1.schema.json",
@@ -305,3 +310,4 @@ def load_replay_run(
         expected_digest=expected_digest,
     )
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
+# [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]

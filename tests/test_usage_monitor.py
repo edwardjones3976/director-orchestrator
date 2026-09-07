@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
@@ -174,6 +175,55 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
         )
 
+    def test_openai_retry_delay_numeric_and_http_date_bounds(self):
+        now = datetime(2026, 9, 7, 8, 0, 0, tzinfo=timezone.utc)
+        cases = [
+            (None, 2.0), ("0", 0.0), ("60", 60.0), ("61", None),
+            ("-1", None), ("NaN", None), ("inf", None), ("broken", None),
+            ("Mon, 07 Sep 2026 08:00:30 GMT", 30.0),
+            ("Mon, 07 Sep 2026 08:01:00 GMT", 60.0),
+            ("Mon, 07 Sep 2026 08:01:01 GMT", None),
+            ("Mon, 07 Sep 2026 07:59:59 GMT", None),
+        ]
+        with patch("director_orchestrator.usage.datetime") as clock:
+            clock.now.return_value = now
+            for value, expected in cases:
+                with self.subTest(value=value):
+                    response = self._openai_response(
+                        429, headers={} if value is None else {"Retry-After": value}
+                    )
+                    self.assertEqual(UsageMonitor._openai_usage_retry_delay(response), expected)
+
+    async def test_openai_invalid_payload_after_retry_keeps_durable_accounting(self):
+        for payload in ({"private": "must-not-leak"}, {"id": None},
+                        {"id": "resp", "status": []}, []):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
+                settings = replace(
+                    Settings(), allow_paid_runs=True, usage_check_enabled=True,
+                    usage_check_provider_delay_seconds=0,
+                    usage_check_providers=("openai",), openai_api_key="test-openai",
+                    slack_bot_token="", sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                )
+                monitor = UsageMonitor(settings, TaskStore(settings.sqlite_path), adapters={})
+                client = SequentialOpenAIUsageClient([
+                    self._openai_response(429, headers={"Retry-After": "0"}),
+                    self._openai_response(200, payload=payload),
+                ])
+                with (
+                    patch("director_orchestrator.usage.httpx.AsyncClient", return_value=client),
+                    patch("director_orchestrator.usage.asyncio.sleep", new=AsyncMock()) as sleep,
+                ):
+                    records = await monitor.run_once(force=True)
+                self.assertEqual(client.calls, 2)
+                sleep.assert_awaited_once_with(0.0)
+                self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+                self.assertEqual(records[0].attempt_count, 2)
+                self.assertEqual(records[0].provider_error_code, "invalid_response")
+                self.assertNotIn("must-not-leak", str(records[0]))
+                accounting = monitor.health()["daily_accounting"]["openai"]
+                self.assertEqual(accounting["request_count"], 2)
+                self.assertEqual(accounting["retry_count"], 1)
+
     async def test_openai_usage_check_recovers_once_from_short_rate_limit(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
@@ -185,7 +235,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             monitor = UsageMonitor(settings, store, adapters={})
             client = SequentialOpenAIUsageClient(
                 [
-                    self._openai_response(429, headers={"Retry-After": "0"}),
+                    self._openai_response(429, headers={"Retry-After": "Mon, 07 Sep 2026 08:00:30 GMT"}),
                     self._openai_response(
                         200,
                         payload={
@@ -199,16 +249,18 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
+                patch("director_orchestrator.usage.datetime") as clock,
                 patch("director_orchestrator.usage.httpx.AsyncClient", return_value=client),
                 patch(
                     "director_orchestrator.usage.asyncio.sleep",
                     new=AsyncMock(return_value=None),
                 ) as sleep,
             ):
+                clock.now.return_value = datetime(2026, 9, 7, 8, 0, tzinfo=timezone.utc)
                 run = await monitor._openai_usage_check()
 
             self.assertEqual(client.calls, 2)
-            sleep.assert_awaited_once_with(0.0)
+            sleep.assert_awaited_once_with(30.0)
             self.assertEqual(run.attempt_count, 2)
             self.assertEqual(run.run_id, "resp_recovered")
 
@@ -1046,3 +1098,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
