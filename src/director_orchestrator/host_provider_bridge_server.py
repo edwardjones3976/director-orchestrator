@@ -245,6 +245,7 @@ def main() -> None:
         )):
             raise RuntimeError("validation keys must differ from production bridge authentication")
         from .provider_validation_team import team_route_from_environment
+        from .provider_validation import campaign_admission_from_environment
         server.validation_service = ValidationBridgeService(  # type: ignore[attr-defined]
             store=PostgresValidationStore(_required("DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN")),
             production_executor=executor,
@@ -252,6 +253,7 @@ def main() -> None:
             owner_token=_required("DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"),
             account_files={key:tuple(values) for key,values in account_files.items()},
             team_route=team_route_from_environment(),
+            monetary_admission=campaign_admission_from_environment(),
         )
     server.serve_forever(poll_interval=0.5)
 

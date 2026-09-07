@@ -54,7 +54,7 @@ class TeamValidationRoute:
             prepared=prepared,authorized_commands=[])
 
     def run(self,service,request,owner_token):
-        admission=service.store.admit(request,owner_token)
+        admission=service.store.admit(request,owner_token,monetary_admission=service.monetary_admission)
         worker=None
         try:
             work=json.loads(admission["packet"])

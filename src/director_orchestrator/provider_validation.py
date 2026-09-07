@@ -69,6 +69,16 @@ class ValidationCapture:
         return value
 
 
+class _MappingRows:
+    """Same connection and transaction, mapping rows for the monetary authority."""
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, query, params=None):
+        from psycopg.rows import dict_row
+        return self._connection.cursor(row_factory=dict_row).execute(query, params or ())
+
+
 class PostgresValidationStore:
     def __init__(self, dsn: str):
         if not dsn:
@@ -88,7 +98,9 @@ class PostgresValidationStore:
                 owner_digest text NOT NULL, expires_at bigint NOT NULL,
                 budget_units bigint NOT NULL CHECK(budget_units > 0),
                 reserved_units bigint NOT NULL DEFAULT 0 CHECK(reserved_units >= 0),
-                revoked boolean NOT NULL DEFAULT false, configuration jsonb NOT NULL)""")
+                revoked boolean NOT NULL DEFAULT false, configuration jsonb NOT NULL,
+                campaign_id text)""")
+            db.execute(f"ALTER TABLE {SCHEMA}.generations ADD COLUMN IF NOT EXISTS campaign_id text")
             db.execute(f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.attempts (
                 reservation text PRIMARY KEY, generation text NOT NULL REFERENCES {SCHEMA}.generations,
                 provider text NOT NULL, nonce text NOT NULL UNIQUE, fence bigint NOT NULL,
@@ -104,8 +116,10 @@ class PostgresValidationStore:
 
     def create_generation(self, *, generation: str, candidate: str, tree: str,
                           owner_token: str, expires_at: int, budget_units: int,
-                          lanes: Mapping[str, dict]) -> None:
+                          lanes: Mapping[str, dict], campaign_id: str | None = None) -> None:
         import re
+        if campaign_id is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", campaign_id):
+            raise ValidationError("invalid campaign identity")
         if (not re.fullmatch(r"[0-9a-f]{64}", generation)
                 or not re.fullmatch(r"[0-9a-f]{40}", candidate)
                 or not re.fullmatch(r"[0-9a-f]{40}", tree)
@@ -113,8 +127,15 @@ class PostgresValidationStore:
                 or not 0 < expires_at - int(time.time()) <= 86400 or not lanes):
             raise ValidationError("invalid validation generation")
         for lane, spec in lanes.items():
-            if set(spec) != {"binding", "configuration_digest", "cost_units", "work_packet"}:
+            if set(spec) - {"budget_authority_digest"} != {"binding", "configuration_digest", "cost_units", "work_packet"}:
                 raise ValidationError("closed lane configuration required")
+            # A campaign generation is monetary: every lane names the signed
+            # provider budget that funds it, and no lane may be funded without one.
+            if (campaign_id is None) != ("budget_authority_digest" not in spec):
+                raise ValidationError("campaign generations require one authoritative lane budget each")
+            if ("budget_authority_digest" in spec
+                    and not re.fullmatch(r"[0-9a-f]{64}", spec["budget_authority_digest"])):
+                raise ValidationError("invalid lane budget authority digest")
             binding = ProviderActivationBinding(**spec["binding"])
             if binding.provider_id != lane or type(spec["cost_units"]) is not int or spec["cost_units"] < 1:
                 raise ValidationError("lane or authoritative cost mismatch")
@@ -129,20 +150,31 @@ class PostgresValidationStore:
                 raise ValidationError("canary must be fixed, packet-only, and effect-free")
         with self.connect() as db:
             db.execute(f"INSERT INTO {SCHEMA}.generations "
-                       "(generation,candidate,tree,owner_digest,expires_at,budget_units,configuration) "
-                       "VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)",
+                       "(generation,candidate,tree,owner_digest,expires_at,budget_units,configuration,campaign_id) "
+                       "VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
                        (generation,candidate,tree,digest(owner_token.encode()),expires_at,
-                        budget_units,json.dumps(dict(lanes))))
+                        budget_units,json.dumps(dict(lanes)),campaign_id))
 
-    def admit(self, request: ValidationRequest, owner_token: str) -> dict:
-        """One transaction locks eligibility, budget and replay admission."""
+    def admit(self, request: ValidationRequest, owner_token: str, *, monetary_admission=None) -> dict:
+        """One transaction locks eligibility, money, budget and replay admission.
+
+        A campaign generation is only admitted when the caller supplies the
+        monetary authority hook; the micro-USD reservation, the nonce, the fence
+        and the attempt row are one PostgreSQL transaction, so no attempt can be
+        dispatched against an unfunded or exhausted campaign.
+        """
         with self.connect() as db:
             row = db.execute(f"SELECT candidate,tree,owner_digest,expires_at,budget_units,"
-                             f"reserved_units,revoked,configuration FROM {SCHEMA}.generations "
+                             f"reserved_units,revoked,configuration,campaign_id FROM {SCHEMA}.generations "
                              "WHERE generation=%s FOR UPDATE", (request.generation,)).fetchone()
             if (row is None or not hmac.compare_digest(row[2],digest(owner_token.encode()))
                     or row[6] or row[3] <= int(time.time()) or request.provider not in row[7]):
                 raise ValidationError("validation generation unauthorized or expired")
+            campaign_id = row[8]
+            if campaign_id is not None and monetary_admission is None:
+                raise ValidationError("paid validation requires authoritative monetary admission")
+            if campaign_id is None and monetary_admission is not None:
+                raise ValidationError("unfunded generation cannot consume monetary authority")
             spec = row[7][request.provider]
             if db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE generation=%s AND provider=%s",
                           (request.generation,request.provider)).fetchone():
@@ -156,6 +188,14 @@ class PostgresValidationStore:
                 work.update(task_id="VALIDATION-"+reservation, assignment_id="VALIDATION-"+reservation,
                             idempotency_key="VALIDATION-"+reservation)
             raw = canonical_json_bytes(work)
+            if monetary_admission is not None:
+                # Reserved before the attempt row exists and never released by a
+                # later failure, so a lost or ambiguous attempt still costs money.
+                monetary_admission.admit(_MappingRows(db),
+                    authority_digest=spec["budget_authority_digest"], provider=request.provider,
+                    attempt_digest="sha256:"+digest(canonical_json_bytes(
+                        {"campaign":campaign_id,"generation":request.generation,
+                         "provider":request.provider,"reservation":reservation})))
             db.execute(f"UPDATE {SCHEMA}.generations SET reserved_units=reserved_units+%s WHERE generation=%s",
                        (spec["cost_units"],request.generation))
             db.execute(f"INSERT INTO {SCHEMA}.attempts "
@@ -272,6 +312,31 @@ def capture_verifier_from_environment(*, candidate: str = "", tree: str = ""):
         capture_key=os.environ["DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"],
         candidate=os.environ["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"],
         generation=os.environ["DIRECTOR_PROVIDER_VALIDATION_GENERATION"],team_route=team_route_from_environment())
+
+
+def campaign_admission_from_environment():
+    """Bind the signed monetary authority that funds a paid validation campaign.
+
+    Returns ``None`` only for an unfunded generation. The validation store then
+    refuses any campaign generation, so an absent or unreadable authority can
+    never be mistaken for free execution.
+    """
+    import os
+    campaign = os.environ.get("DIRECTOR_PROVIDER_VALIDATION_CAMPAIGN_ID", "").strip()
+    if not campaign:
+        return None
+    from .antigravity_team import CampaignAttemptAdmission, PrimaryProviderBudgetAuthority
+    from .entitlement_control_plane import entitlement_store_from_handle, open_entitlement_control_plane
+    handle = open_entitlement_control_plane(
+        os.environ["DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN"],
+        schema=os.environ["DIRECTOR_PROVIDER_VALIDATION_ENTITLEMENT_SCHEMA"],
+        trusted_verifier_secret_file=os.environ["DIRECTOR_ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE"],
+        route_verifier_secret_file=os.environ["DIRECTOR_ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE"],
+        owner_authority_secret_file=os.environ["DIRECTOR_ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE"],
+    )
+    authority = PrimaryProviderBudgetAuthority(entitlement_store_from_handle(handle),
+        primary_schema=os.environ["DIRECTOR_PROVIDER_VALIDATION_PRIMARY_SCHEMA"])
+    return CampaignAttemptAdmission(authority, campaign)
 
 
 def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route=None) -> ValidationCapture:
@@ -394,12 +459,14 @@ def production_configuration_digest(executor, provider: str, *, account_files: t
 class ValidationBridgeService:
     """Dedicated endpoint; the production executor configuration is reused exactly."""
     def __init__(self, *, store: PostgresValidationStore, production_executor,
-                 capture_key: str, owner_token: str, account_files: Mapping[str,tuple[str,...]], team_route=None):
+                 capture_key: str, owner_token: str, account_files: Mapping[str,tuple[str,...]], team_route=None,
+                 monetary_admission=None):
         if len(capture_key)<32 or len(owner_token)<32 or hmac.compare_digest(capture_key,owner_token):
             raise ValueError("distinct validation owner and capture keys required")
         self.store,self.production,self.capture_key,self.owner_token=store,production_executor,capture_key,owner_token
         self.account_files=dict(account_files)
         self.team_route=team_route
+        self.monetary_admission=monetary_admission
 
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
         if not hmac.compare_digest(owner_token,self.owner_token):
@@ -408,7 +475,7 @@ class ValidationBridgeService:
             if self.team_route is None:
                 raise ValidationError("Antigravity team SSH validation route is unbound")
             return self.team_route.run(self,request,owner_token)
-        admission=self.store.admit(request,owner_token)
+        admission=self.store.admit(request,owner_token,monetary_admission=self.monetary_admission)
         raw_captures=[]
         try:
             pin=production_configuration_digest(self.production,request.provider,

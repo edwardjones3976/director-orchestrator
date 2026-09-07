@@ -16,7 +16,8 @@ def main() -> int:
     parser.add_argument("action",choices=("bootstrap","validate"))
     args=parser.parse_args()
     manifest=json.loads(Path(os.environ["DIRECTOR_PROVIDER_VALIDATION_MANIFEST"]).read_text(encoding="utf-8"))
-    if set(manifest)!={"generation","candidate","tree","expires_at","budget_units","lanes"}:
+    closed={"generation","candidate","tree","expires_at","budget_units","lanes"}
+    if set(manifest)-{"campaign_id"}!=closed:
         raise ValueError("closed validation generation manifest required")
     owner=os.environ["DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"]
     if args.action=="bootstrap":

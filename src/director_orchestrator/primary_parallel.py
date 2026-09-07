@@ -735,12 +735,23 @@ class PostgresParallelDispatch:
         budget_evidence_digest: str,
         team_admission=None,
         budget_admission=None,
+        paid_execution: bool = False,
     ) -> ProviderAttemptReservation:
-        """Append one STARTED child event before I/O; never reuse an open attempt."""
+        """Append one STARTED child event before I/O; never reuse an open attempt.
+
+        A paid attempt is admitted by exactly one authoritative monetary hook,
+        whether or not the lane is the Antigravity team lane. A missing hook is
+        rejected here, before the attempt row and therefore before any provider
+        I/O. Offline simulation passes ``paid_execution=False`` and is unchanged.
+        """
 
         format_id, transport_id = format_for_attempt(format_roster, attempt_ordinal)
         if team_admission is not None and budget_admission is not None:
             raise ParallelDispatchError("team admission already includes monetary authority")
+        if paid_execution and team_admission is None and budget_admission is None:
+            raise ParallelDispatchError(
+                "paid provider attempt requires authoritative monetary admission"
+            )
         if team_admission is not None:
             budget_evidence_digest = "sha256:" + team_admission.grant_digest
         elif budget_admission is not None:

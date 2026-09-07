@@ -646,6 +646,9 @@ class DefaultPrimaryLiveDependencies:
         str, Mapping[tuple[str, str], PacketBoundaryAdapter]
     ] = field(default_factory=dict)
     team_routing: Any | None = None
+    # Every live paid lane resolves its authoritative micro-USD admission here,
+    # team lane or not. Absent, live dispatch fails closed before provider I/O.
+    monetary_admissions: Any | None = None
 
     def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
         return deterministic_format_roster(
@@ -813,7 +816,7 @@ def build_automatic_primary_live_dependencies(
     settings: Settings,
     handle: PostgresCheckpointHandle,
     services: "DefaultDryRunServices",
-    *, team_routing=None,
+    *, team_routing=None, monetary_admissions=None,
 ) -> DefaultPrimaryLiveDependencies:
     """Discover installed exact lanes and compose graph-owned durable resolvers.
 
@@ -1071,6 +1074,7 @@ def build_automatic_primary_live_dependencies(
         },
         candidate_sha_resolver=candidate_sha,
         team_routing=team_routing,
+        monetary_admissions=monetary_admissions,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
@@ -1958,6 +1962,7 @@ class DefaultPrimaryActivation:
         *,
         live_dependencies: DefaultPrimaryLiveDependencies | None = None,
         team_routing=None,
+        monetary_admissions=None,
         effect_mutation: EffectMutation | None = None,
         effect_readback: EffectReadback | None = None,
         effect_gateways: ExactEffectGatewayRegistry | None = None,
@@ -2054,7 +2059,8 @@ class DefaultPrimaryActivation:
                 services = DefaultDryRunServices(settings, live_composition=True)
                 if live_dependencies is None:
                     live_dependencies = build_automatic_primary_live_dependencies(
-                        settings, handle, services, team_routing=team_routing
+                        settings, handle, services, team_routing=team_routing,
+                        monetary_admissions=monetary_admissions,
                     )
                 if settings.langgraph_primary_antigravity_team_enabled:
                     from .antigravity_team_routing import PrimaryTeamRouting
@@ -2368,6 +2374,28 @@ class DefaultPrimaryActivation:
                     if team_routing is not None and provider=="antigravity":
                         from .antigravity_team_routing import TEAM_FORMAT
                         format_roster=(TEAM_FORMAT,)
+                    # Money before I/O: a live lane is admitted by one signed
+                    # monetary authority, team or not. Nothing here estimates a
+                    # cost, and an unavailable authority is never free.
+                    monetary = (
+                        team_routing
+                        if team_routing is not None and provider == "antigravity"
+                        else getattr(live_dependencies, "monetary_admissions", None)
+                    )
+                    if monetary is None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED,
+                            None,
+                            "monetary_admission_unavailable",
+                        )
+                    try:
+                        admissions = monetary.admissions(provider, packet)
+                    except Exception:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED,
+                            None,
+                            "monetary_admission_unauthorized",
+                        )
                     attempt_timeout_seconds = max(
                         1, int(limits["timeout_seconds"]) // 3
                     )
@@ -2398,7 +2426,8 @@ class DefaultPrimaryActivation:
                             format_roster=format_roster,
                             idempotency_key_digest=idempotency_key_digest,
                             budget_evidence_digest=budget_evidence_digest,
-                            **({} if team_routing is None else team_routing.admissions(provider,packet)),
+                            paid_execution=True,
+                            **admissions,
                         )
                     def record_attempt(
                         attempt: ProviderAttemptReservation,

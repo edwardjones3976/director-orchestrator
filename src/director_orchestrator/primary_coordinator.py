@@ -519,6 +519,7 @@ class PrimaryTaskCoordinator:
         budget_evidence_digest: str,
         team_admission=None,
         budget_admission=None,
+        paid_execution: bool = False,
     ) -> ProviderAttemptReservation:
         return self.parallel.reserve_provider_attempt(
             reservation=reservation,
@@ -529,6 +530,7 @@ class PrimaryTaskCoordinator:
             budget_evidence_digest=budget_evidence_digest,
             team_admission=team_admission,
             budget_admission=budget_admission,
+            paid_execution=paid_execution,
         )
 
     def record_provider_attempt(

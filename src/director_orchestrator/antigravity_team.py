@@ -142,8 +142,34 @@ class TeamGrant(ClosedModel):
             raise TeamAuthorizationError("task grant expired")
 
 
+CAMPAIGN_LIMIT_MICROUSD = 10_000_000
+DAILY_LIMIT_MICROUSD = 50_000_000
+TASK_LIMIT_MICROUSD = 14_000_000
+
+
+class SubscriptionPolicy(ClosedModel):
+    """Owner-declared bounds for a native subscription lane.
+
+    A subscription vendor supplies no hard per-call USD guarantee, so these
+    bounds are the owner's own limit on how much of the subscription an attempt
+    may consume. They are never converted into a vendor price, and they never
+    replace the separate application-side micro-USD admission cap below.
+    """
+    schema_version: Literal["owner-bounded-subscription/v1"]
+    max_calls: Annotated[int, Field(gt=0)]
+    max_turns: Annotated[int, Field(gt=0)]
+    max_seconds: Annotated[int, Field(gt=0)]
+    max_output_bytes: Annotated[int, Field(gt=0)]
+
+
 class ProviderBudget(ClosedModel):
-    """Owner-approved limits persisted before an execution request arrives."""
+    """Owner-approved limits persisted before an execution request arrives.
+
+    ``attempt_reservation_microusd`` is an application admission cap, not a
+    claim about what a vendor will bill. It is reserved for every admitted
+    attempt in either billing mode, so an attempt whose vendor cost is unknown
+    is never counted as zero and never silently refunded.
+    """
     schema_version: Literal["primary-provider-budget/v1"]
     grant_digest: Digest
     provider_id: Identifier
@@ -155,6 +181,15 @@ class ProviderBudget(ClosedModel):
     attempt_reservation_microusd: Annotated[int, Field(gt=0)]
     token_limit: Annotated[int, Field(gt=0)]
     owner_signature: Digest
+    campaign_id: Identifier | None = None
+    billing_mode: Literal["vendor-metered-usd", "owner-bounded-subscription"] = "vendor-metered-usd"
+    subscription_policy: SubscriptionPolicy | None = None
+
+    @model_validator(mode="after")
+    def check_billing_mode(self):
+        if (self.billing_mode == "owner-bounded-subscription") != (self.subscription_policy is not None):
+            raise TeamAuthorizationError("trusted subscription billing requires explicit owner bounds")
+        return self
 
     def signing_document(self):
         return self.model_dump(mode="json", exclude={"owner_signature"})
@@ -163,6 +198,32 @@ class ProviderBudget(ClosedModel):
         expected = hmac.new(secret, canonical_json_bytes(self.signing_document()), hashlib.sha256).hexdigest()
         if len(secret) < 32 or not hmac.compare_digest(expected, self.owner_signature):
             raise TeamAuthorizationError("budget authority signature invalid")
+
+
+class CampaignBudget(ClosedModel):
+    """Immutable owner-signed monetary identity spanning validation generations.
+
+    Membership is durable and per provider budget: once a budget joins a
+    campaign, every attempt it funds counts against the one campaign ceiling,
+    across days, generations, tasks, providers and processes.
+    """
+    schema_version: Literal["primary-provider-campaign/v1"]
+    campaign_id: Identifier
+    project_id: Identifier
+    campaign_limit_microusd: Annotated[int, Field(gt=0)]
+    owner_signature: Digest
+
+    def signing_document(self):
+        return self.model_dump(mode="json", exclude={"owner_signature"})
+
+    @property
+    def digest(self):
+        return document_digest(self.signing_document())
+
+    def verify(self, secret: bytes):
+        expected = hmac.new(secret, canonical_json_bytes(self.signing_document()), hashlib.sha256).hexdigest()
+        if len(secret) < 32 or not hmac.compare_digest(expected, self.owner_signature):
+            raise TeamAuthorizationError("campaign authority signature invalid")
 
 
 class ProviderUsageReceipt(ClosedModel):
@@ -200,6 +261,15 @@ def team_ddl(schema: str) -> tuple[str, ...]:
             attempt_digest text PRIMARY KEY REFERENCES {schema}.director_primary_provider_spend(attempt_digest),
             document jsonb NOT NULL, actual_microusd bigint NOT NULL CHECK(actual_microusd>=0),
             observed_tokens bigint NOT NULL CHECK(observed_tokens>=0))""",
+        f"""CREATE TABLE IF NOT EXISTS {schema}.director_primary_provider_campaign (
+            campaign_digest text PRIMARY KEY, campaign_id text NOT NULL UNIQUE,
+            project_id text NOT NULL, document jsonb NOT NULL,
+            campaign_limit_microusd bigint NOT NULL CHECK(campaign_limit_microusd>0))""",
+        f"""CREATE TABLE IF NOT EXISTS {schema}.director_primary_provider_campaign_member (
+            authority_digest text PRIMARY KEY REFERENCES
+                {schema}.director_primary_provider_budget(authority_digest),
+            campaign_digest text NOT NULL REFERENCES
+                {schema}.director_primary_provider_campaign(campaign_digest))""",
         f"""CREATE TABLE IF NOT EXISTS {schema}.director_primary_team_boundary (
             nonce text PRIMARY KEY, grant_digest text NOT NULL REFERENCES
                 {schema}.director_primary_team_grant(grant_digest),
@@ -227,7 +297,7 @@ def team_ddl(schema: str) -> tuple[str, ...]:
               CREATE TRIGGER {table}_guard BEFORE UPDATE OR DELETE ON {schema}.{table}
               FOR EACH ROW EXECUTE FUNCTION {schema}.director_primary_team_guard();
             END IF; END $guard$""" for table in (
-                "director_primary_team_grant","director_primary_provider_budget","director_primary_provider_spend","director_primary_provider_usage","director_primary_team_boundary","director_primary_team_candidate")),
+                "director_primary_team_grant","director_primary_provider_budget","director_primary_provider_spend","director_primary_provider_usage","director_primary_team_boundary","director_primary_team_candidate","director_primary_provider_campaign","director_primary_provider_campaign_member")),
     )
 
 
@@ -308,6 +378,9 @@ class PrimaryProviderBudgetAuthority:
         if (budget.task_limit_microusd > int(Decimal(str(limits["budget_task_usd"]))*1000000)
                 or budget.daily_limit_microusd > int(Decimal(str(limits["budget_daily_usd"]))*1000000)):
             raise TeamAuthorizationError("budget exceeds signed project registration")
+        if (budget.task_limit_microusd > TASK_LIMIT_MICROUSD
+                or budget.daily_limit_microusd > DAILY_LIMIT_MICROUSD):
+            raise TeamAuthorizationError("budget exceeds the deterministic launch ceiling")
         rows=connection.execute(f"SELECT document FROM {self.schema}.director_primary_provider_budget WHERE document->>'project_id'=%s",(budget.project_id,)).fetchall()
         for row in rows:
             old=ProviderBudget.model_validate_json(json.dumps(row["document"]))
@@ -315,6 +388,60 @@ class PrimaryProviderBudgetAuthority:
                     or (old.day==budget.day and old.daily_limit_microusd!=budget.daily_limit_microusd)):
                 raise TeamAuthorizationError("persisted budget ceiling cannot change")
         connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest,document) VALUES(%s,%s::jsonb)",(budget.grant_digest,budget.model_dump_json()))
+        if budget.campaign_id is not None:
+            self._join_campaign(connection,budget)
+
+    def register_campaign(self, connection, campaign: CampaignBudget):
+        """Persist one immutable campaign identity; re-registration cannot change it."""
+        campaign.verify(self.entitlements._owner_authority_secret)
+        if campaign.campaign_limit_microusd > CAMPAIGN_LIMIT_MICROUSD:
+            raise TeamAuthorizationError("campaign exceeds the deterministic launch ceiling")
+        connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",("primary-provider-budget:"+campaign.project_id,))
+        row=connection.execute(f"SELECT campaign_digest,project_id,campaign_limit_microusd FROM {self.schema}.director_primary_provider_campaign WHERE campaign_id=%s",(campaign.campaign_id,)).fetchone()
+        if row is not None:
+            if (row["campaign_digest"],row["project_id"],row["campaign_limit_microusd"])!=(
+                    campaign.digest,campaign.project_id,campaign.campaign_limit_microusd):
+                raise TeamAuthorizationError("persisted campaign identity cannot change")
+            return campaign
+        connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_campaign(campaign_digest,campaign_id,project_id,document,campaign_limit_microusd) VALUES(%s,%s,%s,%s::jsonb,%s)",(campaign.digest,campaign.campaign_id,campaign.project_id,campaign.model_dump_json(),campaign.campaign_limit_microusd))
+        return campaign
+
+    def _join_campaign(self, connection, budget: ProviderBudget):
+        row=connection.execute(f"SELECT campaign_digest,project_id FROM {self.schema}.director_primary_provider_campaign WHERE campaign_id=%s",(budget.campaign_id,)).fetchone()
+        if row is None or row["project_id"]!=budget.project_id:
+            raise TeamAuthorizationError("registered campaign identity required before its budgets")
+        held=connection.execute(f"SELECT campaign_digest FROM {self.schema}.director_primary_provider_campaign_member WHERE authority_digest=%s",(budget.grant_digest,)).fetchone()
+        if held is not None:
+            if held["campaign_digest"]!=row["campaign_digest"]:
+                raise TeamAuthorizationError("campaign membership is immutable")
+            return
+        connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_campaign_member(authority_digest,campaign_digest) VALUES(%s,%s)",(budget.grant_digest,row["campaign_digest"]))
+
+    def _campaign_admission(self, connection, budget: ProviderBudget, amount: int):
+        """Charge one cross-generation campaign ceiling inside the caller's transaction."""
+        row=connection.execute(f"""SELECT c.campaign_digest,c.campaign_id,c.campaign_limit_microusd
+            FROM {self.schema}.director_primary_provider_campaign_member m
+            JOIN {self.schema}.director_primary_provider_campaign c USING(campaign_digest)
+            WHERE m.authority_digest=%s""",(budget.grant_digest,)).fetchone()
+        if row is None or row["campaign_id"]!=budget.campaign_id:
+            raise TeamAuthorizationError("campaign membership missing for this provider budget")
+        connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",("primary-provider-campaign:"+row["campaign_id"],))
+        # Every reservation ever made under this campaign counts, including the
+        # failed and ambiguous ones, on any day, task, generation or process.
+        spent=connection.execute(f"""SELECT COALESCE(sum(GREATEST(s.reserved_microusd,COALESCE(u.actual_microusd,0))),0) AS total
+            FROM {self.schema}.director_primary_provider_spend s
+            JOIN {self.schema}.director_primary_provider_campaign_member m ON m.authority_digest=s.grant_digest
+            LEFT JOIN {self.schema}.director_primary_provider_usage u ON u.attempt_digest=s.attempt_digest
+            WHERE m.campaign_digest=%s""",(row["campaign_digest"],)).fetchone()
+        if int(spent["total"])+amount>int(row["campaign_limit_microusd"]):
+            raise TeamAuthorizationError("campaign monetary authority exhausted")
+
+    def _subscription_admission(self, connection, budget: ProviderBudget):
+        """Owner-bounded subscription lanes are admitted by call count, not price."""
+        policy=budget.subscription_policy
+        used=connection.execute(f"SELECT count(*) AS n FROM {self.schema}.director_primary_provider_spend WHERE grant_digest=%s",(budget.grant_digest,)).fetchone()["n"]
+        if int(used)>=policy.max_calls:
+            raise TeamAuthorizationError("owner-bounded subscription call budget exhausted")
 
     def reserve(self, connection, *, authority_digest, provider, task_id, attempt_digest):
         row=connection.execute(f"SELECT document FROM {self.schema}.director_primary_provider_budget WHERE authority_digest=%s",(authority_digest,)).fetchone()
@@ -341,6 +468,10 @@ class PrimaryProviderBudgetAuthority:
         amount=budget.attempt_reservation_microusd
         if totals["task_spend"]+amount>budget.task_limit_microusd or totals["daily_spend"]+amount>budget.daily_limit_microusd:
             raise TeamAuthorizationError("authoritative provider budget exhausted")
+        if budget.billing_mode=="owner-bounded-subscription":
+            self._subscription_admission(connection,budget)
+        if budget.campaign_id is not None:
+            self._campaign_admission(connection,budget,amount)
         connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_spend(attempt_digest,grant_digest,provider_id,project_id,task_id,budget_day,reserved_microusd,token_limit) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",(attempt_digest,authority_digest,provider,budget.project_id,task_id,budget.day,amount,budget.token_limit))
         return budget
 
@@ -362,6 +493,42 @@ class ProviderBudgetAdmission:
     def admit(self, connection, *, task_id, provider, attempt_digest):
         return self.authority.reserve(connection,authority_digest=self.authority_digest,
             task_id=task_id,provider=provider,attempt_digest=attempt_digest)
+
+
+class CampaignAttemptAdmission:
+    """Monetary admission for one campaign attempt, charged in the caller's transaction.
+
+    The task binding comes from the signed persisted budget, never from the
+    caller, so a validation lane cannot spend another task's authority.
+    """
+    def __init__(self, authority: PrimaryProviderBudgetAuthority, campaign_id: str):
+        self.authority,self.campaign_id=authority,campaign_id
+
+    def admit(self, connection, *, authority_digest, provider, attempt_digest):
+        row=connection.execute(f"SELECT document FROM {self.authority.schema}.director_primary_provider_budget WHERE authority_digest=%s",(authority_digest,)).fetchone()
+        if row is None:
+            raise TeamAuthorizationError("authoritative provider budget missing")
+        budget=ProviderBudget.model_validate_json(json.dumps(row["document"]))
+        if budget.campaign_id != self.campaign_id:
+            raise TeamAuthorizationError("provider budget belongs to another campaign")
+        return self.authority.reserve(connection,authority_digest=authority_digest,provider=provider,
+            task_id=budget.task_id,attempt_digest=attempt_digest)
+
+
+class PrimaryMonetaryAdmissions:
+    """Team-independent resolver: every paid primary lane needs one signed budget."""
+    def __init__(self, authority: PrimaryProviderBudgetAuthority, *, pool):
+        self.authority,self.pool=authority,pool
+
+    def admissions(self, provider, packet):
+        with self.pool.connection() as connection,connection.transaction():
+            rows=connection.execute(f"""SELECT authority_digest FROM {self.authority.schema}.director_primary_provider_budget
+                WHERE document->>'task_id'=%s AND document->>'provider_id'=%s
+                AND document->>'project_id'=%s AND document->>'day'=CURRENT_DATE::text""",
+                (packet["task_id"],provider,packet["project"])).fetchall()
+            if len(rows)!=1:
+                raise TeamAuthorizationError("selected provider lacks one authoritative daily task budget")
+            return dict(budget_admission=ProviderBudgetAdmission(self.authority,rows[0]["authority_digest"]))
 
 
 class TeamAuthority:
