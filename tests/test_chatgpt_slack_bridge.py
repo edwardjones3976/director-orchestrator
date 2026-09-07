@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -71,6 +72,8 @@ def _settings(database: str, **changes) -> Settings:
         sqlite_path=database,
         allow_paid_runs=True,
         openai_api_key="test-openai-key",
+        claude_routine_url="https://claude.example/routine",
+        claude_routine_token="test-claude-token",
         slack_owner_user_id="UOWNER123",
         chatgpt_bridge_enabled=True,
         chatgpt_bridge_channel_ids=("C123", "C456"),
@@ -81,6 +84,9 @@ def _settings(database: str, **changes) -> Settings:
         slack_app_token="xapp-test",
         slack_bot_token="xoxb-test",
         slack_gateway_secret=GATEWAY_SECRET,
+        trusted_provider_cost_ranks_json=(
+            '{"claude":1,"cursor":2,"gemini":3,"grok":4,"perplexity":5}'
+        ),
     )
     return replace(settings, **changes)
 
@@ -1273,3 +1279,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]

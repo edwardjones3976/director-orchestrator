@@ -1,3 +1,14 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
@@ -42,17 +53,48 @@ An absent project allowlist blocks every live plan. Cursor cannot use an implici
 ## Owner account and routing context
 
 - **The primary team is OpenAI, Claude, Cursor, and Grok.** These should cover planning, implementation, review, and repository execution; periodic-check membership remains independently configurable.
-- **Claude Pro 20x is the primary workhorse.** Route coding implementation, repository-scale reasoning, code/document review, and Claude-strong analysis there first when its routine is configured and healthy.
-- **ChatGPT is Plus.** OpenAI remains the Director planner and acceptance reviewer, but ChatGPT Plus does not itself fund OpenAI API calls.
-- **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work inside their available surfaces. Cursor has one repository-bound code-agent contact, which also carries invited debate turns; it does not need a separate chat credential. Grok has both chat and code contacts. Producer/reviewer separation and deterministic gates remain unchanged.
+- **Implementation uses cheap-capable-model-first routing.** Establish scope, transport, readiness, capability, tools, context, risk, and reviewer independence; then prefer an under-target eligible provider and the lowest trusted comparable estimated cost. Missing cost is unknown, not zero. An exact trusted assignment requirement may select Claude, but workload length alone does not.
+- **OpenAI Pro 20x and Claude Max 5x** are the owner-reported account context. These capacity signals do not fund separate API calls; verify route-specific remaining capacity and budget.
+- **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.
 - **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.
+
+Use the [approved nine-lane allocation profiles](provider-allocation-profiles.md),
+with Engineering as the default. Freeze profile and digest before approval,
+preserve real history, exclude zero-target lanes, and enforce the prospective
+fixed twenty-slot target+5 ceiling. The ±3-point normal band guides preference;
+observed effort is separately reported and cannot create production credit.
+OpenAI production and Antigravity specialist work require their actual scoped
+adapters and non-author verification; a target alone proves no live capability.
+
+Every assignment has at most three conditional attempt slots. The Director
+derives a deterministic roster of the provider's configured packet formats and
+transports and rejects rosters larger than three. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch. Each child attempt is appended to Postgres before I/O
+and settled with exact provider, format, transport, idempotency, budget,
+result, and reason digests. An ambiguous paid attempt stops redispatch until
+authenticated reconciliation; a failed attempt remains untrusted and cannot
+overwrite the final assignment result artifact.
 
 Practical operating patterns:
 
-1. **Claude-first coding lane:** Claude implements and tests; OpenAI reviews the acceptance evidence; the owner approves any gated action.
-2. **Overflow lane:** if Claude approaches its limit or its Routine is unavailable, route isolated coding work to Cursor and keep Claude for the highest-value review or architectural decisions.
+1. **Cheap-capable implementation lane:** select OpenAI production, Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, and independence; apply direct-production hard eligibility and under-target preference before total-effort rank, then trusted cost and deterministic tie-break; retain the assigned provider's transport and authority limits.
+2. **Exact-requirement lane:** when a trusted work order explicitly requires Claude or a named model profile, honor it; otherwise do not infer a provider requirement from task length.
 3. **Optional specialist lane:** when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate artifacts. A primary model independently verifies and integrates or rejects their evidence.
 4. **Graceful degradation:** periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.
+
+For each selection, record the eligible models, exclusions, trusted comparable
+costs, selected provider/model, and tie-break reason. Track accepted productive
+units, first-pass yield, correction rate, duplicate validation, and categorized
+waste. Compute provider-reported cost ROI only from correlated returned cost;
+never invent missing telemetry or treat it as zero.
+
+Before enabling paid workload routing, set `PRIMARY_WORKHORSE=cheapest_capable`
+and populate `TRUSTED_PROVIDER_COST_RANKS` in the ignored deployment profile as a
+JSON object. Include every configured ready specialist among `claude`, `cursor`,
+`gemini`, `grok`, and `perplexity`. Each value must be a unique positive integer;
+lower means cheaper. The Director has no built-in provider order and fails closed
+before the planning call when the setting is absent, malformed, or incomplete.
+Use current operator-verified comparable cost evidence rather than copying a
+sample ranking from documentation.
 
 ## Trusted OpenAI debate-turn accounting
 
@@ -67,26 +109,29 @@ non-positive or non-finite configured value prevents the service from starting.
 | Role | Supported bridge in this package | Required values | Completion path |
 | --- | --- | --- | --- |
 | Primary — Director | OpenAI Responses API with Structured Outputs | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL` | Immediate planning/review response |
-| Primary — workhorse | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
+| Primary — full-spectrum implementation/review | Claude Code Routine API trigger | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN` | Session URL plus callback/manual report |
 | Primary — repository teammate | Cursor Cloud Agents API v1 | `CURSOR_API_KEY` | Poll durable agent run; draft PR allowed |
 | Primary — Cursor-family teammate | xAI Responses API plus separately authorized Grok Build/Bot contacts | `GROK_ENABLED`, `XAI_API_KEY`, `GROK_MODEL`, `GROK_CODE_MODEL` and the fail-closed controls below | Synchronous API response or named-worktree CLI/Bot evidence |
 | Supplemental — subordinate boilerplate/ideation | Gemini Antigravity Agent over the Interactions API | `GEMINI_API_KEY`, `GEMINI_AGENT`, `GEMINI_API_REVISION` and the subordinate controls below | Poll stored background Interaction |
 | Supplemental — current research | Perplexity Search API; Agent API only for the bounded availability probe | `PERPLEXITY_ENABLED`, `PERPLEXITY_API_KEY` and the research-only controls below | Synchronous ranked results |
 
-### Provider surface matrix
+GitHub Copilot Lite is not another provider bridge. It is an optional
+hygiene observation requested only after required checks are green and the exact
+candidate is frozen. It has no assigned workload share, range, or ceiling,
+no provider adapter or automatic routing, and no production credit,
+independent acceptance role, gate, merge authority, or every-push automation.
+Without an authenticated contact it fails closed as unavailable. A requested
+observation binds at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch.
+Quota/unavailability and rejected findings are recorded as waste.
+A confirmed defect follows the normal correction path, and any substantive
+Copilot-authored fix makes Copilot a material author ineligible to independently
+review that candidate.
 
-| Provider | Chat side | Code side |
-| --- | --- | --- |
-| OpenAI | Responses Director planning, synthesis, and acceptance | Separately owner-authorized Codex work; not a runtime specialist assignment |
-| Claude | Routine conversation, general work, and debate | Routine and Claude Code repository work |
-| Cursor | No separate chat credential | Cursor Cloud Agents API repository implementation, review, technical discussion, and invited debate |
-| Gemini/Antigravity | Persisted Director-invited typed debate | Closed-fixture Antigravity sandbox work with primary-provider integration |
-| Grok | `GROK_MODEL` through the xAI Responses API | `GROK_CODE_MODEL` for typed non-writing code work; Grok Build CLI for repository work |
-
-The Director rejects repository-free Cursor assignments before an API call.
-Cursor debate positions and rebuttals remain valid when they use the same
-repository-bound Agent transport. This is a credential and transport distinction,
-not a reduction in Cursor's capability or responsibility.
+Per-provider profile sheets in `docs/provider-profiles/` are rendered from YAML
+sources and list each lane's variable names, readiness booleans, transports, and
+routes. They mirror this document and the team operating charter, fail the drift
+tests when they diverge, and grant no authority; no value, credential, allowlist
+entry, endpoint, or path is ever recorded in a sheet.
 
 ## Grok primary Cursor-family profile
 
@@ -225,7 +270,7 @@ A revision reuses that same fixed work contract and the prior sandbox
 `environment_id`, failing closed rather than transmitting reviewer prose or
 provisioning an unrelated sandbox. Preview routing selects Antigravity only for
 an explicit boilerplate, scaffolding, low-level, mechanical, or
-alternate-ideation request; Claude remains the default.
+alternate-ideation request; other work follows cheap-capable-model-first routing.
 
 Debate is the deliberate, narrow prose-bearing exception—not an ordinary work
 packet. Antigravity may return an independent position and bounded rebuttal only
@@ -310,6 +355,40 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 
 ## Official references
 
+## Primary security credential boundaries
+
+Completion evidence uses three pairwise-distinct secrets:
+`LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET`,
+`LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET`, and
+`LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET`. None may equal a provider,
+shared, effect, bridge, or other ingress secret. Configure
+`LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON` with exactly
+`independent_review`, `ci`, and `security`; every entry has nonempty `issuers`
+and `principals` arrays, and all three authorities must be pairwise disjoint.
+Each role signs only its exact result binding; the aggregate has no bundle
+credential capable of minting another role. Durable Postgres readback preserves
+and revalidates the three canonical authority proofs.
+
+Activation review authority is separately configured through
+`LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON` and
+`LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON`. These
+GitHub-login arrays must be disjoint. Only an `APPROVED` review from an
+`OWNER`, `MEMBER`, or `COLLABORATOR` is considered, and its body must equal one
+canonical JSON object with exactly `actor`, `head_sha`, `kind`,
+`schema_version`, and `verdict`. Comments, prose, quotes, code fences, extra
+fields, and substring markers are never activation evidence.
+
+Microsoft Work IQ requires the tenant, a protected non-symlink token file, and
+exact `MICROSOFT_365_COPILOT_EXPECTED_SUBJECT` plus
+`MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID`. Windows ACLs may grant access only
+to the current user, SYSTEM, or Administrators; POSIX files must be runtime-owned
+and have no group or other permissions.
+
+The Windows bridge permits plaintext HTTP only on an exact loopback host.
+Container-to-host use must use HTTPS. An all-interface bridge bind requires
+explicit TLS certificate and private-key files; the certificate must be trusted
+by the client runtime and cover `host.docker.internal`.
+
 - OpenAI Responses and Structured Outputs: https://developers.openai.com/api/docs/guides/structured-outputs
 - Cursor Cloud Agents API: https://cursor.com/docs/cloud-agent/api/endpoints
 - Claude Code Routines: https://docs.anthropic.com/en/docs/claude-code/routines
@@ -334,3 +413,16 @@ Credential generation is an owner action. Do not paste any secret into Slack, Ch
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->

@@ -1,0 +1,10 @@
+{
+  "schema_version": "primary-provider-usage/v1",
+  "attempt_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "authority_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "provider_id": "antigravity",
+  "actual_microusd": 100000,
+  "observed_tokens": 500,
+  "complete": true,
+  "meter_signature": "0000000000000000000000000000000000000000000000000000000000000000"
+}

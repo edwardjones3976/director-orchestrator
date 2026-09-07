@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:36 UTC | BEGIN]]
@@ -96,10 +99,19 @@ class FakeGitHubEffectVerifier:
 
 
 class ScriptedSnapshotResolver(LocalGitAuthoritySnapshotResolver):
-    def __init__(self, root: str, *, remote_head: str = COMMIT, contained: bool = True):
-        super().__init__("example/demo", root)
+    def __init__(
+        self,
+        root: str,
+        *,
+        remote_head: str = COMMIT,
+        contained: bool = True,
+        file_count: int = 1,
+        max_files: int = 512,
+    ):
+        super().__init__("example/demo", root, max_files=max_files)
         self.remote_head = remote_head
         self.contained = contained
+        self.file_count = file_count
 
     def _git(self, *arguments: str) -> str:
         if arguments == ("remote", "get-url", "origin"):
@@ -111,7 +123,12 @@ class ScriptedSnapshotResolver(LocalGitAuthoritySnapshotResolver):
         if arguments[0] == "for-each-ref":
             return "refs/remotes/origin/main\n" if self.contained else ""
         if arguments[:3] == ("ls-tree", "-r", "--full-tree"):
-            return f"100644 blob {BLOB}\tREADME.md\n"
+            if self.file_count == 1:
+                return f"100644 blob {BLOB}\tREADME.md\n"
+            return "".join(
+                f"100644 blob {BLOB}\tfile-{index:04d}.txt\n"
+                for index in range(self.file_count)
+            )
         raise AssertionError(arguments)
 
 
@@ -181,6 +198,28 @@ def record_for(assignment: Assignment) -> TaskRecord:
 
 
 class LocalGitAuthoritySnapshotTests(unittest.TestCase):
+    def test_remote_normalization_requires_an_exact_github_host(self) -> None:
+        normalize = LocalGitAuthoritySnapshotResolver._normalize_remote
+
+        self.assertEqual(
+            "example/demo",
+            normalize("https://github.com/Example/Demo.git"),
+        )
+        self.assertEqual(
+            "example/demo",
+            normalize("git@github.com:Example/Demo.git"),
+        )
+        for untrusted in (
+            "https://example.invalid/github.com/example/demo.git",
+            "https://github.com.example.invalid/example/demo.git",
+            "ssh://git@github.com/example/demo.git",
+            "https://origin.cursor.com/example/demo.git",
+            "https://gıthub.com/example/demo.git",
+            "httpſ://github.com/example/demo.git",
+        ):
+            with self.subTest(remote=untrusted):
+                self.assertIsNone(normalize(untrusted))
+
     def test_snapshot_binds_the_requested_origin_ref_and_exact_tree(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             resolver = ScriptedSnapshotResolver(root)
@@ -218,6 +257,49 @@ class LocalGitAuthoritySnapshotTests(unittest.TestCase):
                 ScriptedSnapshotResolver(root, contained=False).resolve(
                     record_for(assignment), assignment
                 )
+
+    def test_default_snapshot_inventory_rejects_more_than_512_files(self) -> None:
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="inspect",
+            acceptance=["report"],
+            repository="example/demo",
+            starting_ref="main",
+        )
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaisesRegex(PacketRoutingError, "bounded packet inventory"):
+                ScriptedSnapshotResolver(root, file_count=513).resolve(
+                    record_for(assignment), assignment
+                )
+
+    def test_configured_snapshot_inventory_returns_all_711_files(self) -> None:
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.CURSOR,
+            task="inspect",
+            acceptance=["report"],
+            repository="example/demo",
+            starting_ref="main",
+        )
+        with tempfile.TemporaryDirectory() as root:
+            snapshot = ScriptedSnapshotResolver(
+                root, file_count=711, max_files=711
+            ).resolve(record_for(assignment), assignment)
+
+        self.assertEqual(711, len(snapshot))
+        self.assertEqual("file-0000.txt", snapshot[0]["path"])
+        self.assertEqual("file-0710.txt", snapshot[-1]["path"])
+        self.assertEqual(711, len({item["path"] for item in snapshot}))
+
+    def test_snapshot_inventory_limit_rejects_values_outside_hard_bounds(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            for invalid in (0, 4097, True):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaisesRegex(ValueError, "between 1 and 4096"):
+                        LocalGitAuthoritySnapshotResolver(
+                            "example/demo", root, max_files=invalid
+                        )
 
 
 class GitHubReadOnlyRepositoryEffectVerifierTests(unittest.TestCase):
@@ -1237,3 +1319,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:36 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]

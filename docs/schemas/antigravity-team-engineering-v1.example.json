@@ -1,0 +1,53 @@
+{
+  "schema_version": "antigravity-team-engineering/v1",
+  "grant_id": "example-grant",
+  "task_id": "example-task",
+  "assignment_id": "example-assignment",
+  "project_id": "example-project",
+  "repository": "example/repository",
+  "packet_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "review_base": null,
+  "operation": "engineering",
+  "source": [
+    {
+      "path": "src/example.py",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "writable_paths": [
+    "src/example.py"
+  ],
+  "prohibited_paths": [
+    "secrets"
+  ],
+  "commands": [
+    [
+      "python",
+      "-m",
+      "unittest"
+    ]
+  ],
+  "workspace_id": "example-isolated-workspace",
+  "provider_family": "gemini",
+  "installation_id": "example-installation",
+  "installation_build": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "executable_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "runtime_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "adapter_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "native_account_id": "example-native-account",
+  "native_project_id": "example-native-project",
+  "model": "gemini-example",
+  "material_authors": [
+    "claude"
+  ],
+  "generation": 1,
+  "expires_at": "2026-01-01T00:00:00Z",
+  "max_tokens": 1000,
+  "timeout_seconds": 60,
+  "max_attempts": 3,
+  "max_local_commands": 1,
+  "owner_signature": "0000000000000000000000000000000000000000000000000000000000000000"
+}

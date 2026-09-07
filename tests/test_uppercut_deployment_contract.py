@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]]
@@ -91,6 +95,36 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         self.assertNotIn('Set-Content ".env"', self.script)
         self.assertNotIn('WriteAllText((Join-Path (Get-Location) ".env")', self.script)
         self.assertIn("SeedProviderCredentialsFromPrimaryEnv", self.script)
+
+    def test_paid_activation_preserves_operator_cost_ranks_and_fails_closed_if_blank(self):
+        self.assertIn('PRIMARY_WORKHORSE = "cheapest_capable"', self.script)
+        self.assertNotIn('PRIMARY_WORKHORSE = "claude"', self.script)
+        self.assertNotRegex(
+            self.script,
+            r'TRUSTED_PROVIDER_COST_RANKS\s*=\s*["\']\{',
+        )
+        paid_guard = self.script.index("if ($EnablePaidRuns) {")
+        required_rank = self.script.index(
+            'Assert-Configured -Values $values -Names @("TRUSTED_PROVIDER_COST_RANKS")',
+            paid_guard,
+        )
+        paid_switch = self.script.index(
+            "Write-ProfileSwitches -PaidRuns $true",
+            required_rank,
+        )
+        self.assertLess(required_rank, paid_switch)
+        for profile_name in (
+            ".env.example",
+            ".env.uppercut.example",
+            ".env.edge-oracle.example",
+            ".env.long-table.example",
+        ):
+            profile = (ROOT / profile_name).read_text(encoding="utf-8")
+            self.assertIn("TRUSTED_PROVIDER_COST_RANKS=", profile)
+            self.assertNotRegex(
+                profile,
+                r"(?m)^TRUSTED_PROVIDER_COST_RANKS=\s*\{",
+            )
 
     def test_legacy_profiles_gain_a_fresh_gateway_secret_without_printing_it(self):
         self.assertIn(
@@ -188,7 +222,7 @@ class UppercutDeploymentContractTests(unittest.TestCase):
     def test_mixed_case_long_table_requires_claude_completion_evidence(self):
         shell = shutil.which("pwsh") or shutil.which("pwsh.exe")
         if shell is None:
-            self.skipTest("PowerShell 7 is unavailable in this environment")
+            self.fail("PowerShell 7 coverage is required for this deployment contract")
         start = self.script.index("function Get-CompletionVerifiedProviders")
         end = self.script.index("function Assert-CoolingProviderEvidence", start)
         function_source = self.script[start:end]
@@ -1080,3 +1114,7 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]

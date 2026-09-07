@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:31 UTC | BEGIN]]
@@ -55,6 +59,12 @@ from .store import TaskStore
 
 
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+_GITHUB_REMOTE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:)"
+    r"(?P<repository>[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]+?)"
+    r"(?:\.git)?/?$",
+    re.IGNORECASE | re.ASCII,
+)
 _MAX_CANONICAL_HANDOFF_BYTES = 256 * 1024
 _SIDE_EFFECT_STATUSES = {"NOT_ATTEMPTED", "ATTEMPTED", "COMPLETED", "FAILED"}
 _SIDE_EFFECT_KEYS = {
@@ -83,6 +93,17 @@ _TERMINAL_FAILURE = {
     "ERROR", "CANCELLED", "EXPIRED", "failed", "cancelled", "incomplete",
     "requires_action", "budget_exceeded",
 }
+
+
+def canonical_github_remote_repository(remote: str) -> str | None:
+    """Return owner/repository only for an exact supported GitHub remote URL."""
+
+    if not remote.isascii():
+        return None
+    match = _GITHUB_REMOTE.fullmatch(remote.strip())
+    if match is None:
+        return None
+    return match.group("repository").lower()
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,11 +371,36 @@ class GitHubReadOnlyRepositoryEffectVerifier:
 class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
     """Bind a single allowlisted repository to its clean local exact HEAD."""
 
-    def __init__(self, repository: str, root: str) -> None:
+    def __init__(
+        self,
+        repository: str,
+        root: str,
+        *,
+        pinned_commit_sha: str = "",
+        pinned_tree_sha: str = "",
+        max_files: int = 512,
+    ) -> None:
         if not repository.strip() or not root.strip():
             raise ValueError("repository and snapshot root are required")
+        commit = pinned_commit_sha.strip().lower()
+        tree = pinned_tree_sha.strip().lower()
+        if bool(commit) != bool(tree) or any(
+            _GIT_SHA.fullmatch(value) is None for value in (commit, tree) if value
+        ):
+            raise ValueError(
+                "pinned commit and tree must be supplied together as exact Git SHAs"
+            )
+        if (
+            not isinstance(max_files, int)
+            or isinstance(max_files, bool)
+            or not 1 <= max_files <= 4096
+        ):
+            raise ValueError("snapshot max files must be between 1 and 4096")
         self.repository = repository.strip().removesuffix(".git").lower()
         self.root = Path(root).resolve(strict=True)
+        self.pinned_commit_sha = commit
+        self.pinned_tree_sha = tree
+        self.max_files = max_files
 
     def _git(self, *arguments: str) -> str:
         completed = subprocess.run(
@@ -367,13 +413,8 @@ class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
         return completed.stdout
 
     @staticmethod
-    def _normalize_remote(remote: str) -> str:
-        value = remote.strip().removesuffix(".git")
-        if value.startswith("git@github.com:"):
-            value = value.removeprefix("git@github.com:")
-        elif "github.com/" in value:
-            value = value.split("github.com/", 1)[1]
-        return value.strip("/").lower()
+    def _normalize_remote(remote: str) -> str | None:
+        return canonical_github_remote_repository(remote)
 
     def resolve(self, record: Any, assignment: Assignment) -> list[dict[str, str]]:
         if (assignment.repository or "").lower().removesuffix(".git") != self.repository:
@@ -388,22 +429,51 @@ class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
         head = self._git("rev-parse", "--verify", f"{starting_ref}^{{commit}}").strip()
         if not _GIT_SHA.fullmatch(head):
             raise PacketRoutingError("repository starting ref is not an exact commit")
-        remote_refs = {
-            item.strip()
-            for item in self._git(
-                "for-each-ref",
-                "--contains",
-                head,
-                "--format=%(refname)",
-                "refs/remotes/origin/",
-            ).splitlines()
-            if item.strip() and item.strip() != "refs/remotes/origin/HEAD"
-        }
-        if not remote_refs:
-            raise PacketRoutingError(
-                "repository starting commit is not present on an origin tracking ref"
-            )
-        if not _GIT_SHA.fullmatch(starting_ref):
+        if self.pinned_commit_sha:
+            plan = getattr(record, "plan", None)
+            prestage = getattr(plan, "prestage", None)
+            try:
+                prestage_root = Path(prestage.worktree).resolve(strict=True)
+            except (AttributeError, OSError):
+                raise PacketRoutingError(
+                    "pinned authority requires its exact pre-stage worktree"
+                ) from None
+            if (
+                starting_ref != self.pinned_commit_sha
+                or head != self.pinned_commit_sha
+                or self._git("rev-parse", "--verify", "HEAD^{commit}").strip()
+                != self.pinned_commit_sha
+                or prestage.base_sha != self.pinned_commit_sha
+                or prestage.branch != self.pinned_commit_sha
+                or prestage_root != self.root
+            ):
+                raise PacketRoutingError(
+                    "pinned authority commit or worktree does not match the plan"
+                )
+            resolved_tree = self._git(
+                "rev-parse", "--verify", f"{head}^{{tree}}"
+            ).strip()
+            if resolved_tree != self.pinned_tree_sha:
+                raise PacketRoutingError(
+                    "pinned authority tree does not match the configured tree"
+                )
+        else:
+            remote_refs = {
+                item.strip()
+                for item in self._git(
+                    "for-each-ref",
+                    "--contains",
+                    head,
+                    "--format=%(refname)",
+                    "refs/remotes/origin/",
+                ).splitlines()
+                if item.strip() and item.strip() != "refs/remotes/origin/HEAD"
+            }
+            if not remote_refs:
+                raise PacketRoutingError(
+                    "repository starting commit is not present on an origin tracking ref"
+                )
+        if not self.pinned_commit_sha and not _GIT_SHA.fullmatch(starting_ref):
             normalized_ref = starting_ref.removeprefix("refs/heads/").removeprefix(
                 "origin/"
             )
@@ -426,7 +496,7 @@ class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
             if not _GIT_SHA.fullmatch(blob_sha):
                 raise PacketRoutingError("repository tree contains a malformed blob identity")
             snapshot.append({"path": path, "commit_sha": head, "blob_sha": blob_sha})
-            if len(snapshot) > 512:
+            if len(snapshot) > self.max_files:
                 raise PacketRoutingError("repository snapshot exceeds the bounded packet inventory")
         if not snapshot:
             raise PacketRoutingError("repository snapshot contains no tracked files")
@@ -1138,3 +1208,7 @@ def build_primary_packet_adapters(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:37 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]

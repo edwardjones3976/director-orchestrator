@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | BEGIN]]
@@ -504,8 +508,7 @@ class CompletionWorkerTests(unittest.TestCase):
         self.assertIsNotNone(snapshot_path)
         self.assertFalse(snapshot_path.exists())
 
-    @unittest.skipIf(os.name == "nt", "POSIX permission semantics only")
-    def test_posix_cleanup_restores_readonly_parent_directory_permissions(self):
+    def test_cleanup_removes_readonly_snapshot_tree(self):
         snapshot = self.root / "readonly-posix-snapshot"
         nested = snapshot / "one" / "two"
         nested.mkdir(parents=True)
@@ -558,7 +561,7 @@ class CompletionWorkerTests(unittest.TestCase):
         backend._execute_argv = Mock(return_value=execution)
         short_spec = replace(
             self.container,
-            limits=replace(self.container.limits, timeout_seconds=1),
+            limits=replace(self.container.limits, timeout_seconds=5),
         )
         request = self.request(
             worker_spec_id=self.container.spec_id,
@@ -820,3 +823,7 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 20:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]

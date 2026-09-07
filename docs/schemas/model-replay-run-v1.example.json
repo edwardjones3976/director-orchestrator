@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "document_type": "director-replay-run",
-  "work_packet_digest": "sha256:ac01061350c0bd2ef0535910191aa43accd9652c0bc0cedb26607b8e9e495ce6",
+  "work_packet_digest": "sha256:de50d90969eda8eae71807479f1fa3cac80254dfdf2656c79474206aea0f663e",
   "result_packet_digest": "sha256:8a761ded8fbbd7033fbd2fba90c0e48c311ccae26a063629e1a1c6cfcc43d3a6",
   "work_packet": {
     "schema_version": "1.0",
@@ -50,7 +50,8 @@
       "budget_usd": 1.0,
       "timeout_seconds": 900,
       "max_hops": 1,
-      "max_revisions": 1
+      "max_revisions": 1,
+      "retry_limit": 3
     },
     "idempotency_key": "DIR-EXAMPLE:1:review",
     "correlation": {
@@ -117,5 +118,5 @@
     },
     "revision_recommended": false
   },
-  "replay_run_digest": "sha256:e6b471784cdea42ae3bafc07f667bc5be3784bed5bb4439cf96e1e3cdc4f83b9"
+  "replay_run_digest": "sha256:217071aec6ec728d1e5cb2b1dedfd07da0b0b785a441f37030b10a271fd23f85"
 }

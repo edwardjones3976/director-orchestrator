@@ -1,3 +1,8 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
 # Model interoperability contract
@@ -9,7 +14,7 @@
 
 The owner accepted this provider-neutral contract authority on 2026-08-16 after Gate 0 acceptance. Merging these documents and schemas authorizes fixture and adapter-conformance work only. It does not install LangGraph, enable a graph, dispatch a provider, migrate state, change the sole writer, or permit an external write.
 
-OpenAI, Claude, and Cursor are the primary team. Gemini, Perplexity, and future providers may implement the same contract later without widening its authority.
+OpenAI, Claude, Cursor, and Grok are primary-capable lanes. The owner-approved allocation profiles also account for Antigravity, Perplexity, Firecrawl, GitHub Copilot, and Microsoft 365 Copilot. Each requires its actual bounded adapter capability; a nonzero target never expands this contract or authenticates readiness. See [Provider allocation profiles](provider-allocation-profiles.md).
 
 ## Principle
 
@@ -27,10 +32,23 @@ Every model receives the same bounded work packet and returns the same bounded r
 - allowed tools and allowed external effects
 - acceptance checks and evidence requirements
 - approval requirements
-- budget, timeout, hop, and revision ceilings
+- budget, timeout, hop, and revision ceilings, including an immutable
+  assignment retry limit of exactly 3
 - idempotency key and correlation identifiers
 
 A packet missing its authority snapshot, acceptance checks, or repository boundary is invalid and must not dispatch.
+The retry limit is a ceiling of three total attempts, never a requirement to
+perform three calls. Stop on success. Attempt two requires a classified temporary
+failure. Attempt three requires materially new information or a substantially
+different underlying transport; a corrected approach alone is insufficient.
+Every attempt remains subject to resource and authority gates. After three
+recorded failures the assignment route is unavailable. An ambiguous paid dispatch
+is never repeated, including through a fallback; reconcile it first.
+For v1 paid revisions, the additional attempt also requires authenticated,
+durable assignment token accounting; primary attempts are unaffected. The
+current runtime has no generic token authority and therefore fails paid
+revisions closed rather than treating pre-stage `budget_units` or optional
+provider telemetry as token accounting.
 
 ## Required result fields
 
@@ -120,3 +138,10 @@ Offline replay fixtures bind one validated work packet to its validated result p
 A self-contained digest detects accidental or unsynchronized modification; it is not a signature and grants no authority. Acceptance, dispatch, external writes, and merge decisions remain governed by deterministic policy and separately trusted evidence.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->

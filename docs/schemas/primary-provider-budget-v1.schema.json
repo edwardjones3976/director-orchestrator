@@ -1,0 +1,76 @@
+{
+  "additionalProperties": false,
+  "description": "Owner-approved limits persisted before an execution request arrives.",
+  "properties": {
+    "schema_version": {
+      "const": "primary-provider-budget/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "grant_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Grant Digest",
+      "type": "string"
+    },
+    "provider_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Provider Id",
+      "type": "string"
+    },
+    "project_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "task_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "day": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "title": "Day",
+      "type": "string"
+    },
+    "task_limit_microusd": {
+      "exclusiveMinimum": 0,
+      "title": "Task Limit Microusd",
+      "type": "integer"
+    },
+    "daily_limit_microusd": {
+      "exclusiveMinimum": 0,
+      "title": "Daily Limit Microusd",
+      "type": "integer"
+    },
+    "attempt_reservation_microusd": {
+      "exclusiveMinimum": 0,
+      "title": "Attempt Reservation Microusd",
+      "type": "integer"
+    },
+    "token_limit": {
+      "exclusiveMinimum": 0,
+      "title": "Token Limit",
+      "type": "integer"
+    },
+    "owner_signature": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Owner Signature",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "grant_digest",
+    "provider_id",
+    "project_id",
+    "task_id",
+    "day",
+    "task_limit_microusd",
+    "daily_limit_microusd",
+    "attempt_reservation_microusd",
+    "token_limit",
+    "owner_signature"
+  ],
+  "title": "ProviderBudget",
+  "type": "object"
+}

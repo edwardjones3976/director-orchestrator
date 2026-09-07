@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]]
@@ -788,10 +789,8 @@ $identity = [ordered]@{
     MAX_AGENT_HOPS = [string]$selected.MAX_AGENT_HOPS
     MAX_TASK_BUDGET_USD = [string]$selected.MAX_TASK_BUDGET_USD
     PRIMARY_TEAM = "openai,claude,cursor,grok"
-    PRIMARY_WORKHORSE = "claude"
-    # USAGE_CHECK_PROVIDERS is deliberately not forced here. The profile's
-    # explicit periodic-check membership is preserved and validated by
-    # Get-ValidatedUsageCheckProviders before any paid dispatch.
+    PRIMARY_WORKHORSE = "cheapest_capable"
+    USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"
     USAGE_CHECK_INTERVAL_MINUTES = "360"
     ALLOW_PAID_RUNS = "false"
     USAGE_CHECK_ENABLED = "false"
@@ -830,6 +829,11 @@ if (-not $ApiOnly) {
     )
 }
 Assert-Configured -Values $values -Names $requiredConfiguration
+if ($EnablePaidRuns) {
+    # The operator owns the comparable-cost order. Preserve the ignored
+    # profile value and fail closed instead of inventing or printing ranks.
+    Assert-Configured -Values $values -Names @("TRUSTED_PROVIDER_COST_RANKS")
+}
 if ($ProfileName -eq "edge-oracle") {
     Assert-Configured -Values $values -Names @("ORACLE_AUTOMERGE_REVIEW_SECRET")
 }
@@ -1128,3 +1132,4 @@ finally {
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | END]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]

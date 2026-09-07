@@ -1,3 +1,13 @@
+# [[Codex | GPT-6 | 2026-09-06 | 01:26 UTC | BEGIN]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:53 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | BEGIN]]
@@ -6,6 +16,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -18,12 +29,17 @@ from director_orchestrator.interactions import (
     ProviderInteractionState,
     ProviderTransport,
     TransportEvidenceSource,
+    acceptance_review_candidate_digest,
     append_interaction_event,
     build_transport_evidence,
     canonical_identifier_digest,
     project_interaction,
     start_interaction,
     transition_interaction,
+)
+from director_orchestrator.approvals import (
+    record_task_effect_observation,
+    reserve_task_effect,
 )
 from director_orchestrator.models import (
     Assignment,
@@ -44,6 +60,7 @@ from director_orchestrator.store import (
     WorkloadReservationConflict,
 )
 from director_orchestrator.workload_policy import (
+    DirectProductionProvider,
     EnforcementMode,
     PRIMARY_PROVIDERS,
     Provider,
@@ -72,8 +89,19 @@ def _install_verified_interaction(
     run_id: str,
     result: str,
     assignment_sequence: int | None,
+    candidate_binding_digest: str | None = None,
+    request_payload: str | None = None,
+    consumed_artifact_digests: tuple[str, ...] = (),
 ) -> tuple[str, str]:
     effect_key = canonical_identifier_digest(interaction_id)
+    if phase is ProviderInteractionPhase.ACCEPTANCE_REVIEW:
+        reserve_task_effect(
+            record,
+            effect_key=effect_key,
+            kind="director_intent",
+            phase="acceptance_review",
+            provider=ProviderName.OPENAI,
+        )
     drafted_evidence = build_transport_evidence(
         transport=_provider_transport(provider),
         source=TransportEvidenceSource.BACKEND_OBSERVATION,
@@ -90,6 +118,9 @@ def _install_verified_interaction(
         attempt=1,
         transport_evidence=drafted_evidence,
         effect_key=effect_key,
+        candidate_binding_digest=candidate_binding_digest,
+        request_payload=request_payload,
+        consumed_artifact_digests=consumed_artifact_digests,
     )
     record.provider_interaction_ledger = append_interaction_event(
         record.provider_interaction_ledger, event
@@ -137,6 +168,16 @@ def _install_verified_interaction(
         raise AssertionError("test interaction is not bound to the provider run id")
     if projection.verified_result_digest is None:
         raise AssertionError("test interaction lacks a verified result digest")
+    if phase is ProviderInteractionPhase.ACCEPTANCE_REVIEW:
+        record_task_effect_observation(
+            record,
+            effect_key=effect_key,
+            intent_kind="director_intent",
+            observation_kind="director_observation",
+            phase="acceptance_review",
+            outcome="completed",
+            run_id=run_id,
+        )
     return projection.latest_event_digest, projection.verified_result_digest
 
 
@@ -183,16 +224,18 @@ class WorkloadLedgerTests(unittest.TestCase):
         mode: EnforcementMode = EnforcementMode.ENFORCED,
         effort_units: int = 1,
         assignment_id: str | None = None,
+        task_id: str | None = None,
         phase: str = "dispatch",
         kind: WorkKind = WorkKind.COORDINATION,
         size: WorkSize = WorkSize.SIMPLE,
         model_label: str | None = None,
         available_primary_providers: frozenset[Provider] = PRIMARY_PROVIDERS,
         shadow_assignment_limit: int = 5,
+        allocation_profile: str = "engineering",
     ):
         return self.store.reserve_workload_assignment(
             reservation_key=key,
-            task_id=f"DIR-{key}",
+            task_id=task_id or f"DIR-{key}",
             assignment_id=assignment_id or f"DIR-{key}:1",
             phase=phase,
             provider=provider,
@@ -203,6 +246,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             available_primary_providers=available_primary_providers,
             mode=mode,
             shadow_assignment_limit=shadow_assignment_limit,
+            allocation_profile=allocation_profile,
         )
 
     @staticmethod
@@ -281,6 +325,15 @@ class WorkloadLedgerTests(unittest.TestCase):
             run_id=f"review-{task_id}",
             result=review_result,
             assignment_sequence=None,
+            candidate_binding_digest=acceptance_review_candidate_digest(
+                task_id=record.task_id,
+                plan_generation=record.plan_generation,
+                assignment_sequence=assignment.sequence,
+                provider=provider.value,
+                provider_run_id=outcome.run_id,
+                provider_event_digest=provider_event_digest,
+                provider_result_digest=provider_result_digest,
+            ),
         )
         outcome.director_review_interaction_id = review_interaction_id
         outcome.verified_director_review_event_digest = review_event_digest
@@ -292,12 +345,19 @@ class WorkloadLedgerTests(unittest.TestCase):
         record: TaskRecord,
         *,
         kind: WorkKind = WorkKind.IMPLEMENTATION,
+        assignment_sequence: int = 1,
     ) -> None:
         if record.plan is None:
             raise AssertionError("accepted-record fixture requires a plan")
-        assignment = record.plan.assignments[0]
+        assignment = next(
+            item
+            for item in record.plan.assignments
+            if item.sequence == assignment_sequence
+        )
         reservation = self.store.reserve_workload_assignment(
-            reservation_key=f"{record.task_id}:authorized-dispatch",
+            reservation_key=(
+                f"{record.task_id}:authorized-dispatch:{assignment.sequence}"
+            ),
             task_id=record.task_id,
             assignment_id=(
                 f"{record.task_id}:{record.plan_generation}:{assignment.sequence}"
@@ -309,12 +369,99 @@ class WorkloadLedgerTests(unittest.TestCase):
             size=assignment.workload_size,
             model_label=assignment.model_label,
             available_primary_providers=PRIMARY_PROVIDERS,
-            mode=EnforcementMode.ENFORCED,
+            # Historical accepted-result fixtures predate the hard cap; use
+            # explicit shadow authority to exercise authentication separately
+            # from startup/cap enforcement. Never seed production this way.
+            mode=EnforcementMode.SHADOW,
+            shadow_assignment_limit=10000,
         )
         self.assertTrue(reservation.decision.allowed)
         self.store.finalize_workload_reservation(
             reservation.reservation_key, WorkloadAttemptOutcome.INVOKED
         )
+
+    @staticmethod
+    def add_accepted_outcome(
+        record: TaskRecord,
+        assignment: Assignment,
+        *,
+        include_consumed_artifacts: bool = True,
+    ) -> None:
+        outcome = AssignmentOutcome(
+            assignment_sequence=assignment.sequence,
+            provider=assignment.agent,
+            run_id=f"run-{record.task_id}-{assignment.sequence}",
+            result=f"Accepted result for assignment {assignment.sequence}.",
+            review_summary="Accepted by the Director.",
+            evidence=["The bounded result satisfies the assignment."],
+        )
+        record.assignment_outcomes.append(outcome)
+        interaction_id = (
+            f"test:{record.task_id}:provider:{assignment.sequence}:{outcome.run_id}"
+        )
+        consumed_artifact_digests = tuple(
+            sorted(
+                prior.provider_result_digest
+                for prior in record.assignment_outcomes
+                if include_consumed_artifacts
+                and prior.assignment_sequence in assignment.depends_on
+                and prior.provider is ProviderName.GEMINI
+                and prior.provider_result_digest is not None
+            )
+        )
+        request_payload = (
+            json.dumps(
+                {"consumed_artifact_digests": consumed_artifact_digests},
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            if consumed_artifact_digests
+            else None
+        )
+        event_digest, result_digest = _install_verified_interaction(
+            record,
+            provider=assignment.agent,
+            phase=ProviderInteractionPhase.DISPATCH,
+            interaction_id=interaction_id,
+            run_id=outcome.run_id,
+            result=outcome.result,
+            assignment_sequence=assignment.sequence,
+            request_payload=request_payload,
+            consumed_artifact_digests=consumed_artifact_digests,
+        )
+        outcome.interaction_id = interaction_id
+        outcome.verified_interaction_event_digest = event_digest
+        outcome.provider_result_digest = result_digest
+        review_result = ReviewDecision(
+            verdict=ReviewVerdict.ACCEPT,
+            summary=outcome.review_summary,
+            evidence=outcome.evidence,
+        ).model_dump_json()
+        review_interaction_id = (
+            f"test:{record.task_id}:openai:acceptance-review:{assignment.sequence}"
+        )
+        review_event_digest, review_result_digest = _install_verified_interaction(
+            record,
+            provider=ProviderName.OPENAI,
+            phase=ProviderInteractionPhase.ACCEPTANCE_REVIEW,
+            interaction_id=review_interaction_id,
+            run_id=f"review-{record.task_id}-{assignment.sequence}",
+            result=review_result,
+            assignment_sequence=None,
+            candidate_binding_digest=acceptance_review_candidate_digest(
+                task_id=record.task_id,
+                plan_generation=record.plan_generation,
+                assignment_sequence=assignment.sequence,
+                provider=assignment.agent.value,
+                provider_run_id=outcome.run_id,
+                provider_event_digest=event_digest,
+                provider_result_digest=result_digest,
+            ),
+        )
+        outcome.director_review_interaction_id = review_interaction_id
+        outcome.verified_director_review_event_digest = review_event_digest
+        outcome.director_review_result_digest = review_result_digest
 
     def test_exact_replay_is_idempotent_and_does_not_double_count(self) -> None:
         first = self.reserve("one", Provider.CLAUDE)
@@ -348,7 +495,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         )
         self.assertEqual(self.store.list_recent_workload_attempts(), [])
 
-    def test_rolling_twenty_blocks_hard_overage_and_excludes_blocked_candidate(self) -> None:
+    def test_cursor_30_percent_is_allowed_and_accounted(self) -> None:
         providers = [Provider.CURSOR] * 5 + [Provider.CLAUDE] * 7 + [Provider.GROK] * 7
         for index, provider in enumerate(providers):
             reservation = self.reserve(f"seed-{index}", provider)
@@ -357,16 +504,18 @@ class WorkloadLedgerTests(unittest.TestCase):
                 reservation.reservation_key, WorkloadAttemptOutcome.INVOKED
             )
 
-        blocked = self.reserve("twentieth", Provider.CURSOR)
-        self.assertFalse(blocked.decision.allowed)
+        candidate = self.reserve("twentieth", Provider.CURSOR)
+        self.assertTrue(candidate.decision.allowed)
+        self.assertEqual(candidate.decision.violations, ())
         self.assertIn(
-            "overall_hard_threshold_exceeded:cursor:25",
-            blocked.decision.violations,
+            "total_effort_prospective_usage_guard", candidate.decision.advisories
         )
-        self.assertEqual(blocked.final_outcome, WorkloadAttemptOutcome.BLOCKED)
-        self.assertEqual(len(self.store.list_recent_workload_attempts(limit=20)), 19)
+        self.store.finalize_workload_reservation(
+            candidate.reservation_key, WorkloadAttemptOutcome.INVOKED
+        )
+        self.assertEqual(len(self.store.list_recent_workload_attempts(limit=20)), 20)
 
-    def test_shadow_would_block_but_real_attempt_is_still_accounted_once(self) -> None:
+    def test_shadow_total_effort_is_accounted_once(self) -> None:
         providers = [Provider.CURSOR] * 5 + [Provider.CLAUDE] * 7 + [Provider.GROK] * 7
         for index, provider in enumerate(providers):
             reservation = self.reserve(f"shadow-seed-{index}", provider)
@@ -378,8 +527,11 @@ class WorkloadLedgerTests(unittest.TestCase):
             "shadow-twentieth", Provider.CURSOR, mode=EnforcementMode.SHADOW
         )
         self.assertTrue(shadow.decision.allowed)
-        self.assertTrue(shadow.decision.would_block)
-        self.assertEqual(shadow.decision.outcome.value, "shadow_would_block")
+        self.assertFalse(shadow.decision.would_block)
+        self.assertEqual(shadow.decision.outcome.value, "allow")
+        self.assertIn(
+            "total_effort_prospective_usage_guard", shadow.decision.advisories
+        )
         self.store.finalize_workload_reservation(
             shadow.reservation_key, WorkloadAttemptOutcome.INVOKED
         )
@@ -405,10 +557,9 @@ class WorkloadLedgerTests(unittest.TestCase):
         self.assertIsNone(cross_provider_pending.final_outcome)
 
         cursor = self.reserve("cross-candidate", Provider.CURSOR)
-        self.assertFalse(cursor.decision.allowed)
-        self.assertIn(
-            "overall_hard_threshold_exceeded:cursor:25",
-            cursor.decision.violations,
+        self.assertTrue(cursor.decision.allowed)
+        self.assertNotIn(
+            "workload_rollover_pending_unresolved", cursor.decision.violations
         )
 
     def test_pending_outcome_cannot_change_a_mature_weighted_window(self) -> None:
@@ -441,13 +592,9 @@ class WorkloadLedgerTests(unittest.TestCase):
             "weighted-candidate", Provider.CLAUDE, effort_units=8
         )
 
-        self.assertFalse(candidate.decision.allowed)
-        self.assertIn(
-            "workload_rollover_pending_unresolved",
-            candidate.decision.violations,
-        )
+        self.assertTrue(candidate.decision.allowed)
 
-    def test_same_provider_pending_remains_conservative_pressure(self) -> None:
+    def test_same_provider_pending_overall_history_does_not_block(self) -> None:
         providers = (
             [Provider.CLAUDE]
             + [Provider.CURSOR] * 4
@@ -468,9 +615,9 @@ class WorkloadLedgerTests(unittest.TestCase):
         self.assertIsNone(first_pending.final_outcome)
 
         second_pending = self.reserve("same-candidate", Provider.CURSOR)
-        self.assertFalse(second_pending.decision.allowed)
-        self.assertIn(
-            "overall_hard_threshold_exceeded:cursor:25",
+        self.assertTrue(second_pending.decision.allowed)
+        self.assertNotIn(
+            "workload_rollover_pending_unresolved",
             second_pending.decision.violations,
         )
 
@@ -526,6 +673,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             Provider.CLAUDE,
             mode=EnforcementMode.SHADOW,
             assignment_id="DIR-SHADOW:1",
+            task_id="DIR-SHADOW",
         )
         self.assertEqual(first.decision.mode, EnforcementMode.SHADOW)
         self.store.finalize_workload_reservation(
@@ -537,6 +685,7 @@ class WorkloadLedgerTests(unittest.TestCase):
             Provider.CLAUDE,
             mode=EnforcementMode.SHADOW,
             assignment_id="DIR-SHADOW:1",
+            task_id="DIR-SHADOW",
             phase="revision",
         )
         self.assertEqual(retry.decision.mode, EnforcementMode.SHADOW)
@@ -628,11 +777,261 @@ class WorkloadLedgerTests(unittest.TestCase):
                     self.store.create(record)
                 self.assertEqual(self.store.list_recent_direct_production(), [])
 
+    def test_direct_credit_rejects_cross_run_or_assignment_review_rebinding(self) -> None:
+        for mode in ("cross-run", "cross-assignment"):
+            with self.subTest(mode=mode):
+                record = self.accepted_record(
+                    f"DIR-DIRECT-REBOUND-{mode}", ProviderName.CLAUDE
+                )
+                assert record.plan is not None
+                outcome = record.assignment_outcomes[0]
+                assignment = record.plan.assignments[0]
+                if mode == "cross-assignment":
+                    assignment = assignment.model_copy(
+                        update={"sequence": 2, "depends_on": [1]}
+                    )
+                    record.plan.assignments.append(assignment)
+                    outcome.assignment_sequence = 2
+                else:
+                    outcome.run_id = f"{outcome.run_id}-replacement"
+                interaction_id = (
+                    f"test:{record.task_id}:provider:replacement:{outcome.run_id}"
+                )
+                event_digest, result_digest = _install_verified_interaction(
+                    record,
+                    provider=ProviderName.CLAUDE,
+                    phase=ProviderInteractionPhase.DISPATCH,
+                    interaction_id=interaction_id,
+                    run_id=outcome.run_id,
+                    result=outcome.result,
+                    assignment_sequence=assignment.sequence,
+                )
+                outcome.interaction_id = interaction_id
+                outcome.verified_interaction_event_digest = event_digest
+                outcome.provider_result_digest = result_digest
+                self.authorize_accepted_record(
+                    record, assignment_sequence=assignment.sequence
+                )
+
+                with self.assertRaisesRegex(
+                    WorkloadReservationConflict, "evidence binding changed"
+                ):
+                    self.store.create(record)
+                self.assertEqual(self.store.list_recent_direct_production(), [])
+
+    def test_profile_bound_replay_rejects_changed_profile_and_preserves_history(self):
+        first = self.reserve("profile-bound", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertTrue(first.decision.allowed)
+        self.store.finalize_workload_reservation(first.reservation_key, WorkloadAttemptOutcome.INVOKED)
+        with self.assertRaisesRegex(WorkloadReservationConflict, "profile binding changed"):
+            self.reserve("profile-bound", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION, allocation_profile="mixed")
+        with self.assertRaisesRegex(WorkloadReservationConflict, "profile binding changed"):
+            self.store.reserve_workload_assignment(
+                reservation_key="other-transport", task_id="DIR-profile-bound", assignment_id="DIR-profile-bound:1",
+                phase="dispatch", provider=Provider.CURSOR, effort_units=1, kind=WorkKind.IMPLEMENTATION,
+                size=WorkSize.SIMPLE, model_label=None, available_primary_providers=PRIMARY_PROVIDERS,
+                mode=EnforcementMode.ENFORCED,
+            )
+        for task_id, kind in (("different-task", WorkKind.IMPLEMENTATION), ("DIR-profile-bound", WorkKind.REVIEW)):
+            with self.assertRaisesRegex(WorkloadReservationConflict, "profile binding changed"):
+                self.store.reserve_workload_assignment(
+                    reservation_key="changed-owner-kind", task_id=task_id, assignment_id="DIR-profile-bound:1",
+                    phase="dispatch", provider=Provider.CLAUDE, effort_units=1, kind=kind,
+                    size=WorkSize.SIMPLE, model_label=None, available_primary_providers=PRIMARY_PROVIDERS,
+                    mode=EnforcementMode.ENFORCED,
+                )
+        self.assertEqual(len(self.store.list_recent_workload_attempts()), 1)
+        with closing(sqlite3.connect(self.path)) as connection:
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute("DELETE FROM workload_profile_bindings")
+
+    def test_old_unbound_history_requires_reconciliation_before_new_admission(self):
+        self.reserve("old-coordination", Provider.CLAUDE)
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.execute("DROP TRIGGER workload_profile_bindings_no_delete")
+            connection.execute("DELETE FROM workload_profile_bindings")
+            connection.commit()
+        reopened = TaskStore(self.path)
+        with self.assertRaisesRegex(WorkloadReservationConflict, "history requires explicit"):
+            reopened.reserve_workload_assignment(reservation_key="new", task_id="new", assignment_id="new:1",
+                phase="dispatch", provider=Provider.CLAUDE, effort_units=1, kind=WorkKind.IMPLEMENTATION,
+                size=WorkSize.SIMPLE, model_label=None, available_primary_providers=PRIMARY_PROVIDERS,
+                mode=EnforcementMode.ENFORCED)
+
+    def test_real_shadow_work_retains_admission_without_duplicate_retry_credit(self):
+        first = self.reserve("shadow-real", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION, mode=EnforcementMode.SHADOW)
+        self.store.finalize_workload_reservation(first.reservation_key, WorkloadAttemptOutcome.INVOKED)
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM workload_profile_bindings WHERE admitted=1").fetchone()[0], 1)
+        replay = self.reserve("shadow-real", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION, mode=EnforcementMode.ENFORCED)
+        self.assertFalse(replay.created)
+
+    def test_failed_reservations_remain_in_profile_admission_window(self):
+        for index in range(7):
+            item = self.reserve(f"retained-{index}", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+            self.assertTrue(item.decision.allowed, item.decision.violations)
+            self.store.finalize_workload_reservation(item.reservation_key, WorkloadAttemptOutcome.FAILED_PRE_SUBMIT)
+        held = self.reserve("retained-eighth", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertFalse(held.decision.allowed)
+        self.assertIn("allocation_admission_hard_cap_exceeded:claude:35", held.decision.violations)
+        self.assertEqual(self.store.list_recent_direct_production(), [])
+
+    def test_research_profile_admits_perplexity_without_fabricated_history(self):
+        candidate = self.reserve("real-public-research", Provider.PERPLEXITY,
+            kind=WorkKind.RESEARCH, allocation_profile="public_research")
+        self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
+        self.assertEqual(self.store.list_recent_direct_production(), [])
+
     def test_ordinary_openai_outcome_does_not_create_external_openai_credit(self) -> None:
         record = self.accepted_record("DIR-DIRECT-OPENAI", ProviderName.OPENAI)
-        self.store.create(record)
-        self.store.save(record)
+        with self.assertRaisesRegex(WorkloadReservationConflict, "invoked workload authority"):
+            self.store.create(record)
         self.assertEqual(self.store.list_recent_direct_production(), [])
+
+    def test_perplexity_authenticated_research_credit_enters_prospective_ledger(
+        self,
+    ) -> None:
+        record = self.accepted_record(
+            "DIR-DIRECT-PERPLEXITY-RESEARCH", ProviderName.PERPLEXITY
+        )
+        assert record.plan is not None
+        assignment = record.plan.assignments[0]
+        assignment.kind = AssignmentKind.RESEARCH
+        assignment.public_research_query = "Public evidence about durable ledgers"
+        self.authorize_accepted_record(record, kind=WorkKind.RESEARCH)
+        self.store.create(record)
+
+        credits = self.store.list_recent_direct_production()
+        self.assertEqual(len(credits), 1)
+        self.assertEqual(credits[0].provider.value, Provider.PERPLEXITY.value)
+
+        candidate = self.reserve(
+            "perplexity-research-followup",
+            Provider.PERPLEXITY,
+            kind=WorkKind.RESEARCH,
+        )
+        self.assertFalse(candidate.decision.allowed)
+        self.assertIn("allocation_profile_lane_ineligible:perplexity", candidate.decision.violations)
+        self.assertIn(
+            "direct_production_window_warming_up:2/20",
+            candidate.decision.advisories,
+        )
+
+        review = self.accepted_record(
+            "DIR-DIRECT-PERPLEXITY-REVIEW", ProviderName.PERPLEXITY
+        )
+        assert review.plan is not None
+        review.plan.assignments[0].kind = AssignmentKind.EXACT_SHA_REVIEW
+        self.authorize_accepted_record(review, kind=WorkKind.REVIEW)
+        self.store.create(review)
+        self.assertEqual(len(self.store.list_recent_direct_production()), 1)
+
+    def test_antigravity_credit_waits_for_accepted_primary_integration(self) -> None:
+        record = self.accepted_record(
+            "DIR-DIRECT-ANTIGRAVITY", ProviderName.GEMINI
+        )
+        assert record.plan is not None
+        integration = Assignment(
+            sequence=2,
+            agent=ProviderName.CURSOR,
+            kind=AssignmentKind.IMPLEMENTATION,
+            workload_size=WorkSize.SHORT,
+            effort_points=2,
+            task="Independently verify and integrate or reject the artifact.",
+            acceptance=["The Antigravity artifact is independently verified."],
+            depends_on=[1],
+        )
+        record.plan.assignments.append(integration)
+        self.authorize_accepted_record(record, assignment_sequence=1)
+        self.store.create(record)
+        self.assertEqual(self.store.list_recent_direct_production(), [])
+
+        pending = self.store.get(record.task_id)
+        self.add_accepted_outcome(pending, integration)
+        self.authorize_accepted_record(pending, assignment_sequence=2)
+        self.store.save(pending)
+
+        credits = self.store.list_recent_direct_production()
+        self.assertEqual(
+            [credit.provider.value for credit in credits],
+            [Provider.CURSOR.value, Provider.GEMINI.value],
+        )
+        antigravity_digest = next(
+            outcome.provider_result_digest
+            for outcome in pending.assignment_outcomes
+            if outcome.provider is ProviderName.GEMINI
+        )
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.row_factory = sqlite3.Row
+            consumption = connection.execute(
+                """SELECT integration_request_payload_digest,
+                          consumed_artifact_digest
+                FROM direct_production_integration_consumption"""
+            ).fetchone()
+            self.assertIsNotNone(consumption)
+            self.assertEqual(
+                consumption["consumed_artifact_digest"], antigravity_digest
+            )
+            self.assertEqual(len(consumption["integration_request_payload_digest"]), 64)
+        restarted = TaskStore(self.path)
+        replay = restarted.get(record.task_id)
+        restarted.save(replay)
+        self.assertEqual(len(restarted.list_recent_direct_production()), 2)
+
+    def test_antigravity_dependency_without_request_consumption_is_not_credited(
+        self,
+    ) -> None:
+        record = self.accepted_record(
+            "DIR-DIRECT-ANTIGRAVITY-NOT-CONSUMED", ProviderName.GEMINI
+        )
+        assert record.plan is not None
+        integration = Assignment(
+            sequence=2,
+            agent=ProviderName.CURSOR,
+            kind=AssignmentKind.IMPLEMENTATION,
+            workload_size=WorkSize.SHORT,
+            effort_points=2,
+            task="Implement independently without consuming the upstream artifact.",
+            acceptance=["The independent implementation is accepted."],
+            depends_on=[1],
+        )
+        record.plan.assignments.append(integration)
+        self.authorize_accepted_record(record, assignment_sequence=1)
+        self.store.create(record)
+
+        pending = self.store.get(record.task_id)
+        self.add_accepted_outcome(
+            pending, integration, include_consumed_artifacts=False
+        )
+        self.authorize_accepted_record(pending, assignment_sequence=2)
+        self.store.save(pending)
+
+        self.assertEqual(
+            [credit.provider.value for credit in self.store.list_recent_direct_production()],
+            [Provider.CURSOR.value],
+        )
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM direct_production_integration_consumption"
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_legacy_antigravity_credit_without_integration_stays_filtered(self) -> None:
+        task_id = "DIR-LEGACY-ANTIGRAVITY-CREDIT"
+        self.store.create(self._minimal_done_task(task_id))
+        self._insert_raw_direct_credit(
+            task_id=task_id,
+            assignment_id=f"{task_id}:1:1",
+            provider=Provider.GEMINI,
+            effort_units=2,
+            recorded_at="2026-08-30T00:00:00+00:00",
+        )
+        self.assertEqual(self.store.list_recent_direct_production(), [])
+        self.assertEqual(
+            TaskStore(self.path).list_recent_direct_production(), []
+        )
 
     def test_direct_credit_requires_invoked_implementation_authority(self) -> None:
         unreserved = self.accepted_record(
@@ -649,69 +1048,21 @@ class WorkloadLedgerTests(unittest.TestCase):
         self.assertEqual(self.store.list_recent_direct_production(), [])
 
     def test_direct_window_blocks_while_accepted_credit_is_unresolved(self) -> None:
-        direct_seeds = (
-            [(Provider.CURSOR, 8)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CLAUDE, 1)]
-            + [(Provider.GROK, 2)]
-            + [(Provider.GROK, 1)] * 3
-            + [(Provider.GEMINI, 2)]
-            + [(Provider.GEMINI, 1)] * 2
-            + [(Provider.PERPLEXITY, 1)] * 4
-        )
-        self.assertEqual(len(direct_seeds), 19)
-        for index, (provider, effort_units) in enumerate(direct_seeds):
-            record = self.accepted_record(
-                f"DIR-DIRECT-SEED-{index}",
-                ProviderName(provider.value),
-                effort_points=effort_units,
-            )
-            self.authorize_accepted_record(record)
-            self.store.create(record)
+        # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
+        for index, provider in enumerate(providers):
+            task_id = f"mature-{index}"
+            self.store.create(self._minimal_done_task(task_id))
+            self._insert_raw_direct_credit(task_id=task_id, assignment_id=f"{task_id}:1:1",
+                provider=provider, effort_units=100 if provider is Provider.CURSOR else 1,
+                recorded_at="2026-08-01T00:00:00+00:00")
+        pending = self.reserve("pending", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertTrue(pending.decision.allowed, pending.decision.violations)
+        sibling = self.reserve("sibling", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertFalse(sibling.decision.allowed)
+        self.assertIn("direct_production_rollover_pending_unresolved", sibling.decision.violations)
+        self.assertEqual(len(self.store.list_recent_direct_production()), 19)
 
-        # Keep the overall-effort ledger safely below Claude's cap so this
-        # regression isolates the accepted-production rollover boundary.
-        overall_controls = (
-            [(Provider.CLAUDE, 6)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CURSOR, 5)] * 4
-            + [(Provider.GROK, 5)] * 4
-            + [(Provider.OPENAI, 8)]
-            + [(Provider.GEMINI, 6), (Provider.GEMINI, 5)]
-            + [(Provider.PERPLEXITY, 5)]
-        )
-        self.assertEqual(len(overall_controls), 19)
-        for index, (provider, effort_units) in enumerate(overall_controls):
-            control = self.reserve(
-                f"direct-overall-control-{index}",
-                provider,
-                mode=EnforcementMode.SHADOW,
-                shadow_assignment_limit=100,
-                effort_units=effort_units,
-            )
-            self.store.finalize_workload_reservation(
-                control.reservation_key, WorkloadAttemptOutcome.INVOKED
-            )
-
-        pending = self.reserve(
-            "direct-pending",
-            Provider.CURSOR,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-        self.assertTrue(pending.decision.allowed)
-        candidate = self.reserve(
-            "direct-candidate",
-            Provider.CLAUDE,
-            effort_units=8,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-
-        self.assertFalse(candidate.decision.allowed)
-        self.assertIn(
-            "direct_production_rollover_pending_unresolved",
-            candidate.decision.violations,
-        )
 
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | BEGIN]]
     _SIBLING_SEEDS = (
@@ -745,11 +1096,12 @@ class WorkloadLedgerTests(unittest.TestCase):
         )
         self.assertIsNone(sibling.final_outcome)
 
-        # In-flight rows remain conservative pressure for an unsafe sibling.
-        unsafe = self.reserve("sibling-unsafe", Provider.CURSOR)
-        self.assertFalse(unsafe.decision.allowed)
-        self.assertIn(
-            "overall_hard_threshold_exceeded:cursor:25", unsafe.decision.violations
+        # Overall effort remains reporting-only even when a sibling is pending.
+        reporting_only = self.reserve("sibling-reporting", Provider.CURSOR)
+        self.assertTrue(reporting_only.decision.allowed)
+        self.assertNotIn(
+            "workload_rollover_pending_unresolved",
+            reporting_only.decision.violations,
         )
 
     def test_stale_pending_row_outside_the_window_is_not_a_lifetime_block(
@@ -770,64 +1122,22 @@ class WorkloadLedgerTests(unittest.TestCase):
             "workload_rollover_pending_unresolved", candidate.decision.violations
         )
 
-    def test_direct_window_permits_safe_sibling_while_credit_is_unresolved(
-        self,
-    ) -> None:
-        direct_seeds = (
-            [(Provider.CLAUDE, 3)] * 9
-            + [(Provider.CURSOR, 2)] * 4
-            + [(Provider.GROK, 2)] * 4
-            + [(Provider.GEMINI, 1)]
-            + [(Provider.PERPLEXITY, 1)]
-        )
-        self.assertEqual(len(direct_seeds), 19)
-        for index, (provider, effort_units) in enumerate(direct_seeds):
-            record = self.accepted_record(
-                f"DIR-DIRECT-SIBLING-{index}",
-                ProviderName(provider.value),
-                effort_points=effort_units,
-            )
-            self.authorize_accepted_record(record)
-            self.store.create(record)
-        overall_controls = (
-            [(Provider.CLAUDE, 6)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CURSOR, 5)] * 4
-            + [(Provider.GROK, 5)] * 4
-            + [(Provider.OPENAI, 8)]
-            + [(Provider.GEMINI, 6), (Provider.GEMINI, 5)]
-            + [(Provider.PERPLEXITY, 5)]
-        )
-        for index, (provider, effort_units) in enumerate(overall_controls):
-            control = self.reserve(
-                f"direct-sibling-control-{index}",
-                provider,
-                mode=EnforcementMode.SHADOW,
-                shadow_assignment_limit=100,
-                effort_units=effort_units,
-            )
-            self.store.finalize_workload_reservation(
-                control.reservation_key, WorkloadAttemptOutcome.INVOKED
-            )
-
-        pending = self.reserve(
-            "direct-sibling-pending",
-            Provider.GEMINI,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-        )
+    def test_direct_unresolved_rollover_still_blocks_unsafe_sibling(self) -> None:
+        # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
+        for index, provider in enumerate(providers):
+            task_id = f"mature-{index}"
+            self.store.create(self._minimal_done_task(task_id))
+            self._insert_raw_direct_credit(task_id=task_id, assignment_id=f"{task_id}:1:1",
+                provider=provider, effort_units=100 if provider is Provider.CURSOR else 1,
+                recorded_at="2026-08-01T00:00:00+00:00")
+        pending = self.reserve("pending", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertTrue(pending.decision.allowed, pending.decision.violations)
-        sibling = self.reserve(
-            "direct-sibling-candidate",
-            Provider.PERPLEXITY,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-        self.assertTrue(sibling.decision.allowed, sibling.decision.violations)
-        self.assertNotIn(
-            "direct_production_rollover_pending_unresolved",
-            sibling.decision.violations,
-        )
+        sibling = self.reserve("sibling", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertFalse(sibling.decision.allowed)
+        self.assertIn("direct_production_rollover_pending_unresolved", sibling.decision.violations)
+        self.assertEqual(len(self.store.list_recent_direct_production()), 19)
+
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
 
     @staticmethod
@@ -900,147 +1210,40 @@ class WorkloadLedgerTests(unittest.TestCase):
             connection.commit()
 
     def test_direct_window_projects_invoked_terminal_task_awaiting_credit(self) -> None:
-        direct_seeds = (
-            [(Provider.CURSOR, 8)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CLAUDE, 1)]
-            + [(Provider.GROK, 2)]
-            + [(Provider.GROK, 1)] * 3
-            + [(Provider.GEMINI, 2)]
-            + [(Provider.GEMINI, 1)] * 2
-            + [(Provider.PERPLEXITY, 1)] * 4
-        )
-        self.assertEqual(len(direct_seeds), 19)
-        for index, (provider, effort_units) in enumerate(direct_seeds):
-            record = self.accepted_record(
-                f"DIR-DIRECT-SEED-{index}",
-                ProviderName(provider.value),
-                effort_points=effort_units,
-            )
-            self.authorize_accepted_record(record)
-            self.store.create(record)
-
-        overall_controls = (
-            [(Provider.CLAUDE, 6)]
-            + [(Provider.CLAUDE, 5)] * 6
-            + [(Provider.CURSOR, 5)] * 4
-            + [(Provider.GROK, 5)] * 4
-            + [(Provider.OPENAI, 8)]
-            + [(Provider.GEMINI, 6), (Provider.GEMINI, 5)]
-            + [(Provider.PERPLEXITY, 5)]
-        )
-        for index, (provider, effort_units) in enumerate(overall_controls):
-            control = self.reserve(
-                f"direct-overall-control-{index}",
-                provider,
-                mode=EnforcementMode.SHADOW,
-                shadow_assignment_limit=100,
-                effort_units=effort_units,
-            )
-            self.store.finalize_workload_reservation(
-                control.reservation_key, WorkloadAttemptOutcome.INVOKED
-            )
-
-        delayed = self._minimal_done_task("DIR-DIRECT-DELAYED")
-        self.store.create(delayed)
-        invoked = self.store.reserve_workload_assignment(
-            reservation_key="delayed-dispatch",
-            task_id=delayed.task_id,
-            assignment_id=f"{delayed.task_id}:1:1",
-            phase="dispatch",
-            provider=Provider.CURSOR,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-            size=WorkSize.SIMPLE,
-            model_label=None,
-            available_primary_providers=PRIMARY_PROVIDERS,
-            mode=EnforcementMode.ENFORCED,
-        )
-        self.assertTrue(invoked.decision.allowed)
-        self.store.finalize_workload_reservation(
-            invoked.reservation_key, WorkloadAttemptOutcome.INVOKED
-        )
-
-        candidate = self.reserve(
-            "direct-candidate",
-            Provider.CLAUDE,
-            effort_units=8,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-
+        # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
+        for index, provider in enumerate(providers):
+            task_id = f"mature-{index}"
+            self.store.create(self._minimal_done_task(task_id))
+            self._insert_raw_direct_credit(task_id=task_id, assignment_id=f"{task_id}:1:1",
+                provider=provider, effort_units=100 if provider is Provider.CURSOR else 1,
+                recorded_at="2026-08-01T00:00:00+00:00")
+        self.store.create(self._minimal_done_task("DIR-invoked"))
+        invoked = self.reserve("invoked", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertTrue(invoked.decision.allowed, invoked.decision.violations)
+        self.store.finalize_workload_reservation(invoked.reservation_key, WorkloadAttemptOutcome.INVOKED)
+        candidate = self.reserve("next", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertFalse(candidate.decision.allowed)
-        self.assertIn(
-            "direct_production_rollover_pending_unresolved",
-            candidate.decision.violations,
-        )
+        self.assertIn("direct_production_rollover_pending_unresolved", candidate.decision.violations)
+        self.assertEqual(len(self.store.list_recent_direct_production()), 19)
+
 
     def test_direct_rollover_window_uses_credit_id_not_recorded_at(self) -> None:
-        old_recorded_at = "2026-08-01T00:00:00+00:00"
-        new_recorded_at = "2026-08-29T12:00:00+00:00"
-
-        pending_task = self._minimal_done_task("DIR-CREDIT-PENDING")
-        self.store.create(pending_task)
-        pending = self.store.reserve_workload_assignment(
-            reservation_key="credit-order-pending",
-            task_id=pending_task.task_id,
-            assignment_id=f"{pending_task.task_id}:1:1",
-            phase="dispatch",
-            provider=Provider.CURSOR,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-            size=WorkSize.SIMPLE,
-            model_label=None,
-            available_primary_providers=PRIMARY_PROVIDERS,
-            mode=EnforcementMode.ENFORCED,
-        )
-        self.assertTrue(pending.decision.allowed)
-        self.store.finalize_workload_reservation(
-            pending.reservation_key, WorkloadAttemptOutcome.INVOKED
-        )
-
-        canonical_tail = (
-            [Provider.CLAUDE] * 10
-            + [Provider.CURSOR] * 2
-            + [Provider.GROK] * 3
-            + [Provider.GEMINI] * 2
-            + [Provider.PERPLEXITY]
-        )
-        self.assertEqual(len(canonical_tail), 18)
-        for index in range(20):
-            task_id = f"DIR-CREDIT-ORDER-{index}"
+        self.store.create(self._minimal_done_task("old-credit"))
+        self._insert_raw_direct_credit(task_id="old-credit", assignment_id="old-credit:1:1",
+            provider=Provider.CLAUDE, effort_units=1, recorded_at="2026-09-01T00:00:00+00:00")
+        # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
+        for index, provider in enumerate(providers):
+            task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
-            if index == 0:
-                provider = Provider.CLAUDE
-                effort_units = 8
-                recorded_at = new_recorded_at
-            elif index == 1:
-                provider = Provider.CLAUDE
-                effort_units = 1
-                recorded_at = old_recorded_at
-            else:
-                provider = canonical_tail[index - 2]
-                effort_units = 1
-                recorded_at = old_recorded_at
-            self._insert_raw_direct_credit(
-                task_id=task_id,
-                assignment_id=f"{task_id}:1:1",
-                provider=provider,
-                effort_units=effort_units,
-                recorded_at=recorded_at,
-            )
-
-        candidate = self.reserve(
-            "credit-order-candidate",
-            Provider.CLAUDE,
-            effort_units=1,
-            kind=WorkKind.IMPLEMENTATION,
-        )
-
+            self._insert_raw_direct_credit(task_id=task_id, assignment_id=f"{task_id}:1:1",
+                provider=provider, effort_units=100 if provider is Provider.CURSOR else 1,
+                recorded_at="2026-08-01T00:00:00+00:00")
+        candidate = self.reserve("ordered", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
-        self.assertNotIn(
-            "direct_production_hard_threshold_exceeded:claude:",
-            candidate.decision.violations,
-        )
+        self.assertIn("prospective_direct_production_share:claude:7/20", candidate.decision.advisories)
+
 
     def test_sqlite_cas_allows_one_cross_process_creator(self) -> None:
         context = multiprocessing.get_context("spawn")
@@ -1075,3 +1278,14 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5 | 2026-08-29 | 06:14 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-29 | 06:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 06:53 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:18 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+
+# [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-06 | 01:26 UTC | END]]

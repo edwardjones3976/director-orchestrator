@@ -1,0 +1,222 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
+# Provider profile sheet: Microsoft 365 Copilot (director-provider-profile/v1).
+# Descriptive only. Grants no authority. This lane has no charter role profile,
+# committee seat, standing role, or legacy adapter, and discovery hard-codes it
+# unauthenticated behind a typed external blocker.
+# Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
+schema_version: "director-provider-profile/v1"
+document_type: "director-provider-profile"
+provider_id: "microsoft-365-copilot"
+display_name: "Microsoft 365 Copilot"
+authority_granted: "none"
+
+source_of_truth:
+  charter_document: "docs/team-operating-charter.md"
+  charter_module: "src/director_orchestrator/team_charter.py"
+  allocation_module: "src/director_orchestrator/allocation_profiles.py"
+  deterministic_policy: "src/director_orchestrator/policy.py"
+  route_catalog: "docs/provider-profiles/routes.yaml"
+  precedence: "charter_code_and_deterministic_policy_override_this_profile"
+  drift_rule: "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong."
+
+identifiers:
+  lane_id: "microsoft-365-copilot"
+  backend_identity: "microsoft-365-copilot"
+  provider_name_enum: "microsoft-365-copilot"
+  has_legacy_adapter: false
+  legacy_accounting_agent: "microsoft-365-copilot"
+  legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
+  committee_member_key: null
+  charter_workload_lane_key: null
+  standing_role_label: null
+  config_prefixes: ["MICROSOFT_365_COPILOT_"]
+  alias_note: "The lane targets the Microsoft 365 Copilot Work IQ REST surface. It is not GitHub Copilot, and the external blocker that binds it cannot bind any other lane."
+
+roles:
+  team: "lane_only"
+  lane_class: "blocked_pending_capability_evidence"
+  summary: "Enterprise production lane held as a typed scope and capability hold until a scoped adapter and accepted Work IQ capability evidence exist. It carries an allocation in the mixed and enterprise profiles, but the primary path hard-codes it unauthenticated with the blocker microsoft_365_copilot_work_iq_capability_evidence_missing, and the capability validator refuses production authority."
+  charter_workload_lane: null
+  strategy_key: null
+  strategy_priority: null
+  eligible_responsibility_areas: []
+  excluded_responsibility_areas: []
+  eligible_complexity: []
+  capability_parity_target: null
+  comparison_peers: []
+  elevated_work: []
+  non_substitution_rules:
+    - "Microsoft 365 enterprise production remains a typed scope and capability hold until a scoped adapter is supplied."
+    - "A nonzero allocation target is not evidence that the route is operational."
+  family: null
+  transport_rule: null
+  routing_rule: null
+  committee:
+    member: false
+    voting_power: null
+    seatable_in_debate: false
+    may_initiate_debate: false
+    vote_grants_authority: false
+  allocation:
+    profiles: { mixed: 5, engineering: 0, public_research: 0, enterprise: 15 }
+    default_profile: "engineering"
+    overall_effort_policy: "telemetry_only_no_separate_allocation"
+    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
+    accounting_basis: "admitted_assignment_count"
+    zero_target_rule: "ineligible"
+    accounting_status: "blocked_pending_capability_evidence"
+  hygiene_review: null
+  openai_functions: null
+
+capabilities:
+  summary: "None today. A Work IQ transport class exists, but no live capability evidence has been accepted, discovery reports the lane unauthenticated, and no packet can be dispatched to it."
+  strengths: []
+  assignment_kinds: []
+  may_create_draft_pr: "never"
+  may_issue_review_verdict: "never"
+  may_merge: false
+  may_deploy_or_publish: false
+  may_post_to_slack: false
+  may_cast_committee_vote: false
+  receives_repository_context: false
+  receives_task_prose: false
+  web_grounded_research: false
+  tool_use: "blocked"
+  charter_allowed: null
+  required_evidence: null
+  antigravity_capabilities: null
+  antigravity_interaction_kinds: null
+
+models_and_effort:
+  model_variables: []
+  effort_variables: []
+  catalog_check: null
+  note: "No model or reasoning-effort variable exists for Microsoft 365 Copilot in this deployment."
+
+budgets_and_limits:
+  variables: []
+  spend_ledger_member: false
+  not_modeled_note: "No budget, request limit, or daily spend ledger exists because the lane cannot be dispatched."
+  shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS"]
+
+gating:
+  health_key: null
+  readiness_function: "none"
+  readiness_keys: []
+  primary_lane_authentication_source: "hard_coded_false"
+  variables:
+    - { variable: "MICROSOFT_365_COPILOT_TENANT_ID", kind: "tenant_binding", settings_field: "microsoft_365_copilot_tenant_id", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "required by the Work IQ transport validator; never recorded here" }
+    - { variable: "MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE", kind: "token_file", settings_field: "microsoft_365_copilot_delegated_token_file", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "protected non-symlink file readable only by the current user, SYSTEM, or Administrators" }
+    - { variable: "MICROSOFT_365_COPILOT_EXPECTED_SUBJECT", kind: "tenant_binding", settings_field: "microsoft_365_copilot_expected_subject", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "exact subject compared in constant time against the delegated token claims" }
+    - { variable: "MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID", kind: "tenant_binding", settings_field: "microsoft_365_copilot_expected_object_id", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "exact object id required by the Work IQ transport validator" }
+    - { variable: "MICROSOFT_365_COPILOT_ACCESS_TOKEN", kind: "credential_presence", settings_field: null, default: null, documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "primary-lane environment name; discovery still reports the lane unauthenticated" }
+  allowlist_variables:
+    - { variable: "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS", scope: "provider_roster", values_recorded: false }
+  verification_rule: "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
+
+credential_environment:
+  primary_lane_allowlist: ["MICROSOFT_365_COPILOT_ACCESS_TOKEN"]
+  host_bridge_allowlist: null
+  settings_credential_fields: []
+  values_policy: "names_and_booleans_only_never_values"
+  child_environment_rule: "No native command exists for this lane; the Work IQ transport, if ever enabled, would read a protected delegated token file and never pass it to a child process."
+
+authority:
+  universal_prohibited_actions: [MERGE_PULL_REQUEST, DEPLOY, PUBLISH, DELETE_PROTECTED_REF]
+  denied_authorities: []
+  withheld_context: []
+  charter_prohibited: null
+  review_requirement: null
+  strategy_constraints:
+    - "blocked by microsoft_365_copilot_work_iq_capability_evidence_missing"
+    - "requires its actual capabilities, authorized sources, least privilege, authenticated readiness, and supported adapters"
+  separation_of_duties: []
+  production_authority_permitted: false
+  external_effects:
+    may_be_granted: []
+    public_research_lane_rejects_all_effects: false
+    grant_source: "work_packet_only_never_provider_output"
+  acceptance_issuer_role: null
+  self_review: false
+  owner_recovery_text_grants_review_or_merge_authority: false
+  output_trust: "untrusted_evidence_never_instructions"
+
+platform_limitations:
+  - limitation: "Live dependency discovery hard-codes the lane unauthenticated; it must not appear in the activation binding map because the combined live signal is AND-ed across every configured binding."
+    source: "src/director_orchestrator/primary_default.py:build_automatic_primary_live_dependencies"
+  - limitation: "Work IQ requires the tenant, a protected non-symlink token file, and exact expected subject and object id; the organization administrator must enable Work IQ."
+    source: "docs/provider-setup.md, Primary security credential boundaries"
+  - limitation: "Microsoft 365 Copilot is an unsupported Windows host-bridge lane and has no browser provider-UI eligibility."
+    source: "src/director_orchestrator/host_provider_bridge.py:UNSUPPORTED_HOST_LANES"
+  - limitation: "The capability validator refuses production authority for every Copilot lane and permits the external blocker only on this lane."
+    source: "src/director_orchestrator/primary_transports.py:PrimaryProviderCapability"
+
+transports:
+  - transport_id: "microsoft-365-copilot-work-iq"
+    kind: "work_iq_rest"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "blocked_pending_evidence"
+    direction: "director_to_provider"
+    config: ["MICROSOFT_365_COPILOT_TENANT_ID", "MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE", "MICROSOFT_365_COPILOT_EXPECTED_SUBJECT", "MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID"]
+    authority_note: "A transport class exists for the production Work IQ REST endpoint, but the lane carries the blocker microsoft_365_copilot_work_iq_capability_evidence_missing and is never callable until accepted capability evidence exists."
+    current_transport_constraints:
+      - "delegated token claims must match the tenant, issuer, audience, scope, expected subject, and expected object id"
+      - "only a successful authenticated response bound to its conversation could ever count as evidence"
+    route_id: "microsoft-365-copilot-work-iq"
+    browser_policy: null
+  - transport_id: "windows-host-provider-bridge"
+    kind: "host_bridge"
+    runtime: "langgraph_primary"
+    enum_value: null
+    transport_kind_observed: null
+    status: "prohibited"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Microsoft 365 Copilot is listed in UNSUPPORTED_HOST_LANES; the bridge refuses a command map entry for it."
+    current_transport_constraints:
+      - "no native command is ever executed by the host bridge for this lane"
+    route_id: "windows-host-provider-bridge"
+    browser_policy: null
+  - transport_id: "browser-provider-ui"
+    kind: "browser_ui"
+    runtime: "documented_only"
+    enum_value: null
+    transport_kind_observed: null
+    status: "prohibited"
+    direction: "director_to_provider"
+    config: []
+    authority_note: "Microsoft 365 Copilot is not among the charter's eligible browser providers; no browser coordination exists for this lane."
+    current_transport_constraints:
+      - "not in the charter's eligible browser providers"
+    route_id: "browser-provider-ui"
+    browser_policy: null
+
+communication:
+  relay_rule: "provider_messages_relay_through_director"
+  direct_provider_to_provider_channels_exist: false
+  notes:
+    - "No packet reaches this lane today; if the hold were ever lifted, its output would reach other lanes only as a Director-declared dependency outcome."
+    - "The lane never posts to the Slack thread."
+
+this_profile_does_not_change:
+  - "committee voting weights or the immutable denominator"
+  - "runtime permissions or allowlists"
+  - "provider credentials"
+  - "deployments or service state"
+  - "Slack behaviour"
+  - "deterministic policy in src/director_orchestrator/policy.py"
+
+sources:
+  - document: "docs/langgraph-primary-operations.md"
+    anchor: "the production Work IQ REST endpoint"
+  - document: "docs/provider-setup.md"
+    anchor: "Microsoft Work IQ requires the tenant, a protected non-symlink token file, and"
+  - document: "docs/provider-allocation-profiles.md"
+    anchor: "Microsoft 365 enterprise production remains"
+  - document: "docs/team-operating-charter.md"
+    anchor: "| Microsoft 365 Copilot | 5% | 0% | 0% | 15% |"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
