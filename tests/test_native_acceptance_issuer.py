@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 04:55 UTC | BEGIN]]
 # [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | BEGIN]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
@@ -17,6 +18,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import zipfile
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -308,6 +310,52 @@ class WindowsBoundaryTests(unittest.TestCase):
             self.assertEqual((destination / "director_orchestrator" / "__init__.py").read_text(), "# accepted")
             self.assertFalse((destination / "director_orchestrator" / "__pycache__").exists())
 
+    @unittest.skipUnless(os.name == "nt", "Windows installer blob fidelity")
+    def test_installer_writes_accepted_blob_bytes_under_eol_conversion(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo, destination = root / "repo", root / "installed"
+            repo.mkdir(); destination.mkdir()
+            package = repo / "src" / "director_orchestrator"
+            (package / "nested").mkdir(parents=True)
+            accepted = b"# accepted\nimport os\n\n\nVALUE = 1\n"
+            (package / "__init__.py").write_bytes(accepted)
+            asset = bytes(range(256))
+            (package / "nested" / "asset.bin").write_bytes(asset)
+            # Disposable fixture repository only; nothing global or shared is configured.
+            (repo / ".gitattributes").write_bytes(b"* text eol=crlf\nsrc/director_orchestrator/nested/asset.bin -text\n")
+            git = shutil.which("git")
+            def run(*args):
+                return subprocess.check_output([git, "-C", str(repo), *args], stderr=subprocess.DEVNULL).decode().strip()
+            run("init")
+            run("config", "core.autocrlf", "true")
+            run("add", ".")
+            run("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")
+            head = run("rev-parse", "HEAD")
+            blob = run("rev-parse", head + ":src/director_orchestrator/__init__.py")
+            asset_blob = run("rev-parse", head + ":src/director_orchestrator/nested/asset.bin")
+            # The accepted blob is LF and shorter than any working-tree form.
+            self.assertEqual(run("cat-file", "-s", blob), str(len(accepted)))
+            archive = root / "archive.zip"
+            subprocess.check_call([git, "-C", str(repo), "archive", "--format=zip", "--output", str(archive), head, "src/director_orchestrator"], stderr=subprocess.DEVNULL)
+            with zipfile.ZipFile(archive) as bundle:
+                converted = bundle.read("src/director_orchestrator/__init__.py")
+            # Actual Windows Git rewrites the accepted bytes on the archive path.
+            self.assertNotEqual(converted, accepted)
+            self.assertEqual(converted, accepted.replace(b"\n", b"\r\n"))
+            source = (Path(__file__).resolve().parents[1] / "scripts" / "windows-install-native-issuer.ps1").read_text()
+            function = source.split('function Install-TrackedPackage', 1)[1].split('Install-TrackedPackage $GitExecutable', 1)[0]
+            script = root / "blob-fidelity.ps1"
+            script.write_text("$ErrorActionPreference='Stop'\nfunction Install-TrackedPackage" + function + "\nInstall-TrackedPackage '" + git + "' '" + str(repo) + "' '" + head + "' '" + str(destination) + "'")
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], cwd=str(repo), capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            installed = destination / "director_orchestrator" / "__init__.py"
+            self.assertEqual(installed.read_bytes(), accepted)
+            self.assertEqual((destination / "director_orchestrator" / "nested" / "asset.bin").read_bytes(), asset)
+            for path, expected in ((installed, blob), (destination / "director_orchestrator" / "nested" / "asset.bin", asset_blob)):
+                actual = subprocess.check_output([git, "hash-object", "--no-filters", "--", str(path)], stderr=subprocess.DEVNULL).decode().strip()
+                self.assertEqual(actual, expected)
+
     @unittest.skipUnless(os.name == "nt", "Windows installer ACL semantics")
     def test_installer_inherit_only_parity_preserves_capability_rejection(self):
         source = (Path(__file__).resolve().parents[1] / "scripts" / "windows-install-native-issuer.ps1").read_text()
@@ -482,3 +530,5 @@ try {
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
 
 # [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | END]]
+
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 04:55 UTC | END]]
