@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:20 UTC | BEGIN]] -->
 # Stage A: LangGraph primary as intake owner, with simulated providers
 
@@ -97,15 +98,28 @@ the life of the process.
 
 ## Verification
 
-All ten of these must be true, and they are the same fields the sanctioned
-`-Action Activate` asserts:
+Nine fields must be true. The tenth, `primary_runtime_active`, must be **false**,
+and expecting otherwise is the easiest way to misread Stage A as a failure.
 
 ```
 primary_graph_constructed      checkpoint_schema_current    writer_lease_ready
 primary_router_wired           claim_store_ready            reconciliation_worker_ready
-checkpoint_backend_postgres    effect_ledger_ready          primary_runtime_active
-                                                            legacy_new_intake_disabled
+checkpoint_backend_postgres    effect_ledger_ready          legacy_new_intake_disabled
 ```
+
+`primary_runtime_active` takes
+`langgraph_primary_live_provider_dispatch_enabled` as its first conjunct
+(`primary_default.py:2634-2646`). Live dispatch is mutually exclusive with
+offline simulation, so under Stage A this field *cannot* be true. It is
+measuring the live path, not this one.
+
+The field that measures Stage A is **`paid_off_primary_intake_active`**
+(`primary_default.py:2623-2631`): the same component checks, plus
+`legacy_new_intake_disabled`, plus `not allow_paid_runs`. It exists precisely to
+describe primary owning intake with the money switched off. It must be **true**.
+
+The ten-field list belongs to `-Action Activate`, which asserts it only on the
+live path where dispatch is on.
 
 Then the ownership proof:
 
@@ -168,3 +182,4 @@ Stage A is a rung, not a shortcut. It proves the primary plane owns intake and
 runs its own lifecycle, with the money and the authorisation questions still
 closed.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:35 UTC | END]] -->
