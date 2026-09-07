@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
@@ -13,6 +14,8 @@ param(
     [string]$NativeHome,
     [string]$NativeProject,
     [string]$NativeDenyHook,
+    [string]$NativeAuthAccountId = '',
+    [string]$NativeAuthRegistrySha256 = '',
     [Parameter(Mandatory)][string]$BrokerAccount,
     [Parameter(Mandatory)][string]$WorkerAccount,
     [Parameter(Mandatory)][string]$CoordinatorSid,
@@ -121,6 +124,8 @@ if (Test-Path -LiteralPath $root) {
 $source = (Resolve-Path -LiteralPath $AcceptedSource).Path
 $head = & $GitExecutable -C $source rev-parse HEAD
 if ($LASTEXITCODE -ne 0 -or $head -cne $AcceptedCommit) { throw 'Accepted installation source revision mismatch.' }
+$acceptedTree = & $GitExecutable -C $source rev-parse "$AcceptedCommit^{tree}"
+if ($LASTEXITCODE -ne 0 -or $acceptedTree -notmatch '^[0-9a-f]{40}$') { throw 'Accepted source tree could not be resolved.' }
 if (& $GitExecutable -C $source status --porcelain) { throw 'Installation source must be clean.' }
 # This read-only local source is a review input, not a remote acquisition command.
 $mirrorSource = (Resolve-Path -LiteralPath $RepositoryMirror).Path
@@ -145,7 +150,7 @@ function Set-ExactAcl([string]$Path, [hashtable]$Access) {
 $baseAcl = @{'S-1-5-18'='FullControl';'S-1-5-32-544'='FullControl'}
 $rootAcl = $baseAcl.Clone(); $rootAcl[$broker]='ReadAndExecute'; $rootAcl[$worker]='ReadAndExecute'; $rootAcl[$CoordinatorSid]='ReadAndExecute'
 Set-ExactAcl $root $rootAcl
-foreach ($name in @('code','authorizations','mirror','broker','worker','requests','responses','public','cursor-config')) {
+foreach ($name in @('code','authorizations','mirror','broker','worker','requests','responses','public','cursor-config','native-auth')) {
     $path = Join-Path $root $name
     New-Item -ItemType Directory -Path $path | Out-Null
     $access = $baseAcl.Clone()
@@ -204,6 +209,7 @@ $config = [ordered]@{
     entrypoint_digest=$(if ($NativeEntrypoint) {(Get-FileHash -LiteralPath $NativeEntrypoint -Algorithm SHA256).Hash.ToLowerInvariant()} else {$null})
     model=$Model;runtime_roots=@($ProtectedRuntimeRoots)
     native_home=$NativeHome;native_project=$NativeProject;native_deny_hook=$NativeDenyHook
+    native_auth_account_id=$NativeAuthAccountId;native_auth_registry_sha256=$NativeAuthRegistrySha256
     native_deny_hook_digest=$(if ($NativeDenyHook) {(Get-FileHash -LiteralPath $NativeDenyHook -Algorithm SHA256).Hash.ToLowerInvariant()} else {''})
 }
 $utf8 = [Text.UTF8Encoding]::new($false)
@@ -237,7 +243,7 @@ foreach ($item in Get-ChildItem -LiteralPath $root -Recurse -Force) {
     }
 }
 $manifestPath = Join-Path $root 'installation.json'
-[IO.File]::WriteAllText($manifestPath,(@{commit=$AcceptedCommit;broker_sid=$broker;worker_sid=$worker;files=$files} | ConvertTo-Json -Depth 5 -Compress),$utf8)
+[IO.File]::WriteAllText($manifestPath,(@{commit=$AcceptedCommit;tree=$acceptedTree;broker_sid=$broker;worker_sid=$worker;files=$files} | ConvertTo-Json -Depth 5 -Compress),$utf8)
 $acl = Get-Acl -LiteralPath $manifestPath
 $acl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
 Set-Acl -LiteralPath $manifestPath -AclObject $acl
@@ -251,3 +257,4 @@ Write-Output 'No key generated and no native login or dispatch occurred. Follow 
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]

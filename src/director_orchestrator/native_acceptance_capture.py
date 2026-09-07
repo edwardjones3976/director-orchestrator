@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
@@ -16,7 +17,7 @@ import threading
 import time
 
 from .native_acceptance_issuer import (IssuerError, MAX_CAPTURE, MAX_DOCUMENT, MAX_PACKET,
-    NATIVE_AUTH_UNENROLLED, _pairs, canonical, claim, contained_native_path, context_from,
+    _pairs, canonical, claim, contained_native_path, context_from,
     digest, read_json, write_new)
 
 CURSOR_DENY = ["Shell(*)", "Read(**)", "Read(/*)", "Read(/**)", "Write(**)",
@@ -119,7 +120,7 @@ def _verdict(text, request):
         raise IssuerError("native review did not accept exact challenge and packet")
 
 
-def parse_capture(raw, *, provider, model, request, exit_code):
+def parse_capture(raw, *, provider, model, request, exit_code, native_auth=None):
     if exit_code != 0 or len(raw) > MAX_DOCUMENT:
         raise IssuerError("native execution incomplete")
     capture = _object(json.loads(raw, object_pairs_hook=_pairs), "native capture is not an object")
@@ -154,7 +155,7 @@ def parse_capture(raw, *, provider, model, request, exit_code):
         return parse_acp(capture, request=request, model=model)
     if provider in {"openai", "gemini"}:
         from .native_acceptance_streams import parse_additional
-        return parse_additional(capture, provider=provider, model=model, request=request)
+        return parse_additional(capture, provider=provider, model=model, request=request, native_auth=native_auth)
     raise IssuerError("unsupported fixed native provider")
 
 
@@ -280,11 +281,16 @@ def work(cfg, job_id):
     if len(job_id) != 64 or any(c not in "0123456789abcdef" for c in job_id):
         raise IssuerError("invalid worker challenge")
     request = cfg.read("requests", job_id + ".json", MAX_PACKET * 2, worker=True)
-    if set(request) != {"context", "packet", "run_nonce"}:
+    request_fields = {"context", "packet", "run_nonce"}
+    if cfg.provider == "gemini":
+        request_fields.add("native_auth_enrollment_digest")
+    if set(request) != request_fields:
         raise IssuerError("unknown worker request fields")
     context = context_from(request["context"])
     if context.challenge != job_id or digest(request["packet"].encode()) != context.packet_digest or not context.issued_at <= int(time.time()) < context.expires_at:
         raise IssuerError("worker request mismatch or expiry")
+    from .native_auth_enrollment import require_native_auth
+    native_auth = require_native_auth(cfg, worker=True, expected_digest=request.get("native_auth_enrollment_digest"))
     command = cfg.command()
     env = child_environment()
     timeout = min(600, context.expires_at - int(time.time()))
@@ -338,11 +344,7 @@ def work(cfg, job_id):
             if not is_deny_all_settings(read_json(settings_path)) or read_json(hooks_path) != deny_all_hooks_document(cfg.native_deny_hook):
                 raise IssuerError("protected AGY deny-all policy and wildcard hook required")
             pin_native_home(env, home)
-            if cfg.provider in NATIVE_AUTH_UNENROLLED:
-                raise IssuerError("native AGY acceptance lane unavailable: independent native "
-                                  "authentication readback is not enrolled for this issuer")
-            # Unreachable until protected host enrollment supplies trusted native
-            # authentication evidence; the transport is preserved, not exercised.
+            native_auth = require_native_auth(cfg, worker=True, expected_digest=request["native_auth_enrollment_digest"])
             code, raw = run_bounded([*command, "--input-format", "stream-json", "--output-format", "stream-json",
                 "--model", cfg.model, "--project", cfg.native_project], cwd=cwd, env=env, timeout=timeout,
                 stdin=canonical({"event": "user", "message": {"content": prompt_for(request)}})+b"\n")
@@ -350,10 +352,12 @@ def work(cfg, job_id):
             # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
         else:
             raise IssuerError("unsupported native provider")
-        parse_capture(capture, provider=cfg.provider, model=cfg.model, request=request, exit_code=code)
+        native_auth = require_native_auth(cfg, worker=True, expected_digest=request.get("native_auth_enrollment_digest"))
+        parse_capture(capture, provider=cfg.provider, model=cfg.model, request=request, exit_code=code, native_auth=native_auth)
         write_new(cfg.root / "responses" / (job_id + ".json"), dict(request_digest=digest(canonical(request)), worker_sid=cfg.worker_sid, exit_code=code, capture=base64.b64encode(capture).decode()))
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]

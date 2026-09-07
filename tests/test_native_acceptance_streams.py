@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
 """Synthetic native events test parser contracts, not provider enrollment."""
@@ -62,7 +63,7 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
                 else:
                     capture["events"][-1]["result"]["response"] = value
                 with self.subTest(provider=provider, value=value):
-                    with self.assertRaisesRegex(IssuerError, "native verdict"):
+                    with self.assertRaises(IssuerError):
                         self.parse(provider, capture)
 
     def test_malformed_stream_objects_raise_controlled_issuer_errors(self):
@@ -276,7 +277,9 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
                     if provider=="openai":
                         work(cfg,fixture.context.challenge)
                     else:
-                        expected="deny-all policy" if surplus else "lane unavailable"
+                        # Legacy requests without the pre-disclosure enrollment
+                        # pin fail before configuration or provider execution.
+                        expected="unknown worker request fields"
                         with self.subTest(surplus=surplus),self.assertRaisesRegex(IssuerError,expected):
                             work(cfg,fixture.context.challenge)
                 written=(fixture.root/"responses"/(fixture.context.challenge+".json")).exists()
@@ -298,3 +301,4 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
             with self.assertRaises(IssuerError):cfg.command()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]

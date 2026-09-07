@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
 """Strict native Codex and AGY receipt captures; never an enrollment authority.
@@ -11,10 +12,10 @@ until protected host enrollment supplies trusted native identity readback.
 import json
 import re
 
-from .native_acceptance_issuer import IssuerError, NATIVE_AUTH_UNENROLLED, _pairs, canonical
+from .native_acceptance_issuer import IssuerError, _pairs, canonical
 
 
-def parse_additional(capture, *, provider, model, request):
+def parse_additional(capture, *, provider, model, request, native_auth=None):
     from .native_acceptance_capture import _object, _verdict
     if set(capture) != {"protocol", "requested_model", "observed_model", "observed_account", "cwd", "events", "auth"}:
         raise IssuerError("native capture fields differ")
@@ -88,7 +89,9 @@ def parse_additional(capture, *, provider, model, request):
     # auth label and this session id are not evidence that the native account is
     # authenticated, so no receipt may be signed from this capture. Removing this
     # fail-closed step requires trusted enrollment readback, not a stream field.
-    if provider in NATIVE_AUTH_UNENROLLED:
+    from .native_auth_enrollment import VerifiedNativeAuth
+    if (not isinstance(native_auth, VerifiedNativeAuth)
+        or request.get("native_auth_enrollment_digest") != native_auth.enrollment_digest):
         raise IssuerError("native AGY acceptance lane unavailable: independent native "
                           "authentication readback is not enrolled for this issuer")
     return session
@@ -101,3 +104,4 @@ def capture_document(raw, *, provider, model, cwd, auth):
         events=[json.loads(line, object_pairs_hook=_pairs) for line in raw.splitlines() if line.strip()]))
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
