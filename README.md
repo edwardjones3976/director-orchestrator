@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
@@ -56,7 +57,7 @@ A bounded, event-driven control plane for coordinating specialist AI agents from
 
 Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`,
 `docs/slack-collaboration-bus.md`, `docs/project-bootstrap-protocol.md`,
-`docs/contribution-attribution-policy.md`,
+`docs/contribution-attribution-policy.md`, `docs/provider-profiles/README.md`,
 `docs/cloud-hosting-later.md`, `docs/project-uppercut-reiteration.md`, and
 `docs/edge-oracle-operations.md`.
 
@@ -335,6 +336,7 @@ $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\scripts\windows-postgres-test-lane.ps1 -Action Stop
 .\.venv\Scripts\python.exe -m json.tool n8n\workflows\director-intake.json > $null
+.\.venv\Scripts\python.exe scripts\render_provider_profiles.py --check
 $env:DIRECTOR_ENV_FILE = ".env.example"
 docker compose --env-file .env.example config --quiet
 ```
@@ -398,3 +400,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->

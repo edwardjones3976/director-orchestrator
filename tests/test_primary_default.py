@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -762,6 +763,8 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             Settings(),
             repository_allowlist=("owner/repository",),
             langgraph_primary_external_effect_pull_number=pull_number,
+            langgraph_primary_external_effect_base_sha="b" * 40,
+            langgraph_primary_external_effect_head_sha="c" * 40,
         )
 
     def test_github_effect_is_pinned_to_configured_director_authority(self):
@@ -790,8 +793,8 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             {
                 "repository": "owner/repository",
                 "pull_number": 82,
-                "head_sha": "a" * 40,
-                "base_sha": "a" * 40,
+                "head_sha": "c" * 40,
+                "base_sha": "b" * 40,
             },
             target,
         )
@@ -810,7 +813,9 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             repository_allowlist=("owner/repository", "owner/second"),
         )
 
-        for settings in (unconfigured, multi_repository):
+        for settings in (unconfigured, multi_repository,
+                         replace(self._grant_settings(), langgraph_primary_external_effect_base_sha=""),
+                         replace(self._grant_settings(), langgraph_primary_external_effect_head_sha="invalid")):
             with self.subTest(repositories=settings.repository_allowlist):
                 self.assertEqual((), typed_external_effect_grant_kinds(settings))
                 self.assertIsNone(
@@ -920,13 +925,12 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             bind(proposal("attacker/fork#82", "redirected-repository"))
         with self.assertRaisesRegex(RuntimeError, "not the configured pull request"):
             bind(proposal("owner/repository#83", "redirected-pull-request"))
-        with self.assertRaisesRegex(
-            RuntimeError, "head or base is outside Director authority"
-        ):
-            bind(
-                proposal("owner/repository#82", "redirected-head"),
-                context=self._effect_context(record, candidate="c" * 40),
-            )
+        # Deployment/task source identity cannot rewrite the independently
+        # approved PR target. The remote gateway revalidates these PR revisions.
+        result = bind(proposal("owner/repository#82", "independent-pr"),
+                      context=self._effect_context(record, candidate="d" * 40))
+        self.assertEqual(result[2]["head_sha"], "c" * 40)
+        self.assertEqual(result[2]["base_sha"], "b" * 40)
         with self.assertRaisesRegex(RuntimeError, "Slack effect target changed"):
             bind(
                 {
@@ -2719,3 +2723,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]]
@@ -623,7 +624,7 @@ class HostProviderBridgeTests(unittest.TestCase):
         self.assertNotIn("windows_copilot", server_source)
 
     def test_executor_refuses_direct_provider_lanes(self) -> None:
-        for provider in ("cursor", "microsoft-365-copilot"):
+        for provider in ("microsoft-365-copilot",):
             with self.subTest(provider=provider), self.assertRaisesRegex(
                 ValueError, "unsupported"
             ):
@@ -641,3 +642,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]

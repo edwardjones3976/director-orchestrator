@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:00 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:20 UTC | BEGIN]]
@@ -80,6 +81,7 @@ class SubjectKind(StrEnum):
 
 
 class EntitlementActionType(StrEnum):
+    SOURCE_READ = "source.read"
     REVIEW_EXACT_SHA = "review.exact_sha"
     REPOSITORY_WRITE = "repository.write"
     SLACK_WRITE = "slack.write"
@@ -89,6 +91,7 @@ class EntitlementActionType(StrEnum):
 
 
 ACTION_CAPABILITY: Mapping[EntitlementActionType, str] = {
+    EntitlementActionType.SOURCE_READ: "source.read.manifest",
     EntitlementActionType.REVIEW_EXACT_SHA: "review.exact_sha",
     EntitlementActionType.REPOSITORY_WRITE: "repository.write.non_protected",
     EntitlementActionType.SLACK_WRITE: "integration.slack.write",
@@ -131,6 +134,7 @@ PROFILE_TEMPLATE_CAPABILITIES: Mapping[str, frozenset[str]] = {
         }
     ),
     "antigravity-exact-sha/v1": frozenset({"review.exact_sha"}),
+    "antigravity-team-engineering/v1": frozenset({"source.read.manifest", "dispatch.scoped", "repository.write.non_protected", "review.exact_sha"}),
 }
 
 SHARED_TEMPLATE_CAPABILITIES = frozenset(
@@ -147,6 +151,7 @@ SHARED_TEMPLATE_CAPABILITIES = frozenset(
 
 AUTHORITY_BEARING_CAPABILITIES = frozenset(
     {
+        "source.read.manifest",
         "review.exact_sha",
         "review.coordinate",
         "repository.write.non_protected",
@@ -349,6 +354,8 @@ def path_matches_pattern(pattern: str, candidate_path: str) -> bool:
 def effective_capabilities(profile_template_id: str) -> frozenset[str]:
     if profile_template_id not in PROFILE_TEMPLATE_CAPABILITIES:
         raise EntitlementContractError("unknown profile entitlement template")
+    if profile_template_id == "antigravity-team-engineering/v1":
+        return PROFILE_TEMPLATE_CAPABILITIES[profile_template_id]
     if profile_template_id == SHARED_INTEGRATIONS_TEMPLATE_ID:
         return frozenset(SHARED_TEMPLATE_CAPABILITIES)
     return SHARED_TEMPLATE_CAPABILITIES | PROFILE_TEMPLATE_CAPABILITIES[profile_template_id]
@@ -1463,3 +1470,4 @@ def parse_runtime_evidence_proof_v1(raw: bytes) -> RuntimeEvidenceProofV1:
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:20 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-04 | 20:00 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 20:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]

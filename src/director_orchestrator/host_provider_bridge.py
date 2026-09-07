@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -38,9 +39,9 @@ from .packet_contracts import canonical_json_bytes
 
 BRIDGE_PROTOCOL = "director-host-provider-bridge/v1"
 SUPPORTED_HOST_LANES = frozenset(
-    {"openai", "claude", "grok", "antigravity", "github-copilot"}
+    {"openai", "claude", "cursor", "grok", "antigravity", "github-copilot"}
 )
-UNSUPPORTED_HOST_LANES = frozenset({"cursor", "microsoft-365-copilot"})
+UNSUPPORTED_HOST_LANES = frozenset({"microsoft-365-copilot"})
 _TOKEN = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_PACKET_BYTES = 1_048_576
@@ -52,6 +53,7 @@ _SAFE_OS_ENV = frozenset(
 )
 _LANE_AUTH_ENV = {
     "openai": frozenset(),
+    "cursor": frozenset(),
     "claude": frozenset({"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}),
     "grok": frozenset({"XAI_API_KEY"}),
     "antigravity": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
@@ -414,7 +416,7 @@ class WindowsHostProviderExecutor:
             providers.remove("openai")
         return providers
 
-    def execute(self, request: BridgeRequest) -> bytes:
+    def execute(self, request: BridgeRequest, *, execution_observer=None) -> bytes:
         command = self.commands.get(request.provider)
         if command is None:
             raise HostProviderBridgeError("host provider command is not configured")
@@ -431,6 +433,7 @@ class WindowsHostProviderExecutor:
                 max_hops=work["limits"]["max_hops"],
                 timeout_seconds=min(self.timeout_seconds, work["limits"]["timeout_seconds"]),
                 allowed_external_effects=tuple(work["allowed_external_effects"]),
+                execution_observer=execution_observer,
             )
             try:
                 result = self.native_codex.send(request.packet, context=context)
@@ -466,6 +469,8 @@ class WindowsHostProviderExecutor:
             raise HostProviderBridgeAmbiguous("host provider returned malformed JSON") from exc
         if not isinstance(result, dict):
             raise HostProviderBridgeAmbiguous("host provider result is not a JSON object")
+        if execution_observer is not None:
+            execution_observer(request.provider, completed.stdout, None)
         return completed.stdout
 
 
@@ -683,3 +688,5 @@ def dispatch_bridge_request(
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]

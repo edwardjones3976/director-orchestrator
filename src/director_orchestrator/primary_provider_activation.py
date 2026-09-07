@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
@@ -31,6 +32,7 @@ class PrimaryProviderActivationService:
         bindings: Mapping[str, ProviderActivationBinding],
         required_providers: tuple[str, ...],
         clock: Callable[[], datetime] | None = None,
+        capture_verifier=None,
     ) -> None:
         if not required_providers or len(set(required_providers)) != len(
             required_providers
@@ -49,6 +51,21 @@ class PrimaryProviderActivationService:
             normalized[provider_id] = ProviderActivationRegistry(store, binding)
         self._registries = normalized
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._store = store
+        self._capture_verifier = capture_verifier
+
+    def _live_captures_valid(self, registry) -> bool:
+        if self._capture_verifier is None:
+            return False
+        for surface in ProviderActivationSurface:
+            records = self._store.load(registry.binding,surface)
+            if not records or records[-1].stage != ProviderActivationStage.LIVE_OK:
+                return False
+            evidence = records[-1]
+            if not self._capture_verifier.verify(registry.binding,evidence.evidence_digest,
+                                                 expires_at=evidence.expires_at):
+                return False
+        return True
 
     def provider_ready(self, provider_id: str, *, live: bool) -> bool:
         """Require both app and runtime-adapter evidence for one provider."""
@@ -60,7 +77,12 @@ class PrimaryProviderActivationService:
             readiness = registry.readiness(now=self._clock())
         except Exception:
             return False
-        return readiness.live_ready if live else readiness.dry_run_ready
+        if live:
+            try:
+                return readiness.live_ready and self._live_captures_valid(registry)
+            except Exception:
+                return False
+        return readiness.dry_run_ready
 
     def record(
         self,
@@ -78,6 +100,11 @@ class PrimaryProviderActivationService:
         registry = self._registries.get(provider_id)
         if registry is None:
             raise ValueError("provider is not required by this activation profile")
+        if stage == ProviderActivationStage.LIVE_OK and (
+            self._capture_verifier is None or not self._capture_verifier.verify(
+                registry.binding,evidence_digest,expires_at=expires_at)
+        ):
+            raise ValueError("LIVE_OK requires authenticated native execution capture")
         return registry.record(
             surface=surface,
             stage=stage,
@@ -112,6 +139,11 @@ class PrimaryProviderActivationService:
             raise ValueError("provider activation evidence schema version mismatch")
         if binding_version != registry.binding.binding_version:
             raise ValueError("provider activation binding version mismatch")
+        if stage == ProviderActivationStage.LIVE_OK and (
+            self._capture_verifier is None or not self._capture_verifier.verify(
+                registry.binding,evidence_digest,expires_at=expires_at)
+        ):
+            raise ValueError("LIVE_OK requires authenticated native execution capture")
         return registry.record_authorized(
             surface=surface,
             stage=stage,
@@ -135,13 +167,14 @@ class PrimaryProviderActivationService:
         for registry in self._registries.values():
             try:
                 readiness = registry.readiness(now=now)
+                captures_valid = self._live_captures_valid(registry)
             except Exception:
                 app_dry = app_live = adapter_dry = adapter_live = False
                 continue
             app_dry = app_dry and readiness.app.dry_run_ready
-            app_live = app_live and readiness.app.live_ready
+            app_live = app_live and readiness.app.live_ready and captures_valid
             adapter_dry = adapter_dry and readiness.runtime_adapter.dry_run_ready
-            adapter_live = adapter_live and readiness.runtime_adapter.live_ready
+            adapter_live = adapter_live and readiness.runtime_adapter.live_ready and captures_valid
         from .primary_roster import core_inventory_ready
         return {
             "core_live_ready": core_inventory_ready(tuple(p for p in self._registries if self.provider_ready(p, live=True))),
@@ -158,3 +191,5 @@ class PrimaryProviderActivationService:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]

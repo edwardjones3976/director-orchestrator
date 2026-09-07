@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:18 UTC | BEGIN]]
@@ -732,10 +733,18 @@ class PostgresParallelDispatch:
         format_roster: Sequence[tuple[str, str]],
         idempotency_key_digest: str,
         budget_evidence_digest: str,
+        team_admission=None,
+        budget_admission=None,
     ) -> ProviderAttemptReservation:
         """Append one STARTED child event before I/O; never reuse an open attempt."""
 
         format_id, transport_id = format_for_attempt(format_roster, attempt_ordinal)
+        if team_admission is not None and budget_admission is not None:
+            raise ParallelDispatchError("team admission already includes monetary authority")
+        if team_admission is not None:
+            budget_evidence_digest = "sha256:" + team_admission.grant_digest
+        elif budget_admission is not None:
+            budget_evidence_digest = "sha256:" + budget_admission.authority_digest
         _require_digest(idempotency_key_digest, "idempotency_key_digest")
         _require_digest(budget_evidence_digest, "budget_evidence_digest")
         attempt_digest = _digest(
@@ -832,6 +841,21 @@ class PostgresParallelDispatch:
                         or binding["provider_id"] != reservation.provider_id
                         or binding["reservation_digest"] != reservation.reservation_digest):
                     raise ParallelDispatchError("workload parallel reservation binding changed")
+                if team_admission is not None:
+                    from .antigravity_team import TeamAttemptAdmission
+                    if not isinstance(team_admission, TeamAttemptAdmission):
+                        raise ParallelDispatchError("invalid team admission authority")
+                    team_admission.admit(connection, task_id=reservation.task_id,
+                        assignment_id=reservation.assignment_id, provider=reservation.provider_id,
+                        attempt_digest=attempt_digest)
+                elif format_id == "antigravity-team-engineering-v1":
+                    raise ParallelDispatchError("team contract requires atomic entitlement admission")
+                if budget_admission is not None:
+                    from .antigravity_team import ProviderBudgetAdmission
+                    if not isinstance(budget_admission,ProviderBudgetAdmission):
+                        raise ParallelDispatchError("invalid provider budget authority")
+                    budget_admission.admit(connection,task_id=reservation.task_id,
+                        provider=reservation.provider_id,attempt_digest=attempt_digest)
                 admit_assignment(
                     connection, schema=schema, task_id=reservation.task_id,
                     assignment_id=reservation.assignment_id,
@@ -1455,3 +1479,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]

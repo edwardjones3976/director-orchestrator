@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-08-31 | 10:05 UTC | BEGIN]]
@@ -111,6 +112,8 @@ class ProviderAdapterContext:
     # immediately before provider I/O. Historical packet-runtime callers retain
     # zero as an explicit "not fenced by the primary writer lease" sentinel.
     fencing_generation: int = 0
+    # Trusted transport observer; never supplied by the model work packet.
+    execution_observer: Callable[[str, bytes, Mapping[str, Any]], None] | None = None
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
@@ -1227,3 +1230,5 @@ class LangGraphPacketRuntime:
 # [[Cursor Agent | Composer 2.5 | 2026-08-31 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]

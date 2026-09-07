@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | BEGIN]]
@@ -650,7 +651,7 @@ if ($Action -eq "Accept") {
 if ($Action -eq "Migrate") {
     Invoke-Evidence -Command require-accepted
     Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
-        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$databaseIdentity', accepted_instance_id='$databaseInstanceId'); print('schema_current=true'); h.close()"
+        "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$databaseIdentity', accepted_instance_id='$databaseInstanceId', initial_accepted_migration=True); print('schema_current=true'); h.close()"
     Invoke-Evidence -Command record -Stage MIGRATED -FactsJson '{"schema_current":true}'
     Write-Host "Primary Postgres schema migration/verification completed."
     return
@@ -825,3 +826,5 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]

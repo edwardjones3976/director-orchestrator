@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
@@ -31,7 +34,22 @@ from .provider_acceptance_v2 import DOMAIN, VERSION, ReviewContext, canonical
 
 MAX_PACKET = 2_097_152  # full packet; never truncate a review
 MAX_CAPTURE = 1_048_576
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+# MAX_CAPTURE bounds the raw native process output. The canonical capture
+# document wraps that output in an envelope and re-escapes non-ASCII text, so a
+# raw stream at exactly MAX_CAPTURE serializes larger. Separate bounds keep the
+# rejection honest instead of discarding complete, in-bound native evidence.
+MAX_DOCUMENT = 4 * MAX_CAPTURE          # serialized capture document
+MAX_RESPONSE = 2 * MAX_DOCUMENT         # base64 document plus worker provenance
+# The AGY stream carries no independent observation of the native account or
+# authentication mode; only a producer-controlled request label. Until protected
+# host enrollment supplies trusted readback evidence, this lane cannot issue an
+# acceptance receipt and must fail closed before any native attempt.
+# Native enrollment is checked by the protected consumer, not a static denylist.
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 ROLE_PROVIDER = {"security": "claude", "independent_review": "cursor"}
+ROLE_PROVIDERS = {"security": frozenset({"claude", "openai", "gemini"}),
+                  "independent_review": frozenset({"cursor", "gemini"})}
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 
@@ -68,6 +86,60 @@ def write_new(path: Path, value):
         f.write(canonical(value))
         f.flush()
         os.fsync(f.fileno())
+
+
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+def _is_reparse(path: Path) -> bool:
+    """Symlink, junction, mount point or any other reparse tag at this component."""
+    try:
+        if path.is_symlink():
+            return True
+        attributes = getattr(path.lstat(), "st_file_attributes", None)
+    except OSError:
+        raise IssuerError("native containment cannot be evaluated") from None
+    if attributes is None:
+        if os.name == "nt":
+            raise IssuerError("native containment cannot be evaluated")
+        return False
+    return bool(attributes & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def canonical_native_path(value) -> Path:
+    """One exact absolute location: no traversal, no link/junction/alias escape.
+
+    Lexical containment alone accepts protected\\..\\elsewhere and any ancestor
+    reparse point, so the declared path must already be its own canonical
+    location. Anything that cannot be evaluated here fails closed.
+    """
+    if not isinstance(value, str) or not value:
+        raise IssuerError("native path must be configured text")
+    path = Path(value)
+    if not path.is_absolute() or any(part in {".", ".."} for part in path.parts) or str(path) != os.path.normpath(str(path)):
+        raise IssuerError("native path must be an exact absolute location")
+    if not path.exists():
+        raise IssuerError("configured native path does not exist")
+    for item in (path, *path.parents):
+        if _is_reparse(item):
+            raise IssuerError("native path or ancestor is a link, junction or reparse point")
+    try:
+        resolved = path.resolve()
+    except OSError:
+        raise IssuerError("native containment cannot be evaluated") from None
+    if os.path.normcase(str(resolved)) != os.path.normcase(str(path)):
+        raise IssuerError("native path is not its own canonical location")
+    return path
+
+
+def contained_native_path(value, roots) -> Path:
+    """Canonical containment inside a protected runtime root; roots are canonical too."""
+    canonical_roots = [canonical_native_path(root) for root in roots]
+    if not canonical_roots:
+        raise IssuerError("protected runtime roots required for native containment")
+    path = canonical_native_path(value)
+    if not any(path == root or root in path.parents for root in canonical_roots):
+        raise IssuerError("native path outside protected runtime roots")
+    return path
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 
 
 def context_from(value: dict) -> ReviewContext:
@@ -244,6 +316,12 @@ class Config:
     entrypoint_digest: str | None
     model: str
     runtime_roots: tuple = ()
+    native_home: str = ""
+    native_project: str = ""
+    native_deny_hook: str = ""
+    native_deny_hook_digest: str = ""
+    native_auth_account_id: str = ""
+    native_auth_registry_sha256: str = ""
 
     @classmethod
     def load(cls, path: Path, expected_digest: str):
@@ -251,10 +329,17 @@ class Config:
             raise IssuerError("installed configuration digest mismatch")
         value = read_json(path)
         cfg = cls(**{**value, "root": Path(value["root"]), "mirror": Path(value["mirror"])})
-        if ROLE_PROVIDER.get(cfg.role) != cfg.provider or cfg.worker_sid == cfg.broker_sid:
+        if cfg.provider not in ROLE_PROVIDERS.get(cfg.role, ()) or cfg.worker_sid == cfg.broker_sid:
             raise IssuerError("fixed role or separate native worker identity missing")
         if not cfg.runtime_roots or any(not Path(p).is_absolute() for p in cfg.runtime_roots):
             raise IssuerError("complete protected runtime roots required")
+        if cfg.provider == "gemini":
+            # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+            if not cfg.native_project or not DIGEST.fullmatch(cfg.native_deny_hook_digest):
+                raise IssuerError("AGY requires protected native home, project and deny-all hook")
+            for native_path in (cfg.native_home, cfg.native_deny_hook):
+                contained_native_path(native_path, cfg.runtime_roots)
+            # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
         for sid in (cfg.worker_sid, cfg.broker_sid):
             if re.fullmatch(r"S-1-5-21-(?:\d+-){3}\d+", sid) is None:
                 raise IssuerError("dedicated local principal required")
@@ -276,13 +361,15 @@ class Config:
         paths = [(self.executable, self.executable_digest)]
         if self.entrypoint:
             paths.append((self.entrypoint, self.entrypoint_digest))
+        if self.provider == "gemini":
+            paths.append((self.native_deny_hook, self.native_deny_hook_digest))
         for name, expected in paths:
             p = Path(name)
             if not p.is_absolute() or p.is_symlink() or digest(p.read_bytes()) != expected:
                 raise IssuerError("native executable or entrypoint pin mismatch")
         if Path(self.executable).suffix.lower() != ".exe":
             raise IssuerError("native Windows executable required")
-        return [p[0] for p in paths]
+        return [self.executable] + ([self.entrypoint] if self.entrypoint else [])
 
 
 def claim(path: Path, identity: str):
@@ -314,13 +401,18 @@ def issue(cfg: Config, job_id: str):
     """Broker starts one fixed worker request; a later collect never redispatches."""
     cfg.identity()
     job, context = _job(cfg, job_id)
+    from .native_auth_enrollment import require_native_auth
+    native_auth = require_native_auth(cfg)
     packet = prepare_packet(git=cfg.git, mirror=cfg.mirror, repository=cfg.repository,
                             base=job["base"], head=context.activation.candidate_commit)
     if digest(packet) != context.packet_digest or json.loads(packet)["tree"] != context.activation.candidate_tree:
         raise IssuerError("complete source packet does not match approved challenge")
+    require_native_auth(cfg, expected_digest=native_auth.enrollment_digest if native_auth else None)
     claim(cfg.root / "broker" / "claims.sqlite3", job_id)
-    write_new(cfg.root / "requests" / (job_id + ".json"),
-              dict(context=context.document(), packet=packet.decode(), run_nonce=uuid.uuid4().hex))
+    request = dict(context=context.document(), packet=packet.decode(), run_nonce=uuid.uuid4().hex)
+    if native_auth is not None:
+        request["native_auth_enrollment_digest"] = native_auth.enrollment_digest
+    write_new(cfg.root / "requests" / (job_id + ".json"), request)
 
 
 def initialize(cfg: Config):
@@ -345,7 +437,11 @@ def collect(cfg: Config, job_id: str):
     cfg.identity()
     _, context = _job(cfg, job_id)
     request = cfg.read("requests", job_id + ".json", MAX_PACKET * 2)
-    result = cfg.read("responses", job_id + ".json", MAX_CAPTURE * 2)
+    from .native_auth_enrollment import require_native_auth
+    if cfg.provider == "gemini" and not request.get("native_auth_enrollment_digest"):
+        raise IssuerError("native authentication enrollment was not bound before disclosure")
+    native_auth = require_native_auth(cfg, expected_digest=request.get("native_auth_enrollment_digest"))
+    result = cfg.read("responses", job_id + ".json", MAX_RESPONSE)
     # responses is writable only by the fixed worker SID and administrator;
     # unlike an imported session endpoint, the coordinator cannot write here.
     if set(result) != {"request_digest", "worker_sid", "capture", "exit_code"} or result["request_digest"] != digest(canonical(request)) or result["worker_sid"] != cfg.worker_sid:
@@ -355,11 +451,12 @@ def collect(cfg: Config, job_id: str):
     from .native_acceptance_capture import parse_capture
     raw = base64.b64decode(result["capture"], validate=True)
     session = parse_capture(raw, provider=cfg.provider, model=cfg.model,
-                            request=request, exit_code=result["exit_code"])
+                            request=request, exit_code=result["exit_code"], native_auth=native_auth)
     unsigned = dict(role=cfg.role, provider=cfg.provider, principal=cfg.broker_sid,
                     deployment=cfg.deployment, session_id=session,
                     transport_evidence_digest=digest(canonical(result)), verdict="ACCEPT",
                     ci_checks=[], ci_workflow_ref="", ci_workflow_commit="")
+    require_native_auth(cfg, expected_digest=request.get("native_auth_enrollment_digest"))
     key = Ed25519PrivateKey.from_private_bytes((cfg.root / "broker" / "private.key").read_bytes())
     signature = key.sign(DOMAIN + canonical(dict(version=VERSION, context=context.document(), receipt=unsigned)))
     receipt = {**unsigned, "signature": base64.b64encode(signature).decode()}
@@ -401,3 +498,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:40 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]

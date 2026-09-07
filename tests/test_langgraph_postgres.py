@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
@@ -1714,10 +1715,12 @@ class PostgresControlPlaneUnitTests(unittest.TestCase):
         )
 
     def open_with_fakes(self, dsn: str = SECURE_DSN, **kwargs: object):
+        # The connection-bound schema inventory has dedicated real-PostgreSQL
+        # drift tests. This dependency-lifecycle fake has no PostgreSQL catalog.
         with patch(
             "director_orchestrator.langgraph_postgres._load_dependencies",
             return_value=self.dependencies(),
-        ):
+        ), patch("director_orchestrator.antigravity_team.verify_team_schema"):
             return open_postgres_control_plane(dsn, **kwargs)  # type: ignore[arg-type]
 
     def parse(self, dsn: str, *, insecure: bool = False):
@@ -3583,3 +3586,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | END]]

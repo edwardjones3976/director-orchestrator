@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 from contextlib import closing
@@ -234,13 +235,56 @@ class DatabaseIdentityBoundaryTests(unittest.TestCase):
         self.assertEqual(database_binding(self.dsn, schema=self.schema, allow_insecure_local_transport=True), original)
         self.assertEqual(database_binding(self.dsn, schema=self.schema, allow_insecure_local_transport=True, bootstrap=True), original)
         self.assertEqual(self.tables(), ["director_primary_control_plane"])
+        # Identity enrollment is deliberately not runtime schema provisioning.
+        # An accepted restart must reject missing inventory without repairing it.
+        from director_orchestrator.antigravity_team import TeamAuthorizationError
+        with self.assertRaisesRegex(TeamAuthorizationError,"inventory changed"):
+            open_postgres_control_plane(self.dsn, schema=self.schema, allow_insecure_local_transport=True,
+                accepted_storage_identity=original[0], accepted_instance_id=original[1])
+        self.assertEqual(self.tables(), ["director_primary_control_plane"])
+        from unittest.mock import patch
+        from director_orchestrator import langgraph_postgres
+        original_ddl=langgraph_postgres._control_plane_ddl
+        def failing_ddl(schema):
+            yield from original_ddl(schema)
+            yield "SELECT director_intentional_migration_failure()"
+        with patch.object(langgraph_postgres,"_control_plane_ddl",side_effect=failing_ddl):
+            with self.assertRaises(self.psycopg.errors.UndefinedFunction):
+                open_postgres_control_plane(self.dsn,schema=self.schema,allow_insecure_local_transport=True,
+                    accepted_storage_identity=original[0],accepted_instance_id=original[1],initial_accepted_migration=True)
+        self.assertEqual(self.tables(), ["director_primary_control_plane"])
+        with self.psycopg.connect(self.dsn) as db:
+            self.assertTrue(db.execute(f"SELECT initial_schema_pending FROM {self.schema}.director_primary_control_plane").fetchone()[0])
         handle = open_postgres_control_plane(self.dsn, schema=self.schema, allow_insecure_local_transport=True,
-            accepted_storage_identity=original[0], accepted_instance_id=original[1])
+            accepted_storage_identity=original[0], accepted_instance_id=original[1], initial_accepted_migration=True)
         try:
             self.assertEqual((handle.storage_identity, handle.database_instance_id), original)
             self.assertIn("checkpoints", self.tables())
         finally:
             handle.close()
+        with self.psycopg.connect(self.dsn) as db:
+            self.assertFalse(db.execute(f"SELECT initial_schema_pending FROM {self.schema}.director_primary_control_plane").fetchone()[0])
+            db.execute(f"ALTER TABLE {self.schema}.director_primary_team_grant DISABLE TRIGGER ALL")
+        # The explicit migration action cannot be replayed to repair drift after
+        # the durable first-migration marker was consumed.
+        for initial in (False,True):
+            with self.assertRaises(TeamAuthorizationError):
+                open_postgres_control_plane(self.dsn,schema=self.schema,allow_insecure_local_transport=True,
+                    accepted_storage_identity=original[0],accepted_instance_id=original[1],initial_accepted_migration=initial)
+
+    def test_old_identity_without_initial_phase_cannot_bypass_inventory(self):
+        from director_orchestrator.langgraph_postgres import database_binding,open_postgres_control_plane
+        from director_orchestrator.antigravity_team import TeamAuthorizationError
+        identity,instance=database_binding(self.dsn,schema=self.schema,allow_insecure_local_transport=True,bootstrap=True)
+        with self.psycopg.connect(self.dsn) as db:
+            db.execute(f"ALTER TABLE {self.schema}.director_primary_control_plane DROP COLUMN initial_schema_pending")
+        # Repeating identity bootstrap must not manufacture an initial phase on
+        # a preexisting identity singleton with unknown migration history.
+        self.assertEqual(database_binding(self.dsn,schema=self.schema,allow_insecure_local_transport=True,bootstrap=True),(identity,instance))
+        with self.assertRaises(TeamAuthorizationError):
+            open_postgres_control_plane(self.dsn,schema=self.schema,allow_insecure_local_transport=True,
+                accepted_storage_identity=identity,accepted_instance_id=instance,initial_accepted_migration=True)
+        self.assertEqual(self.tables(),["director_primary_control_plane"])
 
     def test_wrong_existing_identity_is_rejected_without_repair(self):
         from director_orchestrator.langgraph_postgres import database_binding, PostgresCheckpointConfigurationError
@@ -255,3 +299,5 @@ class DatabaseIdentityBoundaryTests(unittest.TestCase):
             self.assertEqual(db.execute(f"SELECT storage_identity FROM {self.schema}.director_primary_control_plane").fetchone()[0], "wrong")
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | END]]
