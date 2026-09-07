@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
@@ -15,6 +16,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -205,6 +207,18 @@ function global:Get-ProbeEnvironment {
     return $snapshot
 }
 """
+
+# The two probes that execute the whole launcher depend on Windows-only platform
+# APIs: the launcher resolves the current WindowsIdentity before it restricts the
+# profile ACL, and the empty-value seed goes through kernel32. pwsh on Ubuntu
+# supports neither, so those two are gated to Windows instead of being weakened
+# into something that no longer exercises the real script. Everything else in
+# this module is a static or PowerShell-only check and stays cross-platform.
+WINDOWS_LAUNCHER_ONLY = unittest.skipUnless(
+    sys.platform == "win32",
+    "running the full launcher needs Windows: WindowsIdentity and kernel32 are "
+    "unavailable to pwsh on a non-Windows host",
+)
 
 
 class UppercutDeploymentContractTests(unittest.TestCase):
@@ -595,6 +609,7 @@ Write-Output ('profileUnchanged|' + ($profileBefore -eq $profileAfter))
                 if "|" in line
             )
 
+    @WINDOWS_LAUNCHER_ONLY
     def test_unrestorable_inherited_empty_gate_stops_before_any_mutation(self):
         """An empty gate that cannot be restored must stop the run at once.
 
@@ -631,6 +646,7 @@ if (-not [Pr116Probe.Seed]::SetEnvironmentVariableW('ALLOW_PAID_RUNS', '')) {
                 self.assertEqual(observed["composeCalls"], "0")
                 self.assertEqual(observed["profileUnchanged"], "True")
 
+    @WINDOWS_LAUNCHER_ONLY
     def test_denied_compilation_alone_does_not_fail_a_run_without_empties(self):
         """No inherited empty means no need for the native helper.
 
@@ -1138,3 +1154,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | END]]
