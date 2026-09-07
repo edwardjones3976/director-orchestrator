@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
@@ -13,11 +17,222 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+ANSI_CONTROL_SEQUENCE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+# Probes run under the same strictness the script itself declares.
+POWERSHELL_PRELUDE = "Set-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\n"
+
+
+def _powershell_shell() -> str | None:
+    return shutil.which("pwsh") or shutil.which("pwsh.exe")
+
+
+def _windows_powershell_shell() -> str | None:
+    """Locate Windows PowerShell 5.1, which behaves differently from pwsh 7."""
+
+    return shutil.which("powershell") or shutil.which("powershell.exe")
+
+
+PS_SCOPE_HELPERS = """
+function Test-PsTopLevel {
+    param([System.Management.Automation.Language.Ast]$Node)
+
+    # Unconditionally executed when the script runs. A definition nested in a
+    # function, an if, a loop or a switch may never execute, so copying it into
+    # a probe proves nothing about the script. A try body always runs, but its
+    # catch and finally blocks do not, so those are rejected too. This script
+    # wraps its own body in a try, which is why a blanket try rejection would
+    # match nothing at all.
+    $child = $Node
+    $parent = $Node.Parent
+    while ($parent) {
+        if ($parent -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
+            $parent -is [System.Management.Automation.Language.IfStatementAst] -or
+            $parent -is [System.Management.Automation.Language.LoopStatementAst] -or
+            $parent -is [System.Management.Automation.Language.SwitchStatementAst]) {
+            return $false
+        }
+        if ($parent -is [System.Management.Automation.Language.TryStatementAst] -and
+            -not [object]::ReferenceEquals($parent.Body, $child)) {
+            return $false
+        }
+        $child = $parent
+        $parent = $parent.Parent
+    }
+    return $true
+}
+
+function Get-ScriptAst {
+    param([string]$Path)
+
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+        $Path, [ref]$null, [ref]$errors)
+    if ($errors.Count -gt 0) { throw "the script under test does not parse" }
+    return $ast
+}
+
+function Import-TopLevelFunction {
+    param([System.Management.Automation.Language.Ast]$Ast, [string]$Name)
+
+    $matches = @($Ast.FindAll({
+        param($n)
+        $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $n.Name -eq $Name
+    }, $true) | Where-Object { Test-PsTopLevel -Node $_ })
+    if ($matches.Count -ne 1) {
+        throw "expected exactly one unconditional $Name, found $($matches.Count)"
+    }
+    return $matches[0].Extent.Text
+}
+
+function Get-LiveFinalizerBody {
+    param([System.Management.Automation.Language.Ast]$Ast)
+
+    $matches = @($Ast.FindAll({
+        param($n)
+        $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally
+    }, $true) | Where-Object { Test-PsTopLevel -Node $_ })
+    if ($matches.Count -ne 1) {
+        throw "expected exactly one unconditional finalizer, found $($matches.Count)"
+    }
+    $body = $matches[0].Finally.Extent.Text
+    return $body.Substring(1, $body.Length - 2)
+}
+"""
+
+
+def _run_powershell(probe: str, shell: str | None = None) -> str:
+    """Run a deterministic PowerShell probe and return its normalized stdout.
+
+    Defaults to PowerShell 7. Pass a 5.1 path for behavior that differs between
+    editions, such as empty environment values, where a 7-only probe would pass
+    against a defect that only bites on 5.1.
+    """
+
+    shell = shell or _powershell_shell()
+    if shell is None:
+        raise unittest.SkipTest("PowerShell is unavailable in this environment")
+    completed = subprocess.run(
+        [shell, "-NoProfile", "-NonInteractive", "-Command", probe],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr)
+    normalized = ANSI_CONTROL_SEQUENCE.sub("", completed.stdout)
+    return "".join(
+        character
+        for character in normalized
+        if character in "\r\n\t" or ord(character) >= 0x20
+    )
+
+
+# Values a disposable copy of the launcher needs to get past its configuration
+# gates. Synthetic and local: no profile, credential or endpoint is real.
+FIXTURE_PROFILE_NAMES = (
+    "ORCHESTRATOR_SHARED_SECRET",
+    "OPENAI_API_KEY",
+    "CLAUDE_ROUTINE_URL",
+    "CLAUDE_ROUTINE_TOKEN",
+    "CLAUDE_CALLBACK_SECRET",
+    "CURSOR_API_KEY",
+    "N8N_ENCRYPTION_KEY",
+    "N8N_POSTGRES_PASSWORD",
+    "SLACK_APP_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "SLACK_DIRECTOR_CHANNEL_ID",
+    "SLACK_GATEWAY_SECRET",
+    "TRUSTED_PROVIDER_COST_RANKS",
+)
+
+# Docker, the ACL call and every HTTP request are replaced, so the whole script
+# can run end to end without a daemon, a network or a real deployment.
+FULL_LAUNCHER_PROBE_STUBS = """
+$global:probeDocker = New-Object System.Collections.Generic.List[string]
+function global:docker {
+    $global:probeDocker.Add(($args -join ' '))
+    $global:LASTEXITCODE = 0
+    if ($args -contains '--entrypoint') { Write-Output '0' }
+}
+function global:icacls.exe { $global:LASTEXITCODE = 0 }
+function global:Invoke-RestMethod {
+    param($Uri, $Method, $TimeoutSec, $Headers)
+
+    if ($Uri -match '/health$') {
+        return [pscustomobject]@{
+            providers = [pscustomobject]@{
+                openai_director = $true; claude = $true; cursor = $true
+            }
+            execution_profile = [pscustomobject]@{
+                projects_configured = $true
+                repositories_configured = $true
+                starting_refs_configured = $true
+                claude_callback_configured = $true
+            }
+        }
+    }
+    if ($Uri -match '/v1/usage-checks/run$') {
+        return [pscustomobject]@{
+            status = 'not_due'
+            scheduled_providers = @()
+            cooling_down_providers = @('claude', 'cursor', 'openai')
+        }
+    }
+    if ($Uri -match '/v1/usage-checks/latest$') {
+        return @('claude', 'cursor', 'openai') | ForEach-Object {
+            [pscustomobject]@{
+                provider = $_
+                status = 'ok'
+                total_tokens = 0
+                checked_at = [DateTimeOffset]::UtcNow.AddSeconds(-1).ToString('o')
+            }
+        }
+    }
+    throw 'the probe reached an unexpected endpoint'
+}
+function global:Get-ProbeEnvironment {
+    $snapshot = @{}
+    foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+        $snapshot[[string]$entry.Key] = [string]$entry.Value
+    }
+    return $snapshot
+}
+# Denying the compiler can also cost the probe a cmdlet that is not loaded yet,
+# because module autoload on Windows PowerShell 5.1 may compile on its way in.
+# Get-FileHash is the one this fixture used to reach for, so it is denied here
+# on purpose: the profile comparison below has to stand on framework calls
+# alone, and a local pass now proves that independence rather than assuming it.
+function global:Get-FileHash { throw 'synthetic Get-FileHash denial' }
+function global:Get-ProbeFileContent {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Exact bytes, no cmdlet, no encoding guess: enough to prove the profile was
+    # not rewritten, and comparable as an ordinal string.
+    return [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($Path))
+}
+"""
+
+# The two probes that execute the whole launcher depend on Windows-only platform
+# APIs: the launcher resolves the current WindowsIdentity before it restricts the
+# profile ACL, and the empty-value seed goes through kernel32. pwsh on Ubuntu
+# supports neither, so those two are gated to Windows instead of being weakened
+# into something that no longer exercises the real script. Everything else in
+# this module is a static or PowerShell-only check and stays cross-platform.
+WINDOWS_LAUNCHER_ONLY = unittest.skipUnless(
+    sys.platform == "win32",
+    "running the full launcher needs Windows: WindowsIdentity and kernel32 are "
+    "unavailable to pwsh on a non-Windows host",
+)
 
 
 class UppercutDeploymentContractTests(unittest.TestCase):
@@ -34,6 +249,437 @@ class UppercutDeploymentContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         cls.compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         cls.profile = (ROOT / ".env.uppercut.example").read_text(encoding="utf-8")
+
+    def test_every_pinned_gate_is_bound_into_the_compose_environment(self):
+        """A pinned gate must also be bound, or an inherited value wins.
+
+        Compose reads the process environment ahead of --env-file, so a name the
+        identity block writes to the profile but never binds is silently
+        overridden by whatever the operator exported. An inherited
+        ALLOW_PAID_RUNS=true then resolves a paid-closed profile to a paid-open
+        container.
+        """
+
+        managed = self.script[
+            self.script.index("$composeEnvironmentNames = @(") :
+            self.script.index("$originalProcessEnvironment = @{}")
+        ]
+        bound = set(re.findall(r'"([A-Z0-9_]+)"', managed))
+
+        identity_block = self.script[
+            self.script.index("$identity = [ordered]@{") :
+            self.script.index("$unboundIdentityNames = @(")
+        ]
+        pinned = set(re.findall(r"(?m)^\s*(?:\$identity\[\")?([A-Z0-9_]+)(?:\"\])?\s*=", identity_block))
+
+        self.assertIn("ALLOW_PAID_RUNS", pinned)
+        self.assertEqual(pinned - bound, set())
+
+        # Drift must fail closed, so the guard has to actually throw.
+        guard = self.script[
+            self.script.index("$unboundIdentityNames = @(") :
+            self.script.index("foreach ($entry in $identity.GetEnumerator())")
+        ]
+        self.assertIn("throw", guard)
+        self.assertIn("an inherited value would win", guard)
+
+    def test_switch_writes_rebind_the_compose_environment(self):
+        """Opening a gate must reach the container, not just the profile file.
+
+        Binding the closed gates once at staging is only half the contract. If a
+        later switch write updates the file alone, the exported closed value
+        keeps winning and authorized activation can never complete, because
+        Compose still resolves the gate false. This drives the real functions
+        through the closed -> open -> closed transition.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+        lines = source.splitlines()
+
+        def body(name: str) -> str:
+            start = next(
+                i for i, line in enumerate(lines) if line.startswith(f"function {name} ")
+                or line.startswith(f"function {name}{{")
+                or line == f"function {name} {{"
+            )
+            end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
+            return chr(10).join(lines[start : end + 1])
+
+        helpers = chr(10).join(
+            body(name)
+            for name in (
+                "Read-DotEnv",
+                "Set-DotEnvValue",
+                "Write-Utf8NoBom",
+                "Sync-ComposeEnvironment",
+                "Write-ProfileSwitches",
+            )
+        )
+        probe = helpers + """
+$ErrorActionPreference = 'Stop'
+$composeEnvironmentNames = @('ALLOW_PAID_RUNS', 'USAGE_CHECK_ENABLED', 'DIRECTOR_ENV_FILE')
+$ProfileName = 'edge-oracle'
+$profilePath = '.switch-rebind-probe.env'
+Set-Content -LiteralPath $profilePath -Value "ALLOW_PAID_RUNS=false`nUSAGE_CHECK_ENABLED=false`n"
+try {
+    # An operator who exported the gate open must not win.
+    [Environment]::SetEnvironmentVariable('ALLOW_PAID_RUNS', 'true', 'Process')
+    Sync-ComposeEnvironment -Values (Read-DotEnv -Path $profilePath)
+    Write-Host "staged|$([Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS','Process'))"
+    Write-ProfileSwitches -PaidRuns $true -UsageChecks $true
+    Write-Host "opened|$([Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS','Process'))"
+    Write-ProfileSwitches -PaidRuns $false -UsageChecks $false
+    Write-Host "closed|$([Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS','Process'))"
+}
+finally {
+    [Environment]::SetEnvironmentVariable('ALLOW_PAID_RUNS', $null, 'Process')
+    Remove-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
+}
+"""
+        observed = dict(
+            line.strip().split("|", 1)
+            for line in _run_powershell(probe).splitlines()
+            if "|" in line
+        )
+        self.assertEqual(
+            observed, {"staged": "false", "opened": "true", "closed": "false"}
+        )
+
+    def test_absent_gates_are_removed_rather_than_emptied(self):
+        """Restoring absence must remove the name, not blank it.
+
+        PowerShell 7 keeps the variable with an empty value when
+        SetEnvironmentVariable is handed $null, and an exported empty value still
+        beats --env-file. A gate the operator never set would then linger as an
+        empty export and silently override the next profile.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+        lines = source.splitlines()
+        start = lines.index("function Clear-ProcessEnvironmentVariable {")
+        end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
+
+        probe = chr(10).join(lines[start : end + 1]) + """
+$ErrorActionPreference = 'Stop'
+[Environment]::SetEnvironmentVariable('PR77_PROBE_GATE', 'inherited', 'Process')
+Clear-ProcessEnvironmentVariable -Name 'PR77_PROBE_GATE'
+Write-Host "removed|$(Test-Path -LiteralPath 'Env:PR77_PROBE_GATE')"
+# Clearing a name that was never set must stay quiet.
+Clear-ProcessEnvironmentVariable -Name 'PR77_PROBE_NEVER_SET'
+Write-Host "absent|$(Test-Path -LiteralPath 'Env:PR77_PROBE_NEVER_SET')"
+"""
+        observed = dict(
+            line.strip().split("|", 1)
+            for line in _run_powershell(probe).splitlines()
+            if "|" in line
+        )
+        # Behavior first: the name must actually be gone, not blanked.
+        self.assertEqual(observed, {"removed": "False", "absent": "False"})
+        # And no call site may go back to the blanking form.
+        self.assertNotIn(
+            '[Environment]::SetEnvironmentVariable($name, $null, "Process")', source
+        )
+
+    def test_inherited_empty_override_is_restored_exactly(self):
+        """An inherited empty gate must come back, not vanish.
+
+        An empty export still beats --env-file, so an inherited empty gate is a
+        real paid-closed override. Every managed setter deletes the name when
+        handed "", but the Win32 entry point separates an empty string from the
+        null pointer that means delete, so restoration is possible on both
+        editions and the override survives teardown.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+        lines = source.splitlines()
+        # The capability block now runs at startup, ahead of the snapshot, so the
+        # probe takes it from there and pairs it with the real setter.
+        cap_start = lines.index("$script:win32EnvironmentReady = $false")
+        cap_stop = lines.index("$originalProcessEnvironment = @{}")
+        fn_start = lines.index("function Set-ProcessEnvironmentVariableExact {")
+        fn_stop = next(i for i in range(fn_start + 1, len(lines)) if lines[i] == "}")
+        helper = chr(10).join(
+            lines[cap_start:cap_stop] + lines[fn_start : fn_stop + 1]
+        )
+
+        probe = helper + """
+$ErrorActionPreference = 'Stop'
+[Environment]::SetEnvironmentVariable('PR77_EMPTY_GATE', 'inherited', 'Process')
+Set-ProcessEnvironmentVariableExact -Name 'PR77_EMPTY_GATE' -Value ''
+$value = [Environment]::GetEnvironmentVariable('PR77_EMPTY_GATE', 'Process')
+Write-Output ("empty|" + (Test-Path -LiteralPath 'Env:PR77_EMPTY_GATE') + "|" + ([string]$value).Length)
+Set-ProcessEnvironmentVariableExact -Name 'PR77_FULL_GATE' -Value 'false'
+Write-Output ("full|" + (Test-Path -LiteralPath 'Env:PR77_FULL_GATE') + "|" + [Environment]::GetEnvironmentVariable('PR77_FULL_GATE', 'Process'))
+"""
+        shell = _windows_powershell_shell()
+        if shell is None:
+            self.skipTest("Windows PowerShell 5.1 is unavailable in this environment")
+        observed = dict(
+            (line.split("|", 1)[0].strip(), line.split("|", 1)[1])
+            for line in _run_powershell(probe, shell=shell).splitlines()
+            if "|" in line
+        )
+        self.assertEqual(observed["empty"], "True|0")
+        self.assertEqual(observed["full"], "True|false")
+
+    def test_restore_diagnostic_cannot_abort_teardown(self):
+        """The fallback warning must never end the restoration loop.
+
+        It runs in the exit path. An inherited -WarningAction Stop would
+        otherwise turn it into a terminating error, replacing the original
+        exception and leaving every later managed name unrestored.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+        # Resolved by executable scope: a definition wrapped in if ($false)
+        # would never run, so copying it into the probe would prove nothing.
+        diagnostic = PS_SCOPE_HELPERS + """
+$ast = Get-ScriptAst -Path '""" + (ROOT / "scripts" / "windows-isolated-live-validation.ps1").as_posix() + """'
+. ([scriptblock]::Create((Import-TopLevelFunction -Ast $ast -Name 'Write-EnvironmentRestoreWarning')))
+"""
+
+        # And the restore loop must route through it rather than warning directly.
+        restore = source[source.index("$original = $originalProcessEnvironment[$name]") :]
+        restore = restore[: restore.index("Clear-ProcessEnvironmentVariable")]
+        self.assertIn("Write-EnvironmentRestoreWarning", restore)
+        self.assertNotIn("Write-Warning", restore)
+
+        # Drive the script's own helper, not a copy of it: a copy stays quiet
+        # while the real one is made terminating.
+        probe = POWERSHELL_PRELUDE + diagnostic + """
+$WarningPreference = 'Stop'
+$completed = 0
+foreach ($n in 'A', 'B', 'C') {
+    Write-EnvironmentRestoreWarning -Message "probe $n"
+    $completed++
+}
+Write-Output ("completed|" + $completed)
+"""
+        observed = dict(
+            line.strip().split("|", 1)
+            for line in _run_powershell(probe).splitlines()
+            if "|" in line
+        )
+        self.assertEqual(observed, {"completed": "3"})
+
+    def test_one_failed_restore_cannot_strand_the_others(self):
+        """Teardown must survive a failure on any single name.
+
+        The probe runs the script's own finalizer, and resolves it by executable
+        scope: the one top-level try/finally, plus the helper definitions that
+        actually run. Selecting by size or by name alone lets a longer dead
+        try, or a definition wrapped in if ($false), stand in for the live code
+        while the real finalizer strands every gate behind the first failure.
+        """
+
+        script = ROOT / "scripts" / "windows-isolated-live-validation.ps1"
+        source = script.read_text(encoding="utf-8")
+
+        # Compilation happens once, before anything is mutated. Checking only
+        # the loop body would miss a compile inside a helper the loop calls.
+        self.assertEqual(source.count("Add-Type"), 1)
+        self.assertLess(
+            source.index("Add-Type"),
+            source.index("$originalProcessEnvironment = @{}"),
+        )
+
+        probe = POWERSHELL_PRELUDE + PS_SCOPE_HELPERS + """
+$ast = Get-ScriptAst -Path '""" + script.as_posix() + """'
+foreach ($fname in 'Write-EnvironmentRestoreWarning',
+                   'Set-ProcessEnvironmentVariableExact',
+                   'Clear-ProcessEnvironmentVariable') {
+    . ([scriptblock]::Create((Import-TopLevelFunction -Ast $ast -Name $fname)))
+}
+$body = Get-LiveFinalizerBody -Ast $ast
+
+$originalLocation = Get-Location
+$script:win32EnvironmentReady = $true
+$composeEnvironmentNames = @('PR77_N1', 'PR77_BOOM', 'PR77_N3', 'PR77_N4')
+$originalProcessEnvironment = @{}
+foreach ($n in $composeEnvironmentNames) {
+    $originalProcessEnvironment[$n] = [pscustomobject]@{ Present = $true; Value = "v-$n" }
+    [Environment]::SetEnvironmentVariable($n, $null, 'Process')
+}
+# One name fails the way a denied compiler would.
+function Set-ProcessEnvironmentVariableExact {
+    param([string]$Name, [AllowEmptyString()][string]$Value)
+    if ($Name -eq 'PR77_BOOM') { throw 'compiler unavailable' }
+    [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
+    return $true
+}
+
+$threw = 'no'
+try { . ([scriptblock]::Create($body)) } catch { $threw = $_.Exception.Message }
+foreach ($n in $composeEnvironmentNames) {
+    Write-Output ($n + "|" + [Environment]::GetEnvironmentVariable($n, 'Process'))
+}
+Write-Output ("threw|" + $threw)
+"""
+        shells = [None] if _powershell_shell() else []
+        windows_shell = _windows_powershell_shell()
+        if windows_shell is not None:
+            shells.append(windows_shell)
+        self.assertTrue(shells, "no PowerShell available")
+        for shell in shells:
+            observed = dict(
+                line.strip().split("|", 1)
+                for line in _run_powershell(probe, shell=shell).splitlines()
+                if "|" in line
+            )
+            # Individual values, not a count: only the failing name is missing,
+            # and the finalizer itself never throws.
+            self.assertEqual(
+                observed,
+                {
+                    "PR77_N1": "v-PR77_N1",
+                    "PR77_BOOM": "",
+                    "PR77_N3": "v-PR77_N3",
+                    "PR77_N4": "v-PR77_N4",
+                    "threw": "no",
+                },
+            )
+
+    def _available_powershell_shells(self) -> list[str | None]:
+        shells: list[str | None] = [None] if _powershell_shell() else []
+        windows_shell = _windows_powershell_shell()
+        if windows_shell is not None:
+            shells.append(windows_shell)
+        self.assertTrue(shells, "no PowerShell available")
+        return shells
+
+    def _build_launcher_fixture(self, root: Path) -> Path:
+        """Copy the launcher into a disposable tree with a synthetic profile."""
+
+        (root / "scripts").mkdir()
+        shutil.copyfile(
+            ROOT / "scripts" / "windows-isolated-live-validation.ps1",
+            root / "scripts" / "windows-isolated-live-validation.ps1",
+        )
+        (root / ".env.uppercut").write_text(
+            "".join(
+                f"{name}=synthetic-local-fixture-{name}\n"
+                for name in FIXTURE_PROFILE_NAMES
+            ),
+            encoding="utf-8",
+        )
+        return root
+
+    def _run_full_launcher(self, seed: str, shell: str | None) -> dict[str, str]:
+        """Run the unmodified launcher against stubs with the compiler denied."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self._build_launcher_fixture(Path(raw))
+            probe = POWERSHELL_PRELUDE + FULL_LAUNCHER_PROBE_STUBS + f"""
+$fixture = '{fixture.as_posix()}'
+$launcher = Join-Path $fixture 'scripts/windows-isolated-live-validation.ps1'
+$log = Join-Path $fixture 'run.log'
+{seed}
+$seedPresent = Test-Path -LiteralPath 'Env:ALLOW_PAID_RUNS'
+$seedValue = [Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS', 'Process')
+# Denied the way a locked-down session or a missing compiler denies it. The
+# launcher compiles its native environment helper once at startup.
+function global:Add-Type {{ throw 'synthetic compiler denial' }}
+$before = Get-ProbeEnvironment
+$profileFile = Join-Path $fixture '.env.uppercut'
+$profileBefore = Get-ProbeFileContent -Path $profileFile
+$threw = 'none'
+try {{
+    & $launcher -ProfileName project-uppercut -EnablePaidRuns -TimeoutSeconds 1 *> $log
+}}
+catch {{ $threw = $_.Exception.Message }}
+$after = Get-ProbeEnvironment
+$changed = @()
+foreach ($name in @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique)) {{
+    if (-not $before.ContainsKey($name) -or
+        -not $after.ContainsKey($name) -or
+        $before[$name] -cne $after[$name]) {{
+        $changed += $name
+    }}
+}}
+$paid = [Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS', 'Process')
+$profileAfter = Get-ProbeFileContent -Path $profileFile
+Write-Output ('seedPresent|' + $seedPresent)
+Write-Output ('seedLength|' + ([string]$seedValue).Length)
+Write-Output ('threw|' + $threw)
+Write-Output ('paidPresent|' + (Test-Path -LiteralPath 'Env:ALLOW_PAID_RUNS'))
+Write-Output ('paidLength|' + ([string]$paid).Length)
+Write-Output ('paidValue|' + [string]$paid)
+Write-Output ('dockerCalls|' + $global:probeDocker.Count)
+Write-Output ('composeCalls|' + @($global:probeDocker | Where-Object {{ $_ -like 'compose*' }}).Count)
+Write-Output ('changedEnv|' + ($changed -join ','))
+Write-Output ('profileUnchanged|' + ($profileBefore -ceq $profileAfter))
+"""
+            return dict(
+                line.strip().split("|", 1)
+                for line in _run_powershell(probe, shell=shell).splitlines()
+                if "|" in line
+            )
+
+    @WINDOWS_LAUNCHER_ONLY
+    def test_unrestorable_inherited_empty_gate_stops_before_any_mutation(self):
+        """An empty gate that cannot be restored must stop the run at once.
+
+        Startup compilation of the native helper is allowed to fail, but then an
+        inherited empty ALLOW_PAID_RUNS cannot be put back. Running anyway
+        rebinds the gate to false, opens it to true for the provider probes, and
+        hands the caller back a paid-open true where an empty paid-closed
+        override used to be. The whole launcher runs here against stubs with a
+        genuinely empty Win32 value seeded, so the fix has to hold end to end.
+        """
+
+        seed = """
+$signature = '[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern bool SetEnvironmentVariableW(string lpName, string lpValue);'
+Add-Type -Namespace Pr116Probe -Name Seed -MemberDefinition $signature
+if (-not [Pr116Probe.Seed]::SetEnvironmentVariableW('ALLOW_PAID_RUNS', '')) {
+    throw 'could not seed an empty inherited override'
+}
+"""
+        for shell in self._available_powershell_shells():
+            with self.subTest(shell=shell or "pwsh"):
+                observed = self._run_full_launcher(seed, shell)
+                # Without a real empty inherited value the case proves nothing.
+                self.assertEqual(observed["seedPresent"], "True")
+                self.assertEqual(observed["seedLength"], "0")
+                # It fails, and it says which name it could not restore.
+                self.assertIn("ALLOW_PAID_RUNS", observed["threw"])
+                self.assertIn("no service was started", observed["threw"])
+                # The inherited empty override is still exactly that.
+                self.assertEqual(observed["paidPresent"], "True")
+                self.assertEqual(observed["paidLength"], "0")
+                # Nothing was mutated and nothing was started.
+                self.assertEqual(observed["changedEnv"], "")
+                self.assertEqual(observed["dockerCalls"], "0")
+                self.assertEqual(observed["composeCalls"], "0")
+                self.assertEqual(observed["profileUnchanged"], "True")
+
+    @WINDOWS_LAUNCHER_ONLY
+    def test_denied_compilation_alone_does_not_fail_a_run_without_empties(self):
+        """No inherited empty means no need for the native helper.
+
+        The helper only matters for restoring an empty value. Failing every run
+        that cannot compile it would break ordinary activation for no gain, so
+        an inherited non-empty gate must still run and must still come back
+        exactly as it arrived.
+        """
+
+        seed = "[Environment]::SetEnvironmentVariable('ALLOW_PAID_RUNS', 'true', 'Process')"
+        for shell in self._available_powershell_shells():
+            with self.subTest(shell=shell or "pwsh"):
+                observed = self._run_full_launcher(seed, shell)
+                self.assertEqual(observed["seedPresent"], "True")
+                self.assertEqual(observed["threw"], "none")
+                # The run proceeded through Compose rather than failing closed.
+                self.assertGreater(int(observed["composeCalls"]), 0)
+                # And the managed setter restored the non-empty value.
+                self.assertEqual(observed["paidValue"], "true")
 
     def test_profile_is_separate_and_primary_env_is_read_only(self):
         self.assertIn('ProfileName = "project-uppercut"', self.wrapper)
@@ -520,3 +1166,7 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | END]]
