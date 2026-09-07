@@ -1,5 +1,5 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
 """Dedicated synthetic canary through the actual pinned SSH engineering worker."""
 from __future__ import annotations
 from datetime import datetime, timezone
