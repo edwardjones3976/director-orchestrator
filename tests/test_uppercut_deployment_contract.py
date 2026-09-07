@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | BEGIN]]
@@ -855,12 +856,22 @@ Write-Output ("full|" + (Test-Path -LiteralPath 'Env:PR77_FULL_GATE') + "|" + [E
         source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
             encoding="utf-8"
         )
-        lines = source.splitlines()
-        start = lines.index("function Write-EnvironmentRestoreWarning {")
-        stop = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
-        diagnostic = chr(10).join(lines[start : stop + 1])
-        self.assertIn("-WarningAction Continue", diagnostic)
-        self.assertIn("catch { }", diagnostic)
+        # Located with the parser, not by counting braces, so a brace inside a
+        # comment cannot derail it and a dead copy cannot be picked instead.
+        diagnostic = """
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    '""" + (ROOT / "scripts" / "windows-isolated-live-validation.ps1").as_posix() + """',
+    [ref]$null, [ref]$errors)
+if ($errors.Count -gt 0) { throw "the script under test does not parse" }
+$fn = @($ast.FindAll({
+    param($n)
+    $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $n.Name -eq 'Write-EnvironmentRestoreWarning'
+}, $true))
+if ($fn.Count -ne 1) { throw "expected exactly one Write-EnvironmentRestoreWarning" }
+. ([scriptblock]::Create($fn[0].Extent.Text))
+"""
 
         # And the restore loop must route through it rather than warning directly.
         restore = source[source.index("$original = $originalProcessEnvironment[$name]") :]
@@ -870,7 +881,7 @@ Write-Output ("full|" + (Test-Path -LiteralPath 'Env:PR77_FULL_GATE') + "|" + [E
 
         # Drive the script's own helper, not a copy of it: a copy stays quiet
         # while the real one is made terminating.
-        probe = diagnostic + """
+        probe = POWERSHELL_PRELUDE + diagnostic + """
 $WarningPreference = 'Stop'
 $completed = 0
 foreach ($n in 'A', 'B', 'C') {
@@ -889,58 +900,57 @@ Write-Output ("completed|" + $completed)
     def test_one_failed_restore_cannot_strand_the_others(self):
         """Teardown must survive a failure on any single name.
 
-        The native capability is compiled up front rather than in the exit path,
-        because a missing compiler or an unwritable temp directory would
-        otherwise replace the error that ended the run and abandon every name
-        still queued behind it, including the paid, automerge and runtime-writer
-        gates.
-
-        The probe runs the script's own restoration loop rather than a copy of
-        it. A copy passes happily while the real loop is broken, which is how an
-        earlier version of this test missed the catch being moved outside the
-        foreach.
+        The probe runs the script's own finalizer, located with PowerShell's
+        parser and executed under the same strict mode the script sets. Earlier
+        versions of this test ran a handwritten copy, then a brace-counted
+        fragment; both passed while the real finalizer was broken, and the
+        fragment could select a dead copy or be derailed by a brace inside a
+        comment. Asking the parser for the finally block of the outermost try
+        removes all three failure modes at once.
         """
 
-        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
-            encoding="utf-8"
-        )
+        script = ROOT / "scripts" / "windows-isolated-live-validation.ps1"
+        source = script.read_text(encoding="utf-8")
 
         # Compilation happens once, before anything is mutated. Checking only
-        # the loop body would miss a compile inside a helper the loop calls, so
-        # the whole script must hold exactly one Add-Type and it must precede
-        # the snapshot.
+        # the loop body would miss a compile inside a helper the loop calls.
         self.assertEqual(source.count("Add-Type"), 1)
         self.assertLess(
             source.index("Add-Type"),
             source.index("$originalProcessEnvironment = @{}"),
         )
 
-        lines = source.splitlines()
+        probe = POWERSHELL_PRELUDE + """
+$scriptPath = '""" + script.as_posix() + """'
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $scriptPath, [ref]$null, [ref]$errors)
+if ($errors.Count -gt 0) { throw "the script under test does not parse" }
 
-        def block(header: str, after: int = 0) -> str:
-            index = next(
-                i for i, line in enumerate(lines) if i >= after and line.strip() == header
-            )
-            depth = 0
-            for i in range(index, len(lines)):
-                depth += lines[i].count("{") - lines[i].count("}")
-                if depth == 0 and i > index:
-                    return chr(10).join(lines[index : i + 1])
-            raise AssertionError(f"unterminated block: {header}")
+foreach ($fname in 'Write-EnvironmentRestoreWarning',
+                   'Set-ProcessEnvironmentVariableExact',
+                   'Clear-ProcessEnvironmentVariable') {
+    $fn = @($ast.FindAll({
+        param($n)
+        $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $n.Name -eq $fname
+    }, $true))
+    if ($fn.Count -ne 1) { throw "expected exactly one $fname" }
+    . ([scriptblock]::Create($fn[0].Extent.Text))
+}
 
-        helpers = chr(10).join(
-            block(header)
-            for header in (
-                "function Write-EnvironmentRestoreWarning {",
-                "function Set-ProcessEnvironmentVariableExact {",
-                "function Clear-ProcessEnvironmentVariable {",
-            )
-        )
-        teardown = lines.index("    Set-Location $originalLocation")
-        real_loop = block("foreach ($name in $composeEnvironmentNames) {", after=teardown)
+# The finalizer is the finally block of the script's outermost try statement.
+$tries = @($ast.FindAll({
+    param($n)
+    $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally
+}, $true))
+if ($tries.Count -lt 1) { throw "no finalizer found" }
+$outer = $tries | Sort-Object { $_.Extent.EndOffset - $_.Extent.StartOffset } |
+    Select-Object -Last 1
+$body = $outer.Finally.Extent.Text
+$body = $body.Substring(1, $body.Length - 2)
 
-        probe = helpers + """
-$WarningPreference = 'Stop'
+$originalLocation = Get-Location
 $script:win32EnvironmentReady = $true
 $composeEnvironmentNames = @('PR77_N1', 'PR77_BOOM', 'PR77_N3', 'PR77_N4')
 $originalProcessEnvironment = @{}
@@ -955,11 +965,14 @@ function Set-ProcessEnvironmentVariableExact {
     [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
     return $true
 }
-""" + real_loop + """
+
+$threw = 'no'
+try { . ([scriptblock]::Create($body)) } catch { $threw = $_.Exception.Message }
 $after = @($composeEnvironmentNames | Where-Object {
     [Environment]::GetEnvironmentVariable($_, 'Process') -eq "v-$_"
 }).Count
 Write-Output ("survived|" + $after)
+Write-Output ("threw|" + $threw)
 """
         shells = [None] if _powershell_shell() else []
         windows_shell = _windows_powershell_shell()
@@ -972,8 +985,8 @@ Write-Output ("survived|" + $after)
                 for line in _run_powershell(probe, shell=shell).splitlines()
                 if "|" in line
             )
-            # Three of four survive: only the deliberately failing name does not.
-            self.assertEqual(observed, {"survived": "3"})
+            # Three of four survive, and the finalizer itself never throws.
+            self.assertEqual(observed, {"survived": "3", "threw": "no"})
 
     def test_usage_provider_prevalidation_precedes_paid_switches_and_dispatch(self):
         definition = self.script.index("function Get-ValidatedUsageCheckProviders")
@@ -1452,3 +1465,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:44 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:03 UTC | END]]
