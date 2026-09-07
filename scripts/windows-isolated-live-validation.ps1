@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
@@ -199,6 +200,15 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText((Join-Path (Get-Location) $Path), $Text, $utf8NoBom)
 }
 
+function Clear-ProcessEnvironmentVariable {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    # PowerShell 7 keeps the name with an empty value when SetEnvironmentVariable
+    # is handed $null, and an exported empty value still beats --env-file. Only
+    # actual removal restores absence, which Windows PowerShell 5.1 already did.
+    Remove-Item -LiteralPath "Env:${Name}" -ErrorAction SilentlyContinue
+}
+
 function Sync-ComposeEnvironment {
     param([Parameter(Mandatory = $true)][hashtable]$Values)
 
@@ -212,7 +222,7 @@ function Sync-ComposeEnvironment {
             [Environment]::SetEnvironmentVariable($name, [string]$Values[$name], "Process")
         }
         else {
-            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+            Clear-ProcessEnvironmentVariable -Name $name
         }
     }
 }
@@ -1154,7 +1164,7 @@ finally {
             [Environment]::SetEnvironmentVariable($name, [string]$original.Value, "Process")
         }
         else {
-            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+            Clear-ProcessEnvironmentVariable -Name $name
         }
     }
 }
@@ -1173,3 +1183,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
@@ -747,6 +748,43 @@ finally {
             observed, {"staged": "false", "opened": "true", "closed": "false"}
         )
 
+    def test_absent_gates_are_removed_rather_than_emptied(self):
+        """Restoring absence must remove the name, not blank it.
+
+        PowerShell 7 keeps the variable with an empty value when
+        SetEnvironmentVariable is handed $null, and an exported empty value still
+        beats --env-file. A gate the operator never set would then linger as an
+        empty export and silently override the next profile.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+        lines = source.splitlines()
+        start = lines.index("function Clear-ProcessEnvironmentVariable {")
+        end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
+
+        probe = chr(10).join(lines[start : end + 1]) + """
+$ErrorActionPreference = 'Stop'
+[Environment]::SetEnvironmentVariable('PR77_PROBE_GATE', 'inherited', 'Process')
+Clear-ProcessEnvironmentVariable -Name 'PR77_PROBE_GATE'
+Write-Host "removed|$(Test-Path -LiteralPath 'Env:PR77_PROBE_GATE')"
+# Clearing a name that was never set must stay quiet.
+Clear-ProcessEnvironmentVariable -Name 'PR77_PROBE_NEVER_SET'
+Write-Host "absent|$(Test-Path -LiteralPath 'Env:PR77_PROBE_NEVER_SET')"
+"""
+        observed = dict(
+            line.strip().split("|", 1)
+            for line in _run_powershell(probe).splitlines()
+            if "|" in line
+        )
+        # Behavior first: the name must actually be gone, not blanked.
+        self.assertEqual(observed, {"removed": "False", "absent": "False"})
+        # And no call site may go back to the blanking form.
+        self.assertNotIn(
+            '[Environment]::SetEnvironmentVariable($name, $null, "Process")', source
+        )
+
     def test_usage_provider_prevalidation_precedes_paid_switches_and_dispatch(self):
         definition = self.script.index("function Get-ValidatedUsageCheckProviders")
         prevalidation = self.script.index(
@@ -1219,3 +1257,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
