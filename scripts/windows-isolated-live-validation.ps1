@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
@@ -58,6 +59,24 @@ $composeEnvironmentNames = @(
     "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED",
     "LANGGRAPH_PARALLEL_KILL_SWITCH"
 )
+$script:win32EnvironmentReady = $false
+try {
+    # Established here, before a single variable is touched. Compiling inside the
+    # exit path would let a missing compiler or an unwritable temp directory
+    # replace the error that ended the run and abandon every name still waiting
+    # to be restored.
+    Add-Type -Namespace Win32Env -Name Native -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern bool SetEnvironmentVariableW(string lpName, string lpValue);
+'@
+    $script:win32EnvironmentReady = $true
+}
+catch {
+    # Without it an inherited empty value cannot be restored. The restore loop
+    # reports that per name rather than failing the run here.
+    $script:win32EnvironmentReady = $false
+}
+
 $originalProcessEnvironment = @{}
 foreach ($name in $composeEnvironmentNames) {
     $originalProcessEnvironment[$name] = [pscustomobject]@{
@@ -202,7 +221,14 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText((Join-Path (Get-Location) $Path), $Text, $utf8NoBom)
 }
 
-$script:win32EnvironmentReady = $false
+function Write-EnvironmentRestoreWarning {
+    param([Parameter(Mandatory = $true)][string]$Message)
+
+    # Diagnostic only. Write-Warning inherits warning policy, so under
+    # -WarningAction Stop it becomes terminating; in the exit path that would
+    # replace the original exception and strand every later name.
+    try { Write-Warning -WarningAction Continue -Message $Message } catch { }
+}
 
 function Set-ProcessEnvironmentVariableExact {
     param(
@@ -212,7 +238,7 @@ function Set-ProcessEnvironmentVariableExact {
 
     if ($Value -ne "") {
         [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
-        return
+        return $true
     }
 
     # An empty value is not a deletion. The managed setter and every PowerShell
@@ -221,13 +247,10 @@ function Set-ProcessEnvironmentVariableExact {
     # empty override survives on both editions. That override matters: an empty
     # export still beats --env-file, so dropping it reopens the profile's value.
     if (-not $script:win32EnvironmentReady) {
-        Add-Type -Namespace Win32Env -Name Native -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-public static extern bool SetEnvironmentVariableW(string lpName, string lpValue);
-'@
-        $script:win32EnvironmentReady = $true
+        return $false
     }
-    [void][Win32Env.Native]::SetEnvironmentVariableW($Name, "")
+    # Win32 reports failure with a zero return, so it is answered, not discarded.
+    return [bool][Win32Env.Native]::SetEnvironmentVariableW($Name, "")
 }
 
 function Clear-ProcessEnvironmentVariable {
@@ -1189,30 +1212,29 @@ catch {
 finally {
     Set-Location $originalLocation
     foreach ($name in $composeEnvironmentNames) {
-        $original = $originalProcessEnvironment[$name]
-        if ($original.Present) {
-            Set-ProcessEnvironmentVariableExact -Name $name -Value ([string]$original.Value)
-            if (-not (Test-Path -LiteralPath "Env:${name}")) {
-                # Windows PowerShell 5.1 cannot hold an empty process variable:
-                # .NET, Set-Item, assignment and New-Item all delete the name
-                # instead. An inherited empty gate is a real override, because an
-                # empty export still beats --env-file, so losing it silently
-                # would let the next Compose run read the profile value instead.
-                # Diagnostic only, and deliberately unable to terminate. This
-                # runs in the exit path, so an inherited -WarningAction Stop
-                # would otherwise replace the original exception and abandon
-                # every later name in this loop still unrestored.
-                try {
-                    Write-Warning -WarningAction Continue -Message (
-                        "Could not restore the inherited empty ${name}; " +
+        # Each name is restored in isolation. This runs in the exit path, so one
+        # failure must neither replace the error that ended the invocation nor
+        # abandon the names still waiting behind it.
+        try {
+            $original = $originalProcessEnvironment[$name]
+            if ($original.Present) {
+                $expected = [string]$original.Value
+                $restored = Set-ProcessEnvironmentVariableExact -Name $name -Value $expected
+                $actual = [Environment]::GetEnvironmentVariable($name, "Process")
+                if (-not $restored -or $null -eq $actual -or $actual -ne $expected) {
+                    Write-EnvironmentRestoreWarning -Message (
+                        "Could not restore ${name} to its inherited value; " +
                         "re-export it before the next Compose run if it was " +
                         "deliberate.")
                 }
-                catch { }
+            }
+            else {
+                Clear-ProcessEnvironmentVariable -Name $name
             }
         }
-        else {
-            Clear-ProcessEnvironmentVariable -Name $name
+        catch {
+            Write-EnvironmentRestoreWarning -Message (
+                "Restoring ${name} failed: " + $_.Exception.Message)
         }
     }
 }
@@ -1234,3 +1256,4 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | END]]

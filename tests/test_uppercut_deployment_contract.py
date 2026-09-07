@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
@@ -812,9 +813,15 @@ Write-Host "absent|$(Test-Path -LiteralPath 'Env:PR77_PROBE_NEVER_SET')"
             encoding="utf-8"
         )
         lines = source.splitlines()
-        start = lines.index("$script:win32EnvironmentReady = $false")
-        stop = lines.index("function Clear-ProcessEnvironmentVariable {")
-        helper = chr(10).join(lines[start:stop])
+        # The capability block now runs at startup, ahead of the snapshot, so the
+        # probe takes it from there and pairs it with the real setter.
+        cap_start = lines.index("$script:win32EnvironmentReady = $false")
+        cap_stop = lines.index("$originalProcessEnvironment = @{}")
+        fn_start = lines.index("function Set-ProcessEnvironmentVariableExact {")
+        fn_stop = next(i for i in range(fn_start + 1, len(lines)) if lines[i] == "}")
+        helper = chr(10).join(
+            lines[cap_start:cap_stop] + lines[fn_start : fn_stop + 1]
+        )
 
         probe = helper + """
 $ErrorActionPreference = 'Stop'
@@ -847,10 +854,18 @@ Write-Output ("full|" + (Test-Path -LiteralPath 'Env:PR77_FULL_GATE') + "|" + [E
         source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
             encoding="utf-8"
         )
+        lines = source.splitlines()
+        start = lines.index("function Write-EnvironmentRestoreWarning {")
+        stop = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
+        diagnostic = chr(10).join(lines[start : stop + 1])
+        self.assertIn("-WarningAction Continue", diagnostic)
+        self.assertIn("catch { }", diagnostic)
+
+        # And the restore loop must route through it rather than warning directly.
         restore = source[source.index("$original = $originalProcessEnvironment[$name]") :]
         restore = restore[: restore.index("Clear-ProcessEnvironmentVariable")]
-        self.assertIn("-WarningAction Continue", restore)
-        self.assertIn("catch { }", restore)
+        self.assertIn("Write-EnvironmentRestoreWarning", restore)
+        self.assertNotIn("Write-Warning", restore)
 
         probe = """
 $WarningPreference = 'Stop'
@@ -867,6 +882,78 @@ Write-Output ("completed|" + $completed)
             if "|" in line
         )
         self.assertEqual(observed, {"completed": "3"})
+
+    def test_one_failed_restore_cannot_strand_the_others(self):
+        """Teardown must survive a failure on any single name.
+
+        The native capability is compiled up front rather than in the exit path,
+        because a missing compiler or an unwritable temp directory would
+        otherwise replace the error that ended the run and abandon every name
+        still queued behind it, including the paid, automerge and runtime-writer
+        gates.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        # Compilation happens once, before anything is mutated. Checking only
+        # the loop body would miss a compile inside a helper the loop calls, so
+        # the whole script must hold exactly one Add-Type and it must precede
+        # the snapshot.
+        self.assertEqual(source.count("Add-Type"), 1)
+        self.assertLess(
+            source.index("Add-Type"),
+            source.index("$originalProcessEnvironment = @{}"),
+        )
+        restore = source[source.index("foreach ($name in $composeEnvironmentNames) {") :]
+        restore = restore[restore.index("$original = $originalProcessEnvironment[$name]") :]
+        # Each name is attempted in isolation and the result is verified.
+        self.assertIn("catch {", restore)
+        self.assertIn("Write-EnvironmentRestoreWarning", restore)
+        self.assertIn("$actual -ne $expected", restore)
+
+        probe = """
+$WarningPreference = 'Stop'
+function Write-EnvironmentRestoreWarning {
+    param([Parameter(Mandatory = $true)][string]$Message)
+    try { Write-Warning -WarningAction Continue -Message $Message } catch { }
+}
+function Set-ProcessEnvironmentVariableExact {
+    param([string]$Name, [AllowEmptyString()][string]$Value)
+    if ($Name -eq 'PR77_BOOM') { throw 'compiler unavailable' }
+    [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
+    return $true
+}
+$names = 'PR77_N1', 'PR77_BOOM', 'PR77_N3', 'PR77_N4'
+foreach ($name in $names) {
+    try {
+        $expected = "v-$name"
+        $ok = Set-ProcessEnvironmentVariableExact -Name $name -Value $expected
+        $actual = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if (-not $ok -or $actual -ne $expected) {
+            Write-EnvironmentRestoreWarning -Message "could not restore $name"
+        }
+    }
+    catch {
+        Write-EnvironmentRestoreWarning -Message "restoring $name failed"
+    }
+}
+$after = @($names | Where-Object {
+    [Environment]::GetEnvironmentVariable($_, 'Process') -eq "v-$_"
+}).Count
+Write-Output ("survived|" + $after)
+"""
+        for shell in (None, _windows_powershell_shell()):
+            if shell is None and _powershell_shell() is None:
+                continue
+            observed = dict(
+                line.strip().split("|", 1)
+                for line in _run_powershell(probe, shell=shell).splitlines()
+                if "|" in line
+            )
+            # Three of four survive: only the deliberately failing name does not.
+            self.assertEqual(observed, {"survived": "3"})
 
     def test_usage_provider_prevalidation_precedes_paid_switches_and_dispatch(self):
         definition = self.script.index("function Get-ValidatedUsageCheckProviders")
@@ -1343,3 +1430,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | END]]
