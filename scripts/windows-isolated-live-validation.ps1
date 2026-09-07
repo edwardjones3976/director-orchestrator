@@ -38,7 +38,21 @@ $composeEnvironmentNames = @(
     "CHATGPT_BRIDGE_ENABLED", "CHATGPT_BRIDGE_SLACK_USER_ID",
     "CHATGPT_BRIDGE_CHANNEL_IDS", "CHATGPT_BRIDGE_MAX_PROMPT_CHARS",
     "N8N_DIRECTOR_WEBHOOK_URL",
-    "N8N_POSTGRES_PASSWORD", "N8N_ENCRYPTION_KEY", "N8N_IMAGE"
+    "N8N_POSTGRES_PASSWORD", "N8N_ENCRYPTION_KEY", "N8N_IMAGE",
+    # Every gate the identity block pins must also be bound here. Compose reads
+    # the process environment ahead of --env-file, so a name that is written to
+    # the profile but not bound is silently overridden by whatever the operator
+    # happens to have exported. That is how an inherited ALLOW_PAID_RUNS=true
+    # resolves a paid-closed profile to a paid-open container.
+    "SQLITE_PATH", "PROJECT_ALLOWLIST", "REPOSITORY_ALLOWLIST",
+    "ALLOWED_STARTING_REFS", "MAX_AGENT_HOPS", "MAX_TASK_BUDGET_USD",
+    "PRIMARY_TEAM", "PRIMARY_WORKHORSE", "USAGE_CHECK_PROVIDERS",
+    "USAGE_CHECK_INTERVAL_MINUTES", "ALLOW_PAID_RUNS", "USAGE_CHECK_ENABLED",
+    "ORACLE_AUTOMERGE_ENABLED", "ORACLE_AUTOMERGE_KILL_SWITCH",
+    "LANGGRAPH_RUNTIME_ENABLED", "LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED",
+    "LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED",
+    "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED",
+    "LANGGRAPH_PARALLEL_KILL_SWITCH"
 )
 $originalProcessEnvironment = @{}
 foreach ($name in $composeEnvironmentNames) {
@@ -808,6 +822,14 @@ if ($ProfileName -eq "long-table") {
     $identity["LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED"] = "false"
     $identity["LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED"] = "false"
     $identity["LANGGRAPH_PARALLEL_KILL_SWITCH"] = "true"
+}
+$unboundIdentityNames = @(
+    $identity.Keys | Where-Object { $composeEnvironmentNames -notcontains $_ }
+)
+if ($unboundIdentityNames.Count -gt 0) {
+    throw ("Identity names are written to the profile but not bound into the " +
+        "Compose environment, so an inherited value would win: " +
+        ($unboundIdentityNames -join ", "))
 }
 foreach ($entry in $identity.GetEnumerator()) {
     $profileText = Set-DotEnvValue -Text $profileText -Name $entry.Key -Value $entry.Value

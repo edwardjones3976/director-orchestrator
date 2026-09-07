@@ -888,6 +888,58 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(RecordingAsyncClient.calls), 1)
         self.assertEqual(RecordingAsyncClient.calls[0]["method"], "GET")
 
+    async def test_grok_recovers_after_the_key_is_granted_access_to_the_model(self):
+        """A rejected model must not be cached as rejected.
+
+        Caching the catalog before the membership check strands the lane: once
+        the same key is granted access, nothing refetches and every later
+        dispatch keeps failing until the process restarts.
+        """
+
+        settings = replace(
+            Settings(),
+            grok_enabled=True,
+            grok_api_key="test-xai",
+            grok_model="grok-4.6",
+        )
+        assignment = Assignment(
+            sequence=1,
+            agent=ProviderName.GROK,
+            task="Critique a plan",
+            acceptance=["Return findings"],
+        )
+        adapter = GrokAdapter(settings)
+
+        RecordingAsyncClient.calls = []
+        RecordingAsyncClient.responses = [{"data": [{"id": "another-model"}]}]
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            with self.assertRaisesRegex(ProviderError, "unavailable to the authenticated xAI key"):
+                await adapter.dispatch(assignment, "context")
+
+            # Access is granted to the same key on the same adapter instance.
+            RecordingAsyncClient.responses = [
+                {"data": [{"id": "grok-4.6"}]},
+                {"id": "recovered", "status": "completed", "output_text": "ok"},
+            ]
+            run = await adapter.dispatch(assignment, "context")
+
+        self.assertEqual(run.status, "completed")
+        self.assertEqual(
+            [call["method"] for call in RecordingAsyncClient.calls],
+            ["GET", "GET", "POST"],
+        )
+
+        # A model already confirmed present is not refetched.
+        RecordingAsyncClient.calls = []
+        RecordingAsyncClient.responses = [
+            {"id": "second", "status": "completed", "output_text": "ok"}
+        ]
+        with patch("director_orchestrator.providers.httpx.AsyncClient", RecordingAsyncClient):
+            await adapter.dispatch(assignment, "context")
+        self.assertEqual(
+            [call["method"] for call in RecordingAsyncClient.calls], ["POST"]
+        )
+
     async def test_grok_usage_preflight_requires_code_model_before_paid_request(self):
         settings = replace(
             Settings(),

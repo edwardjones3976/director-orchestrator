@@ -987,21 +987,25 @@ class GrokAdapter(ProviderAdapter):
     async def _ensure_model_allowed(
         self, client: httpx.AsyncClient, model: str
     ) -> None:
-        if self._catalog_models is None:
+        if self._catalog_models is None or model not in self._catalog_models:
             response = await client.get(
                 f"{self.settings.grok_api_base}/models", headers=self.headers
             )
             response.raise_for_status()
             payload = response.json()
-            self._catalog_models = frozenset(
+            models = frozenset(
                 item.get("id")
                 for item in payload.get("data", [])
                 if isinstance(item, dict) and isinstance(item.get("id"), str)
             )
-        if model not in self._catalog_models:
-            raise PreSubmitProviderError(
-                "Configured Grok model is unavailable to the authenticated xAI key"
-            )
+            if model not in models:
+                raise PreSubmitProviderError(
+                    "Configured Grok model is unavailable to the authenticated xAI key"
+                )
+            # Cache only a catalog that satisfied the request. Caching one that
+            # lacked the model would strand the lane, because nothing would
+            # refetch once the same key is granted access to it.
+            self._catalog_models = models
 
     def _input(
         self,

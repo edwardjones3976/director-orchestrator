@@ -649,6 +649,38 @@ class LongTableDeploymentContractTests(unittest.TestCase):
         self.assertNotIn('USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"', self.script)
         self.assertRegex(self.profile, r"(?m)^USAGE_CHECK_PROVIDERS=openai,claude,cursor$")
 
+    def test_every_pinned_gate_is_bound_into_the_compose_environment(self):
+        """A pinned gate must also be bound, or an inherited value wins.
+
+        Compose reads the process environment ahead of --env-file, so a name the
+        identity block writes to the profile but never binds is silently
+        overridden by whatever the operator exported. An inherited
+        ALLOW_PAID_RUNS=true then resolves a paid-closed profile to a paid-open
+        container.
+        """
+
+        managed = self.script[
+            self.script.index("$composeEnvironmentNames = @(") :
+            self.script.index("$originalProcessEnvironment = @{}")
+        ]
+        bound = set(re.findall(r'"([A-Z0-9_]+)"', managed))
+
+        identity_block = self.script[
+            self.script.index("$identity = [ordered]@{") :
+            self.script.index("$unboundIdentityNames = @(")
+        ]
+        pinned = set(re.findall(r"(?m)^\s*(?:\$identity\[\")?([A-Z0-9_]+)(?:\"\])?\s*=", identity_block))
+
+        self.assertIn("ALLOW_PAID_RUNS", pinned)
+        self.assertEqual(pinned - bound, set())
+
+        # The script must also refuse to run if the two ever drift apart.
+        self.assertIn("$unboundIdentityNames", self.script)
+        self.assertLess(
+            self.script.index("$unboundIdentityNames = @("),
+            self.script.index("foreach ($entry in $identity.GetEnumerator())"),
+        )
+
     def test_usage_provider_prevalidation_precedes_paid_switches_and_dispatch(self):
         definition = self.script.index("function Get-ValidatedUsageCheckProviders")
         prevalidation = self.script.index(
