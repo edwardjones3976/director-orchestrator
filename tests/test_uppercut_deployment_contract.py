@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -674,11 +675,76 @@ class LongTableDeploymentContractTests(unittest.TestCase):
         self.assertIn("ALLOW_PAID_RUNS", pinned)
         self.assertEqual(pinned - bound, set())
 
-        # The script must also refuse to run if the two ever drift apart.
-        self.assertIn("$unboundIdentityNames", self.script)
-        self.assertLess(
-            self.script.index("$unboundIdentityNames = @("),
-            self.script.index("foreach ($entry in $identity.GetEnumerator())"),
+        # Drift must fail closed, so the guard has to actually throw.
+        guard = self.script[
+            self.script.index("$unboundIdentityNames = @(") :
+            self.script.index("foreach ($entry in $identity.GetEnumerator())")
+        ]
+        self.assertIn("throw", guard)
+        self.assertIn("an inherited value would win", guard)
+
+    def test_switch_writes_rebind_the_compose_environment(self):
+        """Opening a gate must reach the container, not just the profile file.
+
+        Binding the closed gates once at staging is only half the contract. If a
+        later switch write updates the file alone, the exported closed value
+        keeps winning and authorized activation can never complete, because
+        Compose still resolves the gate false. This drives the real functions
+        through the closed -> open -> closed transition.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+        lines = source.splitlines()
+
+        def body(name: str) -> str:
+            start = next(
+                i for i, line in enumerate(lines) if line.startswith(f"function {name} ")
+                or line.startswith(f"function {name}{{")
+                or line == f"function {name} {{"
+            )
+            end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
+            return chr(10).join(lines[start : end + 1])
+
+        helpers = chr(10).join(
+            body(name)
+            for name in (
+                "Read-DotEnv",
+                "Set-DotEnvValue",
+                "Write-Utf8NoBom",
+                "Sync-ComposeEnvironment",
+                "Write-ProfileSwitches",
+            )
+        )
+        probe = helpers + """
+$ErrorActionPreference = 'Stop'
+$composeEnvironmentNames = @('ALLOW_PAID_RUNS', 'USAGE_CHECK_ENABLED', 'DIRECTOR_ENV_FILE')
+$ProfileName = 'edge-oracle'
+$profilePath = '.switch-rebind-probe.env'
+Set-Content -LiteralPath $profilePath -Value "ALLOW_PAID_RUNS=false`nUSAGE_CHECK_ENABLED=false`n"
+try {
+    # An operator who exported the gate open must not win.
+    [Environment]::SetEnvironmentVariable('ALLOW_PAID_RUNS', 'true', 'Process')
+    Sync-ComposeEnvironment -Values (Read-DotEnv -Path $profilePath)
+    Write-Host "staged|$([Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS','Process'))"
+    Write-ProfileSwitches -PaidRuns $true -UsageChecks $true
+    Write-Host "opened|$([Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS','Process'))"
+    Write-ProfileSwitches -PaidRuns $false -UsageChecks $false
+    Write-Host "closed|$([Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS','Process'))"
+}
+finally {
+    [Environment]::SetEnvironmentVariable('ALLOW_PAID_RUNS', $null, 'Process')
+    Remove-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
+}
+"""
+        observed = dict(
+            line.strip().split("|", 1)
+            for line in _run_powershell(probe).splitlines()
+            if "|" in line
+        )
+        self.assertEqual(
+            observed, {"staged": "false", "opened": "true", "closed": "false"}
         )
 
     def test_usage_provider_prevalidation_precedes_paid_switches_and_dispatch(self):
@@ -1152,3 +1218,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | BEGIN]]
@@ -198,6 +199,24 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText((Join-Path (Get-Location) $Path), $Text, $utf8NoBom)
 }
 
+function Sync-ComposeEnvironment {
+    param([Parameter(Mandatory = $true)][hashtable]$Values)
+
+    # Compose reads the process environment ahead of --env-file, so every
+    # managed name is rebound whenever the profile changes. Binding once at
+    # staging would pin the closed gates for the rest of the run and make
+    # authorized activation impossible: the file would say true while the
+    # exported false kept winning.
+    foreach ($name in @($composeEnvironmentNames | Where-Object { $_ -ne "DIRECTOR_ENV_FILE" })) {
+        if ($Values.ContainsKey($name)) {
+            [Environment]::SetEnvironmentVariable($name, [string]$Values[$name], "Process")
+        }
+        else {
+            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+        }
+    }
+}
+
 function Write-ProfileSwitches {
     param(
         [Parameter(Mandatory = $true)][bool]$PaidRuns,
@@ -226,6 +245,7 @@ function Write-ProfileSwitches {
     }
     Write-Utf8NoBom -Path $profilePath -Text $text
     $text = $null
+    Sync-ComposeEnvironment -Values (Read-DotEnv -Path $profilePath)
 }
 
 function Assert-Configured {
@@ -879,14 +899,7 @@ if ($ProfileName -eq "long-table") {
 # project, so $composeProject keeps the value derived before validation.
 $hostPort = [int]$values["DIRECTOR_HOST_PORT"]
 [Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")
-foreach ($name in @($composeEnvironmentNames | Where-Object { $_ -ne "DIRECTOR_ENV_FILE" })) {
-    if ($values.ContainsKey($name)) {
-        [Environment]::SetEnvironmentVariable($name, [string]$values[$name], "Process")
-    }
-    else {
-        [Environment]::SetEnvironmentVariable($name, $null, "Process")
-    }
-}
+Sync-ComposeEnvironment -Values $values
 
 Write-Host "Using isolated $displayName profile $profilePath, Compose project $composeProject, and host port $hostPort."
 docker compose --project-name $composeProject --env-file $profilePath config --quiet
@@ -1159,3 +1172,4 @@ finally {
 # [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
