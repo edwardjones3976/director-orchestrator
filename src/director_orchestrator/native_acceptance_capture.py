@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -11,13 +12,14 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import subprocess
 import tempfile
 import threading
 import time
 
 from .native_acceptance_issuer import (IssuerError, MAX_CAPTURE, MAX_DOCUMENT, MAX_PACKET,
-    _pairs, canonical, claim, contained_native_path, context_from,
+    _pairs, canonical, canonical_native_path, claim, contained_native_path, context_from,
     digest, read_json, write_new)
 
 CURSOR_DENY = ["Shell(*)", "Read(**)", "Read(/*)", "Read(/**)", "Write(**)",
@@ -83,6 +85,82 @@ def pin_native_home(env, home):
     env["LOCALAPPDATA"] = str(Path(home) / "AppData" / "Local")
     return env
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+
+
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
+PROFILE_LIST = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
+
+
+def _profile_image_path(worker_sid):
+    """Read the machine-scope profile record the installation already trusts.
+
+    The administrator-owned ProfileList entry is keyed by the exact worker SID
+    from the digest-pinned configuration, so it describes the account this
+    process was verified to be running as rather than whatever a starting
+    process chose to place in the environment.
+    """
+    try:
+        import winreg
+    except ImportError:
+        raise IssuerError("trusted native worker profile metadata unavailable") from None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, PROFILE_LIST + "\\" + worker_sid, 0,
+                            winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            value, kind = winreg.QueryValueEx(key, "ProfileImagePath")
+    except OSError:
+        raise IssuerError("trusted native worker profile metadata unavailable") from None
+    if kind not in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) or not isinstance(value, str) or not value:
+        raise IssuerError("trusted native worker profile metadata unavailable")
+    return value
+
+
+def _expand_system_variables(value):
+    """Expand only the OS-supplied system location; never a caller's environment."""
+    if "%" not in value:
+        return value
+    import ctypes
+    buffer = ctypes.create_unicode_buffer(260)
+    length = ctypes.windll.kernel32.GetSystemWindowsDirectoryW(buffer, len(buffer))
+    if not length or length >= len(buffer):
+        raise IssuerError("trusted native worker profile metadata unavailable")
+    windows = buffer.value
+    for name, replacement in (("systemroot", windows), ("windir", windows),
+                              ("systemdrive", os.path.splitdrive(windows)[0])):
+        value = re.sub("%" + name + "%", lambda _: replacement, value, flags=re.IGNORECASE)
+    if "%" in value:
+        raise IssuerError("trusted native worker profile metadata unavailable")
+    return value
+
+
+def worker_roaming_appdata(worker_sid):
+    """The worker account's own roaming profile directory, from trusted metadata."""
+    if os.name != "nt":
+        raise IssuerError("trusted native worker profile metadata unavailable")
+    profile = _expand_system_variables(_profile_image_path(worker_sid))
+    if not profile or not Path(profile).is_absolute():
+        raise IssuerError("trusted native worker profile metadata unavailable")
+    roaming = canonical_native_path(str(Path(profile) / "AppData" / "Roaming"))
+    if not roaming.is_dir():
+        raise IssuerError("trusted native worker profile metadata unavailable")
+    return roaming
+
+
+def pin_cursor_native_home(env, home, *, worker_sid):
+    """Protect the Cursor review home without hiding the worker's own login.
+
+    Cursor takes cli-config.json from CURSOR_CONFIG_DIR but computes its saved
+    credential location from APPDATA, so the strict pin hides the completed
+    native worker login and no authenticated review is possible. HOME,
+    USERPROFILE and LOCALAPPDATA still resolve inside the administrator-owned
+    empty home, so home-based rules/skills loaders see nothing; only the roaming
+    profile holding the worker's own credential is restored, from trusted
+    profile metadata rather than an inherited value, and it is neither read nor
+    copied here. Absent metadata fails closed before any native attempt.
+    """
+    pin_native_home(env, home)
+    env["APPDATA"] = str(worker_roaming_appdata(worker_sid))
+    return env
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
 
 
 def prompt_for(request):
@@ -310,7 +388,9 @@ def work(cfg, job_id):
             # when ACP cannot broker a tool call. Enrollment verifies this pin.
             if read_json(cfg.root / "cursor-config" / "cli-config.json") != {"permissions": {"allow": [], "deny": CURSOR_DENY}}:
                 raise IssuerError("protected Cursor deny-all tool configuration missing")
-            pin_native_home(env, cfg.root / "cursor-config")
+            # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
+            pin_cursor_native_home(env, cfg.root / "cursor-config", worker_sid=cfg.worker_sid)
+            # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
             env["CURSOR_CONFIG_DIR"] = str(cfg.root / "cursor-config")
             code, capture = run_acp(command, cwd=cwd, env=env, prompt=prompt_for(request), model=cfg.model, timeout=timeout)
         elif cfg.provider == "openai":
@@ -361,3 +441,4 @@ def work(cfg, job_id):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]

@@ -1,7 +1,9 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
 """Synthetic native events test parser contracts, not provider enrollment."""
+import base64
 import copy
 from dataclasses import asdict, replace
 import json
@@ -289,6 +291,102 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
             finally:fixture.doCleanups()
         # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 
+    # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
+    def cursor_fixture(self, deny):
+        from tests.test_native_acceptance_issuer import IssuerTests
+        fixture = IssuerTests(); fixture.setUp()
+        root = Path(fixture.root).resolve()
+        profile = root / "worker-profile"
+        (profile / "AppData" / "Roaming" / "Cursor").mkdir(parents=True)
+        # The completed login is only located, never opened, moved or copied.
+        (profile / "AppData" / "Roaming" / "Cursor" / "auth.json").write_text('{"fixture": true}')
+        (root / "profile-without-appdata").mkdir()
+        config = root / "cursor-config"; config.mkdir()
+        (config / "cli-config.json").write_bytes(canonical({"permissions": {"allow": [], "deny": deny}}))
+        (root / "requests" / (fixture.context.challenge + ".json")).write_bytes(canonical(fixture.request))
+        cfg = replace(fixture.cfg, role="independent_review", provider="cursor", model="configured")
+        return fixture, cfg, root, profile, config
+
+    def acp_document(self, fixture, model):
+        verdict = json.dumps(dict(verdict="ACCEPT", challenge=fixture.context.challenge,
+            packet_digest=fixture.context.packet_digest, run_nonce=fixture.request["run_nonce"]))
+        messages = [dict(id=1, result=dict(protocolVersion=1, authMethods=[dict(id="cursor_login")])),
+                    dict(id=2, result={}), dict(id=3, result=dict(sessionId="acp-session")),
+                    dict(id=4, result={}), dict(id=5, result={}),
+                    dict(method="session/update", params=dict(sessionId="acp-session", update=dict(
+                        sessionUpdate="agent_message_chunk", content=dict(type="text", text=verdict)))),
+                    dict(id=6, result=dict(stopReason="end_turn"))]
+        return canonical(dict(protocol="cursor-acp/v1", messages=messages, mode="ask", model=model))
+
+    def cursor_attempt(self, deny, profile_kind):
+        """Drive the actual worker through the capture/run_acp boundary."""
+        from director_orchestrator.native_acceptance_capture import work
+        fixture, cfg, root, profile, config = self.cursor_fixture(deny)
+        try:
+            attempts, sids, error = [], [], None
+            def acp(command, *, cwd, env, prompt, model, timeout):
+                attempts.append(dict(env=dict(env), cwd=cwd, model=model,
+                    login_visible=(Path(env["APPDATA"]) / "Cursor" / "auth.json").is_file()))
+                return 0, self.acp_document(fixture, model)
+            def image_path(worker_sid):
+                sids.append(worker_sid)
+                if profile_kind == "absent":
+                    raise IssuerError("trusted native worker profile metadata unavailable")
+                return str(profile if profile_kind == "worker" else root / "profile-without-appdata")
+            with patch.object(Config, "identity"), patch.object(Config, "command", return_value=["native.exe"]), \
+                    patch("director_orchestrator.native_acceptance_capture._profile_image_path", side_effect=image_path), \
+                    patch("director_orchestrator.native_acceptance_capture.run_acp", side_effect=acp):
+                try:
+                    work(cfg, fixture.context.challenge)
+                except IssuerError as exc:
+                    error = str(exc)
+            response = root / "responses" / (fixture.context.challenge + ".json")
+            return dict(error=error, attempts=attempts, sids=sids, worker_sid=cfg.worker_sid,
+                        response=json.loads(response.read_bytes()) if response.exists() else None,
+                        profile=profile, config=config)
+        finally:
+            fixture.doCleanups()
+
+    def test_cursor_review_home_never_hides_the_native_worker_login(self):
+        from director_orchestrator.native_acceptance_capture import CURSOR_DENY, pin_native_home
+        outcome = self.cursor_attempt(CURSOR_DENY, "worker")
+        self.assertIsNone(outcome["error"])
+        env = outcome["attempts"][0]["env"]
+        # Cursor computes its saved credential path from APPDATA, so the actual
+        # worker roaming profile must survive the protected home pin.
+        self.assertEqual(env["APPDATA"], str(outcome["profile"] / "AppData" / "Roaming"))
+        self.assertTrue(outcome["attempts"][0]["login_visible"])
+        # The location came from SID-keyed profile metadata, not the caller.
+        self.assertEqual(outcome["sids"], [outcome["worker_sid"]])
+        for key in ("HOME", "USERPROFILE"):
+            self.assertEqual(env[key], str(outcome["config"]))
+        self.assertEqual(env["CURSOR_CONFIG_DIR"], str(outcome["config"]))
+        self.assertEqual(env["LOCALAPPDATA"], str(outcome["config"] / "AppData" / "Local"))
+        self.assertFalse(any(k in env for k in ("CURSOR_API_KEY", "ANTHROPIC_API_KEY", "PYTHONPATH")))
+        self.assertEqual(json.loads(base64.b64decode(outcome["response"]["capture"]))["protocol"], "cursor-acp/v1")
+        # The stricter AGY pin is unchanged and still replaces every per-user path.
+        strict = pin_native_home(dict(env), outcome["config"])
+        self.assertEqual(strict["APPDATA"], str(outcome["config"] / "AppData" / "Roaming"))
+        self.assertEqual(strict["LOCALAPPDATA"], str(outcome["config"] / "AppData" / "Local"))
+        self.assertEqual(strict["HOME"], str(outcome["config"]))
+
+    def test_cursor_missing_policy_or_profile_metadata_fails_closed(self):
+        from director_orchestrator.native_acceptance_capture import CURSOR_DENY
+        weakened = self.cursor_attempt([d for d in CURSOR_DENY if d != "Shell(*)"], "worker")
+        self.assertIn("protected Cursor deny-all tool configuration missing", weakened["error"])
+        # The weakened administrator configuration stops the lane before any
+        # profile lookup, native attempt or response.
+        self.assertEqual(weakened["sids"], [])
+        self.assertEqual(weakened["attempts"], [])
+        self.assertIsNone(weakened["response"])
+        for profile_kind in ("absent", "unusable"):
+            outcome = self.cursor_attempt(CURSOR_DENY, profile_kind)
+            with self.subTest(profile_kind=profile_kind):
+                self.assertIsNotNone(outcome["error"])
+                self.assertEqual(outcome["attempts"], [])
+                self.assertIsNone(outcome["response"])
+    # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
+
     def test_hook_pin_is_verified_but_is_not_a_native_argument(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);exe=root/"native.exe";hook=root/"deny.exe"
@@ -302,3 +400,4 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
