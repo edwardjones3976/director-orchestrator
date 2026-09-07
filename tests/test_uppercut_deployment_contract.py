@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]]
@@ -785,6 +786,43 @@ Write-Host "absent|$(Test-Path -LiteralPath 'Env:PR77_PROBE_NEVER_SET')"
             '[Environment]::SetEnvironmentVariable($name, $null, "Process")', source
         )
 
+    def test_unrestorable_empty_override_is_reported_not_dropped(self):
+        """An inherited empty gate that cannot be restored must be announced.
+
+        An empty export still beats --env-file, so an inherited empty gate is a
+        real paid-closed override. Windows PowerShell 5.1 cannot represent an
+        empty process variable at all -- .NET, Set-Item, assignment and New-Item
+        each delete the name -- so restoration there is impossible and the only
+        honest option is to say so rather than let the next Compose run silently
+        read the profile value instead.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+        restore = source[source.index("$original = $originalProcessEnvironment[$name]") :]
+        restore = restore[: restore.index("Clear-ProcessEnvironmentVariable")]
+        self.assertIn("Write-Warning", restore)
+        self.assertIn("Could not restore the inherited empty", restore)
+
+        # No edition may quietly claim success: whichever shell runs the suite,
+        # a present-empty original either survives or is reported.
+        probe = """
+$ErrorActionPreference = 'Stop'
+[Environment]::SetEnvironmentVariable('PR77_EMPTY_GATE', '', 'Process')
+$present = Test-Path -LiteralPath 'Env:PR77_EMPTY_GATE'
+Write-Host "restorable|$present"
+[Environment]::SetEnvironmentVariable('PR77_EMPTY_GATE', $null, 'Process')
+"""
+        observed = dict(
+            line.strip().split("|", 1)
+            for line in _run_powershell(probe).splitlines()
+            if "|" in line
+        )
+        # PowerShell 7 keeps it; 5.1 cannot. Either way the script must not
+        # assume restoration succeeded, which the warning above guarantees.
+        self.assertIn(observed["restorable"], {"True", "False"})
+
     def test_usage_provider_prevalidation_precedes_paid_switches_and_dispatch(self):
         definition = self.script.index("function Get-ValidatedUsageCheckProviders")
         prevalidation = self.script.index(
@@ -1258,3 +1296,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]

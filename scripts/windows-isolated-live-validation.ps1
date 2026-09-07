@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]]
@@ -1162,6 +1163,17 @@ finally {
         $original = $originalProcessEnvironment[$name]
         if ($original.Present) {
             [Environment]::SetEnvironmentVariable($name, [string]$original.Value, "Process")
+            if (-not (Test-Path -LiteralPath "Env:${name}")) {
+                # Windows PowerShell 5.1 cannot hold an empty process variable:
+                # .NET, Set-Item, assignment and New-Item all delete the name
+                # instead. An inherited empty gate is a real override, because an
+                # empty export still beats --env-file, so losing it silently
+                # would let the next Compose run read the profile value instead.
+                Write-Warning ("Could not restore the inherited empty ${name}. " +
+                    "This PowerShell edition cannot represent an empty process " +
+                    "variable, so that override is gone; re-export it before the " +
+                    "next Compose run if it was deliberate.")
+            }
         }
         else {
             Clear-ProcessEnvironmentVariable -Name $name
@@ -1184,3 +1196,4 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]
