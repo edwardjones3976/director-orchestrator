@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: OpenAI (director-provider-profile/v1).
@@ -298,3 +299,4 @@ sources:
     anchor: "OpenAI keeps Moderator, Participant, and Director separate in every project-local record; they are never collapsed or renamed into duty buckets."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:52 UTC | END]]
