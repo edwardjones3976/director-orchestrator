@@ -136,12 +136,12 @@ entry, endpoint, or path is ever recorded in a sheet.
 
 ## Grok primary Cursor-family profile
 
-The Grok adapter has two explicit transports and two API model lanes. General
-analysis and debate use `GROK_MODEL`; bounded implementation assignments that
-do not authorize repository writes use `GROK_CODE_MODEL`. Both remain
-synchronous and tool-free. Repository implementation and exact-SHA review use
-the locally authenticated Grok Build CLI in an
-operator-mapped clean named worktree. The Director never promotes API-only
+The Grok adapter has two explicit transports. It also has two API model lanes:
+general analysis and debate use `GROK_MODEL`, while bounded implementation
+assignments that do not authorize repository writes use `GROK_CODE_MODEL`. Both
+remain synchronous and tool-free. Repository implementation and exact-SHA review
+use the locally authenticated Grok Build CLI in an operator-mapped clean named
+worktree. The Director never promotes API-only
 output into repository or review authority. Keep both transports disabled until
 their dedicated credentials, paths, and budgets are configured:
 

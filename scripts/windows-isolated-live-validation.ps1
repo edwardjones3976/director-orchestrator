@@ -791,7 +791,9 @@ $identity = [ordered]@{
     MAX_TASK_BUDGET_USD = [string]$selected.MAX_TASK_BUDGET_USD
     PRIMARY_TEAM = "openai,claude,cursor,grok"
     PRIMARY_WORKHORSE = "cheapest_capable"
-    USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"
+    # USAGE_CHECK_PROVIDERS is deliberately not forced here. The profile's
+    # explicit periodic-check membership is preserved and validated by
+    # Get-ValidatedUsageCheckProviders before any paid dispatch.
     USAGE_CHECK_INTERVAL_MINUTES = "360"
     ALLOW_PAID_RUNS = "false"
     USAGE_CHECK_ENABLED = "false"
