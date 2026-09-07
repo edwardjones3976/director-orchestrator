@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | BEGIN]]
@@ -205,6 +206,19 @@ function global:Get-ProbeEnvironment {
         $snapshot[[string]$entry.Key] = [string]$entry.Value
     }
     return $snapshot
+}
+# Denying the compiler can also cost the probe a cmdlet that is not loaded yet,
+# because module autoload on Windows PowerShell 5.1 may compile on its way in.
+# Get-FileHash is the one this fixture used to reach for, so it is denied here
+# on purpose: the profile comparison below has to stand on framework calls
+# alone, and a local pass now proves that independence rather than assuming it.
+function global:Get-FileHash { throw 'synthetic Get-FileHash denial' }
+function global:Get-ProbeFileContent {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Exact bytes, no cmdlet, no encoding guess: enough to prove the profile was
+    # not rewritten, and comparable as an ordinal string.
+    return [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($Path))
 }
 """
 
@@ -575,7 +589,7 @@ $seedValue = [Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS', 'Process')
 function global:Add-Type {{ throw 'synthetic compiler denial' }}
 $before = Get-ProbeEnvironment
 $profileFile = Join-Path $fixture '.env.uppercut'
-$profileBefore = (Get-FileHash -LiteralPath $profileFile -Algorithm SHA256).Hash
+$profileBefore = Get-ProbeFileContent -Path $profileFile
 $threw = 'none'
 try {{
     & $launcher -ProfileName project-uppercut -EnablePaidRuns -TimeoutSeconds 1 *> $log
@@ -591,7 +605,7 @@ foreach ($name in @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique)) {{
     }}
 }}
 $paid = [Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS', 'Process')
-$profileAfter = (Get-FileHash -LiteralPath $profileFile -Algorithm SHA256).Hash
+$profileAfter = Get-ProbeFileContent -Path $profileFile
 Write-Output ('seedPresent|' + $seedPresent)
 Write-Output ('seedLength|' + ([string]$seedValue).Length)
 Write-Output ('threw|' + $threw)
@@ -601,7 +615,7 @@ Write-Output ('paidValue|' + [string]$paid)
 Write-Output ('dockerCalls|' + $global:probeDocker.Count)
 Write-Output ('composeCalls|' + @($global:probeDocker | Where-Object {{ $_ -like 'compose*' }}).Count)
 Write-Output ('changedEnv|' + ($changed -join ','))
-Write-Output ('profileUnchanged|' + ($profileBefore -eq $profileAfter))
+Write-Output ('profileUnchanged|' + ($profileBefore -ceq $profileAfter))
 """
             return dict(
                 line.strip().split("|", 1)
@@ -1155,3 +1169,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | END]]
