@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 07:05 UTC | BEGIN]] -->
 # Provider activation evidence: mechanism and blockers
 
@@ -29,8 +30,14 @@ Evidence is not produced by dispatching work at all. `make_capture` states it:
 provider, `status == "SUCCEEDED"`, and an **empty** `side_effects` array
 (`:287-288`, which raises *"native canary did not complete without effects"*).
 
-So the evidence run is a set of controlled native canaries, not billable task
-runs. The cost concern that motivated this work was misplaced. The setup is the
+So the evidence run is a set of controlled native canaries rather than
+task-shaped work with external effects. That is a statement about *effects*, not
+about *cost*. Validation calls the configured native executor and inspects the
+result afterwards; the empty `side_effects` array is a property of the returned
+result packet, and it says nothing about what the provider charged to produce
+it. Each canary is a real inference call and can consume money or subscription
+allowance. The cost concern that motivated this work is not misplaced; it is
+answered under "Money" below, not dismissed. The setup is still most of the
 work.
 
 ## The arithmetic
@@ -58,45 +65,94 @@ including `INSTALLED` — returns `stage=None` with both `dry_run_ready` and
 re-checked on every `provider_ready` call. **There is no renewal path**: a lapse
 means redoing the chain.
 
-## Five blockers, each verified
+## Five blockers, corrected against the source
 
-**1. The generation identifier is not derivable today.**
+Three of the five as first written overstated their case. The corrected form is
+below; where a claim shrank, what replaced it is still a blocker, not a
+clearance.
+
+**1. The generation identifier does not exist on this deployment yet.**
 `DIRECTOR_PROVIDER_VALIDATION_GENERATION` must be the primary generation manifest
 SHA256. `LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256` and `_PATH` are both absent
-from `.env`, so there is nothing to derive it from. This is not a value to invent.
+from `.env`, so there is nothing to derive it from today. This is not a value to
+invent. There is a sanctioned way to establish it: the control script's
+`SelectGeneration` action takes an owner-supplied manifest and its exact digest,
+reserves them, and writes both names. Until that has been run against a real
+manifest, this stays blocked.
 
-**2. The mandatory openai lane is skipped by default.**
+**2. The openai lane needs the native route configured and qualified — the
+default is not a contradiction.**
 `langgraph_primary_openai_transport` defaults to `"responses-api"`
-(`config.py:664`), and `primary_transports.py:1249-1250` reads:
+(`config.py:664`). On that default the lane is not skipped: `1216-1225`
+constructs the Responses API adapter whenever `OPENAI_API_KEY` is set and openai
+authentication is observed. The line that reads
 
 ```python
 if provider_id == "openai" and openai_transport != "native-codex-host":
     continue
 ```
 
-openai is mandatory for `core_inventory_ready`, so with the default transport the
-gate cannot be satisfied no matter what the other lanes do.
+is inside the host-bridge loop (`primary_transports.py:1249-1250`); its effect is
+to stop a native host route from overriding the transport that was actually
+selected. Reading it as a blanket skip of the openai lane was wrong.
+
+What is true is narrower and still blocking for *evidence*: capture
+normalization for openai is routed to `normalize_codex_jsonl`
+(`provider_validation.py:309-311`), so a `LIVE_OK` capture for this lane has to
+come from the native Codex host route. That route must be explicitly configured
+(`LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=native-codex-host`, host bridge lane, host
+ChatGPT login) and then qualified against the strict capture checks. Neither
+configuration nor an authenticated host is qualification, and dispatch working
+over the Responses API is not evidence that the native capture path works.
 
 **3. The bridge contradicts itself about cursor.**
-`host_provider_bridge.py:41-43` allowlists `cursor` in `SUPPORTED_HOST_LANES`.
+`host_provider_bridge.py:41-44` allowlists `cursor` in `SUPPORTED_HOST_LANES`.
 `scripts/windows-host-provider-bridge.ps1:65-67` throws
 *"cursor cannot be enabled through the Windows host bridge"* if the command map
-contains it. The Python half admits the lane the PowerShell launcher refuses to
-start. One of the two is wrong and this must be resolved before cursor can be
-counted toward the floor.
+contains it, and its allowlist omits the lane. The Python half admits the lane
+the PowerShell launcher refuses to start. Both checks have to agree, and the
+parity correction is assigned to a separate worktree; it is not made here.
+Resolving the contradiction in either direction only makes the lane launchable —
+it does not qualify the installed route.
 
-**4. grok has no compatible surface.**
-Its non-interactive mode is a persistent stdio/WebSocket agent protocol, not a
-single-shot JSON envelope, and no packet wrapper for it exists in this
-repository. A capture requires a raw native terminal envelope on stdout.
+**4. grok has direct CLI paths; the installed envelope is unproved.**
+The repository does contain finite, single-shot direct paths for grok:
+`primary_transports.py:1186` pins `--output-format json --max-turns 1
+--permission-mode plan` and passes the packet through `--prompt-file`
+(`:979-997`), and `providers.py:1317-1345` carries the matching direct
+invocation. Saying no wrapper exists was wrong.
 
-**5. antigravity cannot produce a capture here.**
-It has no CLI at all — it is IDE-only — and its capture path is hard-routed to a
-pinned-SSH team route that is unbound on this deployment.
+The unproved part is compatibility, on two separate surfaces. Strict capture
+validation (`provider_validation.py:301-328`) requires a raw native terminal
+envelope with a successful terminal status, a string session or conversation
+identifier, no `schema_version` key, and no tool or effect keys; the host bridge
+instead feeds raw stdin (`:449-458`) and demands terminal JSON (`:466-474`).
+Whether the *installed* Grok CLI emits an envelope that satisfies those checks
+has not been demonstrated. The exhausted native probe must not be repeated for
+this document; its existing owner retains any reviewed correction.
 
-Taken together: the floor needs openai plus two of {claude, cursor, grok}. openai
-is blocked by (2), cursor by (3), grok by (4). **claude is the only lane that is
-merely unconfigured rather than blocked.**
+**5. antigravity has an installed CLI; its capture route is unbound.**
+It is not IDE-only. An Antigravity CLI is installed on this host, reports
+version 1.1.27 and carries a valid Authenticode signature, and
+`primary_transports.py:1187` already resolves `agy.exe` as a native lane. The
+version and signature checks made no inference call.
+
+Host authentication, protected-worker availability and enrollment are separate
+questions and remain unestablished; an access-denied protected path is
+indeterminate, not evidence of absence, and existing authentic component reviews
+and installation receipts must be reconciled rather than described as
+nonexistent. The actual capture blocker is narrower: `normalize_capture` routes
+antigravity to a pinned-SSH team route (`provider_validation.py:303-306`) and
+raises *"Antigravity team SSH capture verifier is unbound"* when that route is
+absent, which is the state on this deployment.
+
+Taken together: the floor needs openai plus two of {claude, cursor, grok}. No
+lane is currently qualified. openai needs the native Codex route configured and
+qualified (2); cursor needs the launcher/bridge parity resolved and then
+qualified (3); grok needs its installed envelope proved against the capture
+checks, without repeating the exhausted probe (4). claude is the closest, but
+"unconfigured" is not the same as "ready": it too must be configured and then
+produce a real capture. Nothing here establishes that any lane will pass.
 
 ## A topology problem the variable names hide
 
@@ -129,6 +185,89 @@ The schema name `director_provider_validation_v1` is a module constant with no
 environment override, and the checkpoints table hard-codes its namespace in a
 CHECK constraint, so neither can be renamed.
 
+## Money
+
+The owner-approved budget audit (2026-09-07 07:13 UTC) and launch budget
+decision (2026-09-07 07:20 UTC) are authoritative over this document. Nothing
+below invents a limit; where the two disagree with anything here, they win.
+
+The selected ceilings:
+
+| Limit | Ceiling | Scope |
+| --- | ---: | --- |
+| Initial launch validation campaign | USD 10 total | Every included lane and every validation invocation in the campaign, counting failed and ambiguous attempts. A new generation, candidate, transport, task identifier, process or UTC day does not reset it. |
+| Primary project daily admissions | USD 50 per UTC day | Aggregate funded primary provider admissions for this Director project, across its tasks and providers. Project-scoped, not an account-wide or vendor-side limit. |
+| Primary task admission | USD 14 per task | The existing task ceiling as reported; this document neither changes nor independently verifies the live value. |
+
+Each invocation must satisfy every applicable ceiling. The campaign and
+production scopes are distinct: the daily limit does not replace the campaign
+limit, and the task limit does not multiply it. Selecting a ceiling is not
+authorization to start paid execution or to activate anything.
+
+These three ceilings are selections. None of them has been provisioned on this
+deployment or verified as enforced end to end. That is not the same as saying
+the source enforces no money at all — it does enforce some, and the distinction
+matters when deciding what still has to be built.
+
+Monetary admission that genuinely exists:
+
+- **Per-task and per-assignment admission.** Primary planning divides
+  `MAX_TASK_BUDGET_USD` into assignment allowances and then into per-attempt
+  allowances, and admission is refused beyond them. The deployment was observed
+  with that value at 14, matching the retained task ceiling above. This is a
+  real gate inside the orchestrator, not a decoration — but it is a
+  planning/admission control, not a demonstrated provider-side billing cap, and
+  it says nothing about what a vendor actually charges.
+- **Team-mode project and provider budgets.** Primary cross-task monetary
+  admission is available through enrolled team routing, with limits supplied by
+  signed project and provider registrations. It is conditional: team mode must
+  be enabled and the entitlement and artifact services actually enrolled.
+  Setting a daily environment variable does not wire that consumer, so the
+  USD 50 daily ceiling has to be bound into that signed authority before it may
+  be called enforced.
+
+What is absent, and is the gap the campaign ceiling depends on:
+
+- **No cross-generation USD campaign cap exists in the audited source.**
+  Validation
+  `budget_units` and per-lane `cost_units` are positive abstract integers
+  (`provider_validation.py:105-164`). One transaction locks the generation,
+  checks remaining units, and admits at most one attempt per generation and
+  provider; the reservation persists through success, failure and ambiguity.
+  There is no dollar or token conversion in that path, and the budget is scoped
+  to a single generation, so a fresh generation starts a fresh unit allowance.
+  Ten units are not ten dollars. Nothing accumulates money across generations,
+  providers, processes or UTC days, which is precisely what the USD 10 ceiling
+  requires. Until one durable shared ledger does that, the campaign cap is
+  enforced only by whoever is running the campaign.
+- `MAX_DAILY_PROVIDER_BUDGET_USD` has a default of 1000, but its ledger consumer
+  is the legacy engine. It is not the primary daily monetary gate and must not
+  be cited as one.
+- Native subscription authentication — OpenAI Pro, Claude Max, an authenticated
+  CLI — establishes neither remaining entitlement nor zero incremental cost.
+  Where a route exposes no enforceable dollar interface, record that limitation
+  and bound calls, turns, time and output instead of inventing a currency
+  conversion.
+
+Admission rules for the campaign: at most one canary per required lane; an
+ambiguous paid invocation is never replayed; one durable reservation ledger
+shared by all included routes and generations, reserving a conservative upper
+bound before each potentially metered invocation and atomically refusing any sum
+above USD 10; the whole reservation is retained for unknown or ambiguous
+charges, counting at least the greater of the reservation and the authenticated
+reported charge; absent telemetry is not zero. A lane whose dollar exposure
+cannot be bounded stays unadmitted rather than being given an invented
+allowance.
+
+Canary bounds worth keeping as they are: fixed packets with `allowed_tools=[]`,
+`allowed_external_effects=[]`, `max_hops=1`, `max_revisions=0`, and exactly one
+captured native execution. The proposed 120-second per-invocation timeout counts
+only once the configured executor is confirmed to enforce it for that lane. The
+1 MiB capture ceiling is a post-execution evidence-size bound, not an output or
+billing bound. A 512-token output ceiling applies only where the actual route
+exposes and enforces that control, and a native CLI invocation may issue several
+requests internally, so its turn and request limits need checking separately.
+
 ## What this specification deliberately does not supply
 
 No DSN, no command map, no capture key, no generation identifier, no candidate or
@@ -143,9 +282,14 @@ written.
    answerable from the repository alone, without touching the deployment.
 2. Decide the topology question, since it constrains every DSN that follows.
 3. Establish the generation manifest, which blocker (1) depends on.
-4. Prove one lane end to end — claude, as the only unblocked candidate — and only
-   then generalise.
+4. Prove one lane end to end — claude, as the nearest candidate rather than a
+   qualified one — and only then generalise. Its first capture is a real,
+   possibly metered invocation and needs a reservation under the campaign
+   ceiling below.
 5. Treat (2), (4) and (5) as separate scoped decisions. Each changes what the
-   roster can contain, and (4) and (5) may mean the floor is unreachable without
-   a code change.
+   roster can contain. (4) needs the installed envelope proved without repeating
+   the exhausted probe, and (5) needs the team capture route bound plus host
+   authentication and enrollment settled; either may still require a code
+   change.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 07:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
