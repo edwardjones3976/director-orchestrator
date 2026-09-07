@@ -43,6 +43,36 @@ DENY_TOOLS = {"read_file(*)", "write_file(*)", "read_url(*)", "execute_url(*)",
 MAX_FRAME = 32 * 1024 * 1024
 
 
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+def deny_all_settings_document():
+    """The one accepted native settings document; nothing else is a policy."""
+    return {"permissions": {"allow": [], "deny": sorted(DENY_TOOLS)}}
+
+
+def deny_all_hooks_document(hook_executable):
+    return {"director-team-deny-all": {"PreToolUse": [{"matcher": "*", "hooks": [
+        {"type": "command", "command": hook_executable, "timeout": 5}]}]}}
+
+
+def is_deny_all_settings(settings):
+    """Exact closed shape: a subset match would admit surplus policy keys.
+
+    Documented Antigravity settings also carry command-bearing keys such as
+    statusLine, so anything beyond the deny-all permissions block is refused
+    here rather than accepted as harmless surplus.
+    """
+    if not isinstance(settings, dict) or set(settings) != {"permissions"}:
+        return False
+    permissions = settings["permissions"]
+    if not isinstance(permissions, dict) or set(permissions) != {"allow", "deny"}:
+        return False
+    deny = permissions["deny"]
+    if permissions["allow"] != [] or not isinstance(deny, list) or not all(isinstance(t, str) for t in deny):
+        return False
+    return len(deny) == len(set(deny)) and set(deny) == DENY_TOOLS
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+
+
 def sign(secret, evidence):
     return {"evidence": evidence, "signature": hmac.new(secret,
         canonical_json_bytes(evidence), hashlib.sha256).hexdigest()}
@@ -251,16 +281,15 @@ class LinuxNativeTeamWorker:
         settings_path = str(Path(self.config["native_home"]) / ".gemini/antigravity-cli/settings.json")
         if settings_path not in qualification["protected_files"]:
             raise TeamAuthorizationError("native permission policy is not qualified")
-        settings = json.loads(protected_bytes(settings_path))
-        permissions = settings.get("permissions", {})
-        if permissions.get("allow") or not DENY_TOOLS.issubset(permissions.get("deny", [])):
+        # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+        if not is_deny_all_settings(json.loads(protected_bytes(settings_path))):
             raise TeamAuthorizationError("native tools must be denied by protected policy")
+        # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
         hooks_path=str(Path(self.config["native_home"])/".gemini/antigravity-cli/hooks.json")
         hook=self.config["deny_all_hook_executable"]
         if hooks_path not in qualification["protected_files"] or hook not in qualification["protected_files"]:
             raise TeamAuthorizationError("wildcard native tool guard is not qualified")
-        expected_hook={"director-team-deny-all":{"PreToolUse":[{"matcher":"*","hooks":[{
-            "type":"command","command":hook,"timeout":5}]}]}}
+        expected_hook=deny_all_hooks_document(hook)
         if json.loads(protected_bytes(hooks_path))!=expected_hook:
             raise TeamAuthorizationError("all native tool categories require the protected wildcard guard")
         # Issuer evidence must cover real negative access tests for both exact

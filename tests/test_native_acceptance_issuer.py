@@ -181,6 +181,45 @@ class IssuerTests(unittest.TestCase):
         import sys
         with self.assertRaises(IssuerError):run_bounded([sys.executable,'-c','print("x"*10000)'],cwd=self.root,env=child_environment(),limit=50)
 
+    # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+    def test_malformed_claude_verdict_and_message_values_are_controlled(self):
+        for mutate in (
+            lambda c: c["events"][-1].update(result=None),
+            lambda c: c["events"][-1].update(result={"verdict": "ACCEPT"}),
+            lambda c: c["events"][-1].pop("result"),
+            lambda c: c["events"][-1].update(result="not json at all"),
+            lambda c: c["events"][1].update(message="text"),
+            lambda c: c["events"][1].update(message={"content": "text"}),
+            lambda c: c["events"][1].update(message={"content": ["text"]}),
+            lambda c: c.update(auth=None),
+            lambda c: c.update(events={"type": "result"}),
+        ):
+            c = self.capture(); mutate(c)
+            with self.assertRaises(IssuerError): self.parse(c)
+
+    def test_malformed_acp_results_are_controlled_not_attribute_errors(self):
+        result=json.loads(self.capture()['events'][-1]['result'])
+        messages=[dict(id=1,result=dict(protocolVersion=1,authMethods=[dict(id='cursor_login')])),
+                  dict(id=2,result={}),dict(id=3,result=dict(sessionId='acp-session')),
+                  dict(id=4,result={}),dict(id=5,result={}),
+                  dict(method='session/update',params=dict(sessionId='acp-session',update=dict(sessionUpdate='agent_message_chunk',content=dict(type='text',text=json.dumps(result))))),
+                  dict(id=6,result=dict(stopReason='end_turn'))]
+        cap=dict(protocol='cursor-acp/v1',messages=messages,mode='ask',model='configured')
+        for mutate in (
+            lambda m: m[2].update(result='acp-session'),
+            lambda m: m[6].update(result=None),
+            lambda m: m[0].update(result=dict(protocolVersion=1,authMethods='cursor_login')),
+            lambda m: m[0].update(result=dict(protocolVersion=1,authMethods=['cursor_login'])),
+            lambda m: m[5]['params'].update(update='agent_message_chunk'),
+            lambda m: m[5]['params']['update'].update(content='text'),
+            lambda m: m[5]['params']['update'].update(content=dict(type='text',text=None)),
+            lambda m: m[5].update(params='acp-session'),
+        ):
+            bad=copy.deepcopy(cap); mutate(bad['messages'])
+            with self.assertRaises(IssuerError):
+                parse_acp(bad,request=self.request,model='configured')
+    # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+
     def test_prompt_contains_whole_packet_and_context_binding(self):
         prompt=prompt_for(self.request)
         self.assertIn(self.context.challenge,prompt)

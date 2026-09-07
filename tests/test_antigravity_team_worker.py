@@ -125,6 +125,26 @@ class WorkerProtocolTests(unittest.TestCase):
                     before_execute=lambda:None,before_local_command=lambda argv:None)
                 self.assertIn("session.json",capture["evidence"]["native_state_manifest_after"])
 
+    # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+    def test_native_policy_documents_are_exact_closed_shapes(self):
+        # qualify() compares against these documents; a subset match would admit
+        # surplus, command-bearing settings keys alongside the deny-all block.
+        from director_orchestrator.antigravity_team_worker import (DENY_TOOLS, deny_all_hooks_document,
+            deny_all_settings_document, is_deny_all_settings)
+        self.assertTrue(is_deny_all_settings(deny_all_settings_document()))
+        for settings in ({**deny_all_settings_document(), "statusLine": {"type": "command", "command": "/tmp/foreign"}},
+                         {"permissions": {"allow": [], "deny": sorted(DENY_TOOLS) + ["extra(*)"]}},
+                         {"permissions": {"allow": ["read_file(*)"], "deny": sorted(DENY_TOOLS)}},
+                         {"permissions": {"allow": [], "deny": sorted(DENY_TOOLS - {"mcp(*)"})}},
+                         {"permissions": {"allow": [], "deny": sorted(DENY_TOOLS), "defaultMode": "acceptEdits"}},
+                         {"permissions": {"deny": sorted(DENY_TOOLS)}}, {}, None):
+            with self.subTest(settings=settings):
+                self.assertFalse(is_deny_all_settings(settings))
+        hooks = deny_all_hooks_document("/opt/director/deny")
+        self.assertEqual(hooks["director-team-deny-all"]["PreToolUse"][0]["matcher"], "*")
+        self.assertNotEqual(hooks, deny_all_hooks_document("/opt/other/deny"))
+    # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+
     def test_general_host_qualification_cannot_authorize_another_grants_source(self):
         g=grant()
         worker=LinuxNativeTeamWorker({},owner_secret=fixtures.OWNER_SECRET,issuer_secret=b"i"*32,worker_secret=b"w"*32)

@@ -4,15 +4,18 @@
 
 Stream shapes follow the installed native transport evidence. Neither stream
 observes an account identity or a served backend model. Those remain unknown.
+The AGY lane therefore fails closed: its only authentication field is a
+producer-controlled request label, so it cannot authorize an acceptance receipt
+until protected host enrollment supplies trusted native identity readback.
 """
 import json
 import re
 
-from .native_acceptance_issuer import IssuerError, _pairs, canonical
+from .native_acceptance_issuer import IssuerError, NATIVE_AUTH_UNENROLLED, _pairs, canonical
 
 
 def parse_additional(capture, *, provider, model, request):
-    from .native_acceptance_capture import _verdict
+    from .native_acceptance_capture import _object, _verdict
     if set(capture) != {"protocol", "requested_model", "observed_model", "observed_account", "cwd", "events", "auth"}:
         raise IssuerError("native capture fields differ")
     if capture["requested_model"] != model or capture["observed_model"] is not None or capture["observed_account"] is not None:
@@ -38,7 +41,7 @@ def parse_additional(capture, *, provider, model, request):
             elif kind == "turn.started" and session and not started:
                 started = True
             elif kind in {"item.started", "item.updated", "item.completed"} and started:
-                item = event.get("item", {})
+                item = _object(event.get("item", {}), "native item is not an object")
                 if item.get("type") not in {"reasoning", "agent_message"}:
                     raise IssuerError("tools are prohibited in native review")
                 item_id = item.get("id")
@@ -65,22 +68,31 @@ def parse_additional(capture, *, provider, model, request):
     if events[0].get("event") != "init" or events[-1].get("event") != "result":
         raise IssuerError("missing native init or result")
     session = events[0].get("conversation_id")
-    init = events[0].get("init", {})
+    init = _object(events[0].get("init", {}), "native init is not an object")
     if not isinstance(session, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session) or init.get("model") != model or init.get("cwd") != capture["cwd"]:
         raise IssuerError("native session, requested model or directory mismatch")
     for event in events[1:-1]:
-        step = event.get("step_update", {})
+        step = _object(event.get("step_update", {}), "native step update is not an object")
         if event.get("event") != "step_update" or step.get("conversation_id") != session:
             raise IssuerError("duplicate, foreign or unsupported native event")
         if step.get("step_type") not in {"user_input", "agent_response"} or step.get("tool_info") or step.get("subagent_info"):
             raise IssuerError("tools or subagents are prohibited in native review")
-    result = events[-1].get("result", {})
+    result = _object(events[-1].get("result", {}), "native result is not an object")
     if result.get("conversation_id") != session or result.get("status") != "SUCCESS" or result.get("error"):
         raise IssuerError("native result is incomplete or foreign")
     _verdict(result.get("response", ""), request)
     if "structured_output" in result:
         _verdict(canonical(result["structured_output"]).decode(), request)
+    # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+    # Everything above is stream structure the producer controls. The requested
+    # auth label and this session id are not evidence that the native account is
+    # authenticated, so no receipt may be signed from this capture. Removing this
+    # fail-closed step requires trusted enrollment readback, not a stream field.
+    if provider in NATIVE_AUTH_UNENROLLED:
+        raise IssuerError("native AGY acceptance lane unavailable: independent native "
+                          "authentication readback is not enrolled for this issuer")
     return session
+    # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 
 
 def capture_document(raw, *, provider, model, cwd, auth):

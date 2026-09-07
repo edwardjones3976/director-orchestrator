@@ -1,3 +1,4 @@
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]]
@@ -14,8 +15,9 @@ import tempfile
 import threading
 import time
 
-from .native_acceptance_issuer import (IssuerError, MAX_CAPTURE, MAX_PACKET, _pairs,
-    canonical, claim, context_from, digest, read_json, write_new)
+from .native_acceptance_issuer import (IssuerError, MAX_CAPTURE, MAX_DOCUMENT, MAX_PACKET,
+    NATIVE_AUTH_UNENROLLED, _pairs, canonical, claim, contained_native_path, context_from,
+    digest, read_json, write_new)
 
 CURSOR_DENY = ["Shell(*)", "Read(**)", "Read(/*)", "Read(/**)", "Write(**)",
                "Write(/*)", "Write(/**)", "WebFetch(*)", "Mcp(*:*)"]
@@ -65,6 +67,23 @@ def run_bounded(command, *, cwd, env, stdin=b"", timeout=600, limit=MAX_CAPTURE,
                 _stop(proc)
 
 
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+def pin_native_home(env, home):
+    """Pin every effective per-user lookup path inside the protected home.
+
+    An inherited APPDATA/LOCALAPPDATA still names the coordinator account, so a
+    native CLI could read configuration outside the pinned home even though
+    HOME/USERPROFILE are protected. These are the known Windows per-user
+    variables; no configuration-directory variable is invented here.
+    """
+    home = str(home)
+    env["HOME"] = env["USERPROFILE"] = home
+    env["APPDATA"] = str(Path(home) / "AppData" / "Roaming")
+    env["LOCALAPPDATA"] = str(Path(home) / "AppData" / "Local")
+    return env
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+
+
 def prompt_for(request):
     context = request["context"]
     result = dict(verdict="ACCEPT|CHANGES_REQUIRED|UNAVAILABLE", challenge=context["challenge"],
@@ -77,8 +96,23 @@ def prompt_for(request):
             "\nBEGIN COMPLETE PACKET\n" + request["packet"] + "\nEND COMPLETE PACKET\n")
 
 
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+def _object(value, message):
+    """A native stream field that is not the expected object is a controlled failure."""
+    if not isinstance(value, dict):
+        raise IssuerError(message)
+    return value
+
+
 def _verdict(text, request):
-    value = json.loads(text, object_pairs_hook=_pairs)
+    # A malformed native stream may carry any JSON value here; an uncaught
+    # TypeError would escape the issuer's controlled failure boundary.
+    if not isinstance(text, str):
+        raise IssuerError("native verdict is not a text document")
+    try:
+        value = json.loads(text, object_pairs_hook=_pairs)
+    except (json.JSONDecodeError, UnicodeError, RecursionError):
+        raise IssuerError("native verdict is not a single JSON object") from None
     expected = dict(verdict="ACCEPT", challenge=request["context"]["challenge"],
                     packet_digest=request["context"]["packet_digest"], run_nonce=request["run_nonce"])
     if value != expected:
@@ -86,14 +120,16 @@ def _verdict(text, request):
 
 
 def parse_capture(raw, *, provider, model, request, exit_code):
-    if exit_code != 0 or len(raw) > MAX_CAPTURE:
+    if exit_code != 0 or len(raw) > MAX_DOCUMENT:
         raise IssuerError("native execution incomplete")
-    capture = json.loads(raw, object_pairs_hook=_pairs)
+    capture = _object(json.loads(raw, object_pairs_hook=_pairs), "native capture is not an object")
     if provider == "claude":
-        auth = capture["auth"]
+        auth = _object(capture.get("auth"), "native Claude account authentication required")
         if auth.get("loggedIn") is not True or auth.get("authMethod") != "claude.ai":
             raise IssuerError("native Claude account authentication required")
-        events = capture["events"]
+        events = capture.get("events")
+        if not isinstance(events, list) or not events or not all(isinstance(e, dict) for e in events):
+            raise IssuerError("native event stream is not a list of events")
         init = [e for e in events if e.get("type") == "system" and e.get("subtype") == "init"]
         final = [e for e in events if e.get("type") == "result"]
         if len(init) != 1 or len(final) != 1 or events[-1] != final[0]:
@@ -104,12 +140,15 @@ def parse_capture(raw, *, provider, model, request, exit_code):
         for event in events:
             if event.get("type") not in {"system", "assistant", "result", "rate_limit_event"}:
                 raise IssuerError("unexpected native event")
-            for block in event.get("message", {}).get("content", []):
-                if block.get("type") not in {"text", "thinking"}:
+            content = _object(event.get("message", {}), "native message is not an object").get("content", [])
+            if not isinstance(content, list):
+                raise IssuerError("native message content is not a list of blocks")
+            for block in content:
+                if _object(block, "native content block is not an object").get("type") not in {"text", "thinking"}:
                     raise IssuerError("tools are prohibited in native review")
         if final[0].get("is_error") is not False or final[0].get("subtype") != "success":
             raise IssuerError("native review unsuccessful")
-        _verdict(final[0]["result"], request)
+        _verdict(final[0].get("result"), request)
         return session
     if provider == "cursor":
         return parse_acp(capture, request=request, model=model)
@@ -126,26 +165,33 @@ def parse_acp(capture, *, request, model):
     responses = {}
     text = []
     session = None
-    for message in capture["messages"]:
+    messages = capture["messages"]
+    if not isinstance(messages, list):
+        raise IssuerError("invalid ACP capture")
+    for message in messages:
+        _object(message, "ACP message is not an object")
         if "error" in message:
             raise IssuerError("ACP error")
         if "id" in message:
             if "method" in message or message["id"] in responses:
                 raise IssuerError("ACP permission/tool request or duplicate response")
-            responses[message["id"]] = message.get("result")
+            result = _object(message.get("result"), "ACP response result is not an object")
+            responses[message["id"]] = result
             if message["id"] == 3:
-                session = message["result"].get("sessionId")
+                session = result.get("sessionId")
         elif message.get("method") == "session/update":
-            params = message["params"]
+            params = _object(message.get("params"), "ACP notification params are not an object")
             if not session or params.get("sessionId") != session:
                 raise IssuerError("ACP session mismatch")
-            update = params["update"]
+            update = _object(params.get("update"), "ACP update is not an object")
             kind = update.get("sessionUpdate")
             if kind in {"agent_message_chunk", "agent_thought_chunk"}:
-                content = update.get("content", {})
+                content = _object(update.get("content", {}), "unsupported ACP content")
                 if content.get("type") != "text":
                     raise IssuerError("unsupported ACP content")
                 if kind == "agent_message_chunk":
+                    if not isinstance(content.get("text"), str):
+                        raise IssuerError("unsupported ACP content")
                     text.append(content["text"])
             elif kind not in {"available_commands_update", "current_mode_update", "config_option_update", "usage_update"}:
                 raise IssuerError("ACP tool or unsupported notification")
@@ -153,7 +199,9 @@ def parse_acp(capture, *, request, model):
             raise IssuerError("unexpected ACP notification")
     if set(responses) != {1, 2, 3, 4, 5, 6} or not session or responses[6].get("stopReason") != "end_turn" or responses[4] != {} or responses[5] != {}:
         raise IssuerError("incomplete authenticated ACP session")
-    if responses[1].get("protocolVersion") != 1 or not any(m.get("id") == "cursor_login" for m in responses[1].get("authMethods", [])):
+    methods = responses[1].get("authMethods", [])
+    if not isinstance(methods, list) or responses[1].get("protocolVersion") != 1 or not any(
+            isinstance(m, dict) and m.get("id") == "cursor_login" for m in methods):
         raise IssuerError("native Cursor login method unavailable")
     _verdict("".join(text), request)
     return session
@@ -256,8 +304,7 @@ def work(cfg, job_id):
             # when ACP cannot broker a tool call. Enrollment verifies this pin.
             if read_json(cfg.root / "cursor-config" / "cli-config.json") != {"permissions": {"allow": [], "deny": CURSOR_DENY}}:
                 raise IssuerError("protected Cursor deny-all tool configuration missing")
-            env["HOME"] = str(cfg.root / "cursor-config")
-            env["USERPROFILE"] = str(cfg.root / "cursor-config")
+            pin_native_home(env, cfg.root / "cursor-config")
             env["CURSOR_CONFIG_DIR"] = str(cfg.root / "cursor-config")
             code, capture = run_acp(command, cwd=cwd, env=env, prompt=prompt_for(request), model=cfg.model, timeout=timeout)
         elif cfg.provider == "openai":
@@ -278,20 +325,29 @@ def work(cfg, job_id):
             code, raw = run_bounded([*argv, "-"], cwd=cwd, env=env, stdin=prompt_for(request).encode(), timeout=timeout)
             capture = capture_document(raw, provider=cfg.provider, model=cfg.model, cwd=cwd, auth=auth.decode().strip())
         elif cfg.provider == "gemini":
-            from .antigravity_team_worker import DENY_TOOLS
+            # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
+            from .antigravity_team_worker import deny_all_hooks_document, is_deny_all_settings
             from .native_acceptance_streams import capture_document
-            policy = Path(cfg.native_home) / ".gemini/antigravity-cli"
-            settings = read_json(policy / "settings.json")
-            permissions = settings.get("permissions", {})
-            hooks = {"director-team-deny-all": {"PreToolUse": [{"matcher": "*", "hooks": [
-                {"type": "command", "command": cfg.native_deny_hook, "timeout": 5}]}]}}
-            if permissions.get("allow") or not DENY_TOOLS.issubset(permissions.get("deny", [])) or read_json(policy / "hooks.json") != hooks:
+            # Every consumed policy path, not only the configured home, must be a
+            # canonical location inside a protected runtime root.
+            home = contained_native_path(cfg.native_home, cfg.runtime_roots)
+            contained_native_path(cfg.native_deny_hook, cfg.runtime_roots)
+            policy = home / ".gemini/antigravity-cli"
+            settings_path = contained_native_path(str(policy / "settings.json"), cfg.runtime_roots)
+            hooks_path = contained_native_path(str(policy / "hooks.json"), cfg.runtime_roots)
+            if not is_deny_all_settings(read_json(settings_path)) or read_json(hooks_path) != deny_all_hooks_document(cfg.native_deny_hook):
                 raise IssuerError("protected AGY deny-all policy and wildcard hook required")
-            env["HOME"] = env["USERPROFILE"] = cfg.native_home
+            pin_native_home(env, home)
+            if cfg.provider in NATIVE_AUTH_UNENROLLED:
+                raise IssuerError("native AGY acceptance lane unavailable: independent native "
+                                  "authentication readback is not enrolled for this issuer")
+            # Unreachable until protected host enrollment supplies trusted native
+            # authentication evidence; the transport is preserved, not exercised.
             code, raw = run_bounded([*command, "--input-format", "stream-json", "--output-format", "stream-json",
                 "--model", cfg.model, "--project", cfg.native_project], cwd=cwd, env=env, timeout=timeout,
                 stdin=canonical({"event": "user", "message": {"content": prompt_for(request)}})+b"\n")
             capture = capture_document(raw, provider=cfg.provider, model=cfg.model, cwd=cwd, auth="native-cached-credentials-requested")
+            # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
         else:
             raise IssuerError("unsupported native provider")
         parse_capture(capture, provider=cfg.provider, model=cfg.model, request=request, exit_code=code)
@@ -300,3 +356,4 @@ def work(cfg, job_id):
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
