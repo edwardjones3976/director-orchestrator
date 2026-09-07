@@ -1,4 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | BEGIN]]
@@ -88,6 +90,29 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         self.assertNotIn("reset --hard", text)
         self.assertNotIn("git clean", text)
         self.assertNotIn("Remove-Item", text)
+
+    def test_snapshot_clone_writes_a_working_tree_that_matches_its_blobs(self) -> None:
+        # The snapshot is created on Windows and consumed by the Linux
+        # orchestrator container through a read-only bind. A host with
+        # core.autocrlf=true writes a CRLF working tree over LF blobs, which the
+        # host's own git then hides, because it applies the same conversion when
+        # it compares. The container applies none, sees every line as modified,
+        # and refuses the authority in primary_default with "Default primary
+        # repository authority must be clean".
+        #
+        # Measured on this repository at the time of the fix: without these
+        # settings every one of 317 tracked files differed from its blob byte
+        # for byte, while the script's own cleanliness check still reported the
+        # snapshot clean. Certifying a snapshot the consumer rejects is worse
+        # than failing to build one, so the settings are pinned here.
+        text = self.text("windows-primary-snapshot.ps1")
+        # `git clone -c` writes these into the new repository before checkout,
+        # so the initial checkout uses them and later checkouts keep using them.
+        # `git -c ... clone` would apply to the clone only and not persist.
+        self.assertIn(
+            "git clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks",
+            text,
+        )
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_snapshot_creation_binds_content_to_the_selected_remote(self) -> None:
@@ -572,4 +597,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:44 UTC | END]]
