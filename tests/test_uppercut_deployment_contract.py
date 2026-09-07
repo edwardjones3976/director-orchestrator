@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
@@ -36,12 +37,23 @@ def _powershell_shell() -> str | None:
     return shutil.which("pwsh") or shutil.which("pwsh.exe")
 
 
-def _run_powershell(probe: str) -> str:
-    """Run a deterministic PowerShell 7 probe and return its normalized stdout."""
+def _windows_powershell_shell() -> str | None:
+    """Locate Windows PowerShell 5.1, which behaves differently from pwsh 7."""
 
-    shell = _powershell_shell()
+    return shutil.which("powershell") or shutil.which("powershell.exe")
+
+
+def _run_powershell(probe: str, shell: str | None = None) -> str:
+    """Run a deterministic PowerShell probe and return its normalized stdout.
+
+    Defaults to PowerShell 7. Pass a 5.1 path for behavior that differs between
+    editions, such as empty environment values, where a 7-only probe would pass
+    against a defect that only bites on 5.1.
+    """
+
+    shell = shell or _powershell_shell()
     if shell is None:
-        raise unittest.SkipTest("PowerShell 7 is unavailable in this environment")
+        raise unittest.SkipTest("PowerShell is unavailable in this environment")
     completed = subprocess.run(
         [shell, "-NoProfile", "-NonInteractive", "-Command", probe],
         text=True,
@@ -786,15 +798,50 @@ Write-Host "absent|$(Test-Path -LiteralPath 'Env:PR77_PROBE_NEVER_SET')"
             '[Environment]::SetEnvironmentVariable($name, $null, "Process")', source
         )
 
-    def test_unrestorable_empty_override_is_reported_not_dropped(self):
-        """An inherited empty gate that cannot be restored must be announced.
+    def test_inherited_empty_override_is_restored_exactly(self):
+        """An inherited empty gate must come back, not vanish.
 
         An empty export still beats --env-file, so an inherited empty gate is a
-        real paid-closed override. Windows PowerShell 5.1 cannot represent an
-        empty process variable at all -- .NET, Set-Item, assignment and New-Item
-        each delete the name -- so restoration there is impossible and the only
-        honest option is to say so rather than let the next Compose run silently
-        read the profile value instead.
+        real paid-closed override. Every managed setter deletes the name when
+        handed "", but the Win32 entry point separates an empty string from the
+        null pointer that means delete, so restoration is possible on both
+        editions and the override survives teardown.
+        """
+
+        source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
+            encoding="utf-8"
+        )
+        lines = source.splitlines()
+        start = lines.index("$script:win32EnvironmentReady = $false")
+        stop = lines.index("function Clear-ProcessEnvironmentVariable {")
+        helper = chr(10).join(lines[start:stop])
+
+        probe = helper + """
+$ErrorActionPreference = 'Stop'
+[Environment]::SetEnvironmentVariable('PR77_EMPTY_GATE', 'inherited', 'Process')
+Set-ProcessEnvironmentVariableExact -Name 'PR77_EMPTY_GATE' -Value ''
+$value = [Environment]::GetEnvironmentVariable('PR77_EMPTY_GATE', 'Process')
+Write-Output ("empty|" + (Test-Path -LiteralPath 'Env:PR77_EMPTY_GATE') + "|" + ([string]$value).Length)
+Set-ProcessEnvironmentVariableExact -Name 'PR77_FULL_GATE' -Value 'false'
+Write-Output ("full|" + (Test-Path -LiteralPath 'Env:PR77_FULL_GATE') + "|" + [Environment]::GetEnvironmentVariable('PR77_FULL_GATE', 'Process'))
+"""
+        shell = _windows_powershell_shell()
+        if shell is None:
+            self.skipTest("Windows PowerShell 5.1 is unavailable in this environment")
+        observed = dict(
+            (line.split("|", 1)[0].strip(), line.split("|", 1)[1])
+            for line in _run_powershell(probe, shell=shell).splitlines()
+            if "|" in line
+        )
+        self.assertEqual(observed["empty"], "True|0")
+        self.assertEqual(observed["full"], "True|false")
+
+    def test_restore_diagnostic_cannot_abort_teardown(self):
+        """The fallback warning must never end the restoration loop.
+
+        It runs in the exit path. An inherited -WarningAction Stop would
+        otherwise turn it into a terminating error, replacing the original
+        exception and leaving every later managed name unrestored.
         """
 
         source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
@@ -802,26 +849,24 @@ Write-Host "absent|$(Test-Path -LiteralPath 'Env:PR77_PROBE_NEVER_SET')"
         )
         restore = source[source.index("$original = $originalProcessEnvironment[$name]") :]
         restore = restore[: restore.index("Clear-ProcessEnvironmentVariable")]
-        self.assertIn("Write-Warning", restore)
-        self.assertIn("Could not restore the inherited empty", restore)
+        self.assertIn("-WarningAction Continue", restore)
+        self.assertIn("catch { }", restore)
 
-        # No edition may quietly claim success: whichever shell runs the suite,
-        # a present-empty original either survives or is reported.
         probe = """
-$ErrorActionPreference = 'Stop'
-[Environment]::SetEnvironmentVariable('PR77_EMPTY_GATE', '', 'Process')
-$present = Test-Path -LiteralPath 'Env:PR77_EMPTY_GATE'
-Write-Host "restorable|$present"
-[Environment]::SetEnvironmentVariable('PR77_EMPTY_GATE', $null, 'Process')
+$WarningPreference = 'Stop'
+$completed = 0
+foreach ($n in 'A', 'B', 'C') {
+    try { Write-Warning -WarningAction Continue -Message "probe $n" } catch { }
+    $completed++
+}
+Write-Output ("completed|" + $completed)
 """
         observed = dict(
             line.strip().split("|", 1)
             for line in _run_powershell(probe).splitlines()
             if "|" in line
         )
-        # PowerShell 7 keeps it; 5.1 cannot. Either way the script must not
-        # assume restoration succeeded, which the warning above guarantees.
-        self.assertIn(observed["restorable"], {"True", "False"})
+        self.assertEqual(observed, {"completed": "3"})
 
     def test_usage_provider_prevalidation_precedes_paid_switches_and_dispatch(self):
         definition = self.script.index("function Get-ValidatedUsageCheckProviders")
@@ -1297,3 +1342,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | END]]

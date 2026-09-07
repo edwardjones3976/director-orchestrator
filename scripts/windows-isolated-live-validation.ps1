@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
@@ -199,6 +200,34 @@ function Write-Utf8NoBom {
 
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText((Join-Path (Get-Location) $Path), $Text, $utf8NoBom)
+}
+
+$script:win32EnvironmentReady = $false
+
+function Set-ProcessEnvironmentVariableExact {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value
+    )
+
+    if ($Value -ne "") {
+        [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
+        return
+    }
+
+    # An empty value is not a deletion. The managed setter and every PowerShell
+    # cmdlet delete the name when handed "", but the Win32 entry point separates
+    # an empty string from the null pointer that means delete, so an inherited
+    # empty override survives on both editions. That override matters: an empty
+    # export still beats --env-file, so dropping it reopens the profile's value.
+    if (-not $script:win32EnvironmentReady) {
+        Add-Type -Namespace Win32Env -Name Native -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern bool SetEnvironmentVariableW(string lpName, string lpValue);
+'@
+        $script:win32EnvironmentReady = $true
+    }
+    [void][Win32Env.Native]::SetEnvironmentVariableW($Name, "")
 }
 
 function Clear-ProcessEnvironmentVariable {
@@ -1162,17 +1191,24 @@ finally {
     foreach ($name in $composeEnvironmentNames) {
         $original = $originalProcessEnvironment[$name]
         if ($original.Present) {
-            [Environment]::SetEnvironmentVariable($name, [string]$original.Value, "Process")
+            Set-ProcessEnvironmentVariableExact -Name $name -Value ([string]$original.Value)
             if (-not (Test-Path -LiteralPath "Env:${name}")) {
                 # Windows PowerShell 5.1 cannot hold an empty process variable:
                 # .NET, Set-Item, assignment and New-Item all delete the name
                 # instead. An inherited empty gate is a real override, because an
                 # empty export still beats --env-file, so losing it silently
                 # would let the next Compose run read the profile value instead.
-                Write-Warning ("Could not restore the inherited empty ${name}. " +
-                    "This PowerShell edition cannot represent an empty process " +
-                    "variable, so that override is gone; re-export it before the " +
-                    "next Compose run if it was deliberate.")
+                # Diagnostic only, and deliberately unable to terminate. This
+                # runs in the exit path, so an inherited -WarningAction Stop
+                # would otherwise replace the original exception and abandon
+                # every later name in this loop still unrestored.
+                try {
+                    Write-Warning -WarningAction Continue -Message (
+                        "Could not restore the inherited empty ${name}; " +
+                        "re-export it before the next Compose run if it was " +
+                        "deliberate.")
+                }
+                catch { }
             }
         }
         else {
@@ -1197,3 +1233,4 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | END]]
