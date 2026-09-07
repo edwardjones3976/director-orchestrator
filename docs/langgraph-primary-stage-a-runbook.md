@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:20 UTC | BEGIN]] -->
@@ -268,10 +269,14 @@ deployment with intake stopped, `ALLOW_PAID_RUNS`,
 `LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED` and
 `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` false, the kill switch true,
 `LANGGRAPH_PRIMARY_ENABLED` still true, and the authority row still owned by
-primary. That partial state is the flag-and-lifecycle behaviour the pending
-PR 115 correction addresses; until the corrected control version is the adopted
-one, treat the commands in this section as contingent and re-read the rollback
-body of the script actually held.
+primary. **The pending PR 115 correction does not fix that.** Per the
+independent review of it, PR 115 clears the simulation switch only *after* a
+successful inverse compare-and-swap; the refusal path is unchanged, so a refused
+rollback still leaves the deployment stopped with primary still owning the
+authority row under that version too. Adopting the corrected control script is
+not a reason to enter Stage A expecting an exit. The commands in this section
+stay contingent on which version is actually adopted, so re-read the rollback
+body of the script held before running any of them.
 
 The sequence it runs in this checkout: stop and prove all intake stopped, write
 the switches false, wait 65 seconds for the lease to lapse, run the guarded
@@ -314,3 +319,4 @@ closed.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | END]] -->
