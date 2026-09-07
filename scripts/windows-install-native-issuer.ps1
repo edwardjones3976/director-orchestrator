@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 04:55 UTC | BEGIN]]
 # [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -168,36 +169,54 @@ foreach ($name in @('code','authorizations','mirror','broker','worker','requests
     Set-ExactAcl $path $access
 }
 function Install-TrackedPackage([string]$Git, [string]$Source, [string]$Commit, [string]$Destination) {
+    # Accepted raw object bytes only. Archive and checkout apply .gitattributes
+    # eol/export rules and core.autocrlf, so their bytes are a transformation of
+    # the accepted blob rather than the accepted blob itself.
+    function Copy-AcceptedBlob([string]$Executable, [string]$Repository, [string]$Blob, [string]$Target) {
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $Executable
+        # Blob is a validated hex object name; the repository is selected by
+        # working directory so no path is ever parsed as an argument.
+        $info.Arguments = "cat-file blob $Blob"
+        $info.WorkingDirectory = $Repository
+        $info.UseShellExecute = $false
+        $info.RedirectStandardOutput = $true
+        $info.CreateNoWindow = $true
+        $reader = [Diagnostics.Process]::Start($info)
+        try {
+            $output = [IO.File]::Open($Target,[IO.FileMode]::CreateNew)
+            # Byte stream only; a text reader would re-encode the accepted bytes.
+            try { $reader.StandardOutput.BaseStream.CopyTo($output) } finally { $output.Dispose() }
+            $reader.WaitForExit()
+            if ($reader.ExitCode -ne 0) { throw "Accepted tracked blob could not be read: $Blob" }
+        } finally { $reader.Dispose() }
+    }
     $entries = & $Git -C $Source ls-tree -r $Commit -- src/director_orchestrator
     if ($LASTEXITCODE -ne 0 -or -not $entries) { throw 'Tracked package tree unavailable.' }
-    $blobs = @{}
+    $blobs = [ordered]@{}
     foreach ($entry in $entries) {
         if ($entry -notmatch '^(100644|100755) blob [0-9a-f]{40}\t') { throw 'Only tracked regular files may be installed.' }
         $parts = $entry.Split([char]9,2)
-        $blobs[$parts[1]] = $parts[0].Split(' ')[2]
+        $name = $parts[1]
+        # Quoted or unusual tracked paths fail closed here rather than being decoded.
+        if (-not $name.StartsWith('src/director_orchestrator/') -or $name.Contains('\') -or $name.Contains('"') -or @($name.Split('/') | Where-Object {$_ -in @('','.','..')}).Count) { throw 'Unsafe tracked package path.' }
+        if ($blobs.Contains($name)) { throw 'Duplicate tracked package path.' }
+        $blobs[$name] = $parts[0].Split(' ')[2]
     }
-    $archive = Join-Path $Destination 'accepted-source.zip'
-    & $Git -C $Source archive --format=zip --output=$archive $Commit src/director_orchestrator
-    if ($LASTEXITCODE -ne 0) { throw 'Immutable source archive failed.' }
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [IO.Compression.ZipFile]::OpenRead($archive)
-    try {
-        foreach ($entry in $zip.Entries) {
-            $name = $entry.FullName
-            if ($name.EndsWith('/')) { continue }
-            if (-not $name.StartsWith('src/director_orchestrator/') -or $name.Contains('\') -or @($name.Split('/') | Where-Object {$_ -in @('.','..')}).Count) { throw 'Unsafe tracked package path.' }
-            $target = Join-Path $Destination $name.Substring(4)
-            $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
-            $inputStream = $entry.Open()
-            $outputStream = [IO.File]::Open($target,[IO.FileMode]::CreateNew)
-            try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose(); $inputStream.Dispose() }
-            $actual = & $Git hash-object --no-filters -- $target
-            if ($LASTEXITCODE -ne 0 -or -not $blobs.ContainsKey($name) -or $actual -cne $blobs[$name]) { throw 'Archive bytes differ from accepted tracked blob.' }
-            $blobs.Remove($name)
+    foreach ($name in @($blobs.Keys)) {
+        $target = Join-Path $Destination $name.Substring(4)
+        $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+        Copy-AcceptedBlob $Git $Source $blobs[$name] $target
+        $actual = & $Git hash-object --no-filters -- $target
+        if ($LASTEXITCODE -ne 0) { throw "Installed tracked file could not be hashed: $name" }
+        if ($actual -cne $blobs[$name]) {
+            # Bounded diagnostic: accepted tracked path and both object names only.
+            throw "Installed bytes differ from accepted tracked blob: $name expected $($blobs[$name]) actual $actual"
         }
-        if ($blobs.Count) { throw 'Archive omitted accepted tracked blobs.' }
-    } finally { $zip.Dispose() }
-    Remove-Item -LiteralPath $archive
+    }
+    # Every accepted blob was written and verified; nothing else may be present.
+    $installed = @(Get-ChildItem -LiteralPath $Destination -Recurse -Force -File)
+    if ($installed.Count -ne $blobs.Count) { throw "Installed tracked file set differs from accepted tree: expected $($blobs.Count) actual $($installed.Count)" }
 }
 Install-TrackedPackage $GitExecutable $source $AcceptedCommit (Join-Path $root 'code')
 & $GitExecutable -c "core.hooksPath=NUL" clone --bare --no-hardlinks --local $mirrorSource (Join-Path $root 'mirror\repository.git')
@@ -262,3 +281,5 @@ Write-Output 'No key generated and no native login or dispatch occurred. Follow 
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
 
 # [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | END]]
+
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 04:55 UTC | END]]
