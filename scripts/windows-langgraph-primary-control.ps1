@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
@@ -799,7 +800,7 @@ if ($Action -eq "Rollback") {
     Start-Sleep -Seconds 65
     Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
         "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$databaseIdentity', accepted_instance_id='$databaseInstanceId'); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); q=h.claim_store.primary_quiescence_metrics(); (_ for _ in ()).throw(RuntimeError('ambiguous effects block rollback')) if m.ambiguous_effect_count != 0 else None; (_ for _ in ()).throw(RuntimeError('active provider dispatches, assignments, writer claims, reconciliation, or claims block rollback')) if not q.rollback_safe else None; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); (_ for _ in ()).throw(RuntimeError('legacy intake CAS did not complete')) if n.legacy_new_intake_disabled else None; h.close()"
-    Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; LANGGRAPH_PRIMARY_ENABLED = "false" }
+    Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; LANGGRAPH_PRIMARY_ENABLED = "false"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false" }
     Invoke-Compose up -d --no-build --force-recreate orchestrator
     $null = Wait-Health
     Invoke-Compose up -d n8n slackbot
@@ -828,3 +829,4 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]

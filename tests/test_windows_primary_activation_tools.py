@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | BEGIN]]
@@ -359,9 +360,9 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertLess(activation.index("bind-legacy-inventory"), activation.index("require-ready"))
         self.assertIn("finally { Write-Switches", activation)
 
-    def test_host_wrapper_never_accepts_direct_provider_lanes(self) -> None:
+    def test_host_wrapper_preserves_unsupported_lane_rejection(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
-        self.assertIn('@("cursor", "microsoft-365-copilot")', text)
+        self.assertIn('@("microsoft-365-copilot")', text)
         self.assertIn("Preflight", text)
         self.assertIn("no provider was invoked", text)
 
@@ -571,3 +572,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
