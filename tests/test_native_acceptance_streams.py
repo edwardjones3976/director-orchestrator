@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -347,6 +348,7 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
         finally:
             fixture.doCleanups()
 
+    @unittest.skipUnless(os.name == "nt", "Windows-only Cursor worker profile metadata")
     def test_cursor_review_home_never_hides_the_native_worker_login(self):
         from director_orchestrator.native_acceptance_capture import CURSOR_DENY, pin_native_home
         outcome = self.cursor_attempt(CURSOR_DENY, "worker")
@@ -370,21 +372,37 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
         self.assertEqual(strict["LOCALAPPDATA"], str(outcome["config"] / "AppData" / "Local"))
         self.assertEqual(strict["HOME"], str(outcome["config"]))
 
-    def test_cursor_missing_policy_or_profile_metadata_fails_closed(self):
+    def test_cursor_missing_policy_fails_closed_before_any_profile_lookup(self):
+        # Platform independent: the administrator-owned configuration is checked
+        # before the Windows-only profile resolution is ever reached.
         from director_orchestrator.native_acceptance_capture import CURSOR_DENY
         weakened = self.cursor_attempt([d for d in CURSOR_DENY if d != "Shell(*)"], "worker")
         self.assertIn("protected Cursor deny-all tool configuration missing", weakened["error"])
-        # The weakened administrator configuration stops the lane before any
-        # profile lookup, native attempt or response.
         self.assertEqual(weakened["sids"], [])
         self.assertEqual(weakened["attempts"], [])
         self.assertIsNone(weakened["response"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows-only Cursor worker profile metadata")
+    def test_cursor_profile_metadata_absent_or_unusable_fails_closed(self):
+        from director_orchestrator.native_acceptance_capture import CURSOR_DENY
         for profile_kind in ("absent", "unusable"):
             outcome = self.cursor_attempt(CURSOR_DENY, profile_kind)
             with self.subTest(profile_kind=profile_kind):
                 self.assertIsNotNone(outcome["error"])
                 self.assertEqual(outcome["attempts"], [])
                 self.assertIsNone(outcome["response"])
+
+    @unittest.skipIf(os.name == "nt", "non-Windows absence of worker profile support")
+    def test_cursor_lane_fails_closed_where_worker_profiles_are_unsupported(self):
+        # Worker profile metadata exists only on Windows. Elsewhere the lane must
+        # refuse before consulting metadata, running ACP or writing a response,
+        # and must never fall back to an inherited APPDATA.
+        from director_orchestrator.native_acceptance_capture import CURSOR_DENY
+        outcome = self.cursor_attempt(CURSOR_DENY, "worker")
+        self.assertIn("trusted native worker profile metadata unavailable", outcome["error"])
+        self.assertEqual(outcome["sids"], [])
+        self.assertEqual(outcome["attempts"], [])
+        self.assertIsNone(outcome["response"])
     # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
 
     def test_hook_pin_is_verified_but_is_not_a_native_argument(self):
@@ -401,3 +419,5 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
+
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:32 UTC | END]]
