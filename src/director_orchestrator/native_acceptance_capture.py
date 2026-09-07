@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
@@ -231,7 +233,7 @@ def parse_capture(raw, *, provider, model, request, exit_code, native_auth=None)
         return session
     if provider == "cursor":
         return parse_acp(capture, request=request, model=model)
-    if provider in {"openai", "gemini"}:
+    if provider in {"openai", "gemini", "grok"}:
         from .native_acceptance_streams import parse_additional
         return parse_additional(capture, provider=provider, model=model, request=request, native_auth=native_auth)
     raise IssuerError("unsupported fixed native provider")
@@ -372,6 +374,14 @@ def work(cfg, job_id):
     command = cfg.command()
     env = child_environment()
     timeout = min(600, context.expires_at - int(time.time()))
+    # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
+    if cfg.provider == "grok":
+        # Fail closed before the create-once claim. No paid attempt happens, so
+        # an unqualified lane never consumes the owner's challenge; a claim is
+        # reserved for work that could actually have been performed.
+        from .native_acceptance_streams import require_grok_terminal_qualification
+        require_grok_terminal_qualification()
+    # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
     claim(cfg.root / "worker" / "claims.sqlite3", job_id)
     with tempfile.TemporaryDirectory(dir=cfg.root / "worker") as cwd:
         if cfg.provider == "claude":
@@ -430,6 +440,15 @@ def work(cfg, job_id):
                 stdin=canonical({"event": "user", "message": {"content": prompt_for(request)}})+b"\n")
             capture = capture_document(raw, provider=cfg.provider, model=cfg.model, cwd=cwd, auth="native-cached-credentials-requested")
             # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+        # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
+        elif cfg.provider == "grok":
+            # Build CLI security lane only. The analysis-only xAI Responses API
+            # is never a review transport here and no API credential reaches the
+            # child: child_environment() carries the worker profile alone.
+            from .native_acceptance_streams import grok_attempt
+            code, capture = grok_attempt(command, cwd=cwd, env=env, model=cfg.model,
+                                         request=request, timeout=timeout)
+        # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
         else:
             raise IssuerError("unsupported native provider")
         native_auth = require_native_auth(cfg, worker=True, expected_digest=request.get("native_auth_enrollment_digest"))
@@ -442,3 +461,5 @@ def work(cfg, job_id):
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | END]]

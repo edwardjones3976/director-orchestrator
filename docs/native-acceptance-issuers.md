@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]] -->
 # Native acceptance issuers
@@ -203,3 +204,60 @@ claim an elevated installation or successful four-SID effective-access test:
 those and the two native logins remain owner provisioning gates.
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]] -->
+
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]] -->
+## Grok security lane (implemented, fail-closed)
+
+`-Provider grok` is eligible for the **security** role only, installs into its own
+`DirectorAcceptance\security-grok` directory with its own broker/worker SIDs, key
+and claims, and changes nothing about the Claude, Cursor, Codex or AGY lanes. The
+transport is the locally authenticated **Grok Build CLI**, matching the exact-SHA
+review responsibility already assigned in `docs/provider-setup.md`. The
+analysis-only xAI Responses API is never a review transport here: the worker
+builds a Build CLI argv, and no API key, base URL or coordinator credential is
+placed in the child environment. Because the CLI is a single pinned executable,
+the installer and `Config.load` both reject a separate `NativeEntrypoint`.
+
+The lane **cannot issue a receipt today and fails closed before any paid
+attempt** because protected native-account readback and effective tool/effect
+containment have not been implemented and qualified. The worker refuses before
+its create-once claim. No ambiguous paid work or challenge consumption occurs.
+
+The structural parser now follows the installed xAI manual
+`user-guide/14-headless-mode.md`, **streaming-json** section: `text.data` chunks,
+optional thought/plan/usage events, and a final `end` carrying `stopReason`,
+`sessionId`, `requestId`, `num_turns`, and `modelUsage`. Only a successful
+`end_turn`, exact nonce-derived session, one reported turn/model call and exact
+ACCEPT/challenge/packet/nonce binding pass structural validation. Unknown,
+error, tool, incomplete, foreign, duplicate-terminal and trailing events fail
+closed. CLI-reported model usage is metadata, not a signed backend identity or
+account observation. Missing metadata cannot be filled from requested labels.
+
+`--model` is documented and included as a request, not treated as proof of the
+served model. The invocation uses the ACP `streaming-json` format exclusively.
+The documented Messages format (`result.subtype=success`, `is_error=false`)
+is deliberately rejected on this route rather than mistaken for an ACP end;
+its init model and authentication-source metadata also have fidelity caveats.
+
+The argv requests one bounded turn, no subagents, no web search, and explicit
+canonical deny tool IDs (`run_terminal_cmd`, `search_replace`, web tools, Agent)
+plus Bash/Edit/Write/MCP permission denials. It does not assume an empty
+`--tools` disables tools or that a wildcard tool ID matches every tool. The
+vendor manual says MCP meta-tools remain available unless denied. Requested
+permission restrictions and rejecting tool events are **not proof of effective
+prevention**. The protected account and containment gate therefore remains
+closed independently of successful structural parsing. No API fallback or
+credential changes are introduced.
+
+Remaining blockers before this lane can be enrolled: an actual successful native
+Build CLI run producing a terminal/session/model observation; the pinned
+executable and dependency hashes; distinct non-admin Grok broker/worker accounts
+with an independently protected broker key; native login completed under the
+worker identity without copying coordinator credentials; proof that the worker
+and coordinator cannot read signing material or protected requests; and
+independent nonauthor review, required CI and Codex Security of this source. No
+native Grok run, host qualification, login, installation or enrollment was
+performed for this implementation, and the fixtures in
+`tests/test_native_acceptance_grok.py` are explicitly synthetic.
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | END]] -->
