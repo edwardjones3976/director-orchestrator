@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
 # Slack collaboration bus
 
@@ -50,3 +51,4 @@ context, reuses fresh evidence, allows at most one rebuttal round, caps provider
 three persisted safe attempts, and records unavailable providers rather than creating expensive
 conversation loops.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
