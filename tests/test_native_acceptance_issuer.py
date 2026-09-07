@@ -1,3 +1,4 @@
+# [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | BEGIN]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | BEGIN]]
@@ -339,6 +340,108 @@ Write-Output 'ACL_SEMANTICS_PASS'
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertEqual(result.stdout.strip(), b"ACL_SEMANTICS_PASS")
 
+
+    @unittest.skipUnless(os.name == "nt", "Windows raw directory ancestry")
+    def test_installer_checks_full_raw_ancestry_and_preserves_target_boundary(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "windows-install-native-issuer.ps1").read_text()
+        function = source.split('function Assert-Protected', 1)[1].split('# Owner must provision', 1)[0]
+        harness = r'''
+$target = Join-Path $PSScriptRoot 'protected\child\runtime.exe'
+$directory = [IO.Path]::GetDirectoryName($target)
+[IO.Directory]::CreateDirectory($directory) | Out-Null
+[IO.File]::WriteAllText($target,'fixture')
+$script:badPath = ''
+$script:badOwner = $false
+$script:rights = [Security.AccessControl.FileSystemRights]::CreateDirectories
+$script:visited = @()
+function Get-Acl {
+ param($LiteralPath)
+ $script:visited += $LiteralPath
+ $owner = if ($script:badOwner -and $LiteralPath -eq $script:badPath) {'S-1-5-32-545'} else {'S-1-5-32-544'}
+ $rules = if ($LiteralPath -eq $script:badPath) {@([pscustomobject]@{AccessControlType='Allow';FileSystemRights=$script:rights;IdentityReference=[pscustomobject]@{Value='S-1-5-32-545'};PropagationFlags=[Security.AccessControl.PropagationFlags]::None})} else {@()}
+ $acl=[pscustomobject]@{OwnerValue=$owner;RuleValues=$rules}
+ $acl | Add-Member ScriptMethod GetOwner { param($Type) return [pscustomobject]@{Value=$this.OwnerValue} }
+ $acl | Add-Member ScriptMethod GetAccessRules { param($A,$B,$C) return $this.RuleValues }
+ return $acl
+}
+# Native FileInfo.Directory and DirectoryInfo.Parent are intentionally unwrapped.
+Assert-Protected $target $true
+$expected=@($target)
+$ancestor=[IO.DirectoryInfo]::new($directory)
+while($null -ne $ancestor){$expected += $ancestor.FullName;$ancestor=$ancestor.Parent}
+if (($script:visited -join '|') -ne ($expected -join '|')) {throw 'Ancestry audit stopped before filesystem root'}
+foreach($ancestorPath in $expected[1..($expected.Count-1)]) {
+ $script:badPath=$ancestorPath
+ $script:rights=[Security.AccessControl.FileSystemRights]::CreateDirectories
+ Assert-Protected $target $true
+ foreach($denied in @('Delete','DeleteSubdirectoriesAndFiles','ChangePermissions','TakeOwnership')) {
+  $script:rights=[Security.AccessControl.FileSystemRights]::$denied
+  $rejected=$false
+  try {Assert-Protected $target $true} catch {$rejected=$_.Exception.Message -like 'Unprotected runtime path:*'}
+  if(-not $rejected){throw "Ancestor replacement capability accepted: $denied"}
+ }
+ $script:badOwner=$true
+ $rejected=$false
+ try {Assert-Protected $target $true} catch {$rejected=$_.Exception.Message -like 'Administrator-owned installation path required:*'}
+ if(-not $rejected){throw 'Untrusted ancestor owner accepted'}
+ $script:badOwner=$false
+}
+# A directory audited as the target still rejects creating loadable siblings.
+$script:badPath=$directory
+$script:rights=[Security.AccessControl.FileSystemRights]::CreateDirectories
+$rejected=$false
+try {Assert-Protected $directory $true} catch {$rejected=$_.Exception.Message -like 'Unprotected runtime path:*'}
+if(-not $rejected){throw 'Target directory creation rights accepted'}
+# Its immediate parent may create unrelated siblings without replacing the target.
+$script:badPath=([IO.DirectoryInfo]::new($directory)).Parent.FullName
+Assert-Protected $directory $true
+Write-Output 'RAW_ANCESTRY_PASS'
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            script = Path(temp) / "raw-ancestry.ps1"
+            script.write_text("$ErrorActionPreference='Stop'\nfunction Assert-Protected" + function + harness)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            self.assertEqual(result.stdout.strip(), b"RAW_ANCESTRY_PASS")
+
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction ancestry")
+    def test_installer_rejects_actual_junction_above_immediate_parent(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "windows-install-native-issuer.ps1").read_text()
+        function = source.split('function Assert-Protected', 1)[1].split('# Owner must provision', 1)[0]
+        harness = r'''
+$destination=Join-Path $PSScriptRoot 'destination'
+$junction=Join-Path $PSScriptRoot 'junction'
+[IO.Directory]::CreateDirectory((Join-Path $destination 'child')) | Out-Null
+[IO.File]::WriteAllText((Join-Path $destination 'child\runtime.exe'),'fixture')
+# All ACLs are mocked; the junction and .NET ancestor Attributes are actual.
+function Get-Acl {
+ param($LiteralPath)
+ $acl=[pscustomobject]@{}
+ $acl | Add-Member ScriptMethod GetOwner {param($Type) return [pscustomobject]@{Value='S-1-5-32-544'}}
+ $acl | Add-Member ScriptMethod GetAccessRules {param($A,$B,$C) return @()}
+ return $acl
+}
+New-Item -ItemType Junction -Path $junction -Target $destination | Out-Null
+try {
+ $rejected=$false
+ try {Assert-Protected (Join-Path $junction 'child\runtime.exe') $true}
+ catch {$rejected=$_.Exception.Message -eq "Reparse point forbidden: $junction"}
+ if(-not $rejected){throw 'Actual junction ancestor was not rejected'}
+ if(-not (Test-Path -LiteralPath (Join-Path $destination 'child\runtime.exe'))){throw 'Fixture target changed'}
+ Write-Output 'JUNCTION_ANCESTRY_PASS'
+} finally {
+ # Remove only this exact temporary junction, never recursively its target.
+ [IO.Directory]::Delete($junction)
+}
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            script = Path(temp) / "junction-ancestry.ps1"
+            script.write_text("$ErrorActionPreference='Stop'\nfunction Assert-Protected" + function + harness)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            self.assertEqual(result.stdout.strip(), b"JUNCTION_ANCESTRY_PASS")
+
     def test_trustedinstaller_is_limited_to_os_ancestors_and_runtime(self):
         from director_orchestrator.native_acceptance_issuer import validate_acl_rows
         servicing = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
@@ -377,3 +480,5 @@ Write-Output 'ACL_SEMANTICS_PASS'
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
+
+# [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | END]]

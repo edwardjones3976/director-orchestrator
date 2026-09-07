@@ -1,3 +1,4 @@
+# [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | BEGIN]]
@@ -70,7 +71,7 @@ function Assert-Protected([string]$Path, [bool]$Runtime = $false) {
             # InheritOnly does not grant access to the object being inspected.
             if ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
             $writes = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
-            if ($depth -gt 1) {
+            if ($depth -gt 0) {
                 # Ancestors must not permit replacing protected descendants;
                 # permission to create an unrelated sibling is not replacement.
                 $writes = [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
@@ -79,7 +80,8 @@ function Assert-Protected([string]$Path, [bool]$Runtime = $false) {
                 throw "Unprotected runtime path: $($item.FullName)"
             }
         }
-        $item = if ($item.PSIsContainer) { $item.Parent } else { $item.Directory }
+        # Parent/Directory returns raw .NET objects without PSIsContainer.
+        $item = if ($item -is [IO.DirectoryInfo]) { $item.Parent } else { $item.Directory }
         $depth++
     }
 }
@@ -258,3 +260,5 @@ Write-Output 'No key generated and no native login or dispatch occurred. Follow 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
+
+# [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | END]]
