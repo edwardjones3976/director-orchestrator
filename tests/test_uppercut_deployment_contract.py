@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
@@ -867,11 +868,13 @@ Write-Output ("full|" + (Test-Path -LiteralPath 'Env:PR77_FULL_GATE') + "|" + [E
         self.assertIn("Write-EnvironmentRestoreWarning", restore)
         self.assertNotIn("Write-Warning", restore)
 
-        probe = """
+        # Drive the script's own helper, not a copy of it: a copy stays quiet
+        # while the real one is made terminating.
+        probe = diagnostic + """
 $WarningPreference = 'Stop'
 $completed = 0
 foreach ($n in 'A', 'B', 'C') {
-    try { Write-Warning -WarningAction Continue -Message "probe $n" } catch { }
+    Write-EnvironmentRestoreWarning -Message "probe $n"
     $completed++
 }
 Write-Output ("completed|" + $completed)
@@ -891,6 +894,11 @@ Write-Output ("completed|" + $completed)
         otherwise replace the error that ended the run and abandon every name
         still queued behind it, including the paid, automerge and runtime-writer
         gates.
+
+        The probe runs the script's own restoration loop rather than a copy of
+        it. A copy passes happily while the real loop is broken, which is how an
+        earlier version of this test missed the catch being moved outside the
+        foreach.
         """
 
         source = (ROOT / "scripts" / "windows-isolated-live-validation.ps1").read_text(
@@ -906,47 +914,59 @@ Write-Output ("completed|" + $completed)
             source.index("Add-Type"),
             source.index("$originalProcessEnvironment = @{}"),
         )
-        restore = source[source.index("foreach ($name in $composeEnvironmentNames) {") :]
-        restore = restore[restore.index("$original = $originalProcessEnvironment[$name]") :]
-        # Each name is attempted in isolation and the result is verified.
-        self.assertIn("catch {", restore)
-        self.assertIn("Write-EnvironmentRestoreWarning", restore)
-        self.assertIn("$actual -ne $expected", restore)
 
-        probe = """
+        lines = source.splitlines()
+
+        def block(header: str, after: int = 0) -> str:
+            index = next(
+                i for i, line in enumerate(lines) if i >= after and line.strip() == header
+            )
+            depth = 0
+            for i in range(index, len(lines)):
+                depth += lines[i].count("{") - lines[i].count("}")
+                if depth == 0 and i > index:
+                    return chr(10).join(lines[index : i + 1])
+            raise AssertionError(f"unterminated block: {header}")
+
+        helpers = chr(10).join(
+            block(header)
+            for header in (
+                "function Write-EnvironmentRestoreWarning {",
+                "function Set-ProcessEnvironmentVariableExact {",
+                "function Clear-ProcessEnvironmentVariable {",
+            )
+        )
+        teardown = lines.index("    Set-Location $originalLocation")
+        real_loop = block("foreach ($name in $composeEnvironmentNames) {", after=teardown)
+
+        probe = helpers + """
 $WarningPreference = 'Stop'
-function Write-EnvironmentRestoreWarning {
-    param([Parameter(Mandatory = $true)][string]$Message)
-    try { Write-Warning -WarningAction Continue -Message $Message } catch { }
+$script:win32EnvironmentReady = $true
+$composeEnvironmentNames = @('PR77_N1', 'PR77_BOOM', 'PR77_N3', 'PR77_N4')
+$originalProcessEnvironment = @{}
+foreach ($n in $composeEnvironmentNames) {
+    $originalProcessEnvironment[$n] = [pscustomobject]@{ Present = $true; Value = "v-$n" }
+    [Environment]::SetEnvironmentVariable($n, $null, 'Process')
 }
+# One name fails the way a denied compiler would.
 function Set-ProcessEnvironmentVariableExact {
     param([string]$Name, [AllowEmptyString()][string]$Value)
     if ($Name -eq 'PR77_BOOM') { throw 'compiler unavailable' }
     [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
     return $true
 }
-$names = 'PR77_N1', 'PR77_BOOM', 'PR77_N3', 'PR77_N4'
-foreach ($name in $names) {
-    try {
-        $expected = "v-$name"
-        $ok = Set-ProcessEnvironmentVariableExact -Name $name -Value $expected
-        $actual = [Environment]::GetEnvironmentVariable($name, 'Process')
-        if (-not $ok -or $actual -ne $expected) {
-            Write-EnvironmentRestoreWarning -Message "could not restore $name"
-        }
-    }
-    catch {
-        Write-EnvironmentRestoreWarning -Message "restoring $name failed"
-    }
-}
-$after = @($names | Where-Object {
+""" + real_loop + """
+$after = @($composeEnvironmentNames | Where-Object {
     [Environment]::GetEnvironmentVariable($_, 'Process') -eq "v-$_"
 }).Count
 Write-Output ("survived|" + $after)
 """
-        for shell in (None, _windows_powershell_shell()):
-            if shell is None and _powershell_shell() is None:
-                continue
+        shells = [None] if _powershell_shell() else []
+        windows_shell = _windows_powershell_shell()
+        if windows_shell is not None:
+            shells.append(windows_shell)
+        self.assertTrue(shells, "no PowerShell available")
+        for shell in shells:
             observed = dict(
                 line.strip().split("|", 1)
                 for line in _run_powershell(probe, shell=shell).splitlines()
@@ -1431,3 +1451,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:44 UTC | END]]
