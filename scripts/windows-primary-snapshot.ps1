@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:35 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
@@ -73,7 +74,19 @@ if ($Action -eq "Create") {
         $remoteFields[1] -cne $remoteRef) {
         throw "Snapshot source starting ref does not match the frozen authority."
     }
-    & git clone --no-hardlinks --no-tags --branch $StartingRef --single-branch -- $sourceRemoteUrl $targetPath
+    # -c sets these in the new repository before anything is checked out, so the
+    # working tree is written with the same line endings as the blobs and stays
+    # that way on any later checkout.
+    #
+    # Without it, a host with core.autocrlf=true writes a CRLF working tree over
+    # LF blobs. That is invisible here, because the host's own git applies the
+    # same conversion when it compares -- so the cleanliness check below passes
+    # and the snapshot certifies as good. The consumer is the Linux orchestrator
+    # container, which reads the same files through a read-only bind with no such
+    # conversion, sees every line as modified, and refuses the authority with
+    # "Default primary repository authority must be clean". Certifying a snapshot
+    # the consumer rejects is worse than failing to build one.
+    & git clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks --no-tags --branch $StartingRef --single-branch -- $sourceRemoteUrl $targetPath
     if ($LASTEXITCODE -ne 0) { throw "Snapshot clone failed." }
     & git -C $targetPath remote set-url origin $sourceRemoteUrl
     if ($LASTEXITCODE -ne 0) { throw "Snapshot origin binding failed." }
@@ -101,3 +114,4 @@ Write-Host "Snapshot verification passed at the exact requested commit and tree.
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:27 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 12:24 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:35 UTC | END]]
