@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 07:05 UTC | BEGIN]] -->
@@ -179,9 +180,10 @@ in fact reachable from a host process, is **unknown from what may be read here**
 — unknown, not absent. Do not treat either the base file or this paragraph as
 evidence that the port is closed.
 
-The topology decision is unchanged by that: a single value still cannot serve
-both a container-network consumer and a host-process consumer, and the identical
-variable name in three places still conceals which one is meant. Whoever writes
+The topology decision is unchanged by that: consumers MAY require different DSN
+endpoints, so resolution and reachability must be verified in each host and
+container context, and the identical variable name in three places still
+conceals which one is meant. Whoever writes
 these values must establish the applied override and the actual reachability
 first, from the protected configuration itself.
 
@@ -310,3 +312,4 @@ written.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 07:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:57 UTC | END]] -->
