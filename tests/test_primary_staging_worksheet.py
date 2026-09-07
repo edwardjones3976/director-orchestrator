@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | BEGIN]]
 """Drift tests binding ``docs/primary-staging-worksheet.md`` to the code it describes.
 
@@ -27,6 +28,7 @@ WORKSHEET = ROOT / "docs" / "primary-staging-worksheet.md"
 CONTROL_SCRIPT = ROOT / "scripts" / "windows-langgraph-primary-control.ps1"
 CONFIG_SOURCE = ROOT / "src" / "director_orchestrator" / "config.py"
 ACTIVATION_SOURCE = ROOT / "src" / "director_orchestrator" / "primary_provider_activation.py"
+TRANSPORTS_SOURCE = ROOT / "src" / "director_orchestrator" / "primary_transports.py"
 
 BINDING_FIELDS = (
     "workspace_id",
@@ -213,6 +215,82 @@ class WorksheetWordingTests(unittest.TestCase):
             "stay false and `LANGGRAPH_PARALLEL_KILL_SWITCH` stays true", inventory
         )
 
+    def test_inventory_states_the_conditional_openai_api_key(self):
+        inventory = _flat(_section(self.text, INVENTORY))
+        config_source = CONFIG_SOURCE.read_text(encoding="utf-8")
+        transports_source = TRANSPORTS_SOURCE.read_text(encoding="utf-8")
+        self.assertIn('os.getenv("OPENAI_API_KEY", "")', config_source)
+        self.assertIn(
+            'if openai_transport == "responses-api" and openai_api_key'
+            ' and bool(observed_auth.get("openai", False)):',
+            transports_source,
+        )
+        self.assertIn(
+            'if provider_id == "openai" and openai_transport != "native-codex-host":',
+            transports_source,
+        )
+        self.assertIn(
+            "it is built only when `OPENAI_API_KEY` is set and openai authentication"
+            " is observed",
+            inventory,
+        )
+        self.assertIn("conditionally required by the selected transport", inventory)
+        self.assertIn(
+            "the host-bridge loop skips openai unless the transport is"
+            " `native-codex-host`",
+            inventory,
+        )
+
+    def test_inventory_denies_permission_to_run_without_pins(self):
+        inventory = _flat(_section(self.text, INVENTORY))
+        script = CONTROL_SCRIPT.read_text(encoding="utf-8")
+        # Blank pins fail the script's own shape check, whichever version is held.
+        self.assertIn(
+            "Primary repository authority must have exact commit and tree pins.", script
+        )
+        self.assertIn(
+            'if ([string]$values["LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA"] -notmatch', script
+        )
+        self.assertIn(
+            "it is not permission to run the control script, activate, or dispatch"
+            " without pins",
+            inventory,
+        )
+
+    def test_inventory_separates_the_current_control_version(self):
+        inventory = _flat(_section(self.text, INVENTORY))
+        script = CONTROL_SCRIPT.read_text(encoding="utf-8")
+        self.assertRegex(script, r'\[ValidateSet\("PrepareAcceptance",')
+        self.assertIn(
+            "`BootstrapDatabaseIdentity`, `SelectGeneration`, `StageRuntime`, and"
+            " `ValidateProviders`",
+            inventory,
+        )
+        self.assertIn(
+            "it is not satisfied by, and not testable against, the script in this"
+            " checkout",
+            inventory,
+        )
+        self.assertIn(
+            "Check the `-Action` ValidateSet of the script you actually hold", inventory
+        )
+        for name in (
+            "DIRECTOR_RUNTIME_IMAGE",
+            "DIRECTOR_RUNTIME_IMAGE_ID",
+            "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256",
+            "DIRECTOR_ASGI_APP",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256",
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH",
+            "DIRECTOR_PROVIDER_VALIDATION_MANIFEST",
+            "DIRECTOR_PROVIDER_VALIDATION_GENERATION",
+        ):
+            self.assertIn(f"`{name}`", inventory, name)
+        self.assertIn("director-primary-generation/v1", inventory)
+        self.assertIn(
+            "A canary is a real provider invocation and may be billable", inventory
+        )
+
     def test_worksheet_records_names_only(self):
         # The worksheet may show a non-secret path example such as the snapshot
         # root, but never an assignment to a credential, allowlist, or identity.
@@ -233,3 +311,4 @@ class WorksheetWordingTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]]

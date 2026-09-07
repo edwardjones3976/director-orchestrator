@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:55 UTC | BEGIN]] -->
@@ -215,6 +216,26 @@ action until each name below is present, non-empty, and not a `REPLACE_WITH_`
 placeholder; it never prints values. Record presence only. Values,
 credentials, and account metadata never enter this document or any commit.
 
+### Which control version this inventory describes
+
+Two control-script versions are in play, and they differ in what they demand.
+
+The names below are the ones required by the current accepted control script,
+whose latest contribution record is `OpenAI Codex | GPT-6 | 2026-09-06 | 20:37
+UTC`. That version adds `BootstrapDatabaseIdentity`, `SelectGeneration`,
+`StageRuntime`, and `ValidateProviders` to the `-Action` set, refuses to build an
+image for you, and verifies an exact-candidate image and a selected generation
+before it does anything else.
+
+This branch's own checkout still carries the earlier script (latest record
+`OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC`), which has none of those
+actions and builds the image itself. The always-required list and the
+acceptance-mode list below are identical in both versions, so they can be read
+against either. Everything under "Generation, image, and deployment identities"
+comes from the current version only: it is not satisfied by, and not testable
+against, the script in this checkout. Check the `-Action` ValidateSet of the
+script you actually hold before following any of it.
+
 Always required by the script:
 
 - `LANGGRAPH_PRIMARY_POSTGRES_SCHEMA`, `LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE`
@@ -234,9 +255,14 @@ Always required by the script:
 - `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS`, which the script also checks for
   `openai` plus at least three core lanes
 - `LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` and `LANGGRAPH_PRIMARY_PINNED_TREE_SHA`,
-  each 40 lowercase hexadecimal characters naming the accepted candidate;
-  `authority_pins_valid` reads true while both are empty only because no
-  candidate is pinned yet
+  each 40 lowercase hexadecimal characters naming the accepted candidate. The
+  control script rejects every other shape, empty included, and throws *"Primary
+  repository authority must have exact commit and tree pins"* before it performs
+  any runtime action. `authority_pins_valid` reading true on a deployment where
+  both are empty describes a deployment that has pinned nothing; it is not
+  permission to run the control script, activate, or dispatch without pins. The
+  pins are also the snapshot verification input, and in the current control
+  version they must equal the control checkout's own commit and tree
 - `REPOSITORY_SNAPSHOT_HOST_PATH`, `REPOSITORY_SNAPSHOT_ROOT`,
   `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`
 
@@ -258,9 +284,85 @@ Not checked by the script, but required before live dispatch:
   and `ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64`, never both forms, plus
   `LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_PULL_NUMBER` of at least 1. The default
   of 0 fails every GitHub effect closed.
-- `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT`, `responses-api` when absent;
-  `native-codex-host` additionally needs the host bridge lane and a ChatGPT
-  login on the host.
+- `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT`, `responses-api` when absent. On that
+  default the openai lane is the Responses API adapter, and it is built only when
+  `OPENAI_API_KEY` is set and openai authentication is observed
+  (`primary_transports.py`). The key is therefore conditionally required by the
+  selected transport rather than unconditionally required. The default is not a
+  contradiction that blocks the openai lane: the host-bridge loop skips openai
+  unless the transport is `native-codex-host`, which is what stops a host route
+  from overriding the selected API adapter. `native-codex-host` additionally
+  needs the host bridge lane and a ChatGPT login on the host, and it is the
+  transport whose native capture the validation store knows how to normalise.
+
+### Generation, image, and deployment identities
+
+Current control version only. These names are not in the script's presence
+check. They are *selected* by the control actions and re-verified on every later
+runtime action, so they cannot be filled in by hand during this staging pass:
+
+- `DIRECTOR_RUNTIME_IMAGE` and `DIRECTOR_RUNTIME_IMAGE_ID`, both the
+  content-addressed `sha256:` identity of an already-built exact-candidate
+  image. The script reads it from `docker image inspect`, requires the image's
+  `org.director.candidate.commit` and `org.director.candidate.tree` labels to
+  equal the control checkout's commit and tree, requires an empty entrypoint,
+  and refuses to build the image for you.
+- `DIRECTOR_RESOLVED_DEPLOYMENT_SHA256`, the digest of the fully resolved
+  Compose graph, computed inside that same image with no network and no host
+  mount by `primary_generation compose-digest`. Operational switches and the
+  generation pointers are normalised out before hashing, so this identity pins
+  the image, command, mounts and networks, not the execution switches.
+- `DIRECTOR_ASGI_APP`, either `director_orchestrator.primary_staging:app` for
+  the evidence-only service or `director_orchestrator.main:app` for the live
+  one. `StageRuntime` writes the first; `Activate` writes the second.
+- `LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256`, the owner-supplied 64-hex
+  digest of the exact manifest bytes, and
+  `LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH`, which `SelectGeneration`
+  rewrites to the content-addressed copy it reserves under the data mount.
+- `LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH`, taken from the manifest's
+  `journal_path` and required to be a direct SQLite file in the data mount.
+  Selection creates it exclusively with a single-row generation marker, so an
+  interrupted selection is preserved rather than overwritten and a retry needs a
+  fresh generation.
+
+The manifest is a closed contract with exactly these fields: `version`
+(`director-primary-generation/v1`), `activation`, `journal_path`,
+`registry_path`, `registry_sha256`, `provider_bindings_sha256`,
+`deployment_configuration_sha256`, `image_id`, `resolved_compose_sha256`. A
+missing manifest is never treated as an implicit legacy generation, and
+`provider_bindings_sha256` binds the exact
+`LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON` bytes, so changing the
+binding map after selection invalidates the generation.
+
+The staging lifecycle, in order, all of it before any provider is dispatched:
+
+1. `BootstrapDatabaseIdentity` is the only action that may establish the durable
+   pre-acceptance database identity. It initialises no application or checkpoint
+   schema.
+2. `SelectGeneration` is provider-v2 only. It stops and proves every intake
+   surface stopped, reserves the manifest and journal, and then writes the six
+   identities above.
+3. `Preflight`, `Accept`, `Migrate`, `Backup`, `RestoreDrill` are unchanged in
+   intent, but in provider-v2 mode each one first re-verifies the selected
+   generation.
+4. `StageRuntime` starts the evidence-only app with `ALLOW_PAID_RUNS`,
+   `LANGGRAPH_PRIMARY_ENABLED`, `LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED`,
+   `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` and
+   `LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED` written false and
+   `LANGGRAPH_PARALLEL_KILL_SWITCH` written true, then requires `staged_ready`
+   and `evidence_only` true with `primary_runtime_active` false.
+5. `ValidateProviders` runs only against that exact staged service.
+
+`ValidateProviders` also reads names the control script never checks:
+`DIRECTOR_PROVIDER_VALIDATION_MANIFEST`, whose `generation`, `candidate` and
+`tree` must equal the staged generation and the pins, and the capture verifier's
+`DIRECTOR_PROVIDER_VALIDATION_ENABLED`, `DIRECTOR_PROVIDER_VALIDATION_CANDIDATE`,
+`DIRECTOR_PROVIDER_VALIDATION_TREE`, `DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN`,
+`DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY` and
+`DIRECTOR_PROVIDER_VALIDATION_GENERATION`. Their values, the validation store's
+own schema creation, and any provider canary are outside this staging pass and
+are not authorised by it. A canary is a real provider invocation and may be
+billable or consume subscription allowance even when it produces no effects.
 
 Presence of every name changes no switch. `LANGGRAPH_PRIMARY_ENABLED`,
 `LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED`,
@@ -278,3 +380,4 @@ Those actions remain behind the separately accepted primary activation gates.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:55 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
