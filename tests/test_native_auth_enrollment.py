@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 01:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:52 UTC | BEGIN]]
 """Synthetic independent signatures exercise consumption, never real enrollment."""
 import base64
@@ -18,7 +19,7 @@ from director_orchestrator.native_acceptance_capture import parse_capture
 class NativeEnrollmentTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        root=Path(self.temp.name)
+        root=Path(self.temp.name).resolve()
         for name in ('code','native-auth','home'):
             (root/name).mkdir()
         for name in ('code/module.py','issuer.json','native.exe','deny-hook','home/credential.json','native-auth/readback.bin'):
@@ -115,6 +116,27 @@ class NativeEnrollmentTests(unittest.TestCase):
     def test_unsupported_other_provider_needs_no_new_enrollment(self):
         self.assertIsNone(require_native_auth(replace(self.cfg,provider='claude')))
 
+    def test_fixture_resolves_alias_while_production_rejects_noncanonical_input(self):
+        import os
+        from director_orchestrator.native_acceptance_issuer import canonical_native_path
+        # Every platform checks a noncanonical spelling. On Windows also exercise
+        # the actual 8.3 alias that can be returned in hosted runner TEMP paths.
+        spelling=str(self.cfg.root/'home'/'..')
+        with self.assertRaises(IssuerError): canonical_native_path(spelling)
+        self.assertEqual(self.cfg.root,canonical_native_path(str(Path(spelling).resolve())))
+        if os.name == 'nt':
+            import ctypes
+            buffer=ctypes.create_unicode_buffer(32768)
+            size=ctypes.windll.kernel32.GetShortPathNameW(str(self.cfg.root),buffer,len(buffer))
+            self.assertGreater(size,0)
+            self.assertLess(size,len(buffer))
+            alias=buffer.value
+            self.assertEqual(self.cfg.root,canonical_native_path(str(Path(alias).resolve())))
+            # Volumes without short-name generation return the original path.
+            # That is not an alias; no production acceptance rule is relaxed.
+            if alias.casefold()!=str(self.cfg.root).casefold():
+                with self.assertRaises(IssuerError): canonical_native_path(alias)
+
     def test_collect_rechecks_revocation_before_reading_or_signing_capture(self):
         from director_orchestrator.native_acceptance_issuer import collect
         original=self.verify()
@@ -131,3 +153,4 @@ class NativeEnrollmentTests(unittest.TestCase):
             with self.assertRaises(IssuerError): issue(self.cfg,'a'*64)
             prepare.assert_not_called()
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:52 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 01:09 UTC | END]]
