@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 07:05 UTC | BEGIN]] -->
 # Provider activation evidence: mechanism and blockers
@@ -162,12 +163,27 @@ different network positions: the orchestrator container (verifier,
 `host_provider_bridge_server.py:249`), and whichever host runs the CLI
 (`provider_validation_cli.py:23`).
 
-The existing `langgraph-primary-db` service publishes **no ports**
-(`docker-compose.yml`, contrast the orchestrator's `127.0.0.1:${DIRECTOR_HOST_PORT}`
-mapping), so it is reachable only on the compose network. A single value cannot
-satisfy both a container-network consumer and a host-process consumer. Whoever
-writes these values must decide the topology first; the identical variable name
-in three places conceals that decision.
+In the **base** `docker-compose.yml`, with no override applied, the
+`langgraph-primary-db` service publishes **no ports** — contrast the
+orchestrator's `127.0.0.1:${DIRECTOR_HOST_PORT}` mapping. Reading that as
+"reachable only on the compose network" was an extrapolation from the base file
+to actual reachability, and it was wrong to state it as a fact about the
+deployment.
+
+An independent review reports that a protected `database-port.override.yml`
+exists, and prior owner evidence identifies host port 55439 as a publish for
+this database. That protected configuration was not opened here and no secret
+was inspected, so this document records only that the override exists. Whether
+it is applied to the running deployment, and therefore whether the database is
+in fact reachable from a host process, is **unknown from what may be read here**
+— unknown, not absent. Do not treat either the base file or this paragraph as
+evidence that the port is closed.
+
+The topology decision is unchanged by that: a single value still cannot serve
+both a container-network consumer and a host-process consumer, and the identical
+variable name in three places still conceals which one is meant. Whoever writes
+these values must establish the applied override and the actual reachability
+first, from the protected configuration itself.
 
 ## Schema creation is an explicit act
 
@@ -293,3 +309,4 @@ written.
    change.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 07:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | END]] -->
