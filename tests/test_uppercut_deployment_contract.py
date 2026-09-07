@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -14,6 +15,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -132,6 +134,77 @@ def _run_powershell(probe: str, shell: str | None = None) -> str:
     )
 
 
+# Values a disposable copy of the launcher needs to get past its configuration
+# gates. Synthetic and local: no profile, credential or endpoint is real.
+FIXTURE_PROFILE_NAMES = (
+    "ORCHESTRATOR_SHARED_SECRET",
+    "OPENAI_API_KEY",
+    "CLAUDE_ROUTINE_URL",
+    "CLAUDE_ROUTINE_TOKEN",
+    "CLAUDE_CALLBACK_SECRET",
+    "CURSOR_API_KEY",
+    "N8N_ENCRYPTION_KEY",
+    "N8N_POSTGRES_PASSWORD",
+    "SLACK_APP_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "SLACK_DIRECTOR_CHANNEL_ID",
+    "SLACK_GATEWAY_SECRET",
+    "TRUSTED_PROVIDER_COST_RANKS",
+)
+
+# Docker, the ACL call and every HTTP request are replaced, so the whole script
+# can run end to end without a daemon, a network or a real deployment.
+FULL_LAUNCHER_PROBE_STUBS = """
+$global:probeDocker = New-Object System.Collections.Generic.List[string]
+function global:docker {
+    $global:probeDocker.Add(($args -join ' '))
+    $global:LASTEXITCODE = 0
+    if ($args -contains '--entrypoint') { Write-Output '0' }
+}
+function global:icacls.exe { $global:LASTEXITCODE = 0 }
+function global:Invoke-RestMethod {
+    param($Uri, $Method, $TimeoutSec, $Headers)
+
+    if ($Uri -match '/health$') {
+        return [pscustomobject]@{
+            providers = [pscustomobject]@{
+                openai_director = $true; claude = $true; cursor = $true
+            }
+            execution_profile = [pscustomobject]@{
+                projects_configured = $true
+                repositories_configured = $true
+                starting_refs_configured = $true
+                claude_callback_configured = $true
+            }
+        }
+    }
+    if ($Uri -match '/v1/usage-checks/run$') {
+        return [pscustomobject]@{
+            status = 'not_due'
+            scheduled_providers = @()
+            cooling_down_providers = @('claude', 'cursor', 'openai')
+        }
+    }
+    if ($Uri -match '/v1/usage-checks/latest$') {
+        return @('claude', 'cursor', 'openai') | ForEach-Object {
+            [pscustomobject]@{
+                provider = $_
+                status = 'ok'
+                total_tokens = 0
+                checked_at = [DateTimeOffset]::UtcNow.AddSeconds(-1).ToString('o')
+            }
+        }
+    }
+    throw 'the probe reached an unexpected endpoint'
+}
+function global:Get-ProbeEnvironment {
+    $snapshot = @{}
+    foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+        $snapshot[[string]$entry.Key] = [string]$entry.Value
+    }
+    return $snapshot
+}
+"""
 
 
 class UppercutDeploymentContractTests(unittest.TestCase):
@@ -445,6 +518,138 @@ Write-Output ("threw|" + $threw)
                     "threw": "no",
                 },
             )
+
+    def _available_powershell_shells(self) -> list[str | None]:
+        shells: list[str | None] = [None] if _powershell_shell() else []
+        windows_shell = _windows_powershell_shell()
+        if windows_shell is not None:
+            shells.append(windows_shell)
+        self.assertTrue(shells, "no PowerShell available")
+        return shells
+
+    def _build_launcher_fixture(self, root: Path) -> Path:
+        """Copy the launcher into a disposable tree with a synthetic profile."""
+
+        (root / "scripts").mkdir()
+        shutil.copyfile(
+            ROOT / "scripts" / "windows-isolated-live-validation.ps1",
+            root / "scripts" / "windows-isolated-live-validation.ps1",
+        )
+        (root / ".env.uppercut").write_text(
+            "".join(
+                f"{name}=synthetic-local-fixture-{name}\n"
+                for name in FIXTURE_PROFILE_NAMES
+            ),
+            encoding="utf-8",
+        )
+        return root
+
+    def _run_full_launcher(self, seed: str, shell: str | None) -> dict[str, str]:
+        """Run the unmodified launcher against stubs with the compiler denied."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self._build_launcher_fixture(Path(raw))
+            probe = POWERSHELL_PRELUDE + FULL_LAUNCHER_PROBE_STUBS + f"""
+$fixture = '{fixture.as_posix()}'
+$launcher = Join-Path $fixture 'scripts/windows-isolated-live-validation.ps1'
+$log = Join-Path $fixture 'run.log'
+{seed}
+$seedPresent = Test-Path -LiteralPath 'Env:ALLOW_PAID_RUNS'
+$seedValue = [Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS', 'Process')
+# Denied the way a locked-down session or a missing compiler denies it. The
+# launcher compiles its native environment helper once at startup.
+function global:Add-Type {{ throw 'synthetic compiler denial' }}
+$before = Get-ProbeEnvironment
+$profileFile = Join-Path $fixture '.env.uppercut'
+$profileBefore = (Get-FileHash -LiteralPath $profileFile -Algorithm SHA256).Hash
+$threw = 'none'
+try {{
+    & $launcher -ProfileName project-uppercut -EnablePaidRuns -TimeoutSeconds 1 *> $log
+}}
+catch {{ $threw = $_.Exception.Message }}
+$after = Get-ProbeEnvironment
+$changed = @()
+foreach ($name in @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique)) {{
+    if (-not $before.ContainsKey($name) -or
+        -not $after.ContainsKey($name) -or
+        $before[$name] -cne $after[$name]) {{
+        $changed += $name
+    }}
+}}
+$paid = [Environment]::GetEnvironmentVariable('ALLOW_PAID_RUNS', 'Process')
+$profileAfter = (Get-FileHash -LiteralPath $profileFile -Algorithm SHA256).Hash
+Write-Output ('seedPresent|' + $seedPresent)
+Write-Output ('seedLength|' + ([string]$seedValue).Length)
+Write-Output ('threw|' + $threw)
+Write-Output ('paidPresent|' + (Test-Path -LiteralPath 'Env:ALLOW_PAID_RUNS'))
+Write-Output ('paidLength|' + ([string]$paid).Length)
+Write-Output ('paidValue|' + [string]$paid)
+Write-Output ('dockerCalls|' + $global:probeDocker.Count)
+Write-Output ('composeCalls|' + @($global:probeDocker | Where-Object {{ $_ -like 'compose*' }}).Count)
+Write-Output ('changedEnv|' + ($changed -join ','))
+Write-Output ('profileUnchanged|' + ($profileBefore -eq $profileAfter))
+"""
+            return dict(
+                line.strip().split("|", 1)
+                for line in _run_powershell(probe, shell=shell).splitlines()
+                if "|" in line
+            )
+
+    def test_unrestorable_inherited_empty_gate_stops_before_any_mutation(self):
+        """An empty gate that cannot be restored must stop the run at once.
+
+        Startup compilation of the native helper is allowed to fail, but then an
+        inherited empty ALLOW_PAID_RUNS cannot be put back. Running anyway
+        rebinds the gate to false, opens it to true for the provider probes, and
+        hands the caller back a paid-open true where an empty paid-closed
+        override used to be. The whole launcher runs here against stubs with a
+        genuinely empty Win32 value seeded, so the fix has to hold end to end.
+        """
+
+        seed = """
+$signature = '[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern bool SetEnvironmentVariableW(string lpName, string lpValue);'
+Add-Type -Namespace Pr116Probe -Name Seed -MemberDefinition $signature
+if (-not [Pr116Probe.Seed]::SetEnvironmentVariableW('ALLOW_PAID_RUNS', '')) {
+    throw 'could not seed an empty inherited override'
+}
+"""
+        for shell in self._available_powershell_shells():
+            with self.subTest(shell=shell or "pwsh"):
+                observed = self._run_full_launcher(seed, shell)
+                # Without a real empty inherited value the case proves nothing.
+                self.assertEqual(observed["seedPresent"], "True")
+                self.assertEqual(observed["seedLength"], "0")
+                # It fails, and it says which name it could not restore.
+                self.assertIn("ALLOW_PAID_RUNS", observed["threw"])
+                self.assertIn("no service was started", observed["threw"])
+                # The inherited empty override is still exactly that.
+                self.assertEqual(observed["paidPresent"], "True")
+                self.assertEqual(observed["paidLength"], "0")
+                # Nothing was mutated and nothing was started.
+                self.assertEqual(observed["changedEnv"], "")
+                self.assertEqual(observed["dockerCalls"], "0")
+                self.assertEqual(observed["composeCalls"], "0")
+                self.assertEqual(observed["profileUnchanged"], "True")
+
+    def test_denied_compilation_alone_does_not_fail_a_run_without_empties(self):
+        """No inherited empty means no need for the native helper.
+
+        The helper only matters for restoring an empty value. Failing every run
+        that cannot compile it would break ordinary activation for no gain, so
+        an inherited non-empty gate must still run and must still come back
+        exactly as it arrived.
+        """
+
+        seed = "[Environment]::SetEnvironmentVariable('ALLOW_PAID_RUNS', 'true', 'Process')"
+        for shell in self._available_powershell_shells():
+            with self.subTest(shell=shell or "pwsh"):
+                observed = self._run_full_launcher(seed, shell)
+                self.assertEqual(observed["seedPresent"], "True")
+                self.assertEqual(observed["threw"], "none")
+                # The run proceeded through Compose rather than failing closed.
+                self.assertGreater(int(observed["composeCalls"]), 0)
+                # And the managed setter restored the non-empty value.
+                self.assertEqual(observed["paidValue"], "true")
 
     def test_profile_is_separate_and_primary_env_is_read_only(self):
         self.assertIn('ProfileName = "project-uppercut"', self.wrapper)
@@ -932,3 +1137,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
