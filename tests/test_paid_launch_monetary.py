@@ -1,3 +1,4 @@
+# [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 09:20 UTC | BEGIN]]
 """Real-PostgreSQL monetary admission for the paid launch campaign.
 
@@ -7,6 +8,7 @@ and no reservation is ever released by a later failure.
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import time
 import unittest
@@ -29,12 +31,14 @@ from director_orchestrator.antigravity_team import (
 from director_orchestrator.provider_validation import (
     SCHEMA,
     PostgresValidationStore,
+    ValidationBridgeService,
     ValidationError,
     ValidationRequest,
+    digest,
 )
 from tests import test_entitlement_control_plane as fixtures
 from tests.test_antigravity_team import signed
-from tests.test_provider_validation import CANDIDATE, OWNER, TREE, binding, work_packet
+from tests.test_provider_validation import CANDIDATE, KEY, OWNER, TREE, binding, work_packet
 
 PROJECT = "uppercut"
 CAMPAIGN = "paid-launch-2026-09"
@@ -275,6 +279,28 @@ class PaidLaunchMonetaryPostgresTests(unittest.TestCase):
             self.admit(identifier)
         self.assertEqual(self.attempts(identifier), 0)
 
+    def test_legacy_unbound_generation_cannot_reach_executor_or_consume_attempts(self):
+        """Pre-campaign rows without campaign binding must not dispatch or spend attempts."""
+        identifier = secrets.token_hex(32)
+        lanes = {"claude": {"binding": asdict(binding()), "configuration_digest": "c" * 64,
+                            "cost_units": 2, "work_packet": work_packet()}}
+        with self.validation.connect() as db:
+            db.execute(
+                f"INSERT INTO {SCHEMA}.generations "
+                "(generation,candidate,tree,owner_digest,expires_at,budget_units,configuration,campaign_id) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,NULL)",
+                (identifier, CANDIDATE, TREE, digest(OWNER.encode()), int(time.time()) + 600,
+                 10, json.dumps(lanes)))
+        with self.assertRaisesRegex(ValidationError, "authoritative monetary admission"):
+            self.validation.admit(ValidationRequest(generation=identifier, provider="claude"), OWNER)
+        self.assertEqual(self.attempts(identifier), 0)
+        service = ValidationBridgeService(
+            store=self.validation, production_executor=object(), capture_key=KEY, owner_token=OWNER,
+            account_files={}, monetary_admission=self.admission())
+        with self.assertRaisesRegex(ValidationError, "unfunded generation"):
+            service.run(ValidationRequest(generation=identifier, provider="claude"), OWNER)
+        self.assertEqual(self.attempts(identifier), 0)
+
     def test_owner_bounded_subscription_admits_by_call_bound_not_by_price(self):
         policy = SubscriptionPolicy(schema_version="owner-bounded-subscription/v1", max_calls=1,
                                     max_turns=2, max_seconds=60, max_output_bytes=4096)
@@ -340,3 +366,4 @@ class PaidLaunchMonetaryPostgresTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 09:20 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | END]]

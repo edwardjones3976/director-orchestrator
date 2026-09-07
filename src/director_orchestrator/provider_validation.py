@@ -1,3 +1,4 @@
+# [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 """Dedicated provider canaries: durable admission and captured execution evidence.
@@ -155,13 +156,16 @@ class PostgresValidationStore:
                        (generation,candidate,tree,digest(owner_token.encode()),expires_at,
                         budget_units,json.dumps(dict(lanes)),campaign_id))
 
-    def admit(self, request: ValidationRequest, owner_token: str, *, monetary_admission=None) -> dict:
+    def admit(self, request: ValidationRequest, owner_token: str, *, monetary_admission=None,
+              offline_fixture: bool = False) -> dict:
         """One transaction locks eligibility, money, budget and replay admission.
 
         A campaign generation is only admitted when the caller supplies the
         monetary authority hook; the micro-USD reservation, the nonce, the fence
         and the attempt row are one PostgreSQL transaction, so no attempt can be
-        dispatched against an unfunded or exhausted campaign.
+        dispatched against an unfunded or exhausted campaign. Offline fixtures
+        may opt in explicitly; every production executor boundary keeps the hook
+        mandatory so legacy unbound generations cannot dispatch without USD.
         """
         with self.connect() as db:
             row = db.execute(f"SELECT candidate,tree,owner_digest,expires_at,budget_units,"
@@ -171,11 +175,16 @@ class PostgresValidationStore:
                     or row[6] or row[3] <= int(time.time()) or request.provider not in row[7]):
                 raise ValidationError("validation generation unauthorized or expired")
             campaign_id = row[8]
-            if campaign_id is not None and monetary_admission is None:
+            spec = row[7][request.provider]
+            requires_monetary = (
+                campaign_id is not None
+                or "budget_authority_digest" in spec
+                or not offline_fixture
+            )
+            if requires_monetary and monetary_admission is None:
                 raise ValidationError("paid validation requires authoritative monetary admission")
             if campaign_id is None and monetary_admission is not None:
                 raise ValidationError("unfunded generation cannot consume monetary authority")
-            spec = row[7][request.provider]
             if db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE generation=%s AND provider=%s",
                           (request.generation,request.provider)).fetchone():
                 raise ValidationError("attempt already admitted; reconcile without redispatch")
@@ -460,22 +469,26 @@ class ValidationBridgeService:
     """Dedicated endpoint; the production executor configuration is reused exactly."""
     def __init__(self, *, store: PostgresValidationStore, production_executor,
                  capture_key: str, owner_token: str, account_files: Mapping[str,tuple[str,...]], team_route=None,
-                 monetary_admission=None):
+                 monetary_admission=None, offline_fixture: bool = False):
         if len(capture_key)<32 or len(owner_token)<32 or hmac.compare_digest(capture_key,owner_token):
             raise ValueError("distinct validation owner and capture keys required")
         self.store,self.production,self.capture_key,self.owner_token=store,production_executor,capture_key,owner_token
         self.account_files=dict(account_files)
         self.team_route=team_route
         self.monetary_admission=monetary_admission
+        self.offline_fixture=offline_fixture
 
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
         if not hmac.compare_digest(owner_token,self.owner_token):
             raise ValidationError("validation owner authentication failed")
+        if not self.offline_fixture and self.monetary_admission is None:
+            raise ValidationError("paid validation requires authoritative monetary admission")
         if request.provider == "antigravity":
             if self.team_route is None:
                 raise ValidationError("Antigravity team SSH validation route is unbound")
             return self.team_route.run(self,request,owner_token)
-        admission=self.store.admit(request,owner_token,monetary_admission=self.monetary_admission)
+        admission=self.store.admit(request,owner_token,monetary_admission=self.monetary_admission,
+                                   offline_fixture=self.offline_fixture)
         raw_captures=[]
         try:
             pin=production_configuration_digest(self.production,request.provider,
@@ -514,3 +527,4 @@ class ValidationBridgeService:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | END]]

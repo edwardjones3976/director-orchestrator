@@ -1,4 +1,5 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
 """Dedicated synthetic canary through the actual pinned SSH engineering worker."""
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -54,7 +55,8 @@ class TeamValidationRoute:
             prepared=prepared,authorized_commands=[])
 
     def run(self,service,request,owner_token):
-        admission=service.store.admit(request,owner_token,monetary_admission=service.monetary_admission)
+        admission=service.store.admit(request,owner_token,monetary_admission=service.monetary_admission,
+                                      offline_fixture=service.offline_fixture)
         worker=None
         try:
             work=json.loads(admission["packet"])
@@ -142,3 +144,4 @@ def team_route_from_environment():
     return TeamValidationRoute(grant=grant,owner_secret=owner,worker_secret=worker_key,
         worker_factory=factory,configuration_digest=fingerprint)
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | END]]

@@ -109,7 +109,8 @@ class PostgresValidationTests(unittest.TestCase):
         return generation
 
     def admit(self,generation,provider="claude"):
-        return self.store.admit(ValidationRequest(generation=generation,provider=provider),OWNER)
+        return self.store.admit(ValidationRequest(generation=generation,provider=provider),OWNER,
+                                offline_fixture=True)
 
     def completed(self):
         generation=self.generation()
@@ -169,7 +170,7 @@ class PostgresValidationTests(unittest.TestCase):
             expires_at=int(time.time())+600,budget_units=2,lanes={"antigravity":{
             "binding":asdict(binding("antigravity")),"configuration_digest":"c"*64,"cost_units":2,"work_packet":work}})
         service=ValidationBridgeService(store=self.store,production_executor=None,capture_key=KEY,owner_token=OWNER,
-            account_files={},team_route=route)
+            account_files={},team_route=route,offline_fixture=True)
         request=ValidationRequest(generation=generation,provider="antigravity")
         result=service.run(request,OWNER)
         verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation,team_route=route)
@@ -268,7 +269,7 @@ class PostgresValidationTests(unittest.TestCase):
                 expires_at=int(time.time())+600,budget_units=1,lanes={"claude":{
                     "binding":asdict(binding()),"configuration_digest":config,"cost_units":1,"work_packet":work_packet()}})
             service=ValidationBridgeService(store=self.store,production_executor=production,
-                capture_key=KEY,owner_token=OWNER,account_files={"claude":(str(account),)})
+                capture_key=KEY,owner_token=OWNER,account_files={"claude":(str(account),)},offline_fixture=True)
             result=service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
             self.assertEqual(result["surfaces"],["app","runtime_adapter"])
             verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
@@ -284,7 +285,7 @@ class PostgresValidationTests(unittest.TestCase):
             account=Path(directory)/"synthetic-auth";account.write_text("fixture")
             executor=WindowsHostProviderExecutor({"claude":(str(Path(sys.executable).resolve(strict=True)),"-c","pass")},cwd=directory)
             service=ValidationBridgeService(store=self.store,production_executor=executor,capture_key=KEY,
-                owner_token=OWNER,account_files={"claude":(str(account),)})
+                owner_token=OWNER,account_files={"claude":(str(account),)},offline_fixture=True)
             with patch.object(WindowsHostProviderExecutor,"execute") as execute:
                 with self.assertRaisesRegex(ValidationError,"binding drift"):
                     service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
