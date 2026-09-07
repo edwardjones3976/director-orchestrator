@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
@@ -32,8 +33,40 @@ $composeEnvironmentNames = @(
     "CHATGPT_BRIDGE_ENABLED", "CHATGPT_BRIDGE_SLACK_USER_ID",
     "CHATGPT_BRIDGE_CHANNEL_IDS", "CHATGPT_BRIDGE_MAX_PROMPT_CHARS",
     "N8N_DIRECTOR_WEBHOOK_URL",
-    "N8N_POSTGRES_PASSWORD", "N8N_ENCRYPTION_KEY", "N8N_IMAGE"
+    "N8N_POSTGRES_PASSWORD", "N8N_ENCRYPTION_KEY", "N8N_IMAGE",
+    # Every gate the identity block pins must also be bound here. Compose reads
+    # the process environment ahead of --env-file, so a name that is written to
+    # the profile but not bound is silently overridden by whatever the operator
+    # happens to have exported. That is how an inherited ALLOW_PAID_RUNS=true
+    # resolves a paid-closed profile to a paid-open container.
+    "SQLITE_PATH", "PROJECT_ALLOWLIST", "REPOSITORY_ALLOWLIST",
+    "ALLOWED_STARTING_REFS", "MAX_AGENT_HOPS", "MAX_TASK_BUDGET_USD",
+    "PRIMARY_TEAM", "PRIMARY_WORKHORSE", "USAGE_CHECK_PROVIDERS",
+    "USAGE_CHECK_INTERVAL_MINUTES", "ALLOW_PAID_RUNS", "USAGE_CHECK_ENABLED",
+    "ORACLE_AUTOMERGE_ENABLED", "ORACLE_AUTOMERGE_KILL_SWITCH",
+    "LANGGRAPH_RUNTIME_ENABLED", "LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED",
+    "LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED",
+    "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED",
+    "LANGGRAPH_PARALLEL_KILL_SWITCH"
 )
+$script:win32EnvironmentReady = $false
+try {
+    # Established here, before a single variable is touched. Compiling inside the
+    # exit path would let a missing compiler or an unwritable temp directory
+    # replace the error that ended the run and abandon every name still waiting
+    # to be restored.
+    Add-Type -Namespace Win32Env -Name Native -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern bool SetEnvironmentVariableW(string lpName, string lpValue);
+'@
+    $script:win32EnvironmentReady = $true
+}
+catch {
+    # Without it an inherited empty value cannot be restored. The restore loop
+    # reports that per name rather than failing the run here.
+    $script:win32EnvironmentReady = $false
+}
+
 $originalProcessEnvironment = @{}
 foreach ($name in $composeEnvironmentNames) {
     $originalProcessEnvironment[$name] = [pscustomobject]@{
@@ -145,6 +178,65 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText((Join-Path (Get-Location) $Path), $Text, $utf8NoBom)
 }
 
+function Write-EnvironmentRestoreWarning {
+    param([Parameter(Mandatory = $true)][string]$Message)
+
+    # Diagnostic only. Write-Warning inherits warning policy, so under
+    # -WarningAction Stop it becomes terminating; in the exit path that would
+    # replace the original exception and strand every later name.
+    try { Write-Warning -WarningAction Continue -Message $Message } catch { }
+}
+
+function Set-ProcessEnvironmentVariableExact {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value
+    )
+
+    if ($Value -ne "") {
+        [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
+        return $true
+    }
+
+    # An empty value is not a deletion. The managed setter and every PowerShell
+    # cmdlet delete the name when handed "", but the Win32 entry point separates
+    # an empty string from the null pointer that means delete, so an inherited
+    # empty override survives on both editions. That override matters: an empty
+    # export still beats --env-file, so dropping it reopens the profile's value.
+    if (-not $script:win32EnvironmentReady) {
+        return $false
+    }
+    # Win32 reports failure with a zero return, so it is answered, not discarded.
+    return [bool][Win32Env.Native]::SetEnvironmentVariableW($Name, "")
+}
+
+function Clear-ProcessEnvironmentVariable {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    # PowerShell 7 keeps the name with an empty value when SetEnvironmentVariable
+    # is handed $null, and an exported empty value still beats --env-file. Only
+    # actual removal restores absence, which Windows PowerShell 5.1 already did.
+    Remove-Item -LiteralPath "Env:${Name}" -ErrorAction SilentlyContinue
+}
+
+function Sync-ComposeEnvironment {
+    param([Parameter(Mandatory = $true)][hashtable]$Values)
+
+    # Compose reads the process environment ahead of --env-file, so every
+    # managed name is rebound whenever the profile changes. Binding once at
+    # staging would pin the closed gates for the rest of the run and make
+    # authorized activation impossible: the file would say true while the
+    # exported false kept winning.
+    foreach ($name in @($composeEnvironmentNames | Where-Object { $_ -ne "DIRECTOR_ENV_FILE" })) {
+        if ($Values.ContainsKey($name)) {
+            [Environment]::SetEnvironmentVariable($name, [string]$Values[$name], "Process")
+        }
+        else {
+            Clear-ProcessEnvironmentVariable -Name $name
+        }
+    }
+}
+
 function Write-ProfileSwitches {
     param(
         [Parameter(Mandatory = $true)][bool]$PaidRuns,
@@ -173,6 +265,7 @@ function Write-ProfileSwitches {
     }
     Write-Utf8NoBom -Path $profilePath -Text $text
     $text = $null
+    Sync-ComposeEnvironment -Values (Read-DotEnv -Path $profilePath)
 }
 
 function Assert-Configured {
@@ -565,6 +658,14 @@ if ($ProfileName -eq "long-table") {
     $identity["LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED"] = "false"
     $identity["LANGGRAPH_PARALLEL_KILL_SWITCH"] = "true"
 }
+$unboundIdentityNames = @(
+    $identity.Keys | Where-Object { $composeEnvironmentNames -notcontains $_ }
+)
+if ($unboundIdentityNames.Count -gt 0) {
+    throw ("Identity names are written to the profile but not bound into the " +
+        "Compose environment, so an inherited value would win: " +
+        ($unboundIdentityNames -join ", "))
+}
 foreach ($entry in $identity.GetEnumerator()) {
     $profileText = Set-DotEnvValue -Text $profileText -Name $entry.Key -Value $entry.Value
 }
@@ -612,14 +713,7 @@ if ($ProfileName -eq "long-table") {
 $composeProject = [string]$values["DIRECTOR_COMPOSE_PROJECT_NAME"]
 $hostPort = [int]$values["DIRECTOR_HOST_PORT"]
 [Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")
-foreach ($name in @($composeEnvironmentNames | Where-Object { $_ -ne "DIRECTOR_ENV_FILE" })) {
-    if ($values.ContainsKey($name)) {
-        [Environment]::SetEnvironmentVariable($name, [string]$values[$name], "Process")
-    }
-    else {
-        [Environment]::SetEnvironmentVariable($name, $null, "Process")
-    }
-}
+Sync-ComposeEnvironment -Values $values
 
 Write-Host "Using isolated $displayName profile $profilePath, Compose project $composeProject, and host port $hostPort."
 docker compose --project-name $composeProject --env-file $profilePath config --quiet
@@ -852,12 +946,29 @@ catch {
 finally {
     Set-Location $originalLocation
     foreach ($name in $composeEnvironmentNames) {
-        $original = $originalProcessEnvironment[$name]
-        if ($original.Present) {
-            [Environment]::SetEnvironmentVariable($name, [string]$original.Value, "Process")
+        # Each name is restored in isolation. This runs in the exit path, so one
+        # failure must neither replace the error that ended the invocation nor
+        # abandon the names still waiting behind it.
+        try {
+            $original = $originalProcessEnvironment[$name]
+            if ($original.Present) {
+                $expected = [string]$original.Value
+                $restored = Set-ProcessEnvironmentVariableExact -Name $name -Value $expected
+                $actual = [Environment]::GetEnvironmentVariable($name, "Process")
+                if (-not $restored -or $null -eq $actual -or $actual -ne $expected) {
+                    Write-EnvironmentRestoreWarning -Message (
+                        "Could not restore ${name} to its inherited value; " +
+                        "re-export it before the next Compose run if it was " +
+                        "deliberate.")
+                }
+            }
+            else {
+                Clear-ProcessEnvironmentVariable -Name $name
+            }
         }
-        else {
-            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+        catch {
+            Write-EnvironmentRestoreWarning -Message (
+                "Restoring ${name} failed: " + $_.Exception.Message)
         }
     }
 }
@@ -870,3 +981,4 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | END]]
