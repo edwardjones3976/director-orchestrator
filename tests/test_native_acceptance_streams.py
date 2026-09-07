@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
@@ -293,10 +294,31 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
         # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 
     # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
-    def cursor_fixture(self, deny):
+    # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:43 UTC | BEGIN]]
+    def short_path(self, path):
+        """The actual Windows 8.3 alias, when the volume still generates one."""
+        if os.name != "nt":
+            return None
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(1024)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+        if not length or length >= len(buffer) or buffer.value == str(path):
+            return None
+        return buffer.value
+
+    def cursor_fixture(self, deny, root_kind="canonical"):
         from tests.test_native_acceptance_issuer import IssuerTests
         fixture = IssuerTests(); fixture.setUp()
         root = Path(fixture.root).resolve()
+        configured = root
+        if root_kind == "short":
+            # A CI runner reaches its temporary root through an 8.3 alias; the
+            # installed configuration would then carry that exact spelling.
+            alias = self.short_path(root)
+            if alias is None:
+                fixture.doCleanups()
+                raise unittest.SkipTest("volume does not generate 8.3 short names")
+            configured = Path(alias)
         profile = root / "worker-profile"
         (profile / "AppData" / "Roaming" / "Cursor").mkdir(parents=True)
         # The completed login is only located, never opened, moved or copied.
@@ -305,8 +327,11 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
         config = root / "cursor-config"; config.mkdir()
         (config / "cli-config.json").write_bytes(canonical({"permissions": {"allow": [], "deny": deny}}))
         (root / "requests" / (fixture.context.challenge + ".json")).write_bytes(canonical(fixture.request))
-        cfg = replace(fixture.cfg, role="independent_review", provider="cursor", model="configured")
-        return fixture, cfg, root, profile, config
+        # The worker builds every protected path from cfg.root, so the fixture
+        # configuration must name that root itself instead of a second spelling.
+        cfg = replace(fixture.cfg, root=configured, mirror=configured,
+                      role="independent_review", provider="cursor", model="configured")
+        return fixture, cfg, root, profile
 
     def acp_document(self, fixture, model):
         verdict = json.dumps(dict(verdict="ACCEPT", challenge=fixture.context.challenge,
@@ -319,10 +344,10 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
                     dict(id=6, result=dict(stopReason="end_turn"))]
         return canonical(dict(protocol="cursor-acp/v1", messages=messages, mode="ask", model=model))
 
-    def cursor_attempt(self, deny, profile_kind):
+    def cursor_attempt(self, deny, profile_kind, root_kind="canonical"):
         """Drive the actual worker through the capture/run_acp boundary."""
         from director_orchestrator.native_acceptance_capture import work
-        fixture, cfg, root, profile, config = self.cursor_fixture(deny)
+        fixture, cfg, root, profile = self.cursor_fixture(deny, root_kind)
         try:
             attempts, sids, error = [], [], None
             def acp(command, *, cwd, env, prompt, model, timeout):
@@ -344,7 +369,7 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
             response = root / "responses" / (fixture.context.challenge + ".json")
             return dict(error=error, attempts=attempts, sids=sids, worker_sid=cfg.worker_sid,
                         response=json.loads(response.read_bytes()) if response.exists() else None,
-                        profile=profile, config=config)
+                        profile=profile, config=cfg.root / "cursor-config")
         finally:
             fixture.doCleanups()
 
@@ -371,6 +396,23 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
         self.assertEqual(strict["APPDATA"], str(outcome["config"] / "AppData" / "Roaming"))
         self.assertEqual(strict["LOCALAPPDATA"], str(outcome["config"] / "AppData" / "Local"))
         self.assertEqual(strict["HOME"], str(outcome["config"]))
+
+    @unittest.skipUnless(os.name == "nt", "Windows-only Cursor worker profile metadata")
+    def test_cursor_review_environment_follows_the_configured_root(self):
+        # A Windows runner reaches its temporary directory through an 8.3 alias,
+        # so the installed configuration and the review environment must agree on
+        # one spelling: whatever cfg.root actually says. Production canonical
+        # strictness is unchanged; only the trusted profile metadata is required
+        # to be canonical, and it still is here.
+        from director_orchestrator.native_acceptance_capture import CURSOR_DENY
+        outcome = self.cursor_attempt(CURSOR_DENY, "worker", root_kind="short")
+        self.assertIsNone(outcome["error"])
+        env = outcome["attempts"][0]["env"]
+        for key in ("HOME", "USERPROFILE", "CURSOR_CONFIG_DIR"):
+            self.assertEqual(env[key], str(outcome["config"]))
+        self.assertEqual(env["LOCALAPPDATA"], str(outcome["config"] / "AppData" / "Local"))
+        self.assertEqual(env["APPDATA"], str(outcome["profile"] / "AppData" / "Roaming"))
+        self.assertTrue(outcome["attempts"][0]["login_visible"])
 
     def test_cursor_missing_policy_fails_closed_before_any_profile_lookup(self):
         # Platform independent: the administrator-owned configuration is checked
@@ -403,6 +445,7 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
         self.assertEqual(outcome["sids"], [])
         self.assertEqual(outcome["attempts"], [])
         self.assertIsNone(outcome["response"])
+    # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:43 UTC | END]]
     # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
 
     def test_hook_pin_is_verified_but_is_not_a_native_argument(self):
@@ -421,3 +464,4 @@ class AdditionalNativeCaptureTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
 
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:32 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:43 UTC | END]]
