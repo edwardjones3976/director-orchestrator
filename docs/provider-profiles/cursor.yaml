@@ -60,7 +60,7 @@ roles:
     - "Capability parity does not bypass assignment scope or deterministic gates."
   family: null
   transport_rule: null
-  routing_rule: "Route Cursor by fit, independence, capacity, and evidence needs."
+  routing_rule: "Route Cursor through its repository-bound Agent transport, including debate."
   committee:
     member: true
     voting_power: 1.5
@@ -81,8 +81,8 @@ roles:
 capabilities:
   summary: "Durable cloud agent runs over an allowlisted repository and starting ref, with an optional draft pull request when the packet allows it. Eligible independent exact-SHA reviewer for candidates it did not produce or materially author."
   strengths:
-    - "research and evidence verification"
-    - "deep technical reasoning and planning support"
+    - "repository-bound technical research and evidence verification"
+    - "repository-bound technical reasoning and implementation planning"
     - "complex implementation, debugging, and refactoring"
     - "architecture, reliability, and security-adjacent analysis"
     - "cross-platform quality assurance"

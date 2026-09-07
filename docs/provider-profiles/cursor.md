@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
@@ -68,7 +69,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | 1.0 |
 | Comparison peers | `claude`, `openai_codex` |
 | Family | - |
-| Routing rule | Route Cursor by fit, independence, capacity, and evidence needs. |
+| Routing rule | Route Cursor through its repository-bound Agent transport, including debate. |
 | Transport rule | - |
 
 Elevated work:
@@ -94,8 +95,8 @@ Non-substitution rules:
 
 Strengths:
 
-- research and evidence verification
-- deep technical reasoning and planning support
+- repository-bound technical research and evidence verification
+- repository-bound technical reasoning and implementation planning
 - complex implementation, debugging, and refactoring
 - architecture, reliability, and security-adjacent analysis
 - cross-platform quality assurance
@@ -299,3 +300,4 @@ Separation of duties:
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->

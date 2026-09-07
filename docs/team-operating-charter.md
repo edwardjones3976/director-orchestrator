@@ -255,11 +255,11 @@ eligible review artifact and an owner-authorized assigned agent may invoke the
 gate after all evidence is current. Deterministic code performs the merge; the
 model does not receive raw merge credentials.
 
-Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex
-inside the surfaces each provider exposes. Cursor is code-only; Grok exposes both
-chat and code. Cursor's code-agent contact remains eligible for debate. This is
-real routing eligibility, including critical work, and not
-a benchmark claim. Neither may perform OpenAI's in-process Director acceptance role, replace
+Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex.
+That parity holds inside the surfaces each provider exposes: Cursor is code-only;
+Grok exposes both chat and code. Cursor's code-agent contact remains eligible for
+debate. This is real routing eligibility, including critical work, and not a
+benchmark claim. Neither may perform OpenAI's in-process Director acceptance role, replace
 a mandatory Codex Security check, review its own work, or bypass assignment
 scope and deterministic gates. Cursor and Grok each have a committee voting
 weight of 1.5; capability coverage and voting power are separate controls.

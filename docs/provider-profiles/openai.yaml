@@ -99,6 +99,7 @@ capabilities:
     - "orchestration"
     - "planning"
     - "structured acceptance review"
+    - "bounded Codex implementation through the external code surface"
   assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
   may_create_draft_pr: "never"
   may_issue_review_verdict: "eligible_reviewer"

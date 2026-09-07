@@ -104,6 +104,7 @@ capabilities:
 models_and_effort:
   model_variables:
     - { variable: "GROK_MODEL", role: "provider_model", settings_field: "grok_model", default: "grok-4.6", documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_CODE_MODEL", role: "provider_model", settings_field: "grok_code_model", default: "grok-build-0.1", documented_in_env_example: true, values_recorded: false }
   effort_variables: []
   catalog_check: "Before the first paid request in a process the adapter authenticates GET /models and requires the configured model ID to be present in the xAI catalog."
   note: "No reasoning-effort variable exists for Grok. Requests use POST /responses with tools=[] and store=false; the synchronous API adapter never polls."
@@ -125,7 +126,7 @@ budgets_and_limits:
 gating:
   health_key: "grok"
   readiness_function: "grok_primary_readiness"
-  readiness_keys: [budget_valid, context_limit_valid, credential_configured, cursor_family_primary_mode, daily_request_limit_valid, enabled, model_configured, official_api_endpoint, output_limit_valid, repository_transport_ready, request_cost_floor_valid, timeout_valid, tools_disabled]
+  readiness_keys: [budget_valid, code_model_configured, context_limit_valid, credential_configured, cursor_family_primary_mode, daily_request_limit_valid, enabled, model_configured, official_api_endpoint, output_limit_valid, repository_transport_ready, request_cost_floor_valid, timeout_valid, tools_disabled]
   primary_lane_authentication_source: "environment_variable"
   variables:
     - { variable: "GROK_ENABLED", kind: "enable_switch", settings_field: "grok_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: "enabled", required_value: true, verify: "GET /health grok.enabled" }

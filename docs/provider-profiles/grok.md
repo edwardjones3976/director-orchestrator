@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 
@@ -122,6 +123,7 @@ Strengths:
 | Variable | Role | Settings field | Default | In .env.example | Value recorded |
 | --- | --- | --- | --- | --- | --- |
 | `GROK_MODEL` | provider_model | `grok_model` | `grok-4.6` | yes | no |
+| `GROK_CODE_MODEL` | provider_model | `grok_code_model` | `grok-build-0.1` | yes | no |
 
 | Effort variable | Settings field | Default | Allowed values | In .env.example | Value recorded |
 | --- | --- | --- | --- | --- | --- |
@@ -153,7 +155,7 @@ Strengths:
 | --- | --- |
 | Health key | `grok` |
 | Readiness function | `grok_primary_readiness` |
-| Readiness keys | `budget_valid`, `context_limit_valid`, `credential_configured`, `cursor_family_primary_mode`, `daily_request_limit_valid`, `enabled`, `model_configured`, `official_api_endpoint`, `output_limit_valid`, `repository_transport_ready`, `request_cost_floor_valid`, `timeout_valid`, `tools_disabled` |
+| Readiness keys | `budget_valid`, `code_model_configured`, `context_limit_valid`, `credential_configured`, `cursor_family_primary_mode`, `daily_request_limit_valid`, `enabled`, `model_configured`, `official_api_endpoint`, `output_limit_valid`, `repository_transport_ready`, `request_cost_floor_valid`, `timeout_valid`, `tools_disabled` |
 | Primary lane authentication source | environment_variable |
 | Verification rule | GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values. |
 
@@ -316,3 +318,4 @@ Separation of duties:
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->

@@ -200,6 +200,7 @@
     "readiness_function": "grok_primary_readiness",
     "readiness_keys": [
       "budget_valid",
+      "code_model_configured",
       "context_limit_valid",
       "credential_configured",
       "cursor_family_primary_mode",
@@ -365,6 +366,14 @@
         "settings_field": "grok_model",
         "values_recorded": false,
         "variable": "GROK_MODEL"
+      },
+      {
+        "default": "grok-build-0.1",
+        "documented_in_env_example": true,
+        "role": "provider_model",
+        "settings_field": "grok_code_model",
+        "values_recorded": false,
+        "variable": "GROK_CODE_MODEL"
       }
     ],
     "note": "No reasoning-effort variable exists for Grok. Requests use POST /responses with tools=[] and store=false; the synchronous API adapter never polls."
