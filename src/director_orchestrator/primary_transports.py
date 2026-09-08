@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -23,6 +24,7 @@ import hmac
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import hashlib
 import re
@@ -818,6 +820,37 @@ def _structured_native_output(native: Mapping[str, Any]) -> dict[str, Any]:
     return dict(candidate) if isinstance(candidate, Mapping) else dict(native)
 
 
+_RESULT_USAGE_KEYS = ("model", "input_tokens", "output_tokens", "total_tokens", "cost_usd")
+
+
+def _projected_native_usage(
+    usage: Any, native: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Project a native usage block onto the result-packet usage contract.
+
+    The packet schema sets ``additionalProperties: false`` on ``usage``, so
+    passing a provider's block through verbatim fails validation the moment that
+    provider reports anything extra; grok ships cache and reasoning token counts,
+    for example. Unknown keys are dropped rather than carried.
+
+    ``total_cost_usd`` is accepted as the cost field when a provider does not use
+    ``cost_usd``. Both name the same quantity, and dropping it would lose real
+    cost telemetry that budget accounting depends on. Nothing is estimated:
+    absent cost stays absent.
+    """
+
+    if not isinstance(usage, Mapping):
+        return None
+    projected = {key: usage[key] for key in _RESULT_USAGE_KEYS if key in usage}
+    if "cost_usd" not in projected:
+        for source in (usage, native):
+            candidate = source.get("total_cost_usd")
+            if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                projected["cost_usd"] = candidate
+                break
+    return projected
+
+
 def normalize_native_provider_envelope(
     provider_id: str, work: Mapping[str, Any], native: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -840,6 +873,13 @@ def normalize_native_provider_envelope(
     if run_reference is None:
         raise RuntimeError("authenticated native result lacks a run reference")
     outcome = structured.get("outcome", structured.get("result"))
+    if not isinstance(outcome, str) or not outcome:
+        # Some native CLIs carry the terminal answer in "text" and ship no
+        # structured_output block at all; grok does this.  Fall back to it
+        # before failing, so a conforming envelope is not rejected for naming.
+        candidate = structured.get("text")
+        if isinstance(candidate, str) and candidate:
+            outcome = candidate
     if not isinstance(outcome, str) or not outcome:
         raise RuntimeError("authenticated native result lacks an outcome")
     allowed_effects = tuple(str(item) for item in work["allowed_external_effects"])
@@ -864,7 +904,7 @@ def normalize_native_provider_envelope(
     def list_value(name: str) -> list[Any]:
         value = structured.get(name, [])
         return list(value) if isinstance(value, list) else []
-    usage = native.get("usage", structured.get("usage"))
+    usage = _projected_native_usage(native.get("usage", structured.get("usage")), native)
     return {
         "schema_version": "1.0",
         "task_id": work["task_id"],
@@ -883,7 +923,7 @@ def normalize_native_provider_envelope(
         "blockers": list_value("blockers"),
         "requested_decisions": list_value("requested_decisions"),
         "side_effects": side_effects,
-        "usage": dict(usage) if isinstance(usage, Mapping) else None,
+        "usage": usage,
         "revision_recommended": bool(structured.get("revision_recommended", False)),
     }
 
@@ -1036,6 +1076,32 @@ def _safe_cursor_agent_prefix(executable: str | None) -> tuple[str, ...] | None:
     return None
 
 
+CURSOR_SANDBOX_PLATFORMS = frozenset({"darwin", "linux"})
+
+
+def _cursor_host_lane_prefix(executable: str | None) -> tuple[str, ...] | None:
+    """Offer the cursor host lane only where its pinned containment works.
+
+    The lane pins ``--sandbox enabled``. An authenticated attempt on 2026-09-08
+    showed the Cursor CLI refuses that flag off macOS and Linux -- *"Sandbox mode
+    is enabled but not available on this system. Sandbox requires macOS or
+    Linux."* -- so on any other host the pinned invocation cannot execute and
+    fails at dispatch with an opaque flag error rather than a stated reason.
+
+    Downgrading to ``--sandbox disabled`` is deliberately not done here. That
+    removes the operating-system containment the lane requires, and
+    ``docs/provider-validation-harness.md`` is explicit that metadata declaring
+    no tools is not an operating-system containment proof. The lane therefore
+    fails closed on unsupported platforms, and qualifying it needs a macOS or
+    Linux host rather than a weaker flag.
+    """
+
+    prefix = _safe_cursor_agent_prefix(executable)
+    if prefix is None or sys.platform not in CURSOR_SANDBOX_PLATFORMS:
+        return None
+    return prefix
+
+
 def _safe_firecrawl_prefix(executable: str | None) -> tuple[str, ...] | None:
     """Resolve the npm command shim to node plus Firecrawl's fixed entrypoint."""
 
@@ -1166,7 +1232,7 @@ def discover_local_primary_command_transports(
         }
     ) != 1:
         raise ValueError("host provider bridge endpoint, secret, and writer binding must be configured together")
-    cursor_agent = _safe_cursor_agent_prefix(
+    cursor_agent = _cursor_host_lane_prefix(
         _which(("cursor-agent.exe", "cursor-agent.cmd", "cursor-agent"))
     )
     pplx = _safe_pplx_prefix(_which(("pplx.exe", "pplx.cmd", "pplx")))
@@ -1406,3 +1472,4 @@ def provider_lane_external_blockers(
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]

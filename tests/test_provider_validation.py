@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
@@ -73,6 +74,111 @@ class NativeCaptureTests(unittest.TestCase):
             raw=json.loads(raw_native());raw.update(changes)
             with self.assertRaises(ValidationError):
                 normalize_capture("claude",work_packet(),canonical_json_bytes(raw))
+
+    # Recorded verbatim from ONE authenticated grok canary on 2026-09-08 using
+    # the exact pinned invocation, cost USD 0.0065.  Keeping the real shape here
+    # means the dialect below is justified by an observation rather than a guess.
+    GROK_OBSERVED_ENVELOPE = {
+        "text": "OK",
+        "stopReason": "end_turn",
+        "sessionId": "01a081e6-a616-7fd3-9908-dd63513227ba",
+        "requestId": "59fef4a5-1492-4891-899e-fbefeb147dfa",
+        "num_turns": 1,
+        "total_cost_usd": 0.0064991,
+        "usage": {
+            "input_tokens": 18268,
+            "cache_read_input_tokens": 2944,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 37,
+            "reasoning_tokens": 32,
+            "total_tokens": 21249,
+        },
+    }
+
+    def test_observed_grok_envelope_now_normalizes(self):
+        """The real grok capture must pass end to end, not just the checks."""
+
+        result = normalize_capture(
+            "grok", work_packet(), canonical_json_bytes(self.GROK_OBSERVED_ENVELOPE)
+        )
+
+        self.assertEqual(result["provider"], "grok")
+        self.assertEqual(
+            result["run_reference"], self.GROK_OBSERVED_ENVELOPE["sessionId"]
+        )
+        self.assertEqual(result["outcome"], "OK")
+        # usage is projected onto the packet contract: unknown native keys are
+        # dropped and total_cost_usd is carried as cost_usd.
+        self.assertEqual(
+            set(result["usage"]),
+            {"input_tokens", "output_tokens", "total_tokens", "cost_usd"},
+        )
+        self.assertEqual(result["usage"]["cost_usd"], 0.0064991)
+        self.assertEqual(result["usage"]["total_tokens"], 21249)
+
+    def test_cursor_host_lane_fails_closed_where_its_sandbox_is_unavailable(self):
+        """The lane pins --sandbox enabled, which only macOS and Linux support.
+
+        An authenticated attempt on 2026-09-08 showed the Cursor CLI refuses the
+        flag elsewhere, so the pinned invocation cannot execute and previously
+        failed at dispatch with an opaque flag error.  The lane must instead be
+        withheld on unsupported platforms, and must never be silently downgraded
+        to --sandbox disabled, which removes the containment it requires.
+        """
+
+        from director_orchestrator.primary_transports import (
+            CURSOR_SANDBOX_PLATFORMS,
+            _cursor_host_lane_prefix,
+            _safe_cursor_agent_prefix,
+        )
+
+        self.assertEqual({"darwin", "linux"}, set(CURSOR_SANDBOX_PLATFORMS))
+
+        with tempfile.TemporaryDirectory() as directory:
+            shim = Path(directory) / "cursor-agent"
+            shim.write_text("#!/bin/sh\n", encoding="utf-8")
+            # A suffix-less executable resolves directly, isolating the platform
+            # decision from the Windows .cmd shim resolution path.
+            self.assertIsNotNone(_safe_cursor_agent_prefix(str(shim)))
+
+            for platform, supported in (
+                ("darwin", True),
+                ("linux", True),
+                ("win32", False),
+                ("cygwin", False),
+            ):
+                with self.subTest(platform=platform):
+                    with patch(
+                        "director_orchestrator.primary_transports.sys.platform",
+                        platform,
+                    ):
+                        prefix = _cursor_host_lane_prefix(str(shim))
+                    self.assertEqual(supported, prefix is not None)
+
+    def test_grok_dialect_still_rejects_every_unsuccessful_terminal(self):
+        """Only the exact stopReason "end_turn" qualifies.
+
+        A truncated or errored run must not slip through because the envelope
+        happens to carry a stopReason at all.
+        """
+
+        for changes in (
+            {"stopReason": "max_tokens"},
+            {"stopReason": "error"},
+            {"stopReason": "tool_use"},
+            {"stopReason": None},
+            {"sessionId": None},
+            {"schema_version": "1.0"},
+            {"tool_calls": [{}]},
+            {"side_effects": [{}]},
+        ):
+            with self.subTest(changes=changes):
+                envelope = dict(self.GROK_OBSERVED_ENVELOPE)
+                envelope.update(changes)
+                with self.assertRaises(ValidationError):
+                    normalize_capture(
+                        "grok", work_packet(), canonical_json_bytes(envelope)
+                    )
 
     def test_closed_request_rejects_caller_namespace_commands_and_cost(self):
         for field in ("commands","namespace","cost_units","work_packet"):
@@ -297,3 +403,4 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -584,7 +585,14 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             "Completed", (),
             {"returncode": 0, "stdout": b'{"isAuthenticated":true}', "stderr": b""},
         )()
+        # The lane pins --sandbox enabled, which the Cursor CLI supports only on
+        # macOS and Linux, so discovery withholds it elsewhere.  Pin a supported
+        # platform here: this case covers the command contract, and the
+        # platform behaviour has its own test.  Without this the result depends
+        # on whichever host runs the suite, and CI runs both.
         with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports.sys.platform", "linux"
+        ), patch(
             "director_orchestrator.primary_transports._which",
             side_effect=lambda names: "cursor-agent.exe" if "cursor-agent.exe" in names else None,
         ), patch("subprocess.run", return_value=status) as run:
@@ -1023,3 +1031,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 """Dedicated provider canaries: durable admission and captured execution evidence.
@@ -315,16 +316,23 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None)
     if not isinstance(native,dict) or "schema_version" in native:
         raise ValidationError("raw native terminal envelope is required")
     # These are native CLI envelopes, not result-packet status assertions.
+    # Three vendor dialects are recognised.  The third was established by an
+    # authenticated grok canary on 2026-09-08: that CLI reports terminal success
+    # as stopReason and names its session sessionId.  Only the exact value
+    # "end_turn" is accepted, so a truncated ("max_tokens") or errored run still
+    # fails; this recognises a dialect rather than relaxing the requirement.
     success = native.get("status") == "SUCCESS" or (
         native.get("type") == "result" and native.get("subtype") == "success"
-        and native.get("is_error") is False)
-    if not success or not isinstance(native.get("session_id",native.get("conversation_id")),str):
+        and native.get("is_error") is False) or native.get("stopReason") == "end_turn"
+    session = next((native[key] for key in ("session_id","conversation_id","sessionId")
+        if isinstance(native.get(key),str) and native[key]),None)
+    if not success or session is None:
         raise ValidationError("native unique successful terminal/session is missing")
     if any(native.get(key) for key in ("tool_calls","tool_uses","side_effects")):
         raise ValidationError("unexpected native canary tool effects")
     native = dict(native)
-    if "session_id" not in native:
-        native["session_id"] = native["conversation_id"]
+    # Whichever dialect supplied it, the canonical key is promoted once here.
+    native["session_id"] = session
     return validate_packet("result",normalize_native_provider_envelope(provider,work,native))
 
 
@@ -447,3 +455,4 @@ class ValidationBridgeService:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
