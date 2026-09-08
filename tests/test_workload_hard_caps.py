@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
@@ -24,7 +26,7 @@ from director_orchestrator.workload_policy import (
 )
 
 
-def history(count=7, units=1):
+def history(count=5, units=1):
     return tuple(DirectProductionRecord(str(i), provider, units)
                  for i, provider in enumerate([D.CURSOR] * (19-count) + [D.CLAUDE] * count))
 
@@ -37,13 +39,13 @@ def request(units=1, model=None):
 class HardCapacityTests(unittest.TestCase):
     def test_exact_ceiling_and_excess(self):
         self.assertTrue(evaluate_assignment(request(), direct_production_history=history()).allowed)
-        denied = evaluate_assignment(request(), direct_production_history=history(8))
+        denied = evaluate_assignment(request(), direct_production_history=history(6))
         self.assertFalse(denied.allowed)
-        self.assertIn("direct_production_hard_cap_exceeded:claude:40", denied.violations)
+        self.assertIn("direct_production_hard_cap_exceeded:claude:30", denied.violations)
 
     def test_effort_does_not_change_count_capacity(self):
         self.assertTrue(evaluate_assignment(request(999), direct_production_history=history()).allowed)
-        self.assertFalse(evaluate_assignment(request(), direct_production_history=history(8, 999)).allowed)
+        self.assertFalse(evaluate_assignment(request(), direct_production_history=history(6, 999)).allowed)
 
     def test_rollover_removes_oldest_before_candidate(self):
         prior = (DirectProductionRecord("old", D.CLAUDE),) + history()
@@ -53,7 +55,7 @@ class HardCapacityTests(unittest.TestCase):
         for prior in ((), history()[:18]):
             result = evaluate_assignment(request(), direct_production_history=prior)
             self.assertTrue(result.allowed)
-        self.assertFalse(evaluate_assignment(request(), direct_production_history=history(8)[-8:]).allowed)
+        self.assertFalse(evaluate_assignment(request(), direct_production_history=history(6)[-6:]).allowed)
 
     def test_size_does_not_require_model_but_explicit_requirement_does(self):
         self.assertTrue(evaluate_assignment(request(), direct_production_history=history()).allowed)
@@ -76,19 +78,19 @@ class HardCapacityTests(unittest.TestCase):
                          trusted_profiles=profiles, ready_providers=providers,
                          in_scope_providers=providers, reviewer_independent_providers=providers)
         self.assertEqual(select_cheapest_capable_provider(**arguments,
-                         direct_production_history=history(8)), Provider.GROK)
+                         direct_production_history=history(6)), Provider.GROK)
         with self.assertRaises(WorkloadSelectionHold) as held:
-            select_cheapest_capable_provider(**arguments, direct_production_history=history(8),
+            select_cheapest_capable_provider(**arguments, direct_production_history=history(6),
                                             explicit_required_provider=Provider.CLAUDE)
-        self.assertEqual(held.exception.reasons, ("direct_production_hard_cap_exceeded:claude:40",))
+        self.assertEqual(held.exception.reasons, ("direct_production_hard_cap_exceeded:claude:30",))
         self.assertEqual(select_cheapest_capable_provider(**arguments), Provider.CLAUDE)
-        self.assertEqual(select_cheapest_capable_provider(**arguments, direct_production_history=history(8), mode=EnforcementMode.SHADOW), Provider.CLAUDE)
+        self.assertEqual(select_cheapest_capable_provider(**arguments, direct_production_history=history(6), mode=EnforcementMode.SHADOW), Provider.CLAUDE)
         arguments["ready_providers"] = frozenset({Provider.CLAUDE, Provider.CURSOR})
         with self.assertRaises(WorkloadSelectionHold):
-            select_cheapest_capable_provider(**arguments, direct_production_history=history(8))
+            select_cheapest_capable_provider(**arguments, direct_production_history=history(6))
         arguments["ready_providers"] = frozenset()
         with self.assertRaises(WorkloadPolicyError) as invalid:
-            select_cheapest_capable_provider(**arguments, direct_production_history=history(8))
+            select_cheapest_capable_provider(**arguments, direct_production_history=history(6))
         self.assertNotIsInstance(invalid.exception, WorkloadSelectionHold)
 
     def test_existing_atomic_store_reserves_only_one_remaining_slot(self):
@@ -131,3 +133,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

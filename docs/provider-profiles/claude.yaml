@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
@@ -65,7 +66,7 @@ roles:
   allocation:
     profiles:
       mixed: 30
-      engineering: 35
+      engineering: 25
       public_research: 25
       enterprise: 30
     default_profile: "engineering"
@@ -331,3 +332,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

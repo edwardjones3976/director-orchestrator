@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -12,8 +13,8 @@ profile before plan approval and bind its digest to the immutable assignment pla
 
 | Provider lane | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | ---: | ---: | ---: | ---: |
-| OpenAI / Codex production | 25% | 30% | 20% | 25% |
-| Claude | 30% | 35% | 25% | 30% |
+| OpenAI / Codex production | 25% | 40% | 20% | 25% |
+| Claude | 30% | 25% | 25% | 30% |
 | Cursor | 10% | 15% | 5% | 5% |
 | Grok | 10% | 10% | 5% | 5% |
 | Gemini / Antigravity | 5% | 10% | 5% | 5% |
@@ -37,7 +38,7 @@ a fixed denominator of twenty, including startup. Normal tolerance is plus or
 minus three percentage points; the hard ceiling is target plus five points.
 A zero target is ineligible, even though the numerical ceiling would otherwise
 be five. Startup under-allocation is warming, never permission for filler work.
-Engineering targets correspond to six OpenAI, seven Claude, three Cursor, two
+Engineering targets correspond to eight OpenAI, five Claude, three Cursor, two
 Grok, and two Antigravity assignments per full window; these are targets, not
 mandatory concurrent agents or quotas to fill with unnecessary work.
 
@@ -139,3 +140,4 @@ selecting a profile does not install an adapter or deploy LangGraph.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->

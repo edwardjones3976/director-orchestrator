@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -12,7 +13,7 @@ ALLOCATION_PROFILES = MappingProxyType({
     name: MappingProxyType(dict(zip(LANES, weights, strict=True)))
     for name, weights in {
         "mixed": (25,30,10,10,5,5,5,5,5),
-        "engineering": (30,35,15,10,10,0,0,0,0),
+        "engineering": (40,25,15,10,10,0,0,0,0),
         "public_research": (20,25,5,5,5,25,15,0,0),
         "enterprise": (25,30,5,5,5,0,5,10,15),
     }.items()
@@ -35,3 +36,4 @@ def canonical_allocation_lane(lane: str) -> str:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

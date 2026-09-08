@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-06 | 00:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -443,8 +445,8 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             encoding="utf-8"
         )
         for expected in (
-            "| OpenAI / Codex production | 25% | 30% | 20% | 25% |",
-            "| Claude | 30% | 35% | 25% | 30% |",
+            "| OpenAI / Codex production | 25% | 40% | 20% | 25% |",
+            "| Claude | 30% | 25% | 25% | 30% |",
             "| Cursor | 10% | 15% | 5% | 5% |",
             "| Grok | 10% | 10% | 5% | 5% |",
             "| Gemini / Antigravity | 5% | 10% | 5% | 5% |",
@@ -1561,3 +1563,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-06 | 00:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
@@ -20,7 +21,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=bfae4b29916f89b1589f72f26bec4d0b859e9158370511b35883fd2e1578544d -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=48b05b2b1201c3ee9fbcd2039021759a58b9113f490fd7fbc7b7f6df4d1f193e -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -165,3 +166,4 @@ published, enabled, or otherwise changed>.
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->

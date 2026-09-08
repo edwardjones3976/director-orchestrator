@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
@@ -36,9 +38,9 @@ from director_orchestrator.primary_workload import (
 from director_orchestrator.langgraph_primary import PrimaryWorkflowRuntime
 
 DIGEST = "sha256:" + "a" * 64
-# Last nineteen: six OpenAI, four Claude, four Cursor, three Antigravity,
-# one Grok and one Perplexity. The next OpenAI reaches its 35% hard ceiling.
-HISTORY = ["claude"] * 4 + ["cursor"] * 4 + ["antigravity"] * 3 + ["grok", "perplexity"] + ["openai"] * 6
+# Last nineteen: eight OpenAI, two Claude, four Cursor, three Antigravity,
+# one Grok and one Perplexity. The next OpenAI reaches its 45% hard ceiling.
+HISTORY = ["claude"] * 2 + ["cursor"] * 4 + ["antigravity"] * 3 + ["grok", "perplexity"] + ["openai"] * 8
 
 # Immutable test snapshot from e5145abd, before the owner's prospective role swap.
 PREVIOUS_ENGINEERING_TARGETS = {
@@ -179,7 +181,7 @@ class PostgresAdmissionTests(unittest.TestCase):
 
     def seed_test_history(self, target=None, *, capped=False):
         target = target or self
-        providers = (["openai"] * 7 + ["claude"] * 8 + ["cursor"] * 4) if capped else HISTORY
+        providers = (["openai"] * 9 + ["claude"] * 6 + ["cursor"] * 4) if capped else HISTORY
         with target.handle.claim_store._pool.connection() as connection:
             with connection.transaction():
                 for index, provider in enumerate(providers):
@@ -475,3 +477,5 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

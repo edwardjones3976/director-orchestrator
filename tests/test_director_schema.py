@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -310,7 +312,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
         directive = charter["director_operating_directive"]
         self.assertEqual(directive["default_allocation_profile"], "engineering")
-        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [30, 35, 15, 10, 10, 0, 0, 0, 0])
+        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [40, 25, 15, 10, 10, 0, 0, 0, 0])
         self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 9)
         self.assertEqual(
             directive["workload_accounting"]["ledgers"]["overall_effort"],
@@ -836,7 +838,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         contract = self.contract()
         for field in (
             'default_profile: "engineering"',
-            'engineering: [30, 35, 15, 10, 10, 0, 0, 0, 0]',
+            'engineering: [40, 25, 15, 10, 10, 0, 0, 0, 0]',
             'mixed: [25, 30, 10, 10, 5, 5, 5, 5, 5]',
             'public_research: [20, 25, 5, 5, 5, 25, 15, 0, 0]',
             'enterprise: [25, 30, 5, 5, 5, 0, 5, 10, 15]',
@@ -1262,3 +1264,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

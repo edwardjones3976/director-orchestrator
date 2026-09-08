@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
@@ -306,7 +308,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             # Isolated historical accepted-credit fixture, never a live seeding path.
             with closing(sqlite3.connect(path)) as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM direct_production_credits").fetchone()[0], 0)
-                for index, provider in enumerate(["cursor"]*12 + ["claude"]*7):
+                for index, provider in enumerate(["cursor"]*14 + ["claude"]*5):
                     connection.execute("""INSERT INTO direct_production_credits(
                         credit_key, task_id, plan_generation, assignment_sequence, assignment_id,
                         provider, effort_units, provider_event_digest, provider_result_digest,
@@ -317,9 +319,9 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
                 connection.commit()
             mature = reserve("mature")
             # The real startup reservation still occupies capacity alongside the
-            # seven accepted Claude fixtures; a ninth Claude is correctly held.
+            # five accepted Claude fixtures; a seventh Claude is correctly held.
             self.assertFalse(mature.decision.allowed)
-            self.assertIn("direct_production_hard_cap_exceeded:claude:40", mature.decision.violations)
+            self.assertIn("direct_production_hard_cap_exceeded:claude:30", mature.decision.violations)
             with closing(sqlite3.connect(path)) as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM direct_production_credits").fetchone()[0], 19)
 
@@ -711,3 +713,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

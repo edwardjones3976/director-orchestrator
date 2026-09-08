@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
@@ -30,9 +31,9 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=bfae4b29916f89b1589f72f26bec4d0b859e9158370511b35883fd2e1578544d -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=48b05b2b1201c3ee9fbcd2039021759a58b9113f490fd7fbc7b7f6df4d1f193e -->
 
-A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is disabled by default.
+A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution remains disabled by default and requires the existing activation gates.
 
 **Claude is the acting project Director. Codex/ChatGPT provides bounded engineering
 and eligible independent review.** See [current project leadership](docs/project-leadership.md)
@@ -49,13 +50,16 @@ attest that a deployed service has switched its executing provider.
 - Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
 - A structured Director interface retaining the legacy OpenAI runtime and an
   explicitly enabled Claude adapter that requires a real bound native transport.
-- A primary OpenAI–Claude–Cursor–Grok team selected through a cheap-capable-model-first policy, with Gemini/Antigravity and Perplexity retained as bounded supplemental specialists.
-- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all nine provider lanes. Engineering defaults to Claude 35%, OpenAI 30%, Cursor 15%, Grok 10%, and Antigravity 10%; other profiles reserve real research and enterprise work. A fixed real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion, with ±3-point normal preference.
+- A Claude-led OpenAI–Claude–Cursor–Grok team with Gemini/Antigravity eligible
+  for its explicitly authorized team mode after enrollment and qualification.
+  Perplexity provides bounded supplemental research. Membership and allocation
+  do not attest that a provider route is enrolled or live.
+- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all nine provider lanes. Engineering defaults to OpenAI 40%, Claude 25%, Cursor 15%, Grok 10%, and Antigravity 10%; other profiles reserve real research and enterprise work. A fixed real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion, with ±3-point normal preference.
 - Deterministic accepted-productive-work accounting, an immutable pre-stage packet,
   rolling twenty-assignment preferences, cheap-capable-model selection, and a
   five-action ordinary review-to-merge ceiling. Total effort is telemetry, and
   pure Director coordination creates no production credit.
-- An optional GitHub Copilot Lite hygiene review after required checks are green and the exact candidate is frozen. It has no assigned workload share, range, or ceiling, no provider adapter or automatic routing, and no production credit, gate, authority, or every-push trigger; without an authenticated contact it fails closed as unavailable. A requested review uses at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch.
+- An optional GitHub Copilot hygiene review after required checks are green, and the exact candidate is frozen. It has no assigned workload share, range, or ceiling; no provider adapter or automatic routing; and no production credit, gate, authority, or every-push trigger. Without an authenticated contact, it fails closed as unavailable. A requested review uses at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat an ambiguous paid dispatch.
 - Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
 - Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
 - A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
@@ -412,3 +416,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->

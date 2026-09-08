@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | BEGIN]] -->
@@ -54,9 +55,10 @@ Historical approvals never transfer to a new candidate or a different author.
 
 ## Allocation
 
-The prospective OpenAI and Claude duty allocations exchange places in each
-profile. Engineering uses Claude 35% and OpenAI 30%; the other lanes keep their
-existing targets. Claude's advisory vote is 2.0 and OpenAI's is 2.5, with total
+The prospective OpenAI and Claude duty allocations exchange places in the
+non-engineering profiles. The owner's subsequent explicit engineering decision
+sets OpenAI to 40% and Claude to 25%; the other lanes keep their existing targets.
+Claude's advisory vote is 2.0 and OpenAI's is 2.5, with total
 committee weight unchanged. The canonical numbers are in
 `src/director_orchestrator/allocation_profiles.py` and `team_charter.py`.
 
@@ -100,3 +102,4 @@ allocation sources must agree with this decision.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->

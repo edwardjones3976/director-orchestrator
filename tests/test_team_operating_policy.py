@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -577,7 +579,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "milestone_reporting",
         ])
         profiles = self.directive["allocation_profiles"]
-        self.assertEqual(profiles["weights"]["engineering"], [30,35,15,10,10,0,0,0,0])
+        self.assertEqual(profiles["weights"]["engineering"], [40,25,15,10,10,0,0,0,0])
         self.assertEqual(len(profiles["lane_order"]), 9)
         for targets in profiles["weights"].values():
             self.assertEqual(sum(targets), 100)
@@ -2126,3 +2128,5 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

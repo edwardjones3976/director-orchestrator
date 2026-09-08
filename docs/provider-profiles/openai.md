@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | BEGIN]] -->
@@ -59,7 +60,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 
 | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | --- | --- | --- |
-| 25 | 30 | 20 | 25 |
+| 25 | 40 | 20 | 25 |
 
 ## Roles and responsibilities
 
@@ -305,3 +306,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]] -->
