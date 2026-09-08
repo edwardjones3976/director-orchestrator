@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-08 | 06:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
@@ -240,9 +241,13 @@ class LoaderTests(unittest.TestCase):
         expected = sorted(
             [pp.CATALOG_FILENAME, pp.INDEX_FILENAME]
             + [f"{lane}.yaml" for lane in LANES]
-            + [f"{lane}.md" for lane in LANES]
+            + [f"{lane}{pp.SHEET_SUFFIX}" for lane in LANES]
         )
         self.assertEqual(names, expected)
+        # A rendered sheet must never share a name with an instruction file such
+        # as CLAUDE.md, which Windows matches case-insensitively.
+        self.assertNotEqual(pp.SHEET_SUFFIX, ".md")
+        self.assertNotIn("claude.md", {name.lower() for name in names})
 
 
 class IdentityTests(unittest.TestCase):
@@ -722,7 +727,10 @@ class RouteCatalogTests(unittest.TestCase):
             with self.subTest(route=route_id):
                 status = route["status"]
                 if status == "authorized":
-                    self.assertTrue(route["enforced_by"])
+                    # Prompt-level guidance (kind external) may honestly carry no
+                    # runtime enforcer; every other authorized route names code.
+                    if route["kind"] != "external":
+                        self.assertTrue(route["enforced_by"])
                     self.assertIsNone(route["prohibition_quote"])
                 elif status == "proposed":
                     proposed.add(route_id)
@@ -906,3 +914,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-08 | 06:50 UTC | END]]
