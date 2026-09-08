@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: OpenAI (director-provider-profile/v1).
@@ -7,7 +8,7 @@
 schema_version: "director-provider-profile/v1"
 document_type: "director-provider-profile"
 provider_id: "openai"
-display_name: "OpenAI (Director and Codex production)"
+display_name: OpenAI (Codex / ChatGPT engineering)
 authority_granted: "none"
 
 source_of_truth:
@@ -28,17 +29,20 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "openai"
   charter_workload_lane_key: "openai"
-  standing_role_label: "Director"
+  standing_role_label: Chief Programmer
   config_prefixes: ["OPENAI_", "CHATGPT_"]
-  alias_note: "The Director control plane, separately assigned Codex production, the ChatGPT Slack alias bridge, the native Codex host transport, and the label-triggered Codex security review all map to the openai lane. The legacy provider registry has no OpenAI production adapter; Director planning calls the Responses API directly."
-
+  alias_note: Codex production, ChatGPT alias bridge, native Codex host, and Codex Security keep their actual OpenAI identity.
+    The legacy Responses Director is retained for runtime compatibility; Claude holds project leadership. The ordinary legacy
+    worker registry still has no OpenAI adapter.
 roles:
   team: "primary"
-  lane_class: "director_control_plane"
-  summary: "Owns the full Director control-plane function: intake interpretation, planning, decomposition, neutral coordination, evidence collection, routing, recovery decisions, acceptance review, milestone reporting, and bounded escalation. Production may be separately assigned through an authorized capable runtime adapter under the frozen allocation profile; control-plane duties create no production credit."
-  charter_workload_lane: "control_plane_and_authorized_production"
+  lane_class: full_spectrum_primary
+  summary: 'Chief Programmer: Codex/ChatGPT provides bounded implementation, debugging, repository-scale reasoning, QA, and
+    eligible independent review under Claude''s project direction. The legacy OpenAI runtime remains a separately identified
+    compatibility path while the Claude Director adapter is disabled.'
+  charter_workload_lane: primary_full_spectrum
   strategy_key: "openai"
-  strategy_priority: "director_planning_and_acceptance_review"
+  strategy_priority: bounded_engineering_and_independent_review
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
   excluded_responsibility_areas: []
   eligible_complexity: [low, medium, high, critical]
@@ -46,59 +50,39 @@ roles:
   comparison_peers: []
   elevated_work: []
   non_substitution_rules:
-    - "Control-plane duties create no production credit."
-    - "Actual material authorship requires different-provider exact-candidate review and removes OpenAI/Director merge independence."
-    - "The Director may not independently accept or merge code it actually materially authored."
+  - A provider cannot independently accept or merge a candidate it materially authored.
+  - Project leadership never authenticates runtime execution or changes deterministic gates.
+  - Pure coordination creates no production credit.
   family: null
   transport_rule: "The Responses API and the native Codex host are distinct transports selected by LANGGRAPH_PRIMARY_OPENAI_TRANSPORT; native Codex is packet-only and never falls back to the API silently."
   routing_rule: null
   committee:
     member: true
-    voting_power: 2.0
+    voting_power: 2.5
     seatable_in_debate: true
     may_initiate_debate: false
     vote_grants_authority: false
   allocation:
-    profiles: { mixed: 30, engineering: 35, public_research: 25, enterprise: 30 }
+    profiles:
+      mixed: 25
+      engineering: 30
+      public_research: 20
+      enterprise: 25
     default_profile: "engineering"
     overall_effort_policy: "telemetry_only_no_separate_allocation"
     capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
     accounting_basis: "admitted_assignment_count"
     zero_target_rule: "ineligible"
-    accounting_status: "control_plane_telemetry_and_authorized_production"
+    accounting_status: direct_production_allocation
   hygiene_review: null
-  openai_functions:
-    - id: "moderator"
-      votes: false
-      vote_count: null
-      vote_weight: null
-      duties:
-        - "frame the question and bounded options neutrally"
-        - "request positions without leading language"
-        - "prevent premature cross-exposure"
-        - "run the counter-bias pass against the favored view"
-      boundary: "Moderation does not cast a vote."
-    - id: "participant"
-      votes: true
-      vote_count: 1
-      vote_weight: 2.0
-      duties:
-        - "record an independently formed initial position before specialist conclusions are exposed"
-        - "cast the single existing OpenAI advisory vote during synthesis"
-      boundary: "Participant is the one authenticated OpenAI position and vote. It receives no additional vote for planning, moderation, synthesis, or acceptance."
-    - id: "director"
-      votes: false
-      vote_count: null
-      vote_weight: null
-      duties: [plan, decompose, route, coordinate, synthesize, acceptance_review, review_handoff, milestone_reporting]
-      boundary: "Director authority does not create a vote or a participation record that did not actually occur."
-
+  openai_functions: null
+  director_functions: null
 capabilities:
   summary: "Structured planning, acceptance review, and debate moderation through the Responses API; packet-only Codex analysis under the primary lane. No repository execution lane exists for OpenAI in this deployment, so production is analysis and review bound to a separately authorized surface."
   strengths:
-    - "orchestration"
-    - "planning"
-    - "structured acceptance review"
+  - bounded coding implementation
+  - technical reproduction and quality assurance
+  - independent review when not a material author
   assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
   may_create_draft_pr: "never"
   may_issue_review_verdict: "eligible_reviewer"
@@ -170,9 +154,9 @@ authority:
   review_requirement: null
   strategy_constraints: []
   separation_of_duties:
-    - "Moderator, Participant, and Director functions stay separate; only Participant casts the single OpenAI vote"
-    - "reviewing or merging a candidate never makes the Director one of its authors"
-    - "the materially authoring OpenAI lane cannot review or merge its own candidate"
+  - Codex/ChatGPT does not retain project leadership after the Claude handoff
+  - actual OpenAI material authorship prevents independent acceptance or self-merge
+  - legacy runtime calls retain OpenAI identity and create no Claude evidence
   production_authority_permitted: true
   external_effects:
     may_be_granted: ["chat.postMessage", "pulls.mark_ready"]
@@ -272,10 +256,11 @@ communication:
   relay_rule: "provider_messages_relay_through_director"
   direct_provider_to_provider_channels_exist: false
   notes:
-    - "OpenAI is the Director: every packet, dependency outcome, review handoff, debate turn, and Slack relay passes through it, and as Participant it is also one seated voice among the committee."
-    - "OpenAI production, when assigned, is a provider like any other: its candidate needs different-provider exact-candidate review and it cannot merge its own work."
-    - "The ChatGPT alias bridge reaches the owner only; it never delegates to or addresses another provider."
-
+  - Codex/ChatGPT works under the acting Claude Director; packets, dependency outcomes, and review handoffs stay brokered and
+    accurately attributed.
+  - 'OpenAI production, when assigned, is a provider like any other: its candidate needs different-provider exact-candidate
+    review and it cannot merge its own work.'
+  - The ChatGPT alias bridge reaches the owner only; it never delegates to or addresses another provider.
 this_profile_does_not_change:
   - "committee voting weights or the immutable denominator"
   - "runtime permissions or allowlists"
@@ -285,15 +270,14 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-  - document: "docs/team-operating-charter.md"
-    anchor: "OpenAI owns the full Director/control-plane function: intake interpretation,"
-  - document: "docs/team-operating-charter.md"
-    anchor: "OpenAI keeps three functions separate throughout that process:"
-  - document: "docs/provider-setup.md"
-    anchor: "OpenAI Responses API with Structured Outputs"
-  - document: "docs/native-codex-packet-transport.md"
-    anchor: "The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`"
-  - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
-    anchor: "OpenAI keeps Moderator, Participant, and Director separate in every project-local record; they are never collapsed or renamed into duty buckets."
+- document: docs/team-operating-charter.md
+  anchor: Codex/OpenAI is a bounded implementer and independent
+- document: docs/provider-setup.md
+  anchor: OpenAI Responses API with Structured Outputs
+- document: docs/native-codex-packet-transport.md
+  anchor: The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`
+- document: docs/templates/project-bootstrap/provider-roles-contract.yaml
+  anchor: Claude as acting Director keeps Moderator, Participant, and Director separate
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

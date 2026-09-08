@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
@@ -661,6 +663,11 @@ class Settings:
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    # Leadership is current; runtime selection still requires a separately
+    # enrolled authenticated Claude transport. This switch does not enroll one.
+    claude_director_enabled: bool = field(
+        default_factory=lambda: _bool("CLAUDE_DIRECTOR_ENABLED", False)
+    )
     langgraph_primary_openai_transport: str = os.getenv("LANGGRAPH_PRIMARY_OPENAI_TRANSPORT", "responses-api")
     openai_model: str = os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
     openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "medium")
@@ -1905,20 +1912,35 @@ class Settings:
         return {
             "claude": {
                 "team": "primary",
-                "priority": "trusted_fit_allocation_and_cost_selected",
+                "priority": "acting_director_orchestrator",
+                "project_role": "acting_director",
+                "runtime_selection": (
+                    "native_transport_injection_required" if self.claude_director_enabled
+                    else "disabled_legacy_openai_runtime"
+                ),
                 "account_context": self.claude_account_context,
                 "strengths": [
-                    "coding implementation",
-                    "repository-scale reasoning",
-                    "code and document review",
-                    "long-form analysis",
+                    "orchestration and bounded planning",
+                    "routing, recovery, and evidence reconciliation",
+                    "independent acceptance review when not a material author",
+                    "milestone reporting and owner escalation",
                 ],
             },
             "openai": {
                 "team": "primary",
-                "priority": "director_planning_and_acceptance_review",
+                "priority": "bounded_engineering_and_independent_review",
+                "project_role": "bounded_implementer_and_non_author_reviewer",
+                "runtime_selection": (
+                    "not_selected_as_director" if self.claude_director_enabled
+                    else "legacy_responses_api_director"
+                ),
+                "worker_registration": "separate_authorized_adapter_required",
                 "account_context": self.openai_account_context,
-                "strengths": ["orchestration", "planning", "structured acceptance review"],
+                "strengths": [
+                    "bounded coding implementation",
+                    "technical reproduction and quality assurance",
+                    "independent review when not a material author",
+                ],
             },
             "cursor": {
                 "team": "primary",
@@ -1986,7 +2008,7 @@ class Settings:
                 ],
                 "separation_of_duties": [
                     "cannot independently accept or merge its own candidate",
-                    "cannot replace OpenAI's in-process Director acceptance role",
+                    "cannot replace the executing Director's acceptance role",
                     "external writes still require the assigned execution surface and current deterministic gates",
                 ],
                 "current_transport_constraints": [
@@ -2045,3 +2067,5 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
@@ -55,6 +57,7 @@ from director_orchestrator.antigravity import (
 )
 from director_orchestrator.team_charter import (
     AdvisoryVote,
+    AdvisoryVoteTally,
     TEAM_CHARTER_MAX_BYTES,
     canonical_director_operating_directive_json,
     canonical_team_charter_json,
@@ -300,14 +303,14 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 name: member["voting_power"]
                 for name, member in charter["committee"]["members"].items()
             },
-            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.0, "claude": 2.5},
+            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0},
         )
         self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
         directive = charter["director_operating_directive"]
         self.assertEqual(directive["default_allocation_profile"], "engineering")
-        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [35, 30, 15, 10, 10, 0, 0, 0, 0])
+        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [30, 35, 15, 10, 10, 0, 0, 0, 0])
         self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 9)
         self.assertEqual(
             directive["workload_accounting"]["ledgers"]["overall_effort"],
@@ -464,6 +467,23 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertLessEqual(len(canonical_team_charter_json().encode("utf-8")), TEAM_CHARTER_MAX_BYTES)
 
+    def test_acting_leadership_does_not_relabel_the_runtime_or_capacity(self):
+        directive = team_operating_charter()["director_operating_directive"]
+        self.assertEqual(directive["director"], "claude")
+        self.assertEqual(directive["runtime_director"]["default_provider"], "openai")
+        self.assertFalse(directive["runtime_director"]["activation_from_role_change"])
+        self.assertEqual(directive["capacity_context"], "owner_Pro20x_Max5x_not_API_entitlements")
+        self.assertTrue(directive["duties_excluded_from_direct_production_share"])
+        self.assertEqual(directive["workload_lanes"]["openai"], "primary_full_spectrum")
+        self.assertEqual(directive["workload_lanes"]["claude"], "control_plane_and_authorized_production")
+
+    def test_historical_openai_tally_round_trips_without_relabeling(self):
+        historical = dict(configured_weight_total=8.5, cast_weight_total=4.0,
+            option_weights={"A": 2.0, "B": 2.0}, abstaining=[], unavailable=[],
+            winning_options=["A", "B"], resolution="openai_director_judgment",
+            authorizes_external_action=False)
+        self.assertEqual(AdvisoryVoteTally.model_validate(historical).model_dump(), historical)
+
     def test_machine_and_markdown_charter_manifest_are_exact(self):
         document = (
             Path(__file__).resolve().parents[1] / "docs" / "team-operating-charter.md"
@@ -533,7 +553,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             / "project-state-report.md"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("OpenAI production may be separately assigned", charter)
+        self.assertIn("OpenAI production may be separately assigned", " ".join(charter.split()))
         self.assertIn("OpenAI production may be separately assigned", prompt)
         self.assertIn("OpenAI production uses a separately assigned", readme)
         self.assertIn("different-provider exact-candidate review", charter)
@@ -750,15 +770,15 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        self.assertEqual(tally.option_weights, {"A": 2.5})
-        self.assertEqual(tally.cast_weight_total, 2.5)
+        self.assertEqual(tally.option_weights, {"A": 2.0})
+        self.assertEqual(tally.cast_weight_total, 2.0)
         self.assertEqual(tally.configured_weight_total, 8.5)
         self.assertFalse(tally.authorizes_external_action)
 
-    def test_ties_route_to_openai_or_owner_without_authorizing_action(self):
+    def test_ties_route_to_claude_or_owner_without_authorizing_action(self):
         votes = [
             AdvisoryVote(
-                member="claude",
+                member="openai",
                 disposition="vote",
                 option="A",
                 rationale="Evidence supports A.",
@@ -781,7 +801,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         material = tally_advisory_votes(votes, material_risk=True)
 
         self.assertEqual(ordinary.option_weights, {"A": 2.5, "B": 2.5})
-        self.assertEqual(ordinary.resolution, "openai_director_judgment")
+        self.assertEqual(ordinary.resolution, "claude_director_judgment")
         self.assertEqual(material.resolution, "owner_decision_required")
         self.assertFalse(ordinary.authorizes_external_action)
         self.assertFalse(material.authorizes_external_action)
@@ -816,10 +836,10 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         contract = self.contract()
         for field in (
             'default_profile: "engineering"',
-            'engineering: [35, 30, 15, 10, 10, 0, 0, 0, 0]',
-            'mixed: [30, 25, 10, 10, 5, 5, 5, 5, 5]',
-            'public_research: [25, 20, 5, 5, 5, 25, 15, 0, 0]',
-            'enterprise: [30, 25, 5, 5, 5, 0, 5, 10, 15]',
+            'engineering: [30, 35, 15, 10, 10, 0, 0, 0, 0]',
+            'mixed: [25, 30, 10, 10, 5, 5, 5, 5, 5]',
+            'public_research: [20, 25, 5, 5, 5, 25, 15, 0, 0]',
+            'enterprise: [25, 30, 5, 5, 5, 0, 5, 10, 15]',
             'total_effort_status: "separate_telemetry_not_production_credit"',
         ):
             with self.subTest(field=field):
@@ -964,8 +984,11 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
                 self.assertIn(f'- "{field}"', contract)
         self.assertIn(f'review_requirement: "{charter["review_requirement"]}"', contract)
 
-    def test_contract_keeps_the_three_openai_functions_distinct(self):
+    def test_contract_keeps_the_three_acting_director_functions_distinct(self):
         contract = self.contract()
+        current = contract.split("\n  claude:\n", 1)[1].split("\n  openai:\n", 1)[0]
+        self.assertIn("Claude as acting Director keeps", current)
+        self.assertIn("functions:", current)
 
         for function_id in ("moderator", "participant", "director"):
             with self.subTest(function_id=function_id):
@@ -1016,7 +1039,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
             with self.subTest(unchanged=unchanged):
                 self.assertIn(f'- "{unchanged}"', contract)
 
-    def test_intake_names_the_canonical_openai_functions(self):
+    def test_intake_names_the_canonical_acting_director_functions(self):
         intake = (self.BOOTSTRAP / "intake.md").read_text(encoding="utf-8")
 
         for name in ("Moderator", "Participant", "Director"):
@@ -1237,3 +1260,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

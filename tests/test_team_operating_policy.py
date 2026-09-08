@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -560,9 +562,9 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
     def test_director_duties_are_separate_from_direct_production_share(self):
         self.assertEqual(self.directive["workload_policy_version"], "capacity-allocation-v1")
-        self.assertEqual(self.directive["director"], "openai")
+        self.assertEqual(self.directive["director"], "claude")
         self.assertTrue(
-            self.directive["duties_excluded_from_openai_direct_production_share"]
+            self.directive["duties_excluded_from_direct_production_share"]
         )
         self.assertEqual(self.directive["duties"], [
             "plan",
@@ -575,7 +577,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "milestone_reporting",
         ])
         profiles = self.directive["allocation_profiles"]
-        self.assertEqual(profiles["weights"]["engineering"], [35,30,15,10,10,0,0,0,0])
+        self.assertEqual(profiles["weights"]["engineering"], [30,35,15,10,10,0,0,0,0])
         self.assertEqual(len(profiles["lane_order"]), 9)
         for targets in profiles["weights"].values():
             self.assertEqual(sum(targets), 100)
@@ -589,7 +591,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         )
         self.assertEqual(
             self.directive["workload_lanes"]["openai"],
-            "control_plane_and_authorized_production",
+            "primary_full_spectrum",
         )
         self.assertEqual(
             self.directive["openai_direct_production_boundary"],
@@ -672,7 +674,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertTrue(team_first["default"])
         self.assertEqual(team_first["minimum_distinct_provider_roles"], 2)
         self.assertEqual(
-            team_first["simple_local_openai_exception"],
+            team_first["simple_local_director_exception"],
             {
                 "complexity": "simple",
                 "risk": "low",
@@ -875,7 +877,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 "prospective_total_effort_soft_bands_and_share_advisories",
                 "prestage_packet_digest_workload_size_effort_points_and_deltas",
                 "status_validation_action_counts_reduction_baselines_and_browser_use",
-                "openai_moderator_participant_director_actions_and_vote",
+                "acting_director_moderator_participant_director_actions_and_vote",
                 "dissent_counter_bias_and_alternative_analysis",
                 "exact_tests_trusted_ci_security_independent_review_and_verdict",
                 "unresolved_risks_limitations_blockers_and_confidence",
@@ -914,7 +916,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 name: member["voting_power"]
                 for name, member in self.charter["committee"]["members"].items()
             },
-            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.0, "claude": 2.5},
+            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0},
         )
         review = self.directive["review"]
         self.assertEqual(review["reviewer"], "different_non_author")
@@ -2122,3 +2124,5 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

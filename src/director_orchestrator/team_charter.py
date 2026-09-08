@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -92,7 +94,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             ],
             "routing_rule": "Route Cursor by fit, independence, capacity, and evidence needs.",
             "non_substitution_rules": [
-                "Cursor cannot perform OpenAI's Director acceptance role.",
+                "Cursor cannot replace acting Director acceptance.",
                 "Cursor does not replace mandatory Codex Security.",
                 "Cursor cannot review or approve its own work.",
                 "Capability parity does not bypass assignment scope or deterministic gates.",
@@ -126,7 +128,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "routing_rule": "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.",
             "transport_rule": "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact.",
             "non_substitution_rules": [
-                "Grok cannot perform OpenAI's Director acceptance role.",
+                "Grok cannot replace acting Director acceptance.",
                 "Grok does not replace mandatory Codex Security.",
                 "Grok cannot review or approve its own work.",
                 "Capability parity does not bypass assignment scope or deterministic gates.",
@@ -135,7 +137,11 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     },
     "director_operating_directive": {
         "workload_policy_version": "v1",
-        "director": "openai",
+        "director": "claude",
+        "runtime_director": {
+            "default_provider": "openai",
+            "activation_from_role_change": False,
+        },
         "duties": [
             "plan",
             "decompose",
@@ -146,16 +152,16 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "review_handoff",
             "milestone_reporting",
         ],
-        "duties_excluded_from_openai_direct_production_share": True,
+        "duties_excluded_from_direct_production_share": True,
         "direct_workload_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
         "overall_effort_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
         "workload_lanes": {
-            "claude": "primary_full_spectrum",
+            "claude": "control_plane_and_authorized_production",
             "cursor": "primary_full_spectrum",
             "grok": "primary_full_spectrum",
             "antigravity": "bounded_subordinate_specialist",
             "perplexity": "public_research_evidence_only",
-            "openai": "control_plane_and_authorized_production",
+            "openai": "primary_full_spectrum",
         },
         "workload_accounting": {
             "unit_basis": "real_reserved_assignment_once",
@@ -250,7 +256,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "default": True,
             "minimum_distinct_provider_roles": 2,
             "parallel_nonconflicting_lanes": ["research", "reproduction", "qa", "review"],
-            "simple_local_openai_exception": {
+            "simple_local_director_exception": {
                 "complexity": "simple",
                 "risk": "low",
                 "external_opinion_required": False,
@@ -378,7 +384,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "prospective_total_effort_soft_bands_and_share_advisories",
                 "prestage_packet_digest_workload_size_effort_points_and_deltas",
                 "status_validation_action_counts_reduction_baselines_and_browser_use",
-                "openai_moderator_participant_director_actions_and_vote",
+                "acting_director_moderator_participant_director_actions_and_vote",
                 "dissent_counter_bias_and_alternative_analysis",
                 "exact_tests_trusted_ci_security_independent_review_and_verdict",
                 "unresolved_risks_limitations_blockers_and_confidence",
@@ -459,8 +465,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "antigravity": {"provider": "gemini", "voting_power": 1.0},
             "cursor": {"voting_power": 1.5},
             "grok": {"provider": "xai", "voting_power": 1.5},
-            "openai": {"voting_power": 2.0},
-            "claude": {"voting_power": 2.5},
+            "openai": {"voting_power": 2.5},
+            "claude": {"voting_power": 2.0},
         },
         "debate": {
             # Antigravity is seatable only by Director invitation. It cannot open,
@@ -488,7 +494,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "Record abstentions and unavailable members rather than fabricating votes.",
                 "A producer's advisory vote counts at its full configured weight.",
                 "A producer's vote does not permit review or acceptance of its own work.",
-                "OpenAI resolves an ordinary tie by documented evidence-based judgment.",
+                "Claude resolves ordinary ties by documented evidence-based judgment.",
                 "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision.",
                 "No vote grants access, changes scope, approves a model's own work, or overrides deterministic policy.",
             ],
@@ -765,6 +771,7 @@ class AdvisoryVoteTally(BaseModel):
     resolution: Literal[
         "advisory_recommendation",
         "openai_director_judgment",
+        "claude_director_judgment",
         "owner_decision_required",
         "no_votes",
     ]
@@ -809,7 +816,7 @@ def tally_advisory_votes(
         elif material_risk:
             resolution = "owner_decision_required"
         else:
-            resolution = "openai_director_judgment"
+            resolution = "claude_director_judgment"
     return AdvisoryVoteTally(
         configured_weight_total=configured_total,
         cast_weight_total=cast_total,
@@ -839,3 +846,5 @@ def tally_advisory_votes(
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

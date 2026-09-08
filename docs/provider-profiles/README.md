@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]] -->
@@ -21,8 +23,8 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 
 | Lane | Sheet | ProviderName enum | Backend identity | Legacy accounting agent | Team | Lane class | Committee weight | Health key |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `openai` | [openai.md](openai.md) | `openai` | `openai` | `openai` | primary | director_control_plane | 2.0 | `openai_director` |
-| `claude` | [claude.md](claude.md) | `claude` | `claude` | `claude` | primary | full_spectrum_primary | 2.5 | `claude` |
+| `openai` | [openai.md](openai.md) | `openai` | `openai` | `openai` | primary | full_spectrum_primary | 2.5 | `openai_director` |
+| `claude` | [claude.md](claude.md) | `claude` | `claude` | `claude` | primary | director_control_plane | 2.0 | `claude` |
 | `cursor` | [cursor.md](cursor.md) | `cursor` | `cursor` | `cursor` | primary | full_spectrum_primary | 1.5 | `cursor` |
 | `grok` | [grok.md](grok.md) | `grok` | `grok` | `grok` | primary | full_spectrum_primary | 1.5 | `grok` |
 | `antigravity` | [antigravity.md](antigravity.md) | `gemini` | `gemini` | `gemini` | supplemental | subordinate_specialist | 1.0 | `gemini` |
@@ -73,8 +75,8 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 
 Endpoints:
 
-- `openai`: OpenAI lane: Director control plane plus separately assigned production.
-- `claude`: Claude lane: full-spectrum primary, Chief Programmer.
+- `openai`: OpenAI lane: Codex/ChatGPT engineering support and eligible review; legacy runtime identity retained.
+- `claude`: Claude lane: acting project Director and explicitly gated native Director adapter.
 - `cursor`: Cursor lane: full-spectrum primary, Project Secretary.
 - `grok`: Grok lane: Cursor-family primary teammate on xAI.
 - `antigravity`: Antigravity lane: Gemini-backed subordinate specialist.
@@ -82,7 +84,7 @@ Endpoints:
 - `firecrawl`: Firecrawl lane: public search transport under the research contract.
 - `github-copilot`: GitHub Copilot lane: supplemental hygiene reviewer, no production authority.
 - `microsoft-365-copilot`: Microsoft 365 Copilot lane: blocked pending Work IQ capability evidence.
-- `director`: The OpenAI-backed Director control plane inside the orchestrator.
+- `director`: The runtime Director control plane; executing provider is recorded separately from Claude project leadership.
 - `owner`: The human owner, reached only through Slack and signed owner commands.
 - `slack_thread`: The Director-owned Slack thread for one task in its private project channel.
 - `github`: GitHub pull requests, reviews, checks, and label events.
@@ -165,3 +167,5 @@ Endpoints:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | END]] -->

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:10 UTC | BEGIN]]
@@ -56,10 +58,10 @@ allocation_and_selection:
   allocation_profiles:
     lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
     weights:
-      engineering: [35, 30, 15, 10, 10, 0, 0, 0, 0]
-      mixed: [30, 25, 10, 10, 5, 5, 5, 5, 5]
-      public_research: [25, 20, 5, 5, 5, 25, 15, 0, 0]
-      enterprise: [30, 25, 5, 5, 5, 0, 5, 10, 15]
+      engineering: [30, 35, 15, 10, 10, 0, 0, 0, 0]
+      mixed: [25, 30, 10, 10, 5, 5, 5, 5, 5]
+      public_research: [20, 25, 5, 5, 5, 25, 15, 0, 0]
+      enterprise: [25, 30, 5, 5, 5, 0, 5, 10, 15]
   profile_binding: "frozen_before_approval_preserve_real_history_no_silent_redistribution"
   zero_target: "ineligible"
   total_effort_status: "separate_telemetry_not_production_credit"
@@ -101,6 +103,12 @@ allocation_and_selection:
       - "ambiguous dispatch"
       - "rejected supplemental-review finding"
 
+project_leadership:
+  acting_director: "claude"
+  default_runtime_director: "openai"
+  role_change_activates_provider: false
+  history: "preserve_actual_provider_model_and_receipt_identity"
+
 providers:
 
   cursor:
@@ -128,7 +136,7 @@ providers:
         - "merge, deployment, or publication authority"
         - "safety authority"
     non_substitution_rules:
-      - "Cursor cannot perform OpenAI's Director acceptance role."
+      - "Cursor cannot replace acting Director acceptance."
       - "Cursor does not replace mandatory Codex Security."
       - "Cursor cannot review or approve its own work."
       - "Capability parity does not bypass assignment scope or deterministic gates."
@@ -154,7 +162,7 @@ providers:
       statement: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
     contact_boundary: "The xAI API, Grok Build CLI, and Grok Bot are separate contacts; use only the capabilities and authority actually available on the assigned contact."
     non_substitution_rules:
-      - "Grok cannot perform OpenAI's Director acceptance role."
+      - "Grok cannot replace acting Director acceptance."
       - "Grok does not replace mandatory Codex Security."
       - "Grok cannot review or approve its own work."
       - "Capability parity does not bypass assignment scope or deterministic gates."
@@ -262,12 +270,12 @@ providers:
       - "unavailable_evidence"
     review_requirement: "OpenAI or another authorized primary-team member must evaluate Perplexity evidence before it influences a plan, implementation requirement, or acceptance decision."
 
-  openai:
+  claude:
     # The three canonical identities from docs/team-operating-charter.md and
     # prompts/director-system.md. Coordination, planning, and acceptance are
     # duties nested under these identities; they never replace or blur them,
     # because only the identity carries the voting boundary.
-    function_separation_rule: "OpenAI keeps Moderator, Participant, and Director separate in every project-local record; they are never collapsed or renamed into duty buckets."
+    function_separation_rule: "Claude as acting Director keeps Moderator, Participant, and Director separate in every project-local record; they are never collapsed or renamed into duty buckets."
     functions:
       - id: "moderator"
         votes: false
@@ -283,8 +291,8 @@ providers:
         vote_weight: 2.0
         duties:
           - "record an independently formed initial position before specialist conclusions are exposed"
-          - "cast the single existing OpenAI advisory vote during synthesis"
-        boundary: "Participant is the one authenticated OpenAI position and vote. It receives no additional vote for planning, moderation, synthesis, or acceptance."
+          - "cast the single existing Claude advisory vote during synthesis"
+        boundary: "Participant is the one authenticated Claude position and vote. It receives no additional vote for planning, moderation, synthesis, or acceptance."
       - id: "director"
         votes: false
         duties:
@@ -300,9 +308,15 @@ providers:
     participation_record_rule: "Record only actual provider responses. Never draft a missing position, convert silence into assent, or claim participation, rebuttal, confidence, or a vote that was not returned."
     preserved_boundaries:
       producer_exclusion: "A producer cannot review, accept, or approve its own work; the reviewer must differ from the logical producer and every material author."
-      material_tie_escalation: "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision; only an ordinary tie reaches documented OpenAI evidence judgment."
+      material_tie_escalation: "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision; only an ordinary tie reaches documented Claude evidence judgment."
       deterministic_gates: "Exact-SHA review, trusted checks, budgets, allowlists, and approval gates remain mandatory where configured."
-      assignment_target: "Separately assigned OpenAI production under the frozen profile; material authorship requires different-provider exact-candidate review and removes Director merge independence."
+      assignment_target: "Separately assigned Claude production under the frozen profile; material authorship requires different-provider exact-candidate review and removes Director merge independence."
+
+  openai:
+    team: "primary"
+    standing_role: "bounded_implementer_and_independent_reviewer"
+    assignment_target: "OpenAI production may be separately assigned under the frozen profile; actual material authorship requires different-provider exact-candidate review."
+    leadership_authority: "none_from_provider_identity"
 
 supplemental_reviewers:
   github_copilot_lite:
@@ -351,3 +365,5 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

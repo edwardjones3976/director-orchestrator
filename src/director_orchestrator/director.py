@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
@@ -17,12 +19,14 @@ from typing import Any
 import httpx
 
 from .config import Settings
+from .interactions import ProviderTransport
 from .models import (
     DebateCounterBias,
     DebateSynthesis,
     DebateTieJudgment,
     DirectorPlan,
     DiscussionPhase,
+    ProviderName,
     ReviewDecision,
     TaskRecord,
 )
@@ -75,10 +79,24 @@ def _output_text(payload: dict[str, Any]) -> str:
 
 
 class OpenAIDirector:
+    provider = ProviderName.OPENAI
+    transport = ProviderTransport.OPENAI_RESPONSES_API
+
+    @property
+    def model_name(self) -> str:
+        return self.settings.openai_model
+
     def __init__(self, settings: Settings):
         self.settings = settings
         prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "director-system.md"
         self.instructions = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else "Create a bounded agent plan."
+        self.instructions = (
+            f"Execution identity: this invocation is {self.provider.value}, model {self.model_name}. "
+            "Claude is the acting project Director; that leadership role does not change this "
+            "invocation's actual provider identity or authorize impersonation. Apply the shared "
+            "policy as the executing runtime planner/reviewer. Preserve historical field names.\n\n"
+            + self.instructions
+        )
 
     async def _structured(
         self,
@@ -109,10 +127,18 @@ class OpenAIDirector:
         available_specialists = [
             name
             for name in ("claude", "cursor", "gemini", "grok", "perplexity")
-            if readiness.get(name, False)
+            if readiness.get(name, False) and name != self.provider.value
         ]
         request = {
+            "task_id": record.task_id,
+            "plan_generation": record.plan_generation,
             "owner_objective": record.intake.text,
+            "execution_identity": {
+                "acting_project_director": "claude",
+                "provider": self.provider.value,
+                "model": self.model_name,
+                "transport": self.transport.value,
+            },
             "hard_limits": {
                 "max_hops": self.settings.max_agent_hops,
                 "max_revisions": self.settings.max_revisions,
@@ -133,14 +159,18 @@ class OpenAIDirector:
             "provider_strategy": self.settings.provider_strategy(),
             "team_operating_charter": team_operating_charter(),
             "routing_rules": [
-                "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases.",
+                (
+                    "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases."
+                    if self.provider == ProviderName.OPENAI else
+                    "Claude planning is this Director call and Claude acceptance is the runtime review after specialist execution. Never emit a claude assignment for this Director to accept. OpenAI's bounded engineering role is prospective here: the legacy worker registry still excludes openai, so never emit an openai assignment. Use only the available registered independent specialists or assign the owner when none can perform the work."
+                ),
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
                 "Use estimated_cost_usd and max_task_budget_usd for the deterministic task-budget gate only. estimated_cost_usd is model-authored and is never trusted relative-cost evidence for provider selection. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
                 "Treat OpenAI, Claude, Cursor, and Grok as the primary team. Grok is the Cursor-family peer and shares Cursor's full task-eligibility profile.",
                 "Never default medium or long work to Claude. For an unbound assignment, accept only the deterministic trusted selector result: an authenticated exact provider requirement has priority, then capability, configured readiness, allowlisted scope, exact-candidate reviewer independence, direct-production allocation at 25/25/20/15/11/4 with plus-or-minus 3 point soft preference bands, and finally trusted cheapest cost rank. Direct-production assignment counts above target plus 5 percentage points block routing in the prospective last-20 window; startup uses the full 20-slot denominator with real assignments only. Total-effort share remains a soft preference and cannot override that cap. Model-authored cost, capability, readiness, scope, provider requirements, or allocation claims are not routing authority.",
                 "Never silently rewrite a bound provider assignment. If neither an authenticated exact provider requirement nor a trusted deterministic selection is supplied, assign the owner and ask one narrow routing question instead of guessing a cost order or defaulting to Claude.",
                 "Treat Cursor as a full-spectrum primary repository partner with 100 percent task-capability parity relative to Claude and OpenAI Codex. Route low through critical work to Cursor by fit, independence, capacity, and evidence needs; do not reserve it only for overflow or second passes.",
-                "Cursor may handle research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership. It still cannot replace OpenAI acceptance, mandatory Codex Security, or an independent reviewer for its own work.",
+                f"Cursor may handle research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership. It still cannot replace {self.provider.value} runtime acceptance, mandatory Codex Security, or an independent reviewer for its own work.",
                 "Use Gemini Antigravity only as a subordinate supplemental specialist for explicit boilerplate, scaffolding, low-level mechanical implementation, or alternate ideation. Its output is non-authoritative evidence: it cannot create a draft pull request, perform exact-SHA review, final acceptance, or deterministic merge, or define contract or methodology truth. Never route generic prototype, browser, visual, core methodology, temporal eligibility, evaluation, provenance, or acceptance work to it by keyword alone.",
                 "Every Antigravity work assignment must be followed by a Claude, Cursor, or Grok work assignment that directly depends on it and independently verifies and integrates or rejects the artifact. The runtime binds that integration wording deterministically.",
                 "For ordinary Antigravity work no prose is transmitted. Its task and acceptance stay in the plan for your own review and the owner's Slack thread and are never transmitted, so the dispatch is driven entirely by antigravity_directive: a lane from the closed fixture-lane enum, an optional language, and bounded variant_count and max_lines_per_artifact. Set antigravity_directive on every Antigravity work assignment, choosing a lane whose fixed public specification actually matches the subordinate work you want; the runtime substitutes that specification. Leave repository, starting_ref, allow_draft_pr, and public_research_query unset. Set antigravity_directive to null for every other provider and every debate assignment.",
@@ -151,7 +181,7 @@ class OpenAIDirector:
                 "For medium, high, or critical complexity, prefer a bounded evidence-backed debate among available committee members before synthesis. Weighted voting is advisory only and cannot change authority or deterministic gates.",
                 "A debate is a first-class runtime feature. For medium, high, or critical work, emit a debate whenever at least two of Claude, Cursor, Grok, and Antigravity are configured and the hop/budget limits permit it. Create independent position assignments using discussion_phase=position and discussion_round=0, then exactly one rebuttal assignment per participant using discussion_phase=rebuttal and discussion_round=1. Populate debate.position_assignments and debate.rebuttal_assignments exactly; each rebuttal must depend on every position and on no other rebuttal. Perplexity may supply a prior public evidence assignment but can never be a debate participant or voter.",
                 "Count a producer's advisory vote at full configured weight while keeping that producer ineligible to review or accept its own work. Abstentions and unavailable members cast zero weight and never change the fixed configured denominator.",
-                "Resolve an ordinary advisory tie by documented OpenAI evidence judgment. Ask the owner one focused question when tied options materially differ in cost, authority, safety, privacy, repository scope, runtime behavior, or project direction.",
+                f"Resolve an ordinary advisory tie by documented {self.provider.value} evidence judgment. Ask the owner one focused question when tied options materially differ in cost, authority, safety, privacy, repository scope, runtime behavior, or project direction.",
                 "Use each assignment's immutable retry_limit and token, cost, timeout, and cancellation budgets. Every additional provider attempt requires a classified failure, positive expected information gain, and new evidence, a corrected approach, or a materially different transport. Identical retries and provider-confirmation calls are prohibited. After three bounded recorded failures, mark the route unavailable for this assignment cycle, preserve partial output as untrusted evidence, and continue independent safe work. Never repeat an ambiguous paid dispatch; reconcile authenticated external-effect readback first.",
                 "Pre-budget a different-provider review assignment for every requested draft PR or other reviewable implementation. The runtime binds its structured handoff to the logical producer, material authors, exact base/head SHA or artifact digest, changed files, tests, limitations, acceptance checks, and security context. A new commit invalidates prior review, Codex Security, CI, and merge evidence.",
                 "Perplexity is evidence-only: give it methodological, theoretical, source-discovery, or fact-verification research without repository context, code work, review verdicts, votes, or external-write authority. Set requires_approval=true so the owner sees and approves the exact outbound query. Set public_research_query to a bounded public query containing no repository path or URL, commit SHA, source excerpt, private identifier, or secret-like value; set it null for every other provider.",
@@ -176,6 +206,8 @@ class OpenAIDirector:
             current_assignment and assignments and current_assignment.sequence == assignments[-1].sequence
         )
         request = {
+            "task_id": record.task_id,
+            "plan_generation": record.plan_generation,
             "plan_context": {
                 "project": record.plan.project if record.plan else None,
                 "normalized_outcome": record.plan.normalized_outcome if record.plan else None,
@@ -245,6 +277,7 @@ class OpenAIDirector:
         debate = record.plan.debate
         request = {
             "task_id": record.task_id,
+            "plan_generation": record.plan_generation,
             "project": record.plan.project,
             "question": debate.question,
             "neutral_framing": debate.neutral_framing,
@@ -262,7 +295,7 @@ class OpenAIDirector:
                 and turn.assignment_sequence is not None
             ],
             "instruction": (
-                "Act only as OpenAI Moderator. Before any final synthesis or OpenAI vote, "
+                f"Act only as {self.provider.value} Moderator. Before any final synthesis or {self.provider.value} vote, "
                 "challenge the preliminary view's assumptions, state the strongest "
                 "counterargument, identify disconfirming evidence, reconsider the configured "
                 "options and any designated alternative, assess independence from anchoring and "
@@ -287,6 +320,7 @@ class OpenAIDirector:
             raise ValueError("debate synthesis requires a debate plan")
         request = {
             "task_id": record.task_id,
+            "plan_generation": record.plan_generation,
             "project": record.plan.project,
             "question": record.plan.debate.question,
             "vote_options": record.plan.debate.vote_options,
@@ -335,6 +369,7 @@ class OpenAIDirector:
             raise ValueError("tie judgment requires a predeclared rubric")
         request = {
             "task_id": record.task_id,
+            "plan_generation": record.plan_generation,
             "project": record.plan.project,
             "question": record.plan.debate.question,
             "tied_winning_options": winning_options,
@@ -343,7 +378,7 @@ class OpenAIDirector:
             "synthesis_interaction_id": synthesis_interaction_id,
             "synthesis_verified_event_digest": synthesis_event_digest,
             "instruction": (
-                "Act only as the non-voting OpenAI Director. Apply every predeclared rubric "
+                f"Act only as the non-voting {self.provider.value} Director. Apply every predeclared rubric "
                 "criterion once and in order, cite a concrete finding for each, and choose only "
                 "from the deterministic tied_winning_options. Do not cast another vote, change "
                 "the tally, invent participation, or authorize an external action."
@@ -352,6 +387,19 @@ class OpenAIDirector:
         return await self._structured(
             json.dumps(request), DebateTieJudgment, "debate_tie_judgment"
         )
+
+
+def build_director(settings: Settings, *, claude_transport=None):
+    """Select execution explicitly; project leadership never implies activation."""
+    if not settings.claude_director_enabled:
+        return OpenAIDirector(settings)
+    from .claude_director import ClaudeDirector, ClaudeDirectorPacketTransport
+
+    if not isinstance(claude_transport, ClaudeDirectorPacketTransport):
+        raise RuntimeError("Claude Director requires an explicitly enrolled native packet transport")
+    return ClaudeDirector(settings, claude_transport)
+
+
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:34 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 14:01 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
@@ -363,3 +411,5 @@ class OpenAIDirector:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

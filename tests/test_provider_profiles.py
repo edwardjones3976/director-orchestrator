@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
@@ -391,9 +392,11 @@ class CharterMirrorTests(unittest.TestCase):
                     self.assertEqual(api["current_transport_constraints"], strategy["current_transport_constraints"])
         self.assertEqual(seen, set(self.strategy))
 
-    def test_openai_functions_mirror_roles_contract_and_charter(self):
-        functions = self.profiles["openai"]["roles"]["openai_functions"]
-        expected = self.contract["providers"]["openai"]["functions"]
+    def test_acting_director_functions_mirror_roles_contract_and_charter(self):
+        director_lane = self.directive["director"]
+        self.assertEqual(director_lane, "claude")
+        functions = self.profiles[director_lane]["roles"]["director_functions"]
+        expected = self.contract["providers"][director_lane]["functions"]
         self.assertEqual(len(functions), 3)
         for actual, contract in zip(functions, expected):
             self.assertEqual(actual["id"], contract["id"])
@@ -405,10 +408,11 @@ class CharterMirrorTests(unittest.TestCase):
         director = next(item for item in functions if item["id"] == "director")
         self.assertEqual(director["duties"], self.directive["duties"])
         participant = next(item for item in functions if item["id"] == "participant")
-        self.assertEqual(participant["vote_weight"], self.charter["committee"]["members"]["openai"]["voting_power"])
+        self.assertEqual(participant["vote_weight"], self.charter["committee"]["members"][director_lane]["voting_power"])
         for lane, profile in self.profiles.items():
-            if lane != "openai":
-                self.assertIsNone(profile["roles"]["openai_functions"], lane)
+            self.assertIsNone(profile["roles"]["openai_functions"], lane)
+            if lane != director_lane:
+                self.assertIsNone(profile["roles"].get("director_functions"), lane)
 
     def test_antigravity_constants_mirror_runtime(self):
         profile = self.profiles["antigravity"]
@@ -882,7 +886,10 @@ class DiscoveryTests(unittest.TestCase):
             "tests.test_provider_profiles",
         ):
             self.assertIn(phrase, section, phrase)
-        self.assertEqual((ROOT / "CLAUDE.md").read_text(encoding="utf-8").strip().splitlines()[1:-1], ["@AGENTS.md"])
+        claude_instructions = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("@AGENTS.md", claude_instructions.splitlines())
+        self.assertIn("acting Director-Orchestrator", claude_instructions)
+        self.assertIn("docs/project-leadership.md", claude_instructions)
 
     def test_director_prompt_readme_and_provider_setup_point_at_the_sheets(self):
         prompt = (ROOT / "prompts" / "director-system.md").read_text(encoding="utf-8")
@@ -906,3 +913,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

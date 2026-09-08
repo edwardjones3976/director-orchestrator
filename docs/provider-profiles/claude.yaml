@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: Claude (director-provider-profile/v1).
@@ -7,7 +8,7 @@
 schema_version: "director-provider-profile/v1"
 document_type: "director-provider-profile"
 provider_id: "claude"
-display_name: "Claude"
+display_name: Claude (acting Director)
 authority_granted: "none"
 
 source_of_truth:
@@ -28,17 +29,19 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "claude"
   charter_workload_lane_key: "claude"
-  standing_role_label: "Chief Programmer"
+  standing_role_label: Director
   config_prefixes: ["CLAUDE_", "ANTHROPIC_"]
   alias_note: "Claude Code Routine, the signed callback, the native Claude CLI on the host bridge, an authenticated Claude UI, and the dormant native security issuer are all contacts of one lane; Claude Cowork is not a synchronous adapter."
 
 roles:
   team: "primary"
-  lane_class: "full_spectrum_primary"
-  summary: "Chief Programmer: full-spectrum primary for programming, repository-scale reasoning, architecture, QA, and independent review when it did not produce or materially author the candidate. Selected by the cheap-capable policy or an exact trusted assignment requirement; the owner-reported Claude Max 5x context is a capacity signal, not an API entitlement."
-  charter_workload_lane: "primary_full_spectrum"
+  lane_class: director_control_plane
+  summary: 'Acting project Director: owns priorities, decomposition, routing, workload and budget controls, review orchestration,
+    and delivery reporting. Pure coordination creates no production credit. Runtime Claude planning requires its explicitly
+    enabled, genuinely bound native adapter; leadership alone does not activate it.'
+  charter_workload_lane: control_plane_and_authorized_production
   strategy_key: "claude"
-  strategy_priority: "trusted_fit_allocation_and_cost_selected"
+  strategy_priority: acting_director_orchestrator
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
   excluded_responsibility_areas: []
   eligible_complexity: [low, medium, high, critical]
@@ -46,35 +49,73 @@ roles:
   comparison_peers: []
   elevated_work: []
   non_substitution_rules:
-    - "Claude cannot review or approve a candidate it produced or materially authored."
-    - "There is no unconditional medium/long workload rule or inferred model floor for Claude."
+  - A provider cannot independently accept or merge a candidate it materially authored.
+  - Project leadership never authenticates runtime execution or changes deterministic gates.
+  - Pure coordination creates no production credit.
   family: null
   transport_rule: null
   routing_rule: "Claude may be selected by the cheap-capable policy or an exact trusted assignment requirement; workload length alone does not select it."
   committee:
     member: true
-    voting_power: 2.5
+    voting_power: 2.0
     seatable_in_debate: true
     may_initiate_debate: false
     vote_grants_authority: false
   allocation:
-    profiles: { mixed: 25, engineering: 30, public_research: 20, enterprise: 25 }
+    profiles:
+      mixed: 30
+      engineering: 35
+      public_research: 25
+      enterprise: 30
     default_profile: "engineering"
     overall_effort_policy: "telemetry_only_no_separate_allocation"
     capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
     accounting_basis: "admitted_assignment_count"
     zero_target_rule: "ineligible"
-    accounting_status: "direct_production_allocation"
+    accounting_status: control_plane_telemetry_and_authorized_production
   hygiene_review: null
   openai_functions: null
-
+  director_functions:
+  - id: moderator
+    votes: false
+    duties:
+    - frame the question and bounded options neutrally
+    - request positions without leading language
+    - prevent premature cross-exposure
+    - run the counter-bias pass against the favored view
+    boundary: Moderation does not cast a vote.
+    vote_count: null
+    vote_weight: null
+  - id: participant
+    votes: true
+    vote_count: 1
+    vote_weight: 2.0
+    duties:
+    - record an independently formed initial position before specialist conclusions are exposed
+    - cast the single existing Claude advisory vote during synthesis
+    boundary: Participant is the one authenticated Claude position and vote. It receives no additional vote for planning, moderation,
+      synthesis, or acceptance.
+  - id: director
+    votes: false
+    duties:
+    - plan
+    - decompose
+    - route
+    - coordinate
+    - synthesize
+    - acceptance_review
+    - review_handoff
+    - milestone_reporting
+    boundary: Director authority does not create a vote or a participation record that did not actually occur.
+    vote_count: null
+    vote_weight: null
 capabilities:
   summary: "Repository-scale implementation and review through the Claude Code Routine, with completion reported by the only inbound provider-initiated HTTP route in the system, a bearer-authenticated callback. Eligible independent exact-SHA reviewer for candidates it did not produce."
   strengths:
-    - "coding implementation"
-    - "repository-scale reasoning"
-    - "code and document review"
-    - "long-form analysis"
+  - orchestration and bounded planning
+  - routing, recovery, and evidence reconciliation
+  - independent acceptance review when not a material author
+  - milestone reporting and owner escalation
   assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
   may_create_draft_pr: "allowed_by_packet"
   may_issue_review_verdict: "eligible_reviewer"
@@ -95,12 +136,13 @@ models_and_effort:
   model_variables: []
   effort_variables: []
   catalog_check: null
-  note: "The Claude Code Routine selects the model. An exact trusted assignment requirement may name a Claude model label, but no deployment variable pins a Claude model or reasoning effort."
-
+  note: The Routine selects its own model. The separate Director adapter requires explicit trusted native model and packet binding;
+    project leadership never proves model readiness or grants an API entitlement.
 budgets_and_limits:
   variables: []
   spend_ledger_member: false
-  not_modeled_note: "Claude has no provider daily spend ledger or per-provider budget variable in this deployment; the task budget, provider timeout, and the owner's Claude subscription bound it."
+  not_modeled_note: The task budget and native process bounds remain required. A Claude subscription is capacity context and
+    does not prove a hard USD ceiling or remaining quota.
   shared_limits: ["MAX_TASK_BUDGET_USD", "PROVIDER_TIMEOUT_SECONDS", "PROVIDER_POLL_SECONDS"]
 
 gating:
@@ -109,6 +151,7 @@ gating:
   readiness_keys: [claude]
   primary_lane_authentication_source: "environment_variable"
   variables:
+    - { variable: "CLAUDE_DIRECTOR_ENABLED", kind: "enable_switch", settings_field: "claude_director_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "false retains the explicit legacy runtime; true requires injected trusted native binding and authentication and never falls back" }
     - { variable: "CLAUDE_ROUTINE_URL", kind: "routine_endpoint", settings_field: "claude_routine_url", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "claude", required_value: null, verify: "GET /health claude" }
     - { variable: "CLAUDE_ROUTINE_TOKEN", kind: "credential_presence", settings_field: "claude_routine_token", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "claude", required_value: null, verify: "GET /health claude" }
     - { variable: "CLAUDE_CALLBACK_SECRET", kind: "callback_secret", settings_field: "claude_callback_secret", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "required for live dispatch; compared in constant time on every callback" }
@@ -168,6 +211,21 @@ platform_limitations:
     source: "src/director_orchestrator/config.py:provider_strategy"
 
 transports:
+  - transport_id: "claude-native-director"
+    kind: "host_bridge"
+    runtime: "legacy_engine"
+    enum_value: "claude_native_host"
+    transport_kind_observed: null
+    status: "implemented_disabled_by_default"
+    direction: "director_to_provider"
+    config: ["CLAUDE_DIRECTOR_ENABLED"]
+    authority_note: "Structured Director calls use an explicitly injected native packet transport with a trusted work/context binder and authenticator. No CLI discovery or enrollment occurs; a missing dependency fails closed without an OpenAI fallback."
+    current_transport_constraints:
+      - "native model, authority, writer, process bounds, budget, idempotency, and returned provenance must be verified by trusted application dependencies"
+      - "one effect-free call; typed output is validated and malformed output fails closed"
+      - "project leadership and native sign-in alone do not make this runtime callable"
+    route_id: "windows-host-provider-bridge"
+    browser_policy: null
   - transport_id: "claude-routine-trigger"
     kind: "http_api"
     runtime: "legacy_engine"
@@ -245,10 +303,10 @@ communication:
   relay_rule: "provider_messages_relay_through_director"
   direct_provider_to_provider_channels_exist: false
   notes:
-    - "Claude reaches Cursor, Grok, OpenAI, and every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns."
-    - "The callback is provider-to-Director only; it never addresses another provider or the owner directly."
-    - "Claude never posts to the Slack thread; the Director relays a concise assignment-correlated summary."
-
+  - Claude leads project coordination; runtime messages still pass through the authenticated Director broker with their actual
+    executing provider recorded.
+  - The callback is provider-to-Director only; it never addresses another provider or the owner directly.
+  - Claude never posts to the Slack thread; the Director relays a concise assignment-correlated summary.
 this_profile_does_not_change:
   - "committee voting weights or the immutable denominator"
   - "runtime permissions or allowlists"
@@ -258,15 +316,14 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-  - document: "docs/team-operating-charter.md"
-    anchor: "full-spectrum primary for programming,"
-  - document: "docs/team-operating-charter.md"
-    anchor: "no unconditional medium/long workload rule or inferred model floor."
-  - document: "docs/provider-setup.md"
-    anchor: "The supported programmable bridge here is a **Claude Code Routine** with an API trigger."
-  - document: "docs/provider-allocation-profiles.md"
-    anchor: "The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers"
-  - document: "docs/native-acceptance-issuers.md"
-    anchor: "Claude owns the security role; Cursor owns independent"
+- document: docs/team-operating-charter.md
+  anchor: Claude is the acting Director-Orchestrator for project leadership
+- document: docs/provider-setup.md
+  anchor: The supported programmable bridge here is a **Claude Code Routine** with an API trigger.
+- document: docs/provider-allocation-profiles.md
+  anchor: The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
+- document: docs/native-acceptance-issuers.md
+  anchor: Claude owns the security role; Cursor owns independent
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

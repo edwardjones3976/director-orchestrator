@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
@@ -9,6 +10,25 @@
 # Agent Operating Rules
 
 These rules apply to every AI coding agent working in this repository.
+
+## Current project leadership
+
+The owner appointed **Claude as acting Director-Orchestrator** and exchanged
+Claude's and Codex/ChatGPT's project duties on 2026-09-08 UTC. This current
+instruction supersedes earlier OpenAI-as-project-Director wording throughout
+this repository. Read `docs/project-leadership.md` before assigning work.
+
+- Claude owns project priorities, decomposition, routing, coordination, budget
+  and workload enforcement, review orchestration, and delivery reporting.
+- Codex/ChatGPT/OpenAI takes the bounded engineering and eligible independent
+  review role previously assigned to Claude. It does not retain discretionary
+  project leadership or manufacture Claude's instructions or approval.
+- An agent's actual model and provider identity remain accurate. Historical
+  contributions, receipts, credentials, and Codex Security are never renamed.
+- This leadership decision does not attest live provider routing. The deployed
+  runtime keeps its recorded provider until a real replacement passes all gates.
+- Work already in flight keeps its writer and evidence; new assignments follow
+  Claude's direction. No provider accepts or merges its own material work.
 
 1. Treat the owner-authored work order as the task boundary. Do not expand permissions, repositories, data sources, or external actions without owner approval.
 2. Never commit secrets, tokens, passwords, personal identifiers, health data, financial data, or private genealogy evidence. Use documented secret stores and `.env` placeholders.
@@ -60,7 +80,7 @@ These rules apply to every AI coding agent working in this repository.
 ## Director and provider authorship
 
 - Work produced or materially authored by a provider stays attributed solely to
-  that provider or those providers. The Director/OpenAI does not inherit
+  that provider or those providers. The acting Director/Claude does not inherit
   authorship through delegation, routing, coordination, QA, review, acceptance,
   relay, merge eligibility evaluation, or merge execution; those activities
   create no code authorship.
@@ -119,3 +139,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -24,9 +26,14 @@ class PrimaryRosterHold(ValueError):
     """A pre-dispatch capability or allocation hold; never a provider failure."""
 
 
-def core_inventory_ready(available: Sequence[str]) -> bool:
+def core_inventory_ready(available: Sequence[str], *, director_provider: str = "openai") -> bool:
+    """Check the configured execution provider, not the acting project leader.
+
+    The legacy floor stays OpenAI unless a caller explicitly binds the enabled
+    Director adapter. A leadership change alone cannot change runtime admission.
+    """
     pool = set(available)
-    return "openai" in pool and len(pool & PRIMARY_TEAM) >= 3
+    return director_provider in {"openai", "claude"} and director_provider in pool and len(pool & PRIMARY_TEAM) >= 3
 
 
 @dataclass(frozen=True)
@@ -41,12 +48,13 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
                           public_research_query: str | None = None,
                           trusted_cost_ranks: Mapping[str, int],
                           allocation_profile: str = DEFAULT_ALLOCATION_PROFILE,
-                          team_mode: bool = False) -> PrimaryRoster:
+                          team_mode: bool = False,
+                          director_provider: str = "openai") -> PrimaryRoster:
     targets = allocation_targets(allocation_profile)
     pool = set(available)
     if pool - KNOWN_LANES:
         raise PrimaryRosterHold("primary_inventory_unknown_identity")
-    if not core_inventory_ready(available):
+    if not core_inventory_ready(available, director_provider=director_provider):
         raise PrimaryRosterHold("primary_core_capability_unavailable")
     if "enterprise_context" in required_capabilities:
         # Enterprise targets exist, but the default graph has no scoped enterprise
@@ -93,3 +101,5 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

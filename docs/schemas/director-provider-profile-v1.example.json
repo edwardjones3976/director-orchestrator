@@ -18,7 +18,7 @@
     "self_review": false,
     "separation_of_duties": [
       "cannot independently accept or merge its own candidate",
-      "cannot replace OpenAI's in-process Director acceptance role",
+      "cannot replace the executing Director's acceptance role",
       "external writes still require the assigned execution surface and current deterministic gates"
     ],
     "strategy_constraints": [],
@@ -455,7 +455,7 @@
     "hygiene_review": null,
     "lane_class": "full_spectrum_primary",
     "non_substitution_rules": [
-      "Grok cannot perform OpenAI's Director acceptance role.",
+      "Grok cannot replace acting Director acceptance.",
       "Grok does not replace mandatory Codex Security.",
       "Grok cannot review or approve its own work.",
       "Capability parity does not bypass assignment scope or deterministic gates."

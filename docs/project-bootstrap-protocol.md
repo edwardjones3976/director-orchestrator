@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
@@ -179,8 +180,8 @@ project-local fit here and link back for authority boundaries.
 
 | Provider or capability | Good project-local use | Never infer from this role |
 | --- | --- | --- |
-| OpenAI / Director | framing, orchestration, evidence synthesis, plan reshaping, acceptance synthesis, ordinary tie judgment | authority to remove deterministic policy or approve its own producer work |
-| Claude | repository-scale reasoning, implementation, debugging, architecture, independent review | access to an unnamed repository, self-review, merge, deployment, or external representation |
+| Claude / acting Director | framing, orchestration, evidence synthesis, plan reshaping, acceptance synthesis, ordinary tie judgment | authority to remove deterministic policy or approve its own producer work |
+| Codex / ChatGPT / OpenAI | repository-scale reasoning, implementation, debugging, architecture, independent review | access to an unnamed repository, self-review, merge, deployment, or external representation |
 | Cursor | full-spectrum implementation, reliability, QA, architecture, independent review, technical leadership | an overflow-only role, self-review, or a durable execution target other than the named one |
 | Gemini / Antigravity | bounded subordinate scaffolding, mechanical work, sandboxed alternate ideas, explicitly limited experiments | primary authority, unrestricted project context, final review, acceptance, merge, or methodology truth |
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
@@ -514,3 +515,4 @@ project-specific control.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->

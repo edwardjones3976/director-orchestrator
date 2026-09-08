@@ -1,15 +1,17 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 # Provider allocation profiles
 
-Owner-approved policy, 2026-09-05. Engineering is the default for this repository.
+Owner-approved policy; the prospective Claude/OpenAI duty swap is effective 2026-09-08. Engineering is the default for this repository.
 The canonical runtime definitions are in `allocation_profiles.py`; select one
 profile before plan approval and bind its digest to the immutable assignment plan.
 
 | Provider lane | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | ---: | ---: | ---: | ---: |
-| OpenAI / Codex production | 30% | 35% | 25% | 30% |
-| Claude | 25% | 30% | 20% | 25% |
+| OpenAI / Codex production | 25% | 30% | 20% | 25% |
+| Claude | 30% | 35% | 25% | 30% |
 | Cursor | 10% | 15% | 5% | 5% |
 | Grok | 10% | 10% | 5% | 5% |
 | Gemini / Antigravity | 5% | 10% | 5% | 5% |
@@ -33,7 +35,7 @@ a fixed denominator of twenty, including startup. Normal tolerance is plus or
 minus three percentage points; the hard ceiling is target plus five points.
 A zero target is ineligible, even though the numerical ceiling would otherwise
 be five. Startup under-allocation is warming, never permission for filler work.
-Engineering targets correspond to seven OpenAI, six Claude, three Cursor, two
+Engineering targets correspond to six OpenAI, seven Claude, three Cursor, two
 Grok, and two Antigravity assignments per full window; these are targets, not
 mandatory concurrent agents or quotas to fill with unnecessary work.
 
@@ -56,6 +58,9 @@ subscription-backed execution when suitable and authenticated. Separately billed
 API execution requires its own known budget and gates. Unknown remaining quota,
 cost, or usage telemetry is unknown, never zero or assumed entitlement.
 
+Claude is the acting project Director; the deployed runtime remains OpenAI
+Responses until an explicitly enabled, validated replacement is selected. This
+leadership change does not activate providers or alter historical attribution.
 OpenAI production is separately assigned and attributed; Director coordination,
 Moderator and Participant functions, acceptance supervision, and merge activity
 do not earn production credit. The materially authoring OpenAI lane cannot review
@@ -101,3 +106,5 @@ remain separate. Missing eligible integration or review capability fails closed;
 selecting a profile does not install an adapter or deploy LangGraph.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->

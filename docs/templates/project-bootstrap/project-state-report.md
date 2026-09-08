@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
@@ -19,7 +20,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=b8bb72f1449359bb6969dd424234dce09ab47ca05ec8dbb54577bbd3971aa5ac -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=bfae4b29916f89b1589f72f26bec4d0b859e9158370511b35883fd2e1578544d -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -113,7 +114,7 @@ report or submission envelope.
 - **Trusted CI:** <run IDs, exact candidate, job conclusions, or unverified>
 - **Security:** <scan ID, exact range/candidate, coverage, findings, or unverified>
 - **Independent review:** <provider, exact SHA/digest, verdict, threads, or pending/unverified>
-- **OpenAI function:** <Moderator / Participant / Director / not applicable; Participant may use only the one existing OpenAI vote>
+- **Acting Director function:** <Moderator / Participant / Director / not applicable; record Claude project leadership separately from the provider that actually executed the call; Participant may use only its one existing vote>
 - **Debate integrity:** <neutral framing, independent positions, appropriate alternative or none, counter-bias check, actual participants/abstentions/unavailable members, and retained dissent, or not applicable>
 - **Risks and confidence:** <unresolved risks, limitations, blockers, uncertainty, and calibrated confidence>
 - **Usage:** <cost, input/output/cached/reasoning tokens when available, elapsed time, retries, and explicitly unavailable telemetry>
@@ -163,3 +164,4 @@ published, enabled, or otherwise changed>.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
