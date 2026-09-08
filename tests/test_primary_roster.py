@@ -1,10 +1,12 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 import unittest
-from director_orchestrator.primary_roster import PrimaryRosterHold, select_primary_roster
+from director_orchestrator.primary_roster import PrimaryRosterHold, core_inventory_ready, select_primary_roster
 from director_orchestrator.primary_workload import admission_reason
 
 class PrimaryRosterTests(unittest.TestCase):
@@ -14,6 +16,21 @@ class PrimaryRosterTests(unittest.TestCase):
         args.update(kw)
         return select_primary_roster(**args)
 
+    def test_director_capability_is_explicit_and_legacy_default_is_preserved(self):
+        claude_pool = ("claude", "cursor", "grok")
+        self.assertFalse(core_inventory_ready(claude_pool))
+        self.assertTrue(core_inventory_ready(claude_pool, director_provider="claude"))
+        self.assertTrue(core_inventory_ready(("openai", "cursor", "grok")))
+        self.assertFalse(core_inventory_ready(("openai", "cursor", "grok"), director_provider="claude"))
+        self.assertFalse(core_inventory_ready(claude_pool, director_provider="cursor"))
+        with self.assertRaisesRegex(PrimaryRosterHold, "core_capability"):
+            self.select(available=claude_pool)
+        roster = self.select(available=claude_pool, director_provider="claude")
+        self.assertIn(roster.producer, claude_pool)
+        self.assertNotEqual(roster.producer, roster.reviewer)
+        with self.assertRaisesRegex(PrimaryRosterHold, "core_capability"):
+            self.select(director_provider="unregistered-provider")
+
     def test_core_is_minimal_independent_and_cost_ranked(self):
         roster = self.select()
         self.assertEqual((roster.producer, roster.reviewer), ("openai", "cursor"))
@@ -22,7 +39,7 @@ class PrimaryRosterTests(unittest.TestCase):
     def test_startup_capacity_uses_only_real_assignments(self):
         self.assertIsNone(admission_reason("claude", []))
         self.assertIsNone(admission_reason("claude", ["claude"] * 5))
-        self.assertEqual(admission_reason("claude", ["claude"] * 7), "workload_assignment_hard_limit")
+        self.assertEqual(admission_reason("claude", ["claude"] * 8), "workload_assignment_hard_limit")
 
     def test_openai_production_has_distinct_reviewer(self):
         selected = self.select()
@@ -104,3 +121,5 @@ class PrimaryRosterTests(unittest.TestCase):
         self.assertIn(roster.reviewer, {"openai", "claude", "cursor", "grok"})
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

@@ -1,3 +1,8 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 
@@ -82,7 +87,7 @@ Elevated work:
 
 Non-substitution rules:
 
-- Grok cannot perform OpenAI's Director acceptance role.
+- Grok cannot replace acting Director acceptance.
 - Grok does not replace mandatory Codex Security.
 - Grok cannot review or approve its own work.
 - Capability parity does not bypass assignment scope or deterministic gates.
@@ -215,7 +220,7 @@ Strategy constraints:
 Separation of duties:
 
 - cannot independently accept or merge its own candidate
-- cannot replace OpenAI's in-process Director acceptance role
+- cannot replace the executing Director's acceptance role
 - external writes still require the assigned execution surface and current deterministic gates
 
 ## Platform limitations
@@ -316,3 +321,8 @@ Separation of duties:
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]] -->

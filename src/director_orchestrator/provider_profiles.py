@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
@@ -559,9 +560,18 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     lines.append("Non-substitution rules:")
     lines.append("")
     lines += _bullets(roles["non_substitution_rules"])
-    if roles["openai_functions"] is not None:
+    director_functions = roles.get("director_functions")
+    legacy_openai_functions = roles.get("openai_functions")
+    if director_functions is not None and legacy_openai_functions is not None:
+        raise ProviderProfileError("A profile cannot claim both current and legacy Director functions")
+    functions = director_functions if director_functions is not None else legacy_openai_functions
+    if functions is not None:
         lines.append("")
-        lines.append("OpenAI functions (kept separate; never collapsed):")
+        lines.append(
+            "Acting Director functions (kept separate; never collapsed):"
+            if director_functions is not None
+            else "Legacy OpenAI runtime functions (historical compatibility):"
+        )
         lines.append("")
         lines += _table(
             ["Function", "Votes", "Vote count", "Vote weight", "Duties", "Boundary"],
@@ -574,7 +584,7 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
                     item["duties"],
                     item["boundary"],
                 ]
-                for item in roles["openai_functions"]
+                for item in functions
             ],
         )
     if roles["hygiene_review"] is not None:
@@ -1078,3 +1088,4 @@ def write_outputs(identity: TagIdentity, *, root: Path | None = None) -> list[Pa
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

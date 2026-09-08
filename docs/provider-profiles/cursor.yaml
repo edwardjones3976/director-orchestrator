@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
@@ -29,7 +30,7 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "cursor"
   charter_workload_lane_key: "cursor"
-  standing_role_label: "Project Secretary"
+  standing_role_label: Project Secretary
   config_prefixes: ["CURSOR_"]
   alias_note: "Cursor is reached through the Cursor Cloud Agents API and, for acceptance receipts, a dormant native issuer. GitHub Copilot is a separate lane and is not Cursor; Grok is a Cursor-family teammate on its own lane."
 
@@ -39,7 +40,7 @@ roles:
   summary: "Project Secretary and full-spectrum primary repository partner with full task-capability parity to Claude and OpenAI Codex: technical continuity, canonical records, writer leases, branch, commit, and worktree maps, candidate evidence, and review flow, plus implementation, research, reproduction, QA, and independent review when it did not produce the work."
   charter_workload_lane: "primary_full_spectrum"
   strategy_key: "cursor"
-  strategy_priority: "primary_full_spectrum_repository_partner"
+  strategy_priority: primary_full_spectrum_repository_partner
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
   excluded_responsibility_areas: []
   eligible_complexity: [low, medium, high, critical]
@@ -54,10 +55,10 @@ roles:
     - "cross-platform QA"
     - "technical coordination"
   non_substitution_rules:
-    - "Cursor cannot perform OpenAI's Director acceptance role."
-    - "Cursor does not replace mandatory Codex Security."
-    - "Cursor cannot review or approve its own work."
-    - "Capability parity does not bypass assignment scope or deterministic gates."
+  - Cursor cannot replace acting Director acceptance.
+  - Cursor does not replace mandatory Codex Security.
+  - Cursor cannot review or approve its own work.
+  - Capability parity does not bypass assignment scope or deterministic gates.
   family: null
   transport_rule: null
   routing_rule: "Route Cursor by fit, independence, capacity, and evidence needs."
@@ -81,14 +82,14 @@ roles:
 capabilities:
   summary: "Durable cloud agent runs over an allowlisted repository and starting ref, with an optional draft pull request when the packet allows it. Eligible independent exact-SHA reviewer for candidates it did not produce or materially author."
   strengths:
-    - "research and evidence verification"
-    - "deep technical reasoning and planning support"
-    - "complex implementation, debugging, and refactoring"
-    - "architecture, reliability, and security-adjacent analysis"
-    - "cross-platform quality assurance"
-    - "independent exact-SHA review"
-    - "technical leadership and coordination"
-    - "isolated repository execution and draft pull requests"
+  - research and evidence verification
+  - deep technical reasoning and planning support
+  - complex implementation, debugging, and refactoring
+  - architecture, reliability, and security-adjacent analysis
+  - cross-platform quality assurance
+  - independent exact-SHA review
+  - technical leadership and coordination
+  - isolated repository execution and draft pull requests
   assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
   may_create_draft_pr: "allowed_by_packet"
   may_issue_review_verdict: "eligible_reviewer"
@@ -272,3 +273,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

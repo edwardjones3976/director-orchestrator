@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
@@ -74,7 +78,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             + [DirectProductionProvider.EXTERNAL_OPENAI] * 9
         )
         if capped:
-            providers = [DirectProductionProvider.CLAUDE] * 7 + [DirectProductionProvider.CURSOR] * 4 + [DirectProductionProvider.GROK] * 3 + [DirectProductionProvider.EXTERNAL_OPENAI] * 5
+            providers = [DirectProductionProvider.CLAUDE] * 6 + [DirectProductionProvider.CURSOR] * 4 + [DirectProductionProvider.GROK] * 3 + [DirectProductionProvider.EXTERNAL_OPENAI] * 6
         with closing(sqlite3.connect(path)) as connection:
             for index, provider in enumerate(providers):
                 identity = f"accepted-selector-history-{capped}-{index}"
@@ -907,3 +911,7 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

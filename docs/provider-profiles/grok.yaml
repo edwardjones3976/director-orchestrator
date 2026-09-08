@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: Grok (director-provider-profile/v1).
@@ -28,7 +29,7 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "grok"
   charter_workload_lane_key: "grok"
-  standing_role_label: "Cursor-Family Primary Teammate"
+  standing_role_label: Cursor-Family Primary Teammate
   config_prefixes: ["GROK_", "XAI_"]
   alias_note: "The committee records the provider as xai. The xAI Responses API, the Grok Build CLI, and the not-yet-implemented Grok Bot are three distinct contacts of one lane; they never create a second quota or an independent reviewer."
 
@@ -38,7 +39,7 @@ roles:
   summary: "Cursor-family primary teammate with full task-capability parity to Cursor, Claude, and OpenAI Codex across all eight responsibility areas and low through critical complexity. Transport-specific limits decide what a particular assignment can actually perform without reducing Grok's team rank."
   charter_workload_lane: "primary_full_spectrum"
   strategy_key: "grok"
-  strategy_priority: "primary_cursor_family_repository_partner"
+  strategy_priority: primary_cursor_family_repository_partner
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
   excluded_responsibility_areas: []
   eligible_complexity: [low, medium, high, critical]
@@ -53,10 +54,10 @@ roles:
     - "cross-platform QA"
     - "technical coordination"
   non_substitution_rules:
-    - "Grok cannot perform OpenAI's Director acceptance role."
-    - "Grok does not replace mandatory Codex Security."
-    - "Grok cannot review or approve its own work."
-    - "Capability parity does not bypass assignment scope or deterministic gates."
+  - Grok cannot replace acting Director acceptance.
+  - Grok does not replace mandatory Codex Security.
+  - Grok cannot review or approve its own work.
+  - Capability parity does not bypass assignment scope or deterministic gates.
   family: "cursor"
   transport_rule: "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact."
   routing_rule: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
@@ -80,11 +81,11 @@ roles:
 capabilities:
   summary: "Implementation, research, reproduction, testing, and independent exact-SHA review through a capable authorized contact when Grok did not materially author the candidate. The in-process API contact is analysis only; repository work and review verdicts need the digest-verified CLI contact."
   strengths:
-    - "full-spectrum repository implementation"
-    - "independent technical reasoning and planning"
-    - "architecture, reliability, and security-adjacent analysis"
-    - "cross-platform quality assurance and exact-candidate review"
-    - "technical leadership and coordination"
+  - full-spectrum repository implementation
+  - independent technical reasoning and planning
+  - architecture, reliability, and security-adjacent analysis
+  - cross-platform quality assurance and exact-candidate review
+  - technical leadership and coordination
   assignment_kinds: [general, implementation, research, independent_review, exact_sha_review]
   may_create_draft_pr: "gated_by_allow_flag"
   may_issue_review_verdict: "gated_by_allow_flag_and_cli"
@@ -163,9 +164,9 @@ authority:
   review_requirement: null
   strategy_constraints: []
   separation_of_duties:
-    - "cannot independently accept or merge its own candidate"
-    - "cannot replace OpenAI's in-process Director acceptance role"
-    - "external writes still require the assigned execution surface and current deterministic gates"
+  - cannot independently accept or merge its own candidate
+  - cannot replace the executing Director's acceptance role
+  - external writes still require the assigned execution surface and current deterministic gates
   production_authority_permitted: true
   external_effects:
     may_be_granted: ["chat.postMessage", "pulls.mark_ready"]
@@ -295,3 +296,4 @@ sources:
     anchor: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

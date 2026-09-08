@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
@@ -68,7 +72,7 @@ import httpx
 
 from .config import Settings
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
-from .director import OpenAIDirector
+from .director import build_director
 from .approvals import (
     EffectAlreadyClaimed,
     PAID_REARM_MESSAGE,
@@ -106,6 +110,7 @@ from .models import (
 )
 from .interactions import (
     CommunicationEvidenceFailure,
+    DirectorIdentity,
     ProviderInteractionPhase,
     ProviderInteractionState,
     ProviderTransport,
@@ -115,6 +120,7 @@ from .interactions import (
     build_transport_evidence,
     canonical_content_digest,
     canonical_identifier_digest,
+    director_evidence_matches,
     project_interaction,
     require_verified_result,
     start_interaction,
@@ -164,7 +170,7 @@ from .store import (
     WorkloadLedgerReservation,
     WorkloadReservationConflict,
 )
-from .team_charter import AdvisoryVote, tally_advisory_votes
+from .team_charter import AdvisoryVote, tally_advisory_votes, team_operating_charter
 from .workload_policy import (
     DirectProductionRecord,
     EnforcementMode as WorkloadEnforcementMode,
@@ -203,8 +209,8 @@ _DRY_RUN_PREVIEW_MESSAGE = (
 _OPENAI_KEY_BLOCK_MESSAGE = "OPENAI_API_KEY is not configured"
 
 _STANDING_PROVIDER_ROLES = {
-    ProviderName.OPENAI: "Director",
-    ProviderName.CLAUDE: "Chief Programmer",
+    ProviderName.OPENAI: "Chief Programmer",
+    ProviderName.CLAUDE: "Director",
     ProviderName.CURSOR: "Project Secretary",
     ProviderName.GEMINI: "Specialist and Backup Programmer",
     ProviderName.GROK: "Cursor-Family Primary Teammate",
@@ -390,11 +396,17 @@ class OrchestrationEngine:
         runtime_activation: "RuntimeActivation | None" = None,
         providers: dict[ProviderName, object] | None = None,
         # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
+        claude_transport: object | None = None,
     ):
         self.settings = settings
         self.store = store
         self.oracle_merge_service = oracle_merge_service
-        self.director = OpenAIDirector(settings)
+        self.director = build_director(settings, claude_transport=claude_transport)
+        self._runtime_director_identity = DirectorIdentity(
+            provider=self.director.provider.value,
+            transport=self.director.transport,
+            model_name=self.director.model_name,
+        )
         self.providers = providers or provider_registry(settings)
         # The daily spend ledger is durable, so it exists only when a durable task
         # store does. Callers that pass no store (narrow in-process unit tests of
@@ -2228,6 +2240,66 @@ class OrchestrationEngine:
             return value.model_dump_json()
         return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
+    @staticmethod
+    def _director_provider(record: TaskRecord, generation: int | None = None) -> ProviderName:
+        identity = record.director_generations.get(
+            record.plan_generation if generation is None else generation
+        )
+        return ProviderName(identity.provider if identity is not None else "openai")
+
+    def _require_current_director(self, record: TaskRecord, generation: int) -> None:
+        identity = record.director_generations.get(generation)
+        matches = (
+            identity == self._runtime_director_identity
+            if identity is not None
+            else self._runtime_director_identity.provider == "openai"
+        )
+        if not matches:
+            raise CommunicationEvidenceFailure(
+                "Director runtime identity differs from the persisted plan generation; "
+                "a fresh authenticated plan is required"
+            )
+
+    @staticmethod
+    def _director_event_matches(record: TaskRecord, event) -> bool:
+        current_generation = event.plan_generation == record.plan_generation
+        pending_plan = (
+            record.plan is None
+            and event.phase == ProviderInteractionPhase.PLAN
+            and event.plan_generation == record.plan_generation + 1
+        )
+        return event.task_id == record.task_id and (current_generation or pending_plan) and director_evidence_matches(
+            event, record.director_generations.get(event.plan_generation)
+        )
+
+    @classmethod
+    def _director_label(cls, record: TaskRecord) -> str:
+        return "Claude" if cls._director_provider(record) == ProviderName.CLAUDE else "OpenAI"
+
+    @classmethod
+    def _director_debate_role(cls, record: TaskRecord, role: str) -> DebateActorRole:
+        return DebateActorRole(f"{cls._director_provider(record).value}_{role}")
+
+    def _require_non_author_director(self, record: TaskRecord, assignment: Assignment) -> None:
+        # This gate applies to every new call, including resumed historical plans.
+        director = self._director_provider(record)
+        authors = self._trusted_material_authors(
+            assignment, {item.sequence: item for item in record.plan.assignments}
+        ) if record.plan is not None else frozenset()
+        if assignment.agent == director or WorkloadProvider(director.value) in authors:
+            raise CommunicationEvidenceFailure(
+                "A material author cannot independently accept its own work; "
+                "a non-author Director review is required"
+            )
+
+    def _director_interaction_event(self, record: TaskRecord, interaction_id: str):
+        projection = project_interaction(record.provider_interaction_ledger, interaction_id)
+        event = next(item for item in record.provider_interaction_ledger
+                     if item.event_digest == projection.latest_event_digest)
+        if event.assignment_sequence is not None or not self._director_event_matches(record, event):
+            raise CommunicationEvidenceFailure("Director interaction identity changed")
+        return event
+
     def _begin_director_interaction(
         self,
         record: TaskRecord,
@@ -2242,10 +2314,17 @@ class OrchestrationEngine:
             if plan_generation is None
             else plan_generation
         )
+        if phase == "plan" and interaction_generation == record.plan_generation + 1:
+            record.director_generations.setdefault(
+                interaction_generation, self._runtime_director_identity
+            )
+        self._require_current_director(record, interaction_generation)
+        identity = record.director_generations.get(interaction_generation)
+        provider = self._director_provider(record, interaction_generation)
         interaction_id = str(
             uuid5(
                 NAMESPACE_URL,
-                f"{record.task_id}:{interaction_generation}:openai:{phase}:{effect_key}",
+                f"{record.task_id}:{interaction_generation}:{provider.value}:{phase}:{effect_key}",
             )
         )
         if any(
@@ -2254,7 +2333,7 @@ class OrchestrationEngine:
         ):
             return interaction_id
         evidence = build_transport_evidence(
-            transport=ProviderTransport.OPENAI_RESPONSES_API,
+            transport=self._runtime_director_identity.transport,
             source=TransportEvidenceSource.BACKEND_OBSERVATION,
             idempotency_key=effect_key,
         )
@@ -2263,12 +2342,13 @@ class OrchestrationEngine:
             interaction_id=interaction_id,
             plan_generation=interaction_generation,
             assignment_sequence=None,
-            provider=ProviderName.OPENAI.value,
+            provider=provider.value,
             phase=ProviderInteractionPhase(phase),
             attempt=1,
             transport_evidence=evidence,
             effect_key=effect_key,
             candidate_binding_digest=candidate_binding_digest,
+            director_identity=identity,
         )
         attempted = transition_interaction(
             [drafted],
@@ -2287,9 +2367,11 @@ class OrchestrationEngine:
     def _complete_director_interaction(
         self, record: TaskRecord, *, interaction_id: str, result: object
     ):
+        previous = self._director_interaction_event(record, interaction_id)
+        self._require_current_director(record, previous.plan_generation)
         result_text = self._interaction_result_text(result)
         evidence = build_transport_evidence(
-            transport=ProviderTransport.OPENAI_RESPONSES_API,
+            transport=previous.transport_evidence.transport,
             source=TransportEvidenceSource.AUTHENTICATED_PROVIDER,
             idempotency_key=interaction_id,
             result=result_text,
@@ -2320,10 +2402,12 @@ class OrchestrationEngine:
     def _fail_director_interaction(
         self, record: TaskRecord, *, interaction_id: str, exc: Exception
     ) -> None:
+        previous = self._director_interaction_event(record, interaction_id)
         self._advance_interaction_id(
             record,
             interaction_id=interaction_id,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName(previous.provider.value),
+            transport=previous.transport_evidence.transport,
             state=ProviderInteractionState.UNKNOWN,
             source=TransportEvidenceSource.BACKEND_OBSERVATION,
             error_code=type(exc).__name__,
@@ -2632,7 +2716,7 @@ class OrchestrationEngine:
                 await self._status_post(record, f"*{task_id} — BLOCKED*\n{record.message}")
                 return
 
-            if not self.settings.openai_api_key:
+            if self._runtime_director_identity.provider == "openai" and not self.settings.openai_api_key:
                 self.store.set_status(
                     task_id,
                     TaskStatus.BLOCKED,
@@ -2944,7 +3028,7 @@ class OrchestrationEngine:
                     )
                     if (
                         review_projection.task_id != record.task_id
-                        or review_projection.provider.value != ProviderName.OPENAI.value
+                        or review_projection.provider.value != self._director_provider(record).value
                         or review_projection.assignment_sequence is not None
                         or review_projection.state != ProviderInteractionState.VERIFIED
                         or review_projection.latest_event_digest
@@ -2968,6 +3052,7 @@ class OrchestrationEngine:
                     )
                     if (
                         review_event is None
+                        or not self._director_event_matches(record, review_event)
                         or review_event.phase
                         != ProviderInteractionPhase.ACCEPTANCE_REVIEW
                     ):
@@ -3210,13 +3295,16 @@ class OrchestrationEngine:
             )
         if (
             verified_review.task_id != record.task_id
-            or verified_review.provider.value != ProviderName.OPENAI.value
+            or verified_review.provider.value != self._director_provider(record).value
+            or not self._director_event_matches(record, verified_review)
             or verified_review.assignment_sequence is not None
             or verified_review.phase != ProviderInteractionPhase.ACCEPTANCE_REVIEW
         ):
             raise CommunicationEvidenceFailure(
                 "accepted result is not bound to a Director acceptance review"
             )
+        if verified_review.director_identity is not None:
+            self._require_non_author_director(record, assignment)
         outcome = AssignmentOutcome(
             assignment_sequence=assignment.sequence,
             provider=assignment.agent,
@@ -3299,9 +3387,14 @@ class OrchestrationEngine:
             raise CommunicationEvidenceFailure(
                 "live plan lacks its Director interaction binding"
             )
+        identity = record.director_generations.get(record.plan_generation)
         return json.dumps(
             {
-                "binding_version": "director-plan-materialization-v1",
+                "binding_version": (
+                    "director-plan-materialization-v2" if identity is not None
+                    else "director-plan-materialization-v1"
+                ),
+                **({"director_identity": identity.model_dump(mode="json")} if identity is not None else {}),
                 "task_id": record.task_id,
                 "plan_generation": record.plan_generation,
                 "plan_interaction_id": record.plan_interaction_id,
@@ -3340,18 +3433,19 @@ class OrchestrationEngine:
         )
         if (
             projection.task_id != record.task_id
-            or projection.provider.value != ProviderName.OPENAI.value
+            or projection.provider.value != self._director_provider(record).value
             or projection.assignment_sequence is not None
             or projection.state != ProviderInteractionState.VERIFIED
             or projection.verified_result_digest is None
             or plan_event is None
+            or not self._director_event_matches(record, plan_event)
             or plan_event.phase != ProviderInteractionPhase.PLAN
             or plan_event.plan_generation != record.plan_generation
             or plan_event.transport_evidence.source
             != TransportEvidenceSource.AUTHENTICATED_PROVIDER
         ):
             raise CommunicationEvidenceFailure(
-                "live plan is not bound to the exact VERIFIED OpenAI plan generation"
+                "live plan is not bound to the exact VERIFIED Director plan generation"
             )
 
         if plan_event.effect_key is None:
@@ -3373,7 +3467,7 @@ class OrchestrationEngine:
             and effect.kind == "director_observation"
             and effect.phase == "plan"
             and effect.outcome == "completed"
-            and effect.provider == ProviderName.OPENAI
+            and effect.provider == self._director_provider(record)
             and effect.plan_generation == record.plan_generation
             and effect.run_id_digest is not None
             and hmac.compare_digest(
@@ -3388,13 +3482,13 @@ class OrchestrationEngine:
             and effect.kind == "director_intent"
             and effect.phase == "plan"
             and effect.outcome == "reserved"
-            and effect.provider == ProviderName.OPENAI
+            and effect.provider == self._director_provider(record)
             and effect.plan_generation in allowed_intent_generations
             for effect in record.task_effect_ledger
         )
         if len(observations) != 1 or not matching_intent:
             raise CommunicationEvidenceFailure(
-                "materialized plan changed from its exact VERIFIED OpenAI plan binding"
+                "materialized plan changed from its exact VERIFIED Director plan binding"
             )
         return projection, plan_event
 
@@ -3578,7 +3672,7 @@ class OrchestrationEngine:
         identity: object,
         estimated_cost_usd: float,
     ) -> tuple[TaskRecord, str] | None:
-        """Atomically reserve one paid OpenAI call before network I/O."""
+        """Atomically reserve one generation-bound Director call before network I/O."""
 
         if phase in {
             "debate_counter_bias",
@@ -3627,12 +3721,16 @@ class OrchestrationEngine:
                 raise EffectAlreadyClaimed(
                     "A Director planning intent already exists and must not be duplicated"
                 )
+            generation = current.plan_generation + (1 if phase == "plan" else 0)
+            if phase == "plan":
+                current.director_generations.setdefault(generation, self._runtime_director_identity)
+            self._require_current_director(current, generation)
             reserve_task_effect(
                 current,
                 effect_key=effect_key,
                 kind="director_intent",
                 phase=phase,
-                provider=ProviderName.OPENAI,
+                provider=self._director_provider(current, generation),
                 estimated_cost_usd=estimated_cost_usd,
                 hop_units=1,
                 max_task_budget_usd=self.settings.max_task_budget_usd,
@@ -3834,7 +3932,7 @@ class OrchestrationEngine:
                 "or declared material dimensions"
             )
         preference = (
-            "OpenAI recorded no preliminary preference (not a vote)."
+            f"{self._director_label(record)} recorded no preliminary preference (not a vote)."
             if initial.abstain
             else (
                 "Preliminary preference (not an advisory vote): "
@@ -3844,9 +3942,9 @@ class OrchestrationEngine:
         candidates = [
             CollaborationTurn(
                 assignment_sequence=None,
-                provider=ProviderName.OPENAI,
+                provider=self._director_provider(record),
                 phase="moderator",
-                debate_role=DebateActorRole.OPENAI_MODERATOR,
+                debate_role=self._director_debate_role(record, "moderator"),
                 correlation_id=self._generation_correlation_id(
                     record, "debate-moderator"
                 ),
@@ -3867,9 +3965,9 @@ class OrchestrationEngine:
             ),
             CollaborationTurn(
                 assignment_sequence=None,
-                provider=ProviderName.OPENAI,
+                provider=self._director_provider(record),
                 phase="position",
-                debate_role=DebateActorRole.OPENAI_PARTICIPANT,
+                debate_role=self._director_debate_role(record, "participant"),
                 correlation_id=self._generation_correlation_id(
                     record, "openai-initial-position"
                 ),
@@ -3944,13 +4042,13 @@ class OrchestrationEngine:
         for turn in turns:
             if turn.slack_message_ts is not None:
                 continue
-            if turn.debate_role == DebateActorRole.OPENAI_MODERATOR:
-                label = "OpenAI Moderator"
+            if turn.debate_role == self._director_debate_role(record, "moderator"):
+                label = f"{self._director_label(record)} Moderator"
                 suffix = (
                     "Neutral framing only; this role casts no vote and grants no authority."
                 )
             else:
-                label = "OpenAI Participant"
+                label = f"{self._director_label(record)} Participant"
                 suffix = (
                     "Independent preliminary position only; the single advisory vote is cast "
                     "after rebuttals."
@@ -4063,7 +4161,7 @@ class OrchestrationEngine:
             )
             existing = CollaborationTurn(
                 assignment_sequence=assignment.sequence,
-                provider=ProviderName.OPENAI,
+                provider=self._director_provider(record),
                 phase="delegation",
                 correlation_id=correlation_id,
                 run_id=(
@@ -4083,7 +4181,7 @@ class OrchestrationEngine:
             delivered, existing.slack_message_ts = await self._deliver_collaboration_message(
                 record,
                 (
-                    f"*[OpenAI Director] DELEGATION*\n"
+                    f"*[{self._director_label(record)} Director] DELEGATION*\n"
                     f"Assignment: {record.task_id}/{assignment.sequence}\n"
                     f"Provider: `{assignment.agent.value}` | Phase: `{assignment.discussion_phase.value}`\n"
                     f"Correlation: `{correlation_id}` | Time: {existing.recorded_at.isoformat()}\n"
@@ -4180,7 +4278,8 @@ class OrchestrationEngine:
                 )
                 if (
                     verified_review.task_id != record.task_id
-                    or verified_review.provider.value != ProviderName.OPENAI.value
+                    or verified_review.provider.value != self._director_provider(record).value
+                    or not self._director_event_matches(record, verified_review)
                     or verified_review.assignment_sequence is not None
                     or verified_review.phase
                     != ProviderInteractionPhase.ACCEPTANCE_REVIEW
@@ -4431,7 +4530,8 @@ class OrchestrationEngine:
             )
             if (
                 verified_counter_bias.task_id != record.task_id
-                or verified_counter_bias.provider.value != ProviderName.OPENAI.value
+                or verified_counter_bias.provider.value != self._director_provider(record).value
+                or not self._director_event_matches(record, verified_counter_bias)
                 or verified_counter_bias.assignment_sequence is not None
                 or verified_counter_bias.phase
                 != ProviderInteractionPhase.DEBATE_COUNTER_BIAS
@@ -4440,7 +4540,7 @@ class OrchestrationEngine:
                 != TransportEvidenceSource.AUTHENTICATED_PROVIDER
             ):
                 raise CommunicationEvidenceFailure(
-                    "counter-bias result is not exact authenticated OpenAI evidence"
+                    "counter-bias result is not exact authenticated Director evidence"
                 )
         except CommunicationEvidenceFailure as exc:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -4450,9 +4550,9 @@ class OrchestrationEngine:
             return False
         counter_turn_candidate = CollaborationTurn(
             assignment_sequence=None,
-            provider=ProviderName.OPENAI,
+            provider=self._director_provider(record),
             phase="counter_bias",
-            debate_role=DebateActorRole.OPENAI_MODERATOR,
+            debate_role=self._director_debate_role(record, "moderator"),
             correlation_id=self._generation_correlation_id(
                 record, "debate-counter-bias"
             ),
@@ -4503,7 +4603,7 @@ class OrchestrationEngine:
                 await self._deliver_collaboration_message(
                     record,
                     (
-                        f"*[OpenAI Moderator] COUNTER_BIAS*\nAssignment: {record.task_id}\n"
+                        f"*[{self._director_label(record)} Moderator] COUNTER_BIAS*\nAssignment: {record.task_id}\n"
                         f"Correlation: `{counter_turn.correlation_id}` | "
                         f"Time: {counter_turn.recorded_at.isoformat()}\n"
                         f"Position: {self._slack_safe_text(counter_turn.position)}\n"
@@ -4603,7 +4703,8 @@ class OrchestrationEngine:
             )
             if (
                 verified_synthesis.task_id != record.task_id
-                or verified_synthesis.provider.value != ProviderName.OPENAI.value
+                or verified_synthesis.provider.value != self._director_provider(record).value
+                or not self._director_event_matches(record, verified_synthesis)
                 or verified_synthesis.assignment_sequence is not None
                 or verified_synthesis.phase
                 != ProviderInteractionPhase.DEBATE_SYNTHESIS
@@ -4624,7 +4725,7 @@ class OrchestrationEngine:
             return False
         if synthesis.openai_vote_option not in debate.vote_options and not synthesis.openai_abstains:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
-            record.message = "OpenAI synthesis selected an unconfigured debate option"
+            record.message = "Director synthesis selected an unconfigured debate option"
             self.store.save(record)
             return False
         assignments_by_sequence = {
@@ -4633,15 +4734,19 @@ class OrchestrationEngine:
         valid_discussion_sequences = set(
             debate.position_assignments + debate.rebuttal_assignments
         )
+        seatable_members = set(
+            team_operating_charter()["committee"]["debate"]["seatable_members"]
+        )
+        # Advisory seats are independent of worker registration or dispatch
+        # authority. Only already verified, assigned contributions below vote.
         eligible_participants = {
-            ProviderName.CLAUDE,
-            ProviderName.CURSOR,
-            ProviderName.GROK,
-            ProviderName.GEMINI,
+            provider for provider in ProviderName
+            if self._committee_member(provider) in seatable_members
+            and provider != self._director_provider(record)
         }
         latest_by_provider: dict[ProviderName, CollaborationTurn] = {}
         for turn in record.collaboration_turns:
-            if turn.provider == ProviderName.OPENAI or turn.phase not in {
+            if turn.debate_role is not None or turn.phase not in {
                 "position",
                 "rebuttal",
             }:
@@ -4716,7 +4821,8 @@ class OrchestrationEngine:
                 )
                 if (
                     verified_review.task_id != record.task_id
-                    or verified_review.provider.value != ProviderName.OPENAI.value
+                    or verified_review.provider.value != self._director_provider(record).value
+                    or not self._director_event_matches(record, verified_review)
                     or verified_review.assignment_sequence is not None
                     or verified_review.phase
                     != ProviderInteractionPhase.ACCEPTANCE_REVIEW
@@ -4829,7 +4935,7 @@ class OrchestrationEngine:
             )
         votes.append(
             AdvisoryVote(
-                member="openai",
+                member=self._director_provider(record).value,
                 disposition="abstain" if synthesis.openai_abstains else "vote",
                 option=synthesis.openai_vote_option,
                 rationale=synthesis.rationale,
@@ -4846,7 +4952,8 @@ class OrchestrationEngine:
         record.debate_tally = tally.model_dump(mode="json")
         tie_judgment = None
         verified_tie_judgment = None
-        if tally.resolution == "openai_director_judgment":
+        # These are persisted charter resolution names, not execution identities.
+        if tally.resolution in {"openai_director_judgment", "claude_director_judgment"}:
             if record.debate_tie_judgment is None:
                 # The reservation below is a CAS reload. Persist the exact tally
                 # first so the reloaded task cannot silently drop the vote result.
@@ -4932,7 +5039,8 @@ class OrchestrationEngine:
                 if (
                     verified_tie_judgment.task_id != record.task_id
                     or verified_tie_judgment.provider.value
-                    != ProviderName.OPENAI.value
+                    != self._director_provider(record).value
+                    or not self._director_event_matches(record, verified_tie_judgment)
                     or verified_tie_judgment.assignment_sequence is not None
                     or verified_tie_judgment.phase
                     != ProviderInteractionPhase.DEBATE_TIE_JUDGMENT
@@ -4990,16 +5098,16 @@ class OrchestrationEngine:
             self._interaction_result_text(synthesis)
         )
         vote_position = (
-            "OpenAI Participant abstained from the advisory vote."
+            f"{self._director_label(record)} Participant abstained from the advisory vote."
             if synthesis.openai_abstains
-            else f"OpenAI Participant cast its one advisory vote for {synthesis.openai_vote_option}."
+            else f"{self._director_label(record)} Participant cast its one advisory vote for {synthesis.openai_vote_option}."
         )
         turn_candidates = [
             CollaborationTurn(
                 assignment_sequence=None,
-                provider=ProviderName.OPENAI,
+                provider=self._director_provider(record),
                 phase="rebuttal",
-                debate_role=DebateActorRole.OPENAI_PARTICIPANT,
+                debate_role=self._director_debate_role(record, "participant"),
                 correlation_id=self._generation_correlation_id(
                     record, "openai-final-vote"
                 ),
@@ -5019,9 +5127,9 @@ class OrchestrationEngine:
             ),
             CollaborationTurn(
                 assignment_sequence=None,
-                provider=ProviderName.OPENAI,
+                provider=self._director_provider(record),
                 phase="synthesis",
-                debate_role=DebateActorRole.OPENAI_DIRECTOR,
+                debate_role=self._director_debate_role(record, "director"),
                 correlation_id=self._generation_correlation_id(
                     record, "debate-synthesis"
                 ),
@@ -5043,9 +5151,9 @@ class OrchestrationEngine:
             turn_candidates.append(
                 CollaborationTurn(
                     assignment_sequence=None,
-                    provider=ProviderName.OPENAI,
+                    provider=self._director_provider(record),
                     phase="tie_judgment",
-                    debate_role=DebateActorRole.OPENAI_DIRECTOR,
+                    debate_role=self._director_debate_role(record, "director"),
                     correlation_id=self._generation_correlation_id(
                         record, "debate-tie-judgment"
                     ),
@@ -5113,16 +5221,16 @@ class OrchestrationEngine:
         self.store.save(record)
 
         labels = {
-            "rebuttal": "OpenAI Participant",
-            "synthesis": "OpenAI Director",
-            "tie_judgment": "OpenAI Director",
+            "rebuttal": f"{self._director_label(record)} Participant",
+            "synthesis": f"{self._director_label(record)} Director",
+            "tie_judgment": f"{self._director_label(record)} Director",
         }
         for turn in final_turns:
             if turn.slack_message_ts is not None or not record.collaboration_thread_ts:
                 continue
             if turn.phase == "rebuttal":
                 details = (
-                    "Exactly one OpenAI advisory vote at the configured 2.0 weight; no authority."
+                    f"Exactly one {self._director_label(record)} advisory vote at its configured weight; no authority."
                 )
             elif turn.phase == "tie_judgment":
                 details = (
@@ -5180,7 +5288,7 @@ class OrchestrationEngine:
                 assignment_sequence=max(
                     (item.sequence for item in record.plan.assignments), default=1
                 ),
-                provider=ProviderName.OPENAI,
+                provider=self._director_provider(record),
                 phase="completion",
                 correlation_id=correlation_id,
                 run_id="openai-director-completion",
@@ -5198,7 +5306,7 @@ class OrchestrationEngine:
             delivered, existing.slack_message_ts = await self._deliver_collaboration_message(
                 record,
                 (
-                    f"*[OpenAI Director] COMPLETION*\nAssignment: {record.task_id}\n"
+                    f"*[{self._director_label(record)} Director] COMPLETION*\nAssignment: {record.task_id}\n"
                     f"Correlation: `{correlation_id}` | Time: {existing.recorded_at.isoformat()}\n"
                     f"{existing.position}\nEvidence: {'; '.join(existing.evidence)}\n"
                     "GitHub and deterministic records remain the source of truth for code, review, CI, and merge."
@@ -5905,7 +6013,8 @@ class OrchestrationEngine:
                 )
                 if (
                     verified_review.task_id != record.task_id
-                    or verified_review.provider.value != ProviderName.OPENAI.value
+                    or verified_review.provider.value != self._director_provider(record).value
+                    or not self._director_event_matches(record, verified_review)
                     or verified_review.assignment_sequence is not None
                     or verified_review.phase
                     != ProviderInteractionPhase.ACCEPTANCE_REVIEW
@@ -6273,6 +6382,7 @@ class OrchestrationEngine:
             return await self._finalize_debate(record, assignment)
 
         record.status = TaskStatus.REVIEWING
+        self._require_non_author_director(record, assignment)
         self.store.save(record)
         review_identity = {
             "assignment": assignment_approval_digest(assignment),
@@ -6637,6 +6747,7 @@ class OrchestrationEngine:
                 "run": self._result_digest(revised),
                 "revision_count": record.revision_count,
             }
+            self._require_non_author_director(record, assignment)
             reservation = self._reserve_director_effect(
                 record,
                 phase="acceptance_review",
@@ -6879,3 +6990,7 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

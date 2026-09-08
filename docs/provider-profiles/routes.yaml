@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Director provider route catalog (director-provider-routes/v1).
@@ -17,9 +19,9 @@ lanes: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github
 
 endpoints:
   - id: "openai"
-    description: "OpenAI lane: Director control plane plus separately assigned production."
+    description: "OpenAI lane: Codex/ChatGPT engineering support and eligible review; legacy runtime identity retained."
   - id: "claude"
-    description: "Claude lane: full-spectrum primary, Chief Programmer."
+    description: "Claude lane: acting project Director and explicitly gated native Director adapter."
   - id: "cursor"
     description: "Cursor lane: full-spectrum primary, Project Secretary."
   - id: "grok"
@@ -35,7 +37,7 @@ endpoints:
   - id: "microsoft-365-copilot"
     description: "Microsoft 365 Copilot lane: blocked pending Work IQ capability evidence."
   - id: "director"
-    description: "The OpenAI-backed Director control plane inside the orchestrator."
+    description: "The runtime Director control plane; executing provider is recorded separately from Claude project leadership."
   - id: "owner"
     description: "The human owner, reached only through Slack and signed owner commands."
   - id: "slack_thread"
@@ -54,6 +56,28 @@ endpoints:
     description: "Every provider lane at once; used only by the prohibited peer rule."
 
 routes:
+  - route_id: "claude-director-injected-native-packet"
+    name: "Claude Director injected native packet seam"
+    kind: "mediated"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "claude" }
+    providers_involved: [claude]
+    carries:
+      - "one typed, effect-free Director request bound to an authorized work packet"
+    withheld_context:
+      - "credentials, unrelated repository material, and external write authority"
+    authority: "none"
+    status: "proposed"
+    default_config_state: "blocked"
+    charter_basis:
+      - document: "docs/project-leadership.md"
+        anchor: "Selecting Claude with an unavailable transport must stop"
+    enforced_by: []
+    prohibition_quote: null
+    config: [CLAUDE_DIRECTOR_ENABLED]
+    notes: "Only the typed adapter is implemented. No production transport, binder, or authenticator is supplied or enrolled. Integrators must prove packet deadlines, native process-tree cleanup, identity, budget, and ambiguous-attempt reconciliation. This seam does not inherit the distinct LangGraph Windows host bridge's authorization, signed challenge, claim store, configuration, or readiness."
+
   # ------------------------------------------------------------------ mediated
   - route_id: "work-packet-dispatch"
     name: "Work packet dispatch"
@@ -986,3 +1010,5 @@ provider_to_provider_rule:
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

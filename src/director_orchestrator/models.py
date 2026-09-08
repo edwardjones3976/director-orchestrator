@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -35,7 +37,7 @@ from pydantic import (
     model_validator,
 )
 
-from .interactions import ProviderInteractionEvent
+from .interactions import DirectorIdentity, ProviderInteractionEvent
 from .workload_policy import WorkSize
 
 
@@ -169,6 +171,9 @@ class DebateActorRole(StrEnum):
     OPENAI_MODERATOR = "openai_moderator"
     OPENAI_PARTICIPANT = "openai_participant"
     OPENAI_DIRECTOR = "openai_director"
+    CLAUDE_MODERATOR = "claude_moderator"
+    CLAUDE_PARTICIPANT = "claude_participant"
+    CLAUDE_DIRECTOR = "claude_director"
 
 
 class MaterialDecisionDimension(StrEnum):
@@ -960,6 +965,9 @@ class TaskRecord(BaseModel):
     # Monotonically increases whenever the engine installs a newly generated
     # plan. Slack approval buttons bind to this generation and the plan digest.
     plan_generation: int = Field(default=0, ge=0)
+    # Append only when an authenticated planning generation is reserved. Missing
+    # historical entries mean OpenAI; current settings never supply their identity.
+    director_generations: dict[int, DirectorIdentity] = Field(default_factory=dict)
     provider_runs: list[ProviderRun] = Field(default_factory=list)
     assignment_outcomes: list[AssignmentOutcome] = Field(default_factory=list)
     provider_run_history: list[OpaqueEvidenceDigest] = Field(
@@ -1241,3 +1249,5 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

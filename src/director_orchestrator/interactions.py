@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
@@ -83,6 +85,7 @@ class ProviderTransport(StrEnum):
     DIRECTOR_BACKEND = "director_backend"
     OPENAI_RESPONSES_API = "openai_responses_api"
     CLAUDE_ROUTINE = "claude_routine"
+    CLAUDE_NATIVE_HOST = "claude_native_host"
     CLAUDE_CALLBACK = "claude_callback"
     CURSOR_AGENTS_API = "cursor_agents_api"
     GEMINI_INTERACTIONS_API = "gemini_interactions_api"
@@ -100,6 +103,27 @@ class TransportEvidenceSource(StrEnum):
     OWNER_ATTESTED = "owner_attested"
     UNVERIFIED = "unverified"
     SIMULATION = "simulation"
+
+
+class DirectorIdentity(BaseModel):
+    """Prospective generation identity; a leadership role grants no execution rights."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    acting_project_director: Literal["claude"] = "claude"
+    provider: Literal["openai", "claude"]
+    transport: ProviderTransport
+    model_name: str = Field(min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_transport(self) -> DirectorIdentity:
+        expected = {
+            "openai": ProviderTransport.OPENAI_RESPONSES_API,
+            "claude": ProviderTransport.CLAUDE_NATIVE_HOST,
+        }[self.provider]
+        if self.transport != expected:
+            raise ValueError("Director provider and transport identity disagree")
+        return self
 
 
 TERMINAL_INTERACTION_STATES = frozenset(
@@ -326,7 +350,7 @@ class ProviderInteractionEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    event_version: Literal["v1", "v2"] = "v2"
+    event_version: Literal["v1", "v2", "v3"] = "v2"
     task_id: str = Field(min_length=1, max_length=255)
     interaction_id: str = Field(min_length=1, max_length=255)
     plan_generation: int = Field(ge=0)
@@ -346,6 +370,7 @@ class ProviderInteractionEvent(BaseModel):
         default_factory=tuple, max_length=20
     )
     transport_evidence: ProviderTransportEvidence
+    director_identity: DirectorIdentity | None = None
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_digest: str = Field(pattern=_DIGEST_PATTERN)
 
@@ -371,6 +396,15 @@ class ProviderInteractionEvent(BaseModel):
 
     @model_validator(mode="after")
     def validate_candidate_and_request_bindings(self) -> ProviderInteractionEvent:
+        if self.event_version == "v3":
+            if self.director_identity is None or (
+                self.director_identity.provider != self.provider.value
+                or self.director_identity.transport != self.transport_evidence.transport
+                or self.assignment_sequence is not None
+            ):
+                raise ValueError("v3 Director event requires exact executing role identity")
+        elif self.director_identity is not None:
+            raise ValueError("historical interaction versions cannot acquire Director identity")
         if self.event_version == "v1" and (
             self.candidate_binding_digest is not None
             or self.request_payload_digest is not None
@@ -394,6 +428,8 @@ class ProviderInteractionEvent(BaseModel):
 
     def canonical_payload(self) -> dict[str, Any]:
         excluded = {"event_digest"}
+        if self.event_version != "v3":
+            excluded.add("director_identity")
         if self.event_version == "v1":
             excluded.update(
                 {
@@ -444,9 +480,11 @@ def _event_payload(
     consumed_artifact_digests: tuple[str, ...],
     transport_evidence: ProviderTransportEvidence,
     recorded_at: datetime,
+    director_identity: DirectorIdentity | None = None,
 ) -> dict[str, Any]:
     return {
-        "event_version": "v2",
+        "event_version": "v3" if director_identity is not None else "v2",
+        "director_identity": director_identity,
         "task_id": task_id,
         "interaction_id": interaction_id,
         "plan_generation": plan_generation,
@@ -490,6 +528,7 @@ def start_interaction(
     request_payload: str | bytes | None = None,
     consumed_artifact_digests: Iterable[str] = (),
     recorded_at: datetime | None = None,
+    director_identity: DirectorIdentity | None = None,
 ) -> ProviderInteractionEvent:
     if transport_evidence.source != TransportEvidenceSource.BACKEND_OBSERVATION:
         raise CommunicationEvidenceFailure(
@@ -514,6 +553,7 @@ def start_interaction(
     return _build_event(
         **_event_payload(
             task_id=task_id,
+            director_identity=director_identity,
             interaction_id=interaction_id,
             plan_generation=plan_generation,
             assignment_sequence=assignment_sequence,
@@ -575,6 +615,7 @@ def _validated_events(
             "candidate_binding_digest",
             "request_payload_digest",
             "consumed_artifact_digests",
+            "director_identity",
         ):
             if getattr(event, field) != getattr(previous, field):
                 raise CommunicationEvidenceFailure(
@@ -647,6 +688,7 @@ def transition_interaction(
     return _build_event(
         **_event_payload(
             task_id=previous.task_id,
+            director_identity=previous.director_identity,
             interaction_id=previous.interaction_id,
             plan_generation=previous.plan_generation,
             assignment_sequence=previous.assignment_sequence,
@@ -754,9 +796,24 @@ def require_verified_result(
     return verified
 
 
+def director_evidence_matches(
+    event: ProviderInteractionEvent, identity: DirectorIdentity | None
+) -> bool:
+    """Never reinterpret historical evidence using the current provider setting."""
+    if identity is None:
+        return event.provider == InteractionProvider.OPENAI and event.director_identity is None
+    return (
+        event.director_identity == identity
+        and event.provider.value == identity.provider
+        and event.transport_evidence.transport == identity.transport
+    )
+
+
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:17 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:30 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:12 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

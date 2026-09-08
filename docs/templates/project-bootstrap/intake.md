@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | BEGIN]] -->
@@ -75,17 +77,17 @@ Mark each `enabled`, `optional`, `disabled`, or `unknown`.
 Canonical provider roles, debate rules, and committee weights:
 [`docs/team-operating-charter.md`](../../team-operating-charter.md). Record the
 project-local eight responsibility areas and the Cursor, Antigravity,
-Perplexity, and OpenAI boundaries in
-[`provider-roles-contract.yaml`](provider-roles-contract.yaml); keep OpenAI's
+Perplexity, Claude, and OpenAI boundaries in
+[`provider-roles-contract.yaml`](provider-roles-contract.yaml); keep the acting Director's
 three canonical functions distinct — Moderator, Participant, and Director.
-Only Participant votes, casting the single existing OpenAI advisory vote at
+Only Participant votes, casting the single existing Claude advisory vote at
 weight 2.0; Moderator and Director never vote. Coordination, planning, and
 acceptance review are Director duties, not separate functions.
 
 | Lane | Provider/capability | Shared workflow skill | Why it may fit |
 | --- | --- | --- | --- |
-| Director | OpenAI | none | <Moderator, Participant, and Director kept distinct; only Participant votes> |
-| Primary | <Claude, Cursor, or Grok> | <skill name or none> | <bounded contribution> |
+| Acting project Director | Claude | none | <Moderator, Participant, and Director kept distinct; only Participant votes> |
+| Primary | <OpenAI/Codex, Cursor, or Grok> | <skill name or none> | <bounded contribution> |
 | Independent | <different provider> | <skill name or none> | <research, reproduction, QA, or review> |
 | Supplemental | <Antigravity, Perplexity, Firecrawl, or none> | <skill name or none> | <bounded contribution> |
 
@@ -94,6 +96,10 @@ discovered in the active catalog and compatible with the provider's existing
 contract. A skill may narrow procedure or strengthen evidence; it cannot widen
 repository access, data exposure, budget, review eligibility, or external-action
 authority.
+
+The deployed runtime Director remains OpenAI Responses until an explicitly enabled,
+validated Claude adapter is selected. Project leadership does not activate it or
+relabel historical provider calls.
 
 ## First reversible move
 
@@ -123,3 +129,5 @@ changes authority, scope, cost, privacy, repository target, or risk.
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 22:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->

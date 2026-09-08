@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
@@ -44,6 +46,7 @@ from .interactions import (
     append_interaction_event,
     canonical_content_digest,
     canonical_identifier_digest,
+    director_evidence_matches,
     project_interaction,
 )
 from .models import (
@@ -2063,7 +2066,11 @@ class TaskStore:
             review_binding_valid = (
                 review_event is not None
                 and review_projection.task_id == record.task_id
-                and review_projection.provider is InteractionProvider.OPENAI
+                and director_evidence_matches(
+                    review_event, record.director_generations.get(record.plan_generation)
+                )
+                and (review_event.director_identity is None
+                     or review_event.provider.value != outcome.provider.value)
                 and review_projection.assignment_sequence is None
                 and review_projection.state is ProviderInteractionState.VERIFIED
                 and review_projection.latest_event_digest
@@ -2291,6 +2298,7 @@ class TaskStore:
                 raise StaleTaskWrite(
                     "Task changed after this snapshot was loaded; stale write rejected"
                 )
+            self._validate_director_generation_write(row["record_json"], record)
             record.updated_at = datetime.now(timezone.utc)
             replacement_json = self._record_json_without_effect_projection(record)
             self._mark_cleanup_for_rewrite(
@@ -2358,6 +2366,7 @@ class TaskStore:
             self._require_effect_migration(row)
             record = self._record_from_row(connection, row)
             mutator(record)
+            self._validate_director_generation_write(row["record_json"], record)
             if gateway_nonce_digest is not None:
                 if gateway_nonce_expires_at is None:
                     raise ValueError("Gateway nonce expiry is required")
@@ -2408,6 +2417,21 @@ class TaskStore:
             record._store_version = expected_version + 1
         self._attempt_privacy_cleanup()
         return record
+
+    @staticmethod
+    def _validate_director_generation_write(previous_json: str, record: TaskRecord) -> None:
+        previous = TaskStore._task_record_from_persisted_json(previous_json)
+        for generation, identity in previous.director_generations.items():
+            if record.director_generations.get(generation) != identity:
+                raise CommunicationEvidenceFailure("Persisted Director generation identity is immutable")
+        for generation in record.director_generations.keys() - previous.director_generations.keys():
+            if generation != previous.plan_generation + 1:
+                raise CommunicationEvidenceFailure("Director identity cannot backfill historical generations")
+        for event in record.provider_interaction_ledger:
+            if event.director_identity is not None and not director_evidence_matches(
+                event, record.director_generations.get(event.plan_generation)
+            ):
+                raise CommunicationEvidenceFailure("Director event differs from its persisted generation identity")
 
     def list_task_effects(self, task_id: str) -> list[TaskEffectEvidence]:
         with self._lock, self._connect() as connection:
@@ -3881,3 +3905,5 @@ class TaskStore:
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

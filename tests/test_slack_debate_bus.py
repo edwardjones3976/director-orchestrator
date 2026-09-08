@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | BEGIN]]
@@ -2258,7 +2259,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(completed.status, TaskStatus.DONE, completed.error)
             self.assertEqual(completed.collaboration_thread_ts, "1700000000.000001")
             self.assertEqual(len(completed.collaboration_turns), 14)
-            self.assertEqual(completed.debate_tally["option_weights"], {"A": 2.5, "B": 3.5})
+            self.assertEqual(completed.debate_tally["option_weights"], {"A": 2.0, "B": 4.0})
             self.assertFalse(completed.debate_tally["authorizes_external_action"])
             self.assertIsNotNone(completed.debate_counter_bias)
             self.assertNotEqual(
@@ -2794,3 +2795,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:19 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:16 UTC | END]]

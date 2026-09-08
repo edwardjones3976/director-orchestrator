@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-06 | 00:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -427,7 +430,7 @@ class ProviderRoleHandoffTests(unittest.TestCase):
             handoff = json.loads(engine._handoff_context(record, assignment))
 
         self.assertEqual(handoff["provider_identity"]["provider"], "claude")
-        self.assertEqual(handoff["provider_identity"]["standing_role"], "Chief Programmer")
+        self.assertEqual(handoff["provider_identity"]["standing_role"], "Director")
         self.assertIn("human-visible", handoff["contribution_attribution"])
         self.assertIn("Do not put tags inside JSON", handoff["contribution_attribution"])
 
@@ -442,8 +445,8 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             encoding="utf-8"
         )
         for expected in (
-            "| OpenAI / Codex production | 30% | 35% | 25% | 30% |",
-            "| Claude | 25% | 30% | 20% | 25% |",
+            "| OpenAI / Codex production | 25% | 40% | 20% | 25% |",
+            "| Claude | 30% | 25% | 25% | 30% |",
             "| Cursor | 10% | 15% | 5% | 5% |",
             "| Grok | 10% | 10% | 5% | 5% |",
             "| Gemini / Antigravity | 5% | 10% | 5% | 5% |",
@@ -535,7 +538,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         )
         self.assertIn("create no code authorship", prompt)
         self.assertIn(
-            "Never infer OpenAI logical production, material authorship, or "
+            "Never infer acting Director logical production, material authorship, or "
             "co-authorship from control-plane activity alone",
             prompt,
         )
@@ -553,7 +556,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             prompt,
         )
         self.assertIn(
-            "removes OpenAI/Director reviewer and merge independence for that "
+            "removes OpenAI reviewer and merge independence for that "
             "candidate",
             prompt,
         )
@@ -1559,3 +1562,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-06 | 00:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

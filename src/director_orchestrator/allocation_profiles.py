@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 """Owner-approved allocation authority; subscription multipliers are capacity signals."""
 from types import MappingProxyType
@@ -9,10 +12,10 @@ LANES = ("openai", "claude", "cursor", "grok", "antigravity", "perplexity", "fir
 ALLOCATION_PROFILES = MappingProxyType({
     name: MappingProxyType(dict(zip(LANES, weights, strict=True)))
     for name, weights in {
-        "mixed": (30,25,10,10,5,5,5,5,5),
-        "engineering": (35,30,15,10,10,0,0,0,0),
-        "public_research": (25,20,5,5,5,25,15,0,0),
-        "enterprise": (30,25,5,5,5,0,5,10,15),
+        "mixed": (25,30,10,10,5,5,5,5,5),
+        "engineering": (40,25,15,10,10,0,0,0,0),
+        "public_research": (20,25,5,5,5,25,15,0,0),
+        "enterprise": (25,30,5,5,5,0,5,10,15),
     }.items()
 })
 
@@ -31,3 +34,6 @@ def allocation_profile_digest(profile: str = DEFAULT_ALLOCATION_PROFILE) -> str:
 def canonical_allocation_lane(lane: str) -> str:
     return {"external_openai": "openai", "gemini": "antigravity"}.get(lane, lane)
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]

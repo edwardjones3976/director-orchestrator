@@ -35,7 +35,7 @@
     },
     "providerTransportEnum": {
       "type": "string",
-      "enum": ["director_backend", "openai_responses_api", "claude_routine", "claude_callback", "cursor_agents_api", "gemini_interactions_api", "xai_responses_api", "grok_cli", "perplexity_api", "slack", "manual_owner", "simulation"]
+      "enum": ["director_backend", "openai_responses_api", "claude_routine", "claude_native_host", "claude_callback", "cursor_agents_api", "gemini_interactions_api", "xai_responses_api", "grok_cli", "perplexity_api", "slack", "manual_owner", "simulation"]
     },
     "allocationProfileId": { "type": "string", "enum": ["mixed", "engineering", "public_research", "enterprise"] },
     "envName": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,79}$" },
@@ -59,6 +59,7 @@
             "README.md",
             "prompts/director-system.md",
             "docs/team-operating-charter.md",
+            "docs/project-leadership.md",
             "docs/provider-setup.md",
             "docs/provider-allocation-profiles.md",
             "docs/slack-collaboration-bus.md",
@@ -309,6 +310,9 @@
                   }
                 }
               ]
+            },
+            "director_functions": {
+              "$ref": "#/$defs/profileDocument/properties/roles/properties/openai_functions"
             },
             "openai_functions": {
               "oneOf": [
