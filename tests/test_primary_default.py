@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -28,7 +29,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -436,6 +437,46 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         self.assertTrue(captured["effect_executor"].ready)
         self.assertIsNotNone(activation.application)
 
+        # Exercise the production closure, not a reconstruction of its order.
+        # Stop at the real reservation entrypoint before any transport executes.
+        assignment = SimpleNamespace(sequence=1)
+        record = SimpleNamespace(task_id="startup-task", plan=SimpleNamespace(assignments=[assignment]))
+        reservation = SimpleNamespace(task_id=record.task_id, sequence=1,
+                                      assignment_id="startup-assignment", provider_id="claude")
+        packet = {"task_id": record.task_id, "project": "default",
+                  "idempotency_key": "startup-key", "limits": {"budget_usd": 0.01, "timeout_seconds": 30}}
+        services = activation.services
+        services._record = Mock(return_value=record)
+        services._packet_router._assignment_id = Mock(return_value=reservation.assignment_id)
+        services._packet_router.planned_work_packet = Mock(return_value=packet)
+        handle.claim_store.current_task_writer = Mock(return_value=SimpleNamespace(
+            engine_owner="langgraph", owner_token=settings.langgraph_primary_owner_token,
+            lease_live=True, fencing_generation=1))
+        handle.claim_store.record_work_packet_artifact = Mock(
+            return_value=SimpleNamespace(document_digest=document_digest(packet)))
+        provider_activation.provider_ready = Mock(return_value=True)
+        admission = object()
+        dependencies.monetary_admissions = SimpleNamespace(
+            admissions=Mock(return_value={"budget_admission": admission}))
+        activation.coordinator.reserve_provider_attempt = Mock(side_effect=RuntimeError("reservation boundary"))
+        dependencies.adapter_for_format = Mock(side_effect=AssertionError("unexpected provider I/O"))
+        dispatch = activation.application._parallel_dispatcher
+        with patch("director_orchestrator.primary_default._assignment_provider_lane", return_value="claude"), patch(
+                "director_orchestrator.primary_default.validate_packet", side_effect=lambda _kind, value: value):
+            with self.assertRaisesRegex(RuntimeError, "reservation boundary"):
+                dispatch(reservation)
+            self.assertIs(admission, activation.coordinator.reserve_provider_attempt.call_args.kwargs["budget_admission"])
+            self.assertTrue(activation.coordinator.reserve_provider_attempt.call_args.kwargs["paid_execution"])
+            activation.coordinator.reserve_provider_attempt.reset_mock()
+            dependencies.monetary_admissions.admissions.side_effect = ValueError("authority mismatched")
+            self.assertEqual(ParallelAssignmentStatus.FAILED, dispatch(reservation).status)
+            dependencies.monetary_admissions = None
+            self.assertEqual(ParallelAssignmentStatus.FAILED, dispatch(reservation).status)
+            provider_activation.provider_ready.return_value = False
+            self.assertEqual(ParallelAssignmentStatus.FAILED, dispatch(reservation).status)
+        activation.coordinator.reserve_provider_attempt.assert_not_called()
+        dependencies.adapter_for_format.assert_not_called()
+
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
         with self.assertRaisesRegex(ValueError, "exactly match"):
@@ -596,6 +637,45 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                 handle=None,  # type: ignore[arg-type]
                 services=None,  # type: ignore[arg-type]
             )
+
+
+class PrimaryMonetaryStartupTests(unittest.TestCase):
+    @staticmethod
+    def configured(handle, schema, *, dsn=TEST_DSN, key_override=None, enabled=True):
+        from tests import test_entitlement_control_plane as fixtures
+        settings = replace(
+            Settings(), entitlement_control_plane_enabled=enabled,
+            entitlement_postgres_dsn_file="dsn-reference",
+            entitlement_postgres_schema=schema,
+            entitlement_trusted_verifier_secret_file="install-reference",
+            entitlement_route_verifier_secret_file="route-reference",
+            entitlement_owner_authority_secret_file="owner-reference",
+            entitlement_allow_insecure_local_postgres=True,
+            langgraph_primary_allow_insecure_local_postgres=True,
+            langgraph_primary_postgres_schema=schema,
+        )
+        values = {"": "", "dsn-reference": dsn,
+                  "install-reference": fixtures.VERIFIER_SECRET.decode(),
+                  "route-reference": fixtures.ROUTE_SECRET.decode(),
+                  "owner-reference": fixtures.OWNER_SECRET.decode()}
+        values.update(key_override or {})
+        with patch("director_orchestrator.primary_default.read_protected_delegated_token_file",
+                   side_effect=lambda path: values[path]), patch(
+            "director_orchestrator.primary_default.discover_local_primary_command_transports",
+            return_value=({}, {})), patch(
+            "director_orchestrator.primary_default.build_graph_native_packet_adapters",
+            return_value={}), patch("director_orchestrator.primary_roster.core_inventory_ready",
+                                   return_value=True):
+            return build_automatic_primary_live_dependencies(settings, handle, None)
+
+    def test_missing_authority_cannot_construct_live_dependencies(self):
+        with self.assertRaisesRegex(ValueError, "requires entitlement authority"):
+            self.configured(None, "startup_test_v1", enabled=False)
+
+    def test_mismatched_database_cannot_construct_live_dependencies(self):
+        with self.assertRaisesRegex(ValueError, "primary database identity"):
+            self.configured(SimpleNamespace(storage_identity="other"), "startup_test_v1",
+                            dsn="host=127.0.0.1 port=55450 dbname=test user=test sslmode=disable")
 
 
 class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
@@ -1092,6 +1172,52 @@ class DefaultPrimaryPinnedAuthorityTests(unittest.TestCase):
 
 
 class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
+    def test_automatic_monetary_startup_reserves_signed_budget_before_io(self):
+        from datetime import datetime, timezone
+        from director_orchestrator.antigravity_team import TeamAuthorizationError
+        from tests import test_entitlement_control_plane as fixtures
+        from tests.test_paid_launch_monetary import provider_budget
+
+        dependencies = PrimaryMonetaryStartupTests.configured(self.handle, self.schema)
+        admissions = dependencies.monetary_admissions
+        self.assertIs(admissions.pool, self.handle.pool)
+        self.assertIs(admissions.authority.entitlements._pool, self.handle.pool)
+        budget = provider_budget("startup-funded", day=datetime.now(timezone.utc), campaign_id=None)
+        with self.handle.pool.connection() as connection, connection.transaction():
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest,document) VALUES(%s,%s::jsonb)",
+                (budget.grant_digest, budget.model_dump_json()))
+        packet = {"task_id": budget.task_id, "project": budget.project_id}
+        provider_io = []
+
+        def attempt(resolver, task_packet, attempt_digest):
+            admission = resolver.admissions("claude", task_packet)["budget_admission"]
+            with self.handle.pool.connection() as connection, connection.transaction():
+                admission.admit(connection, task_id=task_packet["task_id"], provider="claude",
+                                attempt_digest=attempt_digest)
+            provider_io.append(task_packet["task_id"])
+
+        with self.assertRaises(TeamAuthorizationError):
+            attempt(admissions, {**packet, "task_id": "unfunded"}, "a" * 64)
+        changed_owner = PrimaryMonetaryStartupTests.configured(
+            self.handle, self.schema,
+            key_override={"owner-reference": fixtures.OWNER_SECRET.decode()[::-1]})
+        with self.assertRaises(TeamAuthorizationError):
+            attempt(changed_owner.monetary_admissions, packet, "b" * 64)
+        self.assertEqual([], provider_io)
+        with self.handle.pool.connection() as connection:
+            self.assertEqual(0, connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.director_primary_provider_spend").fetchone()["n"])
+        attempt(admissions, packet, "c" * 64)
+        self.assertEqual([budget.task_id], provider_io)
+        with self.handle.pool.connection() as connection:
+            self.assertEqual(budget.attempt_reservation_microusd, connection.execute(
+                f"SELECT reserved_microusd FROM {self.schema}.director_primary_provider_spend WHERE attempt_digest=%s",
+                ("c" * 64,)).fetchone()["reserved_microusd"])
+        with self.assertRaisesRegex(RuntimeError, "cryptographically separated"):
+            PrimaryMonetaryStartupTests.configured(self.handle, self.schema,
+                key_override={"owner-reference": fixtures.ROUTE_SECRET.decode()})
+
     @classmethod
     def setUpClass(cls) -> None:
         if not TEST_DSN:
@@ -2724,3 +2850,5 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:10 UTC | END]]

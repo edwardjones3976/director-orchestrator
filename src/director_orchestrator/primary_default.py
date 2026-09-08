@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -812,6 +813,48 @@ def build_primary_packet_result_resolver(
     return packet_result
 
 
+def _configured_primary_monetary_admissions(settings: Settings, handle):
+    """Bind protected authority to the already-owned primary database pool."""
+    from psycopg.conninfo import conninfo_to_dict
+    from .antigravity_team import PrimaryMonetaryAdmissions, PrimaryProviderBudgetAuthority
+    from .entitlement_control_plane import (
+        EntitlementStoreHandle, entitlement_store_from_handle,
+        _storage_identity as entitlement_storage_identity,
+    )
+    from .langgraph_postgres import _parse_connection_target, _storage_identity
+
+    if not settings.entitlement_control_plane_enabled:
+        raise ValueError("live primary monetary admission requires entitlement authority")
+    dsn = read_protected_delegated_token_file(settings.entitlement_postgres_dsn_file)
+    parsed = _parse_connection_target(
+        dsn, conninfo_to_dict=conninfo_to_dict,
+        allow_insecure_local_transport=(
+            settings.entitlement_allow_insecure_local_postgres
+            and settings.langgraph_primary_allow_insecure_local_postgres
+        ),
+    )
+    if _storage_identity(parsed, schema=settings.langgraph_primary_postgres_schema) != handle.storage_identity:
+        raise ValueError("monetary authority must use the primary database identity")
+    entitlement_handle = EntitlementStoreHandle(
+        pool=handle.pool,
+        schema=settings.entitlement_postgres_schema,
+        storage_identity=entitlement_storage_identity(parsed, schema=settings.entitlement_postgres_schema),
+        trusted_verifier_secret=read_protected_delegated_token_file(
+            settings.entitlement_trusted_verifier_secret_file).encode("utf-8"),
+        route_verifier_secret=read_protected_delegated_token_file(
+            settings.entitlement_route_verifier_secret_file).encode("utf-8"),
+        owner_authority_secret=read_protected_delegated_token_file(
+            settings.entitlement_owner_authority_secret_file).encode("utf-8"),
+    )
+    # This is a borrowed pool, closed only by DefaultPrimaryActivation. The
+    # existing store validates key strength and owner/verifier separation.
+    authority = PrimaryProviderBudgetAuthority(
+        entitlement_store_from_handle(entitlement_handle),
+        primary_schema=settings.langgraph_primary_postgres_schema,
+    )
+    return PrimaryMonetaryAdmissions(authority, pool=handle.pool)
+
+
 def build_automatic_primary_live_dependencies(
     settings: Settings,
     handle: PostgresCheckpointHandle,
@@ -919,6 +962,9 @@ def build_automatic_primary_live_dependencies(
                 else ""
             )
         )
+
+    if monetary_admissions is None:
+        monetary_admissions = _configured_primary_monetary_admissions(settings, handle)
 
     def candidate_sha(
         _work_packet: Mapping[str, Any], result_packet: Mapping[str, Any]
@@ -2729,3 +2775,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:10 UTC | END]]

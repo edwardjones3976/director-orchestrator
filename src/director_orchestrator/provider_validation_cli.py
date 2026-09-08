@@ -1,3 +1,4 @@
+# [[OpenAI Codex Director Coordination | GPT-6 | 2026-09-08 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:20 UTC | BEGIN]]
 """Explicit operator bootstrap or one bounded run per configured validation lane."""
 from __future__ import annotations
@@ -52,3 +53,4 @@ def main() -> int:
 if __name__=="__main__":
     raise SystemExit(main())
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:20 UTC | END]]
+# [[OpenAI Codex Director Coordination | GPT-6 | 2026-09-08 | 03:05 UTC | END]]
