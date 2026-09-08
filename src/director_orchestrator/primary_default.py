@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -433,6 +434,24 @@ def _terminal_review_assignment(record: TaskRecord) -> Assignment | None:
     return review
 
 
+def _plan_lane_roster(record: TaskRecord) -> tuple[str, ...]:
+    """Return the plan's distinct provider lanes, in sequence order.
+
+    Each lane holds exactly one concurrency slot, so this doubles as the
+    simultaneous-dispatch roster and as the wave width the ledger may run.
+    """
+
+    plan = record.plan
+    if plan is None:
+        return ()
+    lanes: list[str] = []
+    for item in sorted(plan.assignments, key=lambda value: value.sequence):
+        lane = _assignment_provider_lane(item)
+        if lane not in lanes:
+            lanes.append(lane)
+    return tuple(lanes)
+
+
 def _typed_effect_binding(
     *,
     grant: TypedExternalEffectGrant | None,
@@ -505,17 +524,33 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
         public_research_query=record.intake.primary_public_research_query,
         trusted_cost_ranks={canonical_allocation_lane(lane): rank for lane, rank in settings.trusted_provider_cost_ranks().items()},
         allocation_profile=record.intake.allocation_profile,
-        team_mode=settings.langgraph_primary_antigravity_team_enabled)
-    required = ((selected.research,) if selected.research else ()) + (selected.producer,)
+        team_mode=settings.langgraph_primary_antigravity_team_enabled,
+        max_producers=settings.langgraph_primary_first_wave_max_producers)
     # The paid-off preview always declares a zero cost. A live wave must carry a
     # trusted positive per-lane limit derived from the configured task budget so
     # the packet, the dispatcher and the transport all enforce the same ceiling.
-    assignment_count = len(required) + 1
+    # That single owner-gated budget is split across the whole wave, so every
+    # extra producer lane shrinks every lane's share. Trim the wave to the width
+    # the per-lane floor actually funds instead of starving the lanes, keeping
+    # at least one producer so the floor check below can still refuse the plan.
     task_budget_usd = float(settings.max_task_budget_usd)
+    lane_budget_floor_usd = float(settings.langgraph_primary_min_lane_budget_usd)
+    barriers = (1 if selected.research else 0) + 1  # research fan-in, terminal review
+    producers = selected.producers[
+        : max(1, int(task_budget_usd // lane_budget_floor_usd) - barriers)
+    ]
+    required = ((selected.research,) if selected.research else ()) + producers
+    assignment_count = len(required) + 1
     lane_budget_usd = task_budget_usd / assignment_count
-    if task_budget_usd <= 0.0 or lane_budget_usd <= 0.0:
+    if (
+        task_budget_usd <= 0.0
+        or lane_budget_usd <= 0.0
+        or lane_budget_usd < lane_budget_floor_usd
+    ):
+        # Fail closed. MAX_TASK_BUDGET_USD is owner-gated and never widened here.
         raise RuntimeError(
-            "live primary dispatch requires a positive configured task budget"
+            "live primary dispatch requires a positive configured task budget "
+            "that funds every first-wave lane at or above the per-lane floor"
         )
 
     plan = record.plan
@@ -566,7 +601,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                     ),
                     "repository": None if is_research or is_antigravity else repository,
                     "starting_ref": starting_ref,
-                    "depends_on": ([1] if selected.research and lane == selected.producer else []),
+                    "depends_on": ([1] if selected.research and lane in producers else []),
                     "requires_approval": is_research,
                     "allow_draft_pr": False,
                     "retry_limit": 3,
@@ -1676,16 +1711,34 @@ class DefaultPrimaryApplication:
         self.effect_grant = build_typed_external_effect_grant(settings, authority)
         self._parallel_dispatcher = parallel_dispatcher
 
-    def _parallel_policy(self) -> ParallelDispatchPolicy:
-        """Return the bounded Default policy used for every durable wave."""
+    def _parallel_policy(self, record: TaskRecord) -> ParallelDispatchPolicy:
+        """Return the bounded Default policy used for every durable wave.
+
+        Derived from the frozen plan, never from live ledger state: reserve_ready
+        refuses a max_concurrency that differs from the value stored at
+        register_plan, so registration and every later wave of one task must
+        agree. The plan is frozen before registration and round-trips through
+        the durable projection, so every caller rebuilds the same policy.
+        """
 
         provider_caps = self.settings.parallel_provider_caps()
         provider_caps["antigravity"] = provider_caps.pop("gemini")
         for provider in self.settings.langgraph_primary_required_providers:
             provider_caps.setdefault(provider, 1)
+        roster = _plan_lane_roster(record)
+        if not 4 <= len(roster) <= 20:
+            # ParallelDispatchPolicy keeps concurrency 3 for the accepted
+            # adaptive-scale path this wave deliberately does not use, and
+            # forbids a roster at or below three. A narrow plan keeps the
+            # configured initial ceiling and simply takes more waves.
+            return ParallelDispatchPolicy(
+                max_concurrency=self.settings.langgraph_parallel_initial_max_concurrency,
+                provider_caps=provider_caps,
+            )
         return ParallelDispatchPolicy(
-            max_concurrency=self.settings.langgraph_parallel_initial_max_concurrency,
-            provider_caps=provider_caps,
+            max_concurrency=len(roster),
+            provider_caps={**provider_caps, **{lane: 1 for lane in roster}},
+            simultaneous_provider_roster=roster,
         )
 
     def _parallel_assignments(
@@ -1720,7 +1773,7 @@ class DefaultPrimaryApplication:
             task_id=record.task_id,
             plan_digest=_digest(record.plan.model_dump(mode="json")),
             assignments=self._parallel_assignments(record),
-            policy=self._parallel_policy(),
+            policy=self._parallel_policy(record),
         )
 
     def _ensure_parallel_lifecycle(self, record: TaskRecord) -> str:
@@ -1750,7 +1803,7 @@ class DefaultPrimaryApplication:
             aggregate = self.coordinator.execute_parallel_ready(
                 task_id=record.task_id,
                 plan_digest=bound_plan,
-                policy=self._parallel_policy(),
+                policy=self._parallel_policy(record),
                 dispatcher=self._parallel_dispatcher,
             )
         if aggregate.terminal and not aggregate.ambiguous_slot_count:
@@ -2863,3 +2916,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]]

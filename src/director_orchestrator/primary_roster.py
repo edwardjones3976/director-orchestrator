@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -20,7 +21,7 @@ this seam. Project leadership alone changes neither runtime's admission floor.
 """
 from collections import Counter
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Collection, Mapping, Sequence
 
 from .primary_workload import admission_reason
 from .allocation_profiles import allocation_targets, DEFAULT_ALLOCATION_PROFILE
@@ -45,6 +46,15 @@ class PrimaryRoster:
     producer: str
     reviewer: str
     research: str | None = None
+    #: Further producers drawn from the same ranked order, after ``producer``.
+    #: The reviewer is never one of them, and no lane repeats.
+    additional_producers: tuple[str, ...] = ()
+
+    @property
+    def producers(self) -> tuple[str, ...]:
+        """Every selected producer, widest ranked order first."""
+
+        return (self.producer, *self.additional_producers)
 
 
 def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
@@ -53,6 +63,7 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
                           trusted_cost_ranks: Mapping[str, int],
                           allocation_profile: str = DEFAULT_ALLOCATION_PROFILE,
                           team_mode: bool = False,
+                          max_producers: int = 1,
                           director_provider: str = "openai") -> PrimaryRoster:
     targets = allocation_targets(allocation_profile)
     pool = set(available)
@@ -79,8 +90,8 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
         research = min(research_lanes, key=lambda lane: (trusted_cost_ranks[lane], lane))
     # Planning projects the actual dependency order only; it writes no admissions.
     projected = tuple(history[-19:]) + ((research,) if research else ())
-    def eligible_for(prior: Sequence[str], *, exclude: str | None = None):
-        candidates = [lane for lane in IMPLEMENTERS if lane != exclude and lane in pool
+    def eligible_for(prior: Sequence[str], *, exclude: Collection[str] = ()):
+        candidates = [lane for lane in IMPLEMENTERS if lane not in exclude and lane in pool
                       and (lane != "antigravity" or team_mode or "bounded_scaffolding" in required_capabilities)
                       and (lane != "github-copilot" or "repository_assistance" in required_capabilities)
                       and admission_reason(lane, prior, allocation_profile=allocation_profile) is None]
@@ -94,11 +105,22 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
             return tier, trusted_cost_ranks[lane], lane
         return sorted(candidates, key=rank)
     for producer in eligible_for(projected):
-        reviewers = [lane for lane in eligible_for((*projected[-19:], producer), exclude=producer)
+        reviewers = [lane for lane in eligible_for((*projected[-19:], producer), exclude=(producer,))
                      if (lane in REVIEWERS or (team_mode and lane=="antigravity"))
                      and (team_mode or producer != "antigravity" or lane in {"claude", "cursor", "grok"})]
         if reviewers:
-            return PrimaryRoster(producer, reviewers[0], research)
+            # Widen the first wave along the same ranked order that chose the
+            # producer, projecting each pick so under-used lanes keep leading.
+            # The reviewer stays excluded so the terminal barrier is independent.
+            extra: list[str] = []
+            prior = (*projected, producer)
+            while len(extra) + 1 < max_producers:
+                nxt = eligible_for(prior[-19:], exclude=(producer, reviewers[0], *extra))
+                if not nxt:
+                    break
+                extra.append(nxt[0])
+                prior = (*prior, nxt[0])
+            return PrimaryRoster(producer, reviewers[0], research, tuple(extra))
     raise PrimaryRosterHold("primary_independent_review_allocation_unavailable")
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
@@ -109,3 +131,4 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -661,7 +662,9 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
 
         _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}'), available=("openai", "claude", "cursor", "grok"), history=())
 
-        lanes = ("cursor",)
+        # The wave carries several producers in the ranked order eligible_for
+        # already computes, then the independent reviewer.
+        lanes = ("cursor", "grok", "openai")
         self.assertEqual(len(lanes) + 1, len(record.plan.assignments))
         expected = settings.max_task_budget_usd / (len(lanes) + 1)
         for assignment in record.plan.assignments:
@@ -693,12 +696,17 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             "primary_public_research_query": "public API specification",
         })
         _live_parallel_plan(record, settings, available=("openai", "claude", "cursor", "perplexity"), history=())
-        research, producer, reviewer = record.plan.assignments
+        research, *producers = record.plan.assignments
+        reviewer = producers.pop()
         self.assertEqual(research.task, "public API specification")
         self.assertEqual(research.public_research_query, research.task)
         self.assertIsNone(research.repository)
-        self.assertEqual(producer.depends_on, [1])
-        self.assertNotEqual(producer.primary_provider_lane, reviewer.primary_provider_lane)
+        # Research fans in to every producer of the widened first wave.
+        self.assertEqual([[1]] * len(producers), [item.depends_on for item in producers])
+        self.assertNotIn(
+            reviewer.primary_provider_lane,
+            {item.primary_provider_lane for item in producers},
+        )
         self.assertNotIn("PRIVATE-CONTEXT", research.model_dump_json())
         packet = packet_router(settings).planned_work_packet(record, research)
         self.assertNotIn("PRIVATE-CONTEXT", json.dumps(packet))
@@ -714,6 +722,58 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "positive configured task budget"):
             _live_parallel_plan(record, replace(settings, trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}'), available=("openai", "claude", "cursor", "grok"), history=())
+
+    def test_per_lane_budget_floor_shrinks_the_wave_then_refuses_the_plan(self):
+        """One fixed task budget is split across the wave, so width is bounded.
+
+        MAX_TASK_BUDGET_USD is owner-gated and never widened here. The wave
+        shrinks to the width the per-lane floor funds, and a plan that cannot
+        fund even its narrowest wave is refused rather than silently starved.
+        """
+
+        settings = replace(
+            Settings(),
+            repository_allowlist=("owner/repository",),
+            max_task_budget_usd=2.0,
+            trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}',
+        )
+        lanes = ("openai", "claude", "cursor", "grok")
+
+        # $0.50 funds four lanes: three producers plus the terminal review.
+        wide = self._record(settings)
+        _live_parallel_plan(
+            wide,
+            replace(settings, langgraph_primary_min_lane_budget_usd=0.5),
+            available=lanes,
+            history=(),
+        )
+        self.assertEqual(4, len(wide.plan.assignments))
+        self.assertTrue(
+            all(item.estimated_cost_usd >= 0.5 for item in wide.plan.assignments)
+        )
+
+        # $0.90 funds only two: the wave shrinks instead of starving its lanes.
+        narrow = self._record(settings)
+        _live_parallel_plan(
+            narrow,
+            replace(settings, langgraph_primary_min_lane_budget_usd=0.9),
+            available=lanes,
+            history=(),
+        )
+        self.assertEqual(2, len(narrow.plan.assignments))
+        self.assertTrue(
+            all(item.estimated_cost_usd >= 0.9 for item in narrow.plan.assignments)
+        )
+
+        # $1.50 cannot fund even one producer plus its review: fail closed.
+        refused = self._record(settings)
+        with self.assertRaisesRegex(RuntimeError, "per-lane floor"):
+            _live_parallel_plan(
+                refused,
+                replace(settings, langgraph_primary_min_lane_budget_usd=1.5),
+                available=lanes,
+                history=(),
+            )
 
     def test_terminal_review_barrier_is_identified_structurally(self):
         settings = replace(
@@ -1193,7 +1253,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         )
         reservation = self.coordinator.reserve_parallel_ready(
             task_id=record.task_id,
-            policy=self.application._parallel_policy(),
+            policy=self.application._parallel_policy(record),
         )[0]
         first = self.coordinator.reserve_provider_attempt(
             reservation=reservation,
@@ -1281,7 +1341,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                     intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
                 )
                 reservation = self.coordinator.reserve_parallel_ready(
-                    task_id=record.task_id, policy=self.application._parallel_policy(),
+                    task_id=record.task_id, policy=self.application._parallel_policy(record),
                 )[0]
                 roster = (("json", primary), ("text", recovery))
                 if third is not None:
@@ -1344,7 +1404,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         )
         reservation = self.coordinator.reserve_parallel_ready(
             task_id=record.task_id,
-            policy=self.application._parallel_policy(),
+            policy=self.application._parallel_policy(record),
         )[0]
         roster = (("json", "api"), ("text", "cli"))
         first = self.coordinator.reserve_provider_attempt(
@@ -1837,7 +1897,10 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             langgraph_primary_offline_simulation_enabled=True,
             trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3,"perplexity":5,"firecrawl":6}',
         )
-        first_wave_size = 1
+        # Three producers are eligible here once the reviewer is excluded, and
+        # the barrier only clears when the ledger reserves all three at once.
+        first_wave_size = 3
+        first_wave_lanes = {"cursor", "grok", "openai"}
         barrier = threading.Barrier(first_wave_size)
         completed_first_wave: set[int] = set()
         entered: list[tuple[int, str]] = []
@@ -1893,7 +1956,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         first_wave = pending.plan.assignments[:first_wave_size]
         review = pending.plan.assignments[first_wave_size]
         self.assertEqual(
-            {"cursor"},
+            first_wave_lanes,
             {item.primary_provider_lane for item in first_wave},
         )
         self.assertTrue(all(not item.depends_on for item in first_wave))
@@ -1913,7 +1976,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
 
         self.assertEqual(first_wave_size + 1, len(rows))
         self.assertEqual(
-            {"cursor"},
+            first_wave_lanes,
             {row["provider_id"] for row in rows[:first_wave_size]},
         )
         self.assertGreaterEqual(len(worker_threads), first_wave_size)
@@ -2023,7 +2086,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.approve(self.application, self.coordinator, pending.task_id)
         reservations = self.coordinator.reserve_parallel_ready(
             task_id=pending.task_id,
-            policy=self.application._parallel_policy(),
+            policy=self.application._parallel_policy(pending),
         )
         self.assertEqual(2, len(reservations))
 
@@ -2071,7 +2134,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             )
         active = self.coordinator.reserve_parallel_ready(
             task_id=pending.task_id,
-            policy=self.application._parallel_policy(),
+            policy=self.application._parallel_policy(pending),
         )
         self.assertEqual(2, len(active))
 
@@ -2083,7 +2146,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             (),
             self.coordinator.reserve_parallel_ready(
                 task_id=pending.task_id,
-                policy=self.application._parallel_policy(),
+                policy=self.application._parallel_policy(pending),
             ),
         )
         projection = self.coordinator.get_projection(pending.task_id)
@@ -2147,7 +2210,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.approve(self.application, self.coordinator, pending.task_id)
         reservations = self.coordinator.reserve_parallel_ready(
             task_id=pending.task_id,
-            policy=self.application._parallel_policy(),
+            policy=self.application._parallel_policy(pending),
         )
         first, second = reservations
         attempt = self.coordinator.reserve_provider_attempt(
@@ -2564,6 +2627,123 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         )
         return services, coordinator, application, pending, completed
 
+    def test_wide_first_wave_settles_every_producer_in_one_ledger_wave(self):
+        """Several producer lanes must settle together, not in serial waves.
+
+        The offline doubles make the whole lifecycle provable without contacting
+        any provider: intake composes the wide live plan, the derived policy
+        declares the exact one-slot roster, and the ledger reserves every
+        producer at once. Only the terminal review takes a second wave, because
+        it is the barrier that depends on every first-wave sequence.
+        """
+
+        settings = replace(
+            self.settings,
+            langgraph_primary_offline_simulation_enabled=True,
+            trusted_provider_cost_ranks_json='{"openai":4,"claude":2,"cursor":1,"grok":3}',
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings), live_composition=True
+        )
+        services.available_provider_lanes = ("openai", "claude", "cursor", "grok")
+        services.provider_lane_ready = lambda _provider: True
+        coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace="default-primary-wide-wave-v1",
+            auto_execute_provider=False,
+            application_projection_provider=services.application_projection,
+        )
+        coordinator.adopt_or_activate_new_intake()
+
+        waves: list[tuple[str, ...]] = []
+        run_wave = coordinator.execute_parallel_ready
+
+        def counting_execute(**kwargs):
+            before = coordinator.parallel_aggregate(kwargs["task_id"]).statuses
+            aggregate = run_wave(**kwargs)
+            waves.append(
+                tuple(
+                    sorted(
+                        identifier
+                        for identifier, status in aggregate.statuses.items()
+                        if status != before.get(identifier)
+                    )
+                )
+            )
+            return aggregate
+
+        coordinator.execute_parallel_ready = counting_execute
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator,
+            services,
+            DefaultPrimaryAuthority(
+                starting_sha=SHA, authority_snapshot_digest=digest("authority")
+            ),
+            parallel_dispatcher=build_offline_parallel_dispatcher(
+                services, lambda: coordinator
+            ),
+        )
+        pending = application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "event-wide-wave"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+
+        review = _terminal_review_assignment(pending)
+        self.assertIsNotNone(review, pending.plan)
+        producers = [
+            item for item in pending.plan.assignments if item.sequence != review.sequence
+        ]
+        self.assertGreater(len(producers), 2, pending.plan)
+        self.assertEqual(
+            sorted(item.sequence for item in producers), sorted(review.depends_on)
+        )
+        self.assertNotIn(
+            _assignment_provider_lane(review),
+            {_assignment_provider_lane(item) for item in producers},
+        )
+
+        policy = application._parallel_policy(pending)
+        self.assertEqual(len(producers) + 1, policy.max_concurrency)
+        self.assertEqual(policy.max_concurrency, len(policy.simultaneous_provider_roster))
+        self.assertIsNone(policy.scale_policy_evidence_digest)
+        self.assertTrue(
+            all(
+                policy.provider_caps[lane] == 1
+                for lane in policy.simultaneous_provider_roster
+            )
+        )
+
+        projection = coordinator.get_projection(pending.task_id)
+        assert projection is not None
+        approval = projection.projection["pending_approval"]
+        completed = application.resume_approval(
+            ApprovalResume(
+                task_id=pending.task_id,
+                kind=ApprovalKind(approval["kind"]),
+                request_digest=approval["request_digest"],
+                approval_event_id="approve-wide-wave",
+                decision=ApprovalDecision.APPROVE,
+            )
+        )
+
+        # Every producer settled in the first wave; only the barrier took a second.
+        self.assertEqual([len(producers), 1], [len(wave) for wave in waves], waves)
+        self.assertEqual(TaskStatus.DONE, completed.status)
+        aggregate = coordinator.parallel_aggregate(pending.task_id)
+        self.assertTrue(aggregate.succeeded, aggregate)
+        self.assertEqual(
+            len(producers) + 1,
+            sum(
+                1
+                for status in aggregate.statuses.values()
+                if status == ParallelAssignmentStatus.SUCCEEDED
+            ),
+            aggregate.statuses,
+        )
+
     def test_offline_doubles_execute_through_the_parallel_ledger(self):
         """The offline wave must run under the production ledger-only wiring."""
 
@@ -2920,3 +3100,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]]

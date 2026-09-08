@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -298,6 +299,18 @@ class Settings:
         default_factory=lambda: _csv(
             "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS",
             "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot,microsoft-365-copilot",
+        )
+    )
+    # One first wave may carry several producer lanes. The cap is bounded here
+    # rather than at the call site so widening never becomes a code literal, and
+    # the per-lane floor keeps a wider wave from silently starving every lane
+    # out of the single owner-gated MAX_TASK_BUDGET_USD it is split across.
+    langgraph_primary_first_wave_max_producers: int = field(
+        default_factory=lambda: _int("LANGGRAPH_PRIMARY_FIRST_WAVE_MAX_PRODUCERS", 4)
+    )
+    langgraph_primary_min_lane_budget_usd: float = field(
+        default_factory=lambda: _positive_float(
+            "LANGGRAPH_PRIMARY_MIN_LANE_BUDGET_USD", 0.25
         )
     )
     langgraph_primary_provider_activation_bindings_json: str = field(
@@ -2069,3 +2082,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]]
