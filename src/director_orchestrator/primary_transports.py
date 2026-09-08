@@ -820,6 +820,57 @@ def _structured_native_output(native: Mapping[str, Any]) -> dict[str, Any]:
     return dict(candidate) if isinstance(candidate, Mapping) else dict(native)
 
 
+def grok_terminal_success(native: Mapping[str, Any]) -> bool:
+    """Whether a grok envelope is terminally successful within its one turn.
+
+    ``stopReason`` must be exactly ``end_turn`` -- a truncated ``max_tokens``
+    run or an errored stop does not qualify -- and ``num_turns`` must be
+    exactly one, because the lane's command requests ``--max-turns 1`` and the
+    canary packet pins ``max_hops=1``.
+    """
+
+    turns = native.get("num_turns")
+    return (
+        native.get("stopReason") == "end_turn"
+        and isinstance(turns, int)
+        and not isinstance(turns, bool)
+        and turns == 1
+    )
+
+
+def _canonical_grok_native(native: Mapping[str, Any]) -> dict[str, Any]:
+    """Canonicalize a grok envelope on the shared normalization path.
+
+    The live lane reaches ``normalize_native_provider_envelope`` directly
+    through ``NativeCommandPacketTransport.send``, so anything applied only in
+    ``provider_validation.normalize_capture`` never protects production
+    dispatch. Two consequences were real: the observed camel-case ``sessionId``
+    raised *"authenticated native result lacks a run reference"* on every real
+    dispatch, and a structured result carried inside ``text`` was stringified
+    into ``outcome``, discarding ``status``, blockers and side effects before
+    the packet defaulted to ``SUCCEEDED``.
+
+    Only naming is canonicalized here. Terminal qualification is applied by the
+    caller so an unqualified run becomes a FAILED packet rather than an
+    exception, which is what the lifecycle expects from a real failed run.
+    """
+
+    envelope = dict(native)
+    session = envelope.get("sessionId")
+    if "session_id" not in envelope and isinstance(session, str) and session:
+        envelope["session_id"] = session
+    if "structured_output" not in envelope and "result" not in envelope:
+        text = envelope.get("text")
+        if isinstance(text, str) and text.strip().startswith("{"):
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                decoded = None
+            if isinstance(decoded, Mapping):
+                envelope["structured_output"] = dict(decoded)
+    return envelope
+
+
 def _project_onto_result_contract(field: str, value: Any) -> Any:
     """Drop provider keys the result contract does not define for ``field``.
 
@@ -884,6 +935,8 @@ def normalize_native_provider_envelope(
     redacted outbound payload cannot weaken the result's bindings.
     """
 
+    if provider_id == "grok":
+        native = _canonical_grok_native(native)
     structured = _structured_native_output(native)
     run_reference = next(
         (
@@ -912,6 +965,11 @@ def normalize_native_provider_envelope(
     if allowed_effects and not side_effects:
         raise RuntimeError("native result lacks evidence for allowed external effects")
     status = str(structured.get("status", "SUCCEEDED"))
+    if provider_id == "grok" and not grok_terminal_success(native):
+        # A truncated or errored grok run supplies nonempty text and no status,
+        # which would otherwise default to SUCCEEDED on the live path.  Record
+        # the real terminal state instead of inventing a success.
+        status = "FAILED"
     if status not in {"SUCCEEDED", "FAILED", "OWNER_DECISION_REQUIRED"}:
         raise RuntimeError("native provider returned an unsupported terminal status")
     acceptance = structured.get("acceptance")
@@ -947,7 +1005,12 @@ def normalize_native_provider_envelope(
         "risks": list_value("risks"),
         "blockers": list_value("blockers"),
         "requested_decisions": list_value("requested_decisions"),
-        "side_effects": _project_onto_result_contract("side_effects", side_effects),
+        # Deliberately NOT projected.  Side-effect objects drive effect
+        # authorization and accounting, and packet_transports rejects extra
+        # members as malformed.  Sanitizing them here would convert
+        # schema-invalid provider evidence into an accepted result, so this
+        # field stays fail-closed even though its siblings are projected.
+        "side_effects": side_effects,
         "usage": usage,
         "revision_recommended": bool(structured.get("revision_recommended", False)),
     }
@@ -1123,6 +1186,15 @@ def _cursor_host_lane_prefix(executable: str | None) -> tuple[str, ...] | None:
 
     prefix = _safe_cursor_agent_prefix(executable)
     if prefix is None or sys.platform not in CURSOR_SANDBOX_PLATFORMS:
+        return None
+    # Under WSL ``sys.platform`` is "linux" while the interop PATH can resolve a
+    # Windows ``cursor-agent.exe``.  That process still executes on Windows and
+    # still rejects ``--sandbox enabled``, recreating the opaque dispatch
+    # failure this guard exists to prevent, so a Windows launcher is ineligible
+    # even when the host platform looks supported.
+    if any(
+        part.lower().endswith((".exe", ".cmd", ".bat", ".ps1")) for part in prefix
+    ):
         return None
     return prefix
 

@@ -299,6 +299,26 @@ def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route
     return ValidationCapture(**fields,signature=signature)
 
 
+def _qualified_grok_terminal(native: Mapping) -> bool:
+    """Accept only a grok envelope that is terminally successful in one turn.
+
+    ``stopReason`` must be exactly ``end_turn``: a truncated ``max_tokens`` run
+    or an errored stop must not qualify.  ``num_turns`` must be exactly one.
+    The canary packet pins ``max_hops=1`` and the lane's command requests
+    ``--max-turns 1``, so the observed envelope's ``num_turns: 1`` is
+    safety-relevant evidence that the run stayed inside its bound, not
+    incidental telemetry.
+    """
+
+    turns = native.get("num_turns")
+    return (
+        native.get("stopReason") == "end_turn"
+        and isinstance(turns, int)
+        and not isinstance(turns, bool)
+        and turns == 1
+    )
+
+
 def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None) -> dict:
     """Require native terminal capture, never a caller-authored result packet."""
     if provider == "antigravity":
@@ -321,10 +341,18 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None)
     # as stopReason and names its session sessionId.  Only the exact value
     # "end_turn" is accepted, so a truncated ("max_tokens") or errored run still
     # fails; this recognises a dialect rather than relaxing the requirement.
+    # The grok dialect is scoped to its own lane.  Left provider-agnostic, an
+    # "end_turn" stop reason rehabilitates an already-failed envelope of another
+    # dialect -- a claude-shaped result carrying subtype "error" and is_error
+    # true would pass.  Only grok's envelope was observed and qualified, and a
+    # provider payload must never select the dialect it is judged by.
+    grok = provider == "grok"
     success = native.get("status") == "SUCCESS" or (
         native.get("type") == "result" and native.get("subtype") == "success"
-        and native.get("is_error") is False) or native.get("stopReason") == "end_turn"
-    session = next((native[key] for key in ("session_id","conversation_id","sessionId")
+        and native.get("is_error") is False) or (
+        grok and _qualified_grok_terminal(native))
+    session_keys = ("session_id","conversation_id") + (("sessionId",) if grok else ())
+    session = next((native[key] for key in session_keys
         if isinstance(native.get(key),str) and native[key]),None)
     if not success or session is None:
         raise ValidationError("native unique successful terminal/session is missing")

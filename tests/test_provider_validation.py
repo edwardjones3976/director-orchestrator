@@ -214,6 +214,93 @@ class NativeCaptureTests(unittest.TestCase):
                         prefix = _cursor_host_lane_prefix(str(shim))
                     self.assertEqual(supported, prefix is not None)
 
+    def test_end_turn_cannot_rehabilitate_another_provider_dialect(self):
+        """Raised as a MEDIUM security finding and a P1.
+
+        Left provider-agnostic, ``stopReason: end_turn`` rescued an envelope
+        that its own dialect had already failed. Only grok's envelope was
+        observed and qualified, and a payload must never select the dialect it
+        is judged by.
+        """
+
+        failed_claude = {
+            "type": "result",
+            "subtype": "error",
+            "is_error": True,
+            "session_id": "claude-session",
+            "sessionId": "claude-session",
+            "stopReason": "end_turn",
+            "num_turns": 1,
+            "text": "rescued",
+        }
+
+        for provider in ("claude", "cursor", "github-copilot"):
+            with self.subTest(provider=provider):
+                with self.assertRaises(ValidationError):
+                    normalize_capture(
+                        provider, work_packet(), canonical_json_bytes(failed_claude)
+                    )
+
+    def test_grok_capture_requires_exactly_one_turn(self):
+        """The canary pins max_hops=1 and the command requests --max-turns 1."""
+
+        for turns in (2, 0, "1", True, None):
+            with self.subTest(num_turns=turns):
+                envelope = dict(self.GROK_OBSERVED_ENVELOPE)
+                envelope["num_turns"] = turns
+                with self.assertRaises(ValidationError):
+                    normalize_capture(
+                        "grok", work_packet(), canonical_json_bytes(envelope)
+                    )
+
+    def test_live_grok_path_is_protected_not_only_the_capture_path(self):
+        """The live lane bypasses normalize_capture entirely.
+
+        ``NativeCommandPacketTransport.send`` calls
+        ``normalize_native_provider_envelope`` directly, so checks living only
+        in ``normalize_capture`` never reached production dispatch.
+        """
+
+        from director_orchestrator.primary_transports import (
+            normalize_native_provider_envelope,
+        )
+
+        # The camel-case session must resolve, or every real dispatch raised.
+        ok = normalize_native_provider_envelope(
+            "grok", work_packet(), dict(self.GROK_OBSERVED_ENVELOPE)
+        )
+        self.assertEqual(ok["run_reference"], self.GROK_OBSERVED_ENVELOPE["sessionId"])
+        self.assertEqual(ok["status"], "SUCCEEDED")
+
+        # A truncated run must not be persisted as a success.
+        truncated = dict(self.GROK_OBSERVED_ENVELOPE)
+        truncated["stopReason"] = "max_tokens"
+        self.assertEqual(
+            "FAILED",
+            normalize_native_provider_envelope("grok", work_packet(), truncated)[
+                "status"
+            ],
+        )
+
+    def test_structured_result_inside_text_is_decoded_not_stringified(self):
+        """A FAILED status carried in text must not become a SUCCEEDED packet."""
+
+        from director_orchestrator.primary_transports import (
+            normalize_native_provider_envelope,
+        )
+
+        envelope = dict(self.GROK_OBSERVED_ENVELOPE)
+        envelope["text"] = json.dumps(
+            {"status": "FAILED", "outcome": "Canary could not complete"}
+        )
+
+        result = normalize_native_provider_envelope(
+            "grok", work_packet(), envelope
+        )
+
+        self.assertEqual("FAILED", result["status"])
+        self.assertEqual("Canary could not complete", result["outcome"])
+
     def test_grok_dialect_still_rejects_every_unsuccessful_terminal(self):
         """Only the exact stopReason "end_turn" qualifies.
 

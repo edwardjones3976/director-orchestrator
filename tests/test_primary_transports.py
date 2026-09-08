@@ -593,8 +593,11 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         with TemporaryDirectory() as directory, patch(
             "director_orchestrator.primary_transports.sys.platform", "linux"
         ), patch(
+            # A POSIX launcher, matching the platform pinned above.  A Windows
+            # .exe here would be the WSL interop case, which discovery now
+            # rejects because that process still refuses --sandbox enabled.
             "director_orchestrator.primary_transports._which",
-            side_effect=lambda names: "cursor-agent.exe" if "cursor-agent.exe" in names else None,
+            side_effect=lambda names: "cursor-agent" if "cursor-agent" in names else None,
         ), patch("subprocess.run", return_value=status) as run:
             transports, observed = discover_local_primary_command_transports(
                 cwd=directory, authenticated={}
