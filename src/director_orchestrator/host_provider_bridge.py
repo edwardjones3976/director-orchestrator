@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -91,6 +92,8 @@ def _signature_payload(
     packet_digest: str,
     writer_owner_token_digest: str,
     work_packet_digest: str = "",
+    execution_authority: str = "",
+    attempt_digest: str = "",
 ) -> bytes:
     material = [
         BRIDGE_PROTOCOL,
@@ -110,6 +113,8 @@ def _signature_payload(
     # stripped or forged binding changes the signature and fails closed.
     if work_packet_digest:
         material.append(work_packet_digest)
+    if execution_authority:
+        material.extend(("execution-authority/v1", execution_authority, attempt_digest))
     return "\n".join(material).encode("utf-8")
 
 
@@ -237,12 +242,31 @@ class BridgeRequest:
     # packet the posted body was derived from. It is authenticated, never used
     # to reconstruct anything the host was deliberately not shown.
     work_packet_digest: str = ""
+    execution_authority: str = ""
+    attempt_digest: str = ""
+
+    def bound_execution_authority(self):
+        from .antigravity_team import ProviderExecutionAuthority
+        if not self.execution_authority or len(self.execution_authority) > 4096:
+            raise HostProviderBridgeError("paid bridge execution authority is missing or oversized")
+        try:
+            authority = ProviderExecutionAuthority.model_validate_json(self.execution_authority)
+        except ValueError as exc:
+            raise HostProviderBridgeError("invalid execution authority") from exc
+        if authority.provider_id != self.provider:
+            raise HostProviderBridgeError("execution authority provider mismatch")
+        if authority.execution_task_id != self.task_id or authority.attempt_digest != self.attempt_digest:
+            raise HostProviderBridgeError("execution authority task or attempt mismatch")
+        if canonical_json_bytes(authority.model_dump(mode="json")).decode() != self.execution_authority:
+            raise HostProviderBridgeError("execution authority is not canonical")
+        return authority
 
     def validate(self, secret: str, *, now: int | None = None, max_age_seconds: int = 60) -> None:
         if self.provider in UNSUPPORTED_HOST_LANES:
             raise HostProviderBridgeError(f"unsupported host provider lane: {self.provider}")
         if self.provider not in SUPPORTED_HOST_LANES:
             raise HostProviderBridgeError("unallowlisted host provider lane")
+        self.bound_execution_authority()
         _require_token(self.task_id, "task id")
         _require_token(self.assignment_id, "assignment id")
         _require_token(self.nonce, "nonce")
@@ -271,6 +295,8 @@ class BridgeRequest:
             packet_digest=self.packet_digest,
             writer_owner_token_digest=self.writer_owner_token_digest,
             work_packet_digest=self.work_packet_digest,
+            execution_authority=self.execution_authority,
+            attempt_digest=self.attempt_digest,
         )
         if not hmac.compare_digest(expected, self.signature):
             raise HostProviderBridgeError("host bridge authentication failed")
@@ -316,6 +342,11 @@ class BridgeClaimStore:
                 );
                 """
             )
+            connection.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(bridge_attempts)")}
+            if "execution_authority_digest" not in columns:
+                connection.execute("ALTER TABLE bridge_attempts ADD COLUMN execution_authority_digest TEXT NOT NULL DEFAULT ''")
+            connection.commit()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
@@ -332,6 +363,7 @@ class BridgeClaimStore:
             request.writer_generation,
             request.packet_digest,
             request.writer_owner_token_digest,
+            _digest(request.execution_authority.encode()),
         )
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -344,20 +376,20 @@ class BridgeClaimStore:
                 connection.rollback()
                 raise HostProviderBridgeError("bridge nonce replay") from exc
             row = connection.execute(
-                "SELECT provider, task_id, assignment_id, writer_generation, packet_digest, writer_owner_token_digest, state, response_json "
+                "SELECT provider, task_id, assignment_id, writer_generation, packet_digest, writer_owner_token_digest, execution_authority_digest, state, response_json "
                 "FROM bridge_attempts WHERE idempotency_digest = ?",
                 (request.idempotency_digest,),
             ).fetchone()
             if row is not None:
-                if tuple(row[:6]) != bindings:
+                if tuple(row[:7]) != bindings:
                     connection.rollback()
                     raise HostProviderBridgeError("idempotency key binding conflict")
                 connection.commit()
-                if row[6] == "SUCCEEDED" and isinstance(row[7], bytes):
-                    return row[7]
+                if row[7] == "SUCCEEDED" and isinstance(row[8], bytes):
+                    return row[8]
                 raise HostProviderBridgeAmbiguous("host provider attempt is not safely replayable")
             connection.execute(
-                "INSERT INTO bridge_attempts VALUES (?, ?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
+                "INSERT INTO bridge_attempts (idempotency_digest,provider,task_id,assignment_id,writer_generation,packet_digest,writer_owner_token_digest,execution_authority_digest,state,response_json,updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
                 (request.idempotency_digest, *bindings, int(time.time())),
             )
             connection.commit()
@@ -416,7 +448,19 @@ class WindowsHostProviderExecutor:
             providers.remove("openai")
         return providers
 
-    def execute(self, request: BridgeRequest, *, execution_observer=None) -> bytes:
+    def execute(self, request: BridgeRequest, *, execution_observer=None, offline_fixture=False) -> bytes:
+        started = time.monotonic()
+        authority = None if offline_fixture and not request.execution_authority else request.bound_execution_authority()
+        if authority is not None:
+            authority.require_supported_execution()
+        timeout = min(self.timeout_seconds, authority.max_seconds or self.timeout_seconds) if authority else self.timeout_seconds
+        packet_limits = json.loads(request.packet).get("limits", {})
+        packet_timeout = packet_limits.get("timeout_seconds", timeout)
+        if type(packet_timeout) is not int or packet_timeout < 1:
+            raise HostProviderBridgeError("invalid work-packet execution timeout")
+        timeout = min(timeout, packet_timeout)
+        output_limit = min(_MAX_RESULT_BYTES, authority.max_output_bytes or _MAX_RESULT_BYTES) if authority else _MAX_RESULT_BYTES
+        deadline = started + timeout
         command = self.commands.get(request.provider)
         if command is None:
             raise HostProviderBridgeError("host provider command is not configured")
@@ -434,6 +478,8 @@ class WindowsHostProviderExecutor:
                 timeout_seconds=min(self.timeout_seconds, work["limits"]["timeout_seconds"]),
                 allowed_external_effects=tuple(work["allowed_external_effects"]),
                 execution_observer=execution_observer,
+                execution_authority=authority,
+                execution_deadline=deadline,
             )
             try:
                 result = self.native_codex.send(request.packet, context=context)
@@ -446,32 +492,27 @@ class WindowsHostProviderExecutor:
             if name.upper() in _SAFE_OS_ENV or name in _LANE_AUTH_ENV[request.provider]
         }
         try:
-            completed = subprocess.run(
-                command,
-                cwd=self.cwd,
-                input=request.packet,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=False,
-                check=False,
-                timeout=self.timeout_seconds,
-                env=environment,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            from .bounded_process import run_bounded_process
+            from .process_isolation import ProcessContainmentError
+            code, timed_out, overflow, stdout, _stderr = run_bounded_process(
+                command, cwd=self.cwd, input_bytes=request.packet,
+                timeout_seconds=timeout, deadline=deadline,
+                output_limit_bytes=output_limit, environment=environment)
+        except (OSError, ProcessContainmentError) as exc:
             raise HostProviderBridgeAmbiguous("host provider outcome is ambiguous") from exc
-        if completed.returncode != 0:
+        if code != 0 or timed_out or overflow:
             raise HostProviderBridgeAmbiguous("host provider outcome is ambiguous")
-        if not completed.stdout or len(completed.stdout) > _MAX_RESULT_BYTES:
+        if not stdout or len(stdout) > output_limit:
             raise HostProviderBridgeAmbiguous("host provider returned no bounded result")
         try:
-            result = json.loads(completed.stdout)
+            result = json.loads(stdout)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise HostProviderBridgeAmbiguous("host provider returned malformed JSON") from exc
         if not isinstance(result, dict):
             raise HostProviderBridgeAmbiguous("host provider result is not a JSON object")
         if execution_observer is not None:
-            execution_observer(request.provider, completed.stdout, None)
-        return completed.stdout
+            execution_observer(request.provider, stdout, None)
+        return stdout
 
 
 class PostgresHostWriterFenceVerifier:
@@ -571,10 +612,18 @@ class HostBridgePacketTransport:
         self.result_normalizer = result_normalizer
 
     def send(self, work_packet_json: bytes, *, context: ProviderAdapterContext) -> Mapping[str, object]:
+        from .antigravity_team import ProviderExecutionAuthority
+        authority = getattr(context, "execution_authority", None)
+        if not isinstance(authority, ProviderExecutionAuthority) or authority.provider_id != self.provider:
+            raise HostProviderBridgeError("host transport execution authority is missing or invalid")
+        if authority.attempt_digest != getattr(context, "idempotency_key", None):
+            raise HostProviderBridgeError("host transport reserved attempt mismatch")
         if not work_packet_json or len(work_packet_json) > _MAX_PACKET_BYTES:
             raise RuntimeError("host bridge work packet is not bounded")
         packet = json.loads(work_packet_json)
         task_id = _require_token(str(packet.get("task_id", "")), "task id")
+        if authority.execution_task_id != task_id:
+            raise HostProviderBridgeError("host transport execution task mismatch")
         assignment_id = _require_token(str(packet.get("assignment_id", "")), "assignment id")
         idempotency_key = str(packet.get("idempotency_key", ""))
         if not idempotency_key:
@@ -604,6 +653,8 @@ class HostBridgePacketTransport:
             packet_digest=packet_digest,
             writer_owner_token_digest=self.writer_owner_token_digest,
             work_packet_digest=work_packet_digest,
+            execution_authority=canonical_json_bytes(context.execution_authority.model_dump(mode="json")).decode(),
+            attempt_digest=authority.attempt_digest,
         )
         headers = {
             "Content-Type": "application/json",
@@ -621,6 +672,8 @@ class HostBridgePacketTransport:
         }
         if work_packet_digest:
             headers["X-Director-Work-Packet-Digest"] = work_packet_digest
+        headers["X-Director-Execution-Authority"] = bindings["execution_authority"]
+        headers["X-Director-Attempt-Digest"] = authority.attempt_digest
         request = urllib.request.Request(self.endpoint, data=outbound, headers=headers, method="POST")
         try:
             with urllib.request.build_opener(_NoRedirectHandler()).open(
@@ -690,3 +743,5 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

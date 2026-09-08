@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | BEGIN]]
@@ -114,6 +115,7 @@ class ProviderAdapterContext:
     fencing_generation: int = 0
     # Trusted transport observer; never supplied by the model work packet.
     execution_observer: Callable[[str, bytes, Mapping[str, Any]], None] | None = None
+    execution_authority: object | None = None
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
@@ -184,6 +186,14 @@ class PacketBoundaryAdapter:
     ) -> Mapping[str, Any]:
         """Signal only after outbound validation and immediately before submit."""
 
+        authority = context.execution_authority
+        if authority is not None:
+            from .antigravity_team import ProviderExecutionAuthority
+            if not isinstance(authority, ProviderExecutionAuthority) or (
+                authority.provider_id, authority.task_id, authority.attempt_digest
+            ) != (self.provider, context.task_id, context.idempotency_key):
+                raise PacketContractError("execution authority does not match the reserved attempt")
+            authority.require_supported_execution()
         work = validate_packet("work", work_packet)
         if not _secure_equal(document_digest(work), context.work_packet_digest):
             raise PacketContractError(
@@ -1232,3 +1242,5 @@ class LangGraphPacketRuntime:
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

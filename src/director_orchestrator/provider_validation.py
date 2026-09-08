@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
@@ -197,14 +198,19 @@ class PostgresValidationStore:
                 work.update(task_id="VALIDATION-"+reservation, assignment_id="VALIDATION-"+reservation,
                             idempotency_key="VALIDATION-"+reservation)
             raw = canonical_json_bytes(work)
+            execution_authority = None
             if monetary_admission is not None:
                 # Reserved before the attempt row exists and never released by a
                 # later failure, so a lost or ambiguous attempt still costs money.
-                monetary_admission.admit(_MappingRows(db),
+                attempt_digest = "sha256:"+digest(canonical_json_bytes(
+                    {"campaign":campaign_id,"generation":request.generation,
+                     "provider":request.provider,"reservation":reservation}))
+                reserved_budget = monetary_admission.admit(_MappingRows(db),
                     authority_digest=spec["budget_authority_digest"], provider=request.provider,
-                    attempt_digest="sha256:"+digest(canonical_json_bytes(
-                        {"campaign":campaign_id,"generation":request.generation,
-                         "provider":request.provider,"reservation":reservation})))
+                    attempt_digest=attempt_digest)
+                from .antigravity_team import ProviderExecutionAuthority
+                execution_authority = ProviderExecutionAuthority.from_reserved_budget(
+                    reserved_budget, attempt_digest=attempt_digest, execution_task_id=work["task_id"])
             db.execute(f"UPDATE {SCHEMA}.generations SET reserved_units=reserved_units+%s WHERE generation=%s",
                        (spec["cost_units"],request.generation))
             db.execute(f"INSERT INTO {SCHEMA}.attempts "
@@ -216,7 +222,7 @@ class PostgresValidationStore:
             return dict(reservation=reservation,nonce=nonce,fence=1,generation=request.generation,
                         provider=request.provider,candidate=row[0],tree=row[1],expires_at=row[3],
                         binding=spec["binding"],configuration_digest=spec["configuration_digest"],
-                        packet=raw,owner_digest=row[2])
+                        packet=raw,owner_digest=row[2],execution_authority=execution_authority)
 
     def claim_execution(self, admission: dict) -> None:
         with self.connect() as db:
@@ -506,12 +512,15 @@ class ValidationBridgeService:
                 idempotency_digest=digest(("VALIDATION-"+admission["reservation"]).encode()),
                 writer_generation=admission["fence"],packet_digest=digest(admission["packet"]),
                 writer_owner_token_digest="sha256:"+admission["owner_digest"],
-                timestamp=int(time.time()),nonce=admission["nonce"],signature="",packet=admission["packet"])
+                timestamp=int(time.time()),nonce=admission["nonce"],signature="",packet=admission["packet"],
+                execution_authority=("" if admission["execution_authority"] is None else
+                    canonical_json_bytes(admission["execution_authority"].model_dump(mode="json")).decode()),
+                attempt_digest="" if admission["execution_authority"] is None else admission["execution_authority"].attempt_digest)
             def observe(provider,raw,result):
                 if provider!=request.provider or raw_captures:
                     raise ValidationError("duplicate or mismatched native capture")
                 raw_captures.append(raw)
-            executor.execute(bridge,execution_observer=observe)
+            executor.execute(bridge,execution_observer=observe,offline_fixture=self.offline_fixture)
             if len(raw_captures)!=1:
                 raise ValidationError("native transport discarded its execution capture")
             if pin!=production_configuration_digest(self.production,request.provider,
@@ -528,3 +537,5 @@ class ValidationBridgeService:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
 """Dedicated synthetic canary through the actual pinned SSH engineering worker."""
@@ -59,6 +60,8 @@ class TeamValidationRoute:
                                       offline_fixture=service.offline_fixture)
         worker=None
         try:
+            if admission.get("execution_authority") is not None:
+                admission["execution_authority"].require_supported_execution()
             work=json.loads(admission["packet"])
             self.check_work(work)
             g=self.grant
@@ -145,3 +148,5 @@ def team_route_from_environment():
         worker_factory=factory,configuration_digest=fingerprint)
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

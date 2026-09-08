@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -641,12 +642,12 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
 
 class PrimaryMonetaryStartupTests(unittest.TestCase):
     @staticmethod
-    def configured(handle, schema, *, dsn=TEST_DSN, key_override=None, enabled=True):
+    def configured(handle, schema, *, dsn=TEST_DSN, key_override=None, enabled=True, entitlement_schema=None):
         from tests import test_entitlement_control_plane as fixtures
         settings = replace(
             Settings(), entitlement_control_plane_enabled=enabled,
             entitlement_postgres_dsn_file="dsn-reference",
-            entitlement_postgres_schema=schema,
+            entitlement_postgres_schema=entitlement_schema or schema,
             entitlement_trusted_verifier_secret_file="install-reference",
             entitlement_route_verifier_secret_file="route-reference",
             entitlement_owner_authority_secret_file="owner-reference",
@@ -1177,8 +1178,23 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         from director_orchestrator.antigravity_team import TeamAuthorizationError
         from tests import test_entitlement_control_plane as fixtures
         from tests.test_paid_launch_monetary import provider_budget
+        from director_orchestrator.entitlement_control_plane import open_entitlement_control_plane
 
-        dependencies = PrimaryMonetaryStartupTests.configured(self.handle, self.schema)
+        entitlement_schema = f"startup_entitlement_{uuid.uuid4().hex[:8]}_v1"
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index, secret in enumerate((fixtures.VERIFIER_SECRET, fixtures.ROUTE_SECRET, fixtures.OWNER_SECRET)):
+                path = Path(directory) / str(index)
+                path.write_bytes(secret)
+                paths.append(str(path))
+            enrolled = open_entitlement_control_plane(TEST_DSN, schema=entitlement_schema,
+                trusted_verifier_secret_file=paths[0], route_verifier_secret_file=paths[1],
+                owner_authority_secret_file=paths[2], allow_insecure_local_transport=True)
+            enrolled.close()
+        self.entitlement_fixture_schema = entitlement_schema
+
+        dependencies = PrimaryMonetaryStartupTests.configured(self.handle, self.schema,
+            entitlement_schema=entitlement_schema)
         admissions = dependencies.monetary_admissions
         self.assertIs(admissions.pool, self.handle.pool)
         self.assertIs(admissions.authority.entitlements._pool, self.handle.pool)
@@ -1201,6 +1217,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             attempt(admissions, {**packet, "task_id": "unfunded"}, "a" * 64)
         changed_owner = PrimaryMonetaryStartupTests.configured(
             self.handle, self.schema,
+            entitlement_schema=entitlement_schema,
             key_override={"owner-reference": fixtures.OWNER_SECRET.decode()[::-1]})
         with self.assertRaises(TeamAuthorizationError):
             attempt(changed_owner.monetary_admissions, packet, "b" * 64)
@@ -1216,6 +1233,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 ("c" * 64,)).fetchone()["reserved_microusd"])
         with self.assertRaisesRegex(RuntimeError, "cryptographically separated"):
             PrimaryMonetaryStartupTests.configured(self.handle, self.schema,
+                entitlement_schema=entitlement_schema,
                 key_override={"owner-reference": fixtures.ROUTE_SECRET.decode()})
 
     @classmethod
@@ -1266,6 +1284,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
     def tearDown(self) -> None:
         try:
             with self.handle.pool.connection() as connection:
+                if getattr(self, "entitlement_fixture_schema", None):
+                    connection.execute(f"DROP SCHEMA {self.entitlement_fixture_schema} CASCADE")
                 connection.execute(f"DROP SCHEMA IF EXISTS {self.schema} CASCADE")
         finally:
             self.handle.close()
@@ -2852,3 +2872,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:10 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

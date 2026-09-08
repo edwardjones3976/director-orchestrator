@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 03:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
@@ -15,10 +16,8 @@ import hmac
 import json
 import os
 import re
-import signal
 import stat
 import subprocess
-import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -27,7 +26,8 @@ from typing import Any, Mapping, Sequence
 
 import rfc8785
 from jsonschema import Draft202012Validator
-from .process_isolation import launch_contained_process, trusted_neutral_cwd
+from .process_isolation import ProcessContainmentError, trusted_neutral_cwd
+from .bounded_process import run_bounded_process
 
 
 JsonObject = dict[str, Any]
@@ -1113,147 +1113,17 @@ class RunnerRegistry:
         return completed.stdout.strip()
 
     @staticmethod
-    def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
-        """Best-effort, bounded termination of the runner and its descendants."""
-
-        if os.name == "nt":
-            try:
-                subprocess.run(
-                    ("taskkill", "/PID", str(process.pid), "/T", "/F"),
-                    shell=False,
-                    check=False,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                )
-            except (OSError, subprocess.SubprocessError):
-                pass
-        else:
-            try:
-                # start_new_session=True makes the child's PID its process-group ID,
-                # which remains addressable even if the group leader exits first.
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-        if process.poll() is None:
-            try:
-                process.kill()
-            except OSError:
-                pass
-
-    @staticmethod
     def _run_bounded(
-        argv: Sequence[str],
-        *,
-        cwd: Path,
-        environment: Mapping[str, str],
-        timeout_seconds: int,
-        output_limit_bytes: int,
+        argv: Sequence[str], *, cwd: Path, environment: Mapping[str, str],
+        timeout_seconds: int, output_limit_bytes: int,
     ) -> tuple[int | None, bool, bool, bytes, bytes]:
-        process, tree_guard = launch_contained_process(
-            tuple(argv),
-            cwd=cwd,
-            env=dict(environment),
-            shell=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        buffers = {"stdout": bytearray(), "stderr": bytearray()}
-        lock = threading.Lock()
-        output_limit_exceeded = threading.Event()
-        termination_started = threading.Event()
-        termination_lock = threading.Lock()
-        termination_errors: list[BaseException] = []
-
-        def terminate_tree_once() -> None:
-            with termination_lock:
-                if termination_started.is_set():
-                    return
-                termination_started.set()
-            try:
-                tree_guard.terminate()
-                RunnerRegistry._terminate_process_tree(process)
-            except BaseException as exc:
-                termination_errors.append(exc)
-
-        def drain(name: str, stream: Any) -> None:
-            try:
-                while True:
-                    chunk = stream.read(4096)
-                    if not chunk:
-                        return
-                    with lock:
-                        captured = len(buffers["stdout"]) + len(buffers["stderr"])
-                        remaining = max(0, output_limit_bytes - captured)
-                        buffers[name].extend(chunk[:remaining])
-                        overflowed = len(chunk) > remaining
-                    # Terminate outside the buffer lock: killing a tree can take
-                    # seconds on Windows, and the sibling drain must stay free to
-                    # reach EOF rather than block behind it.
-                    if overflowed:
-                        output_limit_exceeded.set()
-                        terminate_tree_once()
-                        return
-            finally:
-                stream.close()
-
-        threads = [
-            threading.Thread(target=drain, args=("stdout", process.stdout), daemon=True),
-            threading.Thread(target=drain, args=("stderr", process.stderr), daemon=True),
-        ]
-        for thread in threads:
-            thread.start()
-        timed_out = False
         try:
-            exit_code: int | None = process.wait(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            terminate_tree_once()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired as exc:
-                raise CompletionGateError(
-                    "runner process tree did not terminate after timeout"
-                ) from exc
-            exit_code = None
-        # Even a successful parent may have spawned a detached descendant.
-        # The mandatory Job/session group is closed before evidence is returned.
-        terminate_tree_once()
-        # A child can inherit a pipe and outlive a normally exited parent. Give
-        # ordinary drains a short grace period, then close the complete tree so
-        # no descendant can keep proof execution alive or mutate after return.
-        for thread in threads:
-            thread.join(timeout=0.25)
-        if any(thread.is_alive() for thread in threads):
-            terminate_tree_once()
-        for thread in threads:
-            thread.join(timeout=5)
-        if any(thread.is_alive() for thread in threads):
-            terminate_tree_once()
-            for stream in (process.stdout, process.stderr):
-                try:
-                    stream.close()
-                except OSError:
-                    pass
-            for thread in threads:
-                thread.join(timeout=1)
-        if any(thread.is_alive() for thread in threads):
-            raise CompletionGateError("runner output drain did not terminate")
-        try:
-            tree_guard.close()
-        except BaseException as exc:
-            termination_errors.append(exc)
-        if termination_errors:
-            raise CompletionGateError("runner process containment failed") from termination_errors[0]
-        return (
-            exit_code,
-            timed_out,
-            output_limit_exceeded.is_set(),
-            bytes(buffers["stdout"]),
-            bytes(buffers["stderr"]),
-        )
+            return run_bounded_process(
+                argv, cwd=cwd, environment=environment,
+                timeout_seconds=timeout_seconds, output_limit_bytes=output_limit_bytes,
+            )
+        except ProcessContainmentError as exc:
+            raise CompletionGateError("runner process containment failed") from exc
 
     @staticmethod
     def _git_status(root: Path) -> str:
@@ -1315,3 +1185,5 @@ class RunnerRegistry:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 03:32 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -8,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -15,6 +17,7 @@ import urllib.error
 import urllib.request
 import unittest
 from dataclasses import replace
+from contextlib import closing
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,6 +51,20 @@ from director_orchestrator.host_provider_bridge import (
 SECRET = "bridge-test-secret-that-is-longer-than-32-characters"
 
 
+def execution_authority(provider="claude", **changes):
+    from director_orchestrator.antigravity_team import ProviderExecutionAuthority
+    values = dict(authority_digest="1" * 64, budget_document_digest="2" * 64,
+        provider_id=provider, task_id="task-1", execution_task_id="task-1", attempt_digest="3" * 64,
+        billing_mode="vendor-metered-usd")
+    values.update(changes)
+    return ProviderExecutionAuthority(**values)
+
+
+def encoded_authority(authority):
+    from director_orchestrator.entitlement_contracts import canonical_json_bytes
+    return canonical_json_bytes(authority.model_dump(mode="json")).decode()
+
+
 def request(*, nonce: str = "nonce-1", packet_key: str = "effect-key-1") -> BridgeRequest:
     packet = json.dumps(
         {
@@ -67,6 +84,8 @@ def request(*, nonce: str = "nonce-1", packet_key: str = "effect-key-1") -> Brid
         "writer_generation": 7,
         "packet_digest": _digest(packet),
         "writer_owner_token_digest": "sha256:" + "f" * 64,
+        "execution_authority": encoded_authority(execution_authority()),
+        "attempt_digest": "3" * 64,
     }
     return BridgeRequest(
         **bindings,
@@ -139,6 +158,65 @@ class _ChallengeResponse:
 
 
 class HostProviderBridgeTests(unittest.TestCase):
+    def test_execution_authority_tamper_strip_and_replay_conflict(self):
+        original = request()
+        original.validate(SECRET, now=1000)
+        for text in ("", encoded_authority(execution_authority(
+                billing_mode="owner-bounded-subscription", max_turns=3,
+                max_seconds=60, max_output_bytes=1024))):
+            with self.subTest(authority=text), self.assertRaises(HostProviderBridgeError):
+                replace(original, execution_authority=text).validate(SECRET, now=1000)
+        with tempfile.TemporaryDirectory() as directory:
+            store = BridgeClaimStore(Path(directory) / "claims.sqlite3")
+            store.claim(original)
+            changed = replace(original, nonce="different-nonce", execution_authority=encoded_authority(
+                execution_authority(budget_document_digest="9" * 64)))
+            with self.assertRaisesRegex(HostProviderBridgeError, "binding conflict"):
+                store.claim(changed)
+
+    def test_subscription_and_missing_binding_start_no_native_process(self):
+        for provider in ("claude", "openai", "antigravity"):
+            with self.subTest(provider=provider):
+                authority = execution_authority(provider, billing_mode="owner-bounded-subscription",
+                    max_turns=1, max_seconds=1, max_output_bytes=64)
+                command = (sys.executable, "gpt-5.4") if provider == "openai" else (sys.executable,)
+                executor = WindowsHostProviderExecutor({provider: command},
+                    cwd=Path.cwd(), writer_fence_verifier=_Verifier())
+                with patch("subprocess.run") as launch:
+                    for text in ("", encoded_authority(authority)):
+                        with self.assertRaises((HostProviderBridgeError, ValueError)):
+                            executor.execute(replace(request(), provider=provider, execution_authority=text))
+                    launch.assert_not_called()
+
+    def test_identity_mismatch_and_overflow_never_produce_capture(self):
+        executor = WindowsHostProviderExecutor({"claude": (sys.executable,)}, cwd=Path.cwd(),
+            writer_fence_verifier=_Verifier())
+        observer = MagicMock()
+        with patch("director_orchestrator.bounded_process.run_bounded_process") as launch:
+            for invalid in (replace(request(), task_id="another-task"),
+                            replace(request(), attempt_digest="8" * 64)):
+                with self.assertRaisesRegex(HostProviderBridgeError, "task or attempt"):
+                    executor.execute(invalid, execution_observer=observer)
+            launch.assert_not_called()
+            launch.return_value = (0, False, True, b'{"status":"SUCCEEDED"}', b"overflow")
+            with self.assertRaises(HostProviderBridgeAmbiguous):
+                executor.execute(request(), execution_observer=observer)
+            observer.assert_not_called()
+
+    def test_existing_unbound_success_cannot_replay_after_schema_upgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.sqlite3"
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute("CREATE TABLE bridge_attempts(idempotency_digest TEXT PRIMARY KEY,provider TEXT,task_id TEXT,assignment_id TEXT,writer_generation INTEGER,packet_digest TEXT,writer_owner_token_digest TEXT,state TEXT,response_json BLOB,updated_at INTEGER)")
+                old = request()
+                connection.execute("INSERT INTO bridge_attempts VALUES(?,?,?,?,?,?,?,?,?,?)", (
+                    old.idempotency_digest,old.provider,old.task_id,old.assignment_id,old.writer_generation,
+                    old.packet_digest,old.writer_owner_token_digest,"SUCCEEDED",b"{}",1000))
+            store = BridgeClaimStore(path)
+            BridgeClaimStore(path)  # Repeated startup is an idempotent migration.
+            with self.assertRaisesRegex(HostProviderBridgeError, "binding conflict"):
+                store.claim(old)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.store = BridgeClaimStore(Path(self.temporary.name) / "bridge.sqlite3")
@@ -213,15 +291,15 @@ class HostProviderBridgeTests(unittest.TestCase):
             "CLAUDE_CALLBACK_SECRET": "must-not-leak",
         }
         with patch.dict(os.environ, environment, clear=True), patch(
-            "subprocess.run", return_value=completed
+            "director_orchestrator.bounded_process.run_bounded_process",
+            return_value=(0, False, False, completed.stdout, b"")
         ) as run:
             self.assertEqual(b'{"status":"SUCCEEDED"}', executor.execute(request()))
         self.assertEqual(1, verifier.calls)
         self.assertEqual(1, run.call_count)
-        self.assertIs(run.call_args.kwargs["shell"], False)
-        self.assertIs(run.call_args.kwargs["check"], False)
+        self.assertEqual(request().packet, run.call_args.kwargs["input_bytes"])
         child_environment = {
-            key.upper(): value for key, value in run.call_args.kwargs["env"].items()
+            key.upper(): value for key, value in run.call_args.kwargs["environment"].items()
         }
         self.assertEqual(
             {"SYSTEMROOT": "C:\\Windows", "ANTHROPIC_API_KEY": "lane-auth"},
@@ -326,7 +404,8 @@ class HostProviderBridgeTests(unittest.TestCase):
         ):
             result = transport.send(
                 json.dumps(work, separators=(",", ":")).encode(),
-                context=SimpleNamespace(timeout_seconds=30, fencing_generation=7),
+                context=SimpleNamespace(timeout_seconds=30, fencing_generation=7, idempotency_key="3" * 64,
+                                        execution_authority=execution_authority("antigravity", execution_task_id=work["task_id"])),
             )
         return work, captured, result
 
@@ -401,6 +480,8 @@ class HostProviderBridgeTests(unittest.TestCase):
             packet_digest=headers["X-director-packet-digest"],
             writer_owner_token_digest=headers["X-director-writer-owner-token-digest"],
             work_packet_digest=headers["X-director-work-packet-digest"],
+            execution_authority=headers["X-director-execution-authority"],
+            attempt_digest=headers["X-director-attempt-digest"],
         )
         signature = headers["Authorization"].removeprefix("Director-HMAC ")
         accepted = BridgeRequest(
@@ -453,7 +534,8 @@ class HostProviderBridgeTests(unittest.TestCase):
         ):
             result = transport.send(
                 encoded,
-                context=SimpleNamespace(timeout_seconds=30, fencing_generation=7),
+                context=SimpleNamespace(timeout_seconds=30, fencing_generation=7, idempotency_key="3" * 64,
+                                        execution_authority=execution_authority()),
             )
 
         self.assertEqual(encoded, captured["data"])
@@ -644,3 +726,5 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -820,6 +821,7 @@ def _configured_primary_monetary_admissions(settings: Settings, handle):
     from .entitlement_control_plane import (
         EntitlementStoreHandle, entitlement_store_from_handle,
         _storage_identity as entitlement_storage_identity,
+        validate_entitlement_enrollment,
     )
     from .langgraph_postgres import _parse_connection_target, _storage_identity
 
@@ -835,6 +837,8 @@ def _configured_primary_monetary_admissions(settings: Settings, handle):
     )
     if _storage_identity(parsed, schema=settings.langgraph_primary_postgres_schema) != handle.storage_identity:
         raise ValueError("monetary authority must use the primary database identity")
+    validate_entitlement_enrollment(handle.pool, schema=settings.entitlement_postgres_schema,
+        storage_identity=entitlement_storage_identity(parsed, schema=settings.entitlement_postgres_schema))
     entitlement_handle = EntitlementStoreHandle(
         pool=handle.pool,
         schema=settings.entitlement_postgres_schema,
@@ -2513,6 +2517,7 @@ class DefaultPrimaryActivation:
                                     packet["allowed_external_effects"]
                                 ),
                                 fencing_generation=writer.fencing_generation,
+                                execution_authority=attempt.execution_authority,
                             ),
                         )
 
@@ -2777,3 +2782,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:10 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

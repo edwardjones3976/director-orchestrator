@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 03:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
@@ -386,6 +387,33 @@ def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) ->
             (ENTITLEMENT_MANIFEST_VERSION, schema, storage_identity),
         )
         return
+    _validate_enrolled_schema(connection, schema=schema, storage_identity=storage_identity)
+
+
+def validate_entitlement_enrollment(
+    pool: Any, *, schema: str, storage_identity: str
+) -> None:
+    """Validate existing enrollment without creating schema or owning the pool.
+
+    Borrow one connection for a read-only transaction. Missing enrollment is an
+    error; only the explicit entitlement opener may bootstrap a new schema.
+    """
+    schema = _require_schema(schema)
+    with pool.connection() as connection, connection.transaction():
+        connection.execute("SET TRANSACTION READ ONLY")
+        manifest_table = connection.execute(
+            "SELECT to_regclass(%s) AS manifest_table",
+            (f"{schema}.entitlement_schema_manifest",),
+        ).fetchone()["manifest_table"]
+        if manifest_table is None:
+            raise EntitlementControlPlaneError("entitlement schema is not enrolled")
+        _validate_enrolled_schema(connection, schema=schema, storage_identity=storage_identity)
+
+
+def _validate_enrolled_schema(
+    connection: Any, *, schema: str, storage_identity: str
+) -> None:
+    """Shared existing-schema checks; the caller owns its transaction."""
     manifest = connection.execute(
         f"""
         SELECT manifest_version, schema_version, storage_identity
@@ -3183,3 +3211,4 @@ def entitlement_store_from_handle(handle: EntitlementStoreHandle) -> Entitlement
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 03:33 UTC | END]]

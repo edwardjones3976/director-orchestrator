@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 import json
@@ -13,6 +14,7 @@ from director_orchestrator.native_codex_transport import (
 )
 from director_orchestrator.primary_transports import discover_local_primary_command_transports
 from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+from tests.test_host_provider_bridge import execution_authority
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,6 +40,25 @@ def encode(rows):
 
 
 class NativeCodexTests(unittest.TestCase):
+    def test_auth_and_execution_share_deadline_and_overflow_never_captures(self):
+        native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
+        observer = unittest.mock.Mock()
+        context = SimpleNamespace(fencing_generation=1,max_hops=1,timeout_seconds=5,
+            allowed_external_effects=(),execution_observer=observer,
+            execution_authority=execution_authority("openai",execution_task_id=work()["task_id"]))
+        with patch('director_orchestrator.bounded_process.run_bounded_process', side_effect=[
+                (0,False,False,b'Logged in using ChatGPT',b''),
+                (0,False,True,encode(events()),b'overflow')]) as bounded:
+            with self.assertRaisesRegex(RuntimeError, 'ambiguous'):
+                native.send(json.dumps(work()).encode(),context=context)
+            self.assertEqual(bounded.call_args_list[0].kwargs['deadline'], bounded.call_args_list[1].kwargs['deadline'])
+            observer.assert_not_called()
+        with patch('director_orchestrator.bounded_process.run_bounded_process') as bounded:
+            context.execution_authority = None
+            with self.assertRaisesRegex(ValueError, 'authority is missing'):
+                native.send(json.dumps(work()).encode(),context=context)
+            bounded.assert_not_called()
+
     def test_documented_jsonl_rebinds_session_and_usage_without_billing_claim(self):
         result = normalize_codex_jsonl(work(), encode(events()), requested_model='gpt-5.6')
         self.assertEqual('openai', result['provider'])
@@ -74,7 +95,8 @@ class NativeCodexTests(unittest.TestCase):
 
     def test_isolated_prompt_only_flags_and_no_retry(self):
         native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
-        context = SimpleNamespace(fencing_generation=1, max_hops=1, timeout_seconds=5, allowed_external_effects=())
+        context = SimpleNamespace(fencing_generation=1, max_hops=1, timeout_seconds=5, allowed_external_effects=(),
+            execution_authority=execution_authority("openai", execution_task_id=work()["task_id"]))
         with patch.object(native, 'authenticated', return_value=True), patch.object(native, '_run', return_value=encode(events())) as run:
             native.send(json.dumps(work()).encode(), context=context)
         argv, prompt, cwd, timeout = run.call_args.args
@@ -111,7 +133,8 @@ class NativeCodexTests(unittest.TestCase):
         verifier = SimpleNamespace(verify=lambda request: observed.append(request))
         observed = []
         executor = WindowsHostProviderExecutor({'openai': [str(Path(sys.executable).resolve()), 'gpt-5.6']}, cwd=ROOT, writer_fence_verifier=verifier)
-        request = SimpleNamespace(provider='openai', writer_generation=7, packet=json.dumps(work()).encode())
+        request = SimpleNamespace(provider='openai', writer_generation=7, packet=json.dumps(work()).encode(),
+            bound_execution_authority=lambda: execution_authority("openai", execution_task_id=work()["task_id"]))
         with patch.object(executor.native_codex, 'send', return_value={'provider': 'openai'}) as send:
             self.assertEqual({'provider': 'openai'}, json.loads(executor.execute(request)))
         self.assertEqual([request], observed)
@@ -127,3 +150,5 @@ class NativeCodexTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

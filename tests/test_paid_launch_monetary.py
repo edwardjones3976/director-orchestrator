@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 02:52 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 09:20 UTC | BEGIN]]
@@ -359,6 +360,25 @@ class PaidLaunchMonetaryPostgresTests(unittest.TestCase):
         # Vendor billing is not modelled; the application cap is still charged.
         self.assertEqual(int(reserved), RESERVATION_MICROUSD)
 
+    def test_validation_retains_signed_subscription_bounds_and_charge_on_hold(self):
+        from director_orchestrator.antigravity_team import ProviderExecutionAuthority
+        policy = SubscriptionPolicy(schema_version="owner-bounded-subscription/v1", max_calls=1,
+                                    max_turns=2, max_seconds=11, max_output_bytes=777)
+        budget = self.register(provider_budget("subscription-validation",
+            billing_mode="owner-bounded-subscription", subscription_policy=policy))
+        identifier = self.generation(budget)
+        admitted = self.admit(identifier)
+        authority = admitted["execution_authority"]
+        self.assertIsInstance(authority, ProviderExecutionAuthority)
+        self.assertEqual((2, 11, 777), (authority.max_turns, authority.max_seconds, authority.max_output_bytes))
+        self.assertEqual(budget.grant_digest, authority.authority_digest)
+        with self.assertRaisesRegex(TeamAuthorizationError, "hard-turn enforcement"):
+            authority.require_supported_execution()
+        self.validation.fail(admitted["reservation"])
+        self.assertEqual(RESERVATION_MICROUSD, self.campaign_spend())
+        with self.assertRaisesRegex(ValidationError, "already admitted"):
+            self.admit(identifier)
+
     def test_campaign_membership_is_immutable_across_generations(self):
         budget = self.register(provider_budget("membership-task"))
         moved = signed(budget.model_copy(update={"campaign_id": "another-campaign"}), fixtures.OWNER_SECRET)
@@ -392,6 +412,35 @@ class PaidLaunchMonetaryPostgresTests(unittest.TestCase):
         finally:
             fixture.tearDown()
 
+    def test_primary_reservation_retains_verified_execution_authority(self):
+        from tests.test_primary_workload import DIGEST, PostgresAdmissionTests
+        from director_orchestrator.antigravity_team import ProviderBudgetAdmission
+        fixture = PostgresAdmissionTests()
+        fixture.dsn = fixtures.TEST_DSN
+        fixture.setUp()
+        try:
+            task, writer = fixture.task("claude")
+            reservation = fixture.ready((task, writer))
+            policy = SubscriptionPolicy(schema_version="owner-bounded-subscription/v1", max_calls=1,
+                max_turns=2, max_seconds=7, max_output_bytes=999)
+            budget = provider_budget(task, campaign_id=None,
+                billing_mode="owner-bounded-subscription", subscription_policy=policy)
+            authority = PrimaryProviderBudgetAuthority(self.store, primary_schema=fixture.schema)
+            with fixture.handle.pool.connection() as connection, connection.transaction():
+                authority.register(connection, budget)
+            attempt = fixture.parallel.reserve_provider_attempt(reservation=reservation, writer=writer,
+                attempt_ordinal=1, format_roster=(("model-work-packet-v1", "packet-boundary-adapter"),),
+                idempotency_key_digest=DIGEST, budget_evidence_digest=DIGEST, paid_execution=True,
+                budget_admission=ProviderBudgetAdmission(authority, budget.grant_digest))
+            bound = attempt.execution_authority
+            self.assertEqual((task, attempt.attempt_digest, budget.grant_digest),
+                (bound.execution_task_id, bound.attempt_digest, bound.authority_digest))
+            self.assertEqual((2, 7, 999), (bound.max_turns, bound.max_seconds, bound.max_output_bytes))
+            with self.assertRaises(Exception):
+                bound.max_turns = 3
+        finally:
+            fixture.tearDown()
+
     def test_team_independent_resolver_requires_one_daily_task_budget(self):
         self.register(provider_budget("resolved-task"))
         resolver = PrimaryMonetaryAdmissions(self.budgets, pool=self.pool)
@@ -407,3 +456,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 09:20 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 02:52 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

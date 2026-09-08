@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex Director Coordination | GPT-6 | 2026-09-08 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -351,6 +352,7 @@ class ProviderAttemptReservation:
     idempotency_key_digest: str
     attempt_digest: str
     budget_evidence_digest: str
+    execution_authority: object | None = None
 
 
 def deterministic_format_roster(formats: Iterable[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
@@ -746,6 +748,7 @@ class PostgresParallelDispatch:
         I/O. Offline simulation passes ``paid_execution=False`` and is unchanged.
         """
 
+        execution_authority = None
         format_id, transport_id = format_for_attempt(format_roster, attempt_ordinal)
         if team_admission is not None and budget_admission is not None:
             raise ParallelDispatchError("team admission already includes monetary authority")
@@ -866,8 +869,11 @@ class PostgresParallelDispatch:
                     from .antigravity_team import ProviderBudgetAdmission
                     if not isinstance(budget_admission,ProviderBudgetAdmission):
                         raise ParallelDispatchError("invalid provider budget authority")
-                    budget_admission.admit(connection,task_id=reservation.task_id,
+                    reserved_budget = budget_admission.admit(connection,task_id=reservation.task_id,
                         provider=reservation.provider_id,attempt_digest=attempt_digest)
+                    from .antigravity_team import ProviderExecutionAuthority
+                    execution_authority = ProviderExecutionAuthority.from_reserved_budget(
+                        reserved_budget, attempt_digest=attempt_digest)
                 admit_assignment(
                     connection, schema=schema, task_id=reservation.task_id,
                     assignment_id=reservation.assignment_id,
@@ -915,6 +921,7 @@ class PostgresParallelDispatch:
             idempotency_key_digest,
             attempt_digest,
             budget_evidence_digest,
+            execution_authority,
         )
 
     def record_provider_attempt(
@@ -1493,3 +1500,5 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex Director Coordination | GPT-6 | 2026-09-08 | 03:05 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

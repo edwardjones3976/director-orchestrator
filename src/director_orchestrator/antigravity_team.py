@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 02:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -161,6 +162,54 @@ class SubscriptionPolicy(ClosedModel):
     max_turns: Annotated[int, Field(gt=0)]
     max_seconds: Annotated[int, Field(gt=0)]
     max_output_bytes: Annotated[int, Field(gt=0)]
+
+
+class ProviderExecutionAuthority(ClosedModel):
+    """Immutable transport authority derived only from a verified reservation."""
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    schema_version: Literal["provider-execution-authority/v1"] = "provider-execution-authority/v1"
+    authority_digest: Digest
+    budget_document_digest: str
+    provider_id: Identifier
+    task_id: Identifier
+    attempt_digest: str
+    execution_task_id: Identifier
+    billing_mode: Literal["vendor-metered-usd", "owner-bounded-subscription"]
+    max_turns: int | None = None
+    max_seconds: int | None = None
+    max_output_bytes: int | None = None
+
+    @model_validator(mode="after")
+    def check_bounds(self):
+        for value in (self.budget_document_digest, self.attempt_digest):
+            if re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", value) is None:
+                raise ValueError("execution authority digest is invalid")
+        limits = (self.max_turns, self.max_seconds, self.max_output_bytes)
+        if self.billing_mode == "owner-bounded-subscription":
+            if any(value is None or value < 1 for value in limits):
+                raise ValueError("subscription execution requires all positive bounds")
+        elif any(value is not None for value in limits):
+            raise ValueError("metered execution cannot carry subscription bounds")
+        return self
+
+    @classmethod
+    def from_reserved_budget(cls, budget, *, attempt_digest, execution_task_id=None):
+        policy = budget.subscription_policy
+        return cls(authority_digest=budget.grant_digest,
+            budget_document_digest=document_digest(budget.model_dump(mode="json")),
+            provider_id=budget.provider_id, task_id=budget.task_id,
+            execution_task_id=execution_task_id or budget.task_id,
+            attempt_digest=attempt_digest, billing_mode=budget.billing_mode,
+            max_turns=None if policy is None else policy.max_turns,
+            max_seconds=None if policy is None else policy.max_seconds,
+            max_output_bytes=None if policy is None else policy.max_output_bytes)
+
+    def require_supported_execution(self):
+        # No installed route currently proves hard native-turn enforcement.
+        # A returned turn count, hop budget or caller capability boolean is not
+        # such proof. A future enrolled supervisor must replace this gate.
+        if self.billing_mode == "owner-bounded-subscription":
+            raise TeamAuthorizationError("subscription hard-turn enforcement is unavailable")
 
 
 class ProviderBudget(ClosedModel):
@@ -581,6 +630,8 @@ class TeamAuthority:
                   attempt_digest: str | None = None, command: tuple[str, ...] | None = None):
         """Caller owns one transaction encompassing authorization and its action claim."""
         grant, budget = self._load(connection, grant_digest)
+        if stage in {"dispatch", "execution", "command"} and budget.subscription_policy is not None:
+            raise TeamAuthorizationError("subscription hard-turn enforcement is unavailable for the team worker")
         if (query.project_profile_id != grant.project_id or query.repository != grant.repository
                 or query.ref != grant.commit or query.installation_id != grant.installation_id
                 or query.current_build_digest != grant.installation_build
@@ -627,8 +678,10 @@ class TeamAuthority:
         return grant
 
     def _reserve(self, connection, grant, budget, attempt_digest):
-        self.budgets.reserve(connection,authority_digest=grant.digest,provider="antigravity",
+        reserved = self.budgets.reserve(connection,authority_digest=grant.digest,provider="antigravity",
             task_id=grant.task_id,attempt_digest=attempt_digest)
+        ProviderExecutionAuthority.from_reserved_budget(
+            reserved, attempt_digest=attempt_digest).require_supported_execution()
 
     def revoke(self, connection, *, grant_digest: str, owner_signature: str):
         payload = canonical_json_bytes({"operation":"revoke-team-grant","grant_digest":grant_digest})
@@ -652,3 +705,5 @@ class TeamAttemptAdmission:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 02:52 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

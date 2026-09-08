@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -170,6 +171,8 @@ class _Handler(BaseHTTPRequestHandler):
                 timestamp=int(self.headers.get("X-Director-Bridge-Timestamp", "0")),
                 nonce=self.headers.get("X-Director-Bridge-Nonce", ""),
                 signature=authorization.removeprefix("Director-HMAC "),
+                execution_authority=self.headers.get("X-Director-Execution-Authority", ""),
+                attempt_digest=self.headers.get("X-Director-Attempt-Digest", ""),
                 packet=self.rfile.read(length),
                 # Present only for a redacted lane. It is covered by the request
                 # signature, so stripping or forging it fails authentication.
@@ -279,3 +282,5 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 03:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -8,6 +9,7 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+import time
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any, Sequence
@@ -39,6 +41,7 @@ class ProcessTreeGuard:
 
     def __init__(self, process: subprocess.Popen[bytes]) -> None:
         self._job: int | None = None
+        self._members: list[int] = []
         self._kernel32: object | None = None
         if os.name != "nt":
             return
@@ -121,14 +124,84 @@ class ProcessTreeGuard:
         if self._job is None or os.name != "nt":
             return
         assert self._kernel32 is not None
+        # Keep synchronization handles: job accounting can reach zero before
+        # the corresponding process objects become signaled.
+        kernel = self._kernel32
+        query = kernel.QueryInformationJobObject
+        query.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                          wintypes.DWORD, ctypes.c_void_p)
+        query.restype = wintypes.BOOL
+        class ProcessIds(ctypes.Structure):
+            _fields_ = [("assigned", wintypes.DWORD), ("count", wintypes.DWORD),
+                        ("ids", ctypes.c_size_t * 4096)]
+        ids = ProcessIds()
+        if not query(wintypes.HANDLE(self._job), 3, ctypes.byref(ids),
+                     ctypes.sizeof(ids), None):
+            # Kill even when enumeration fails, but never accept its evidence.
+            kernel.TerminateJobObject(wintypes.HANDLE(self._job), 1)
+            raise ProcessContainmentError("Windows Job Object member readback failed")
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        for pid in ids.ids[:ids.count]:
+            handle = kernel.OpenProcess(0x00100000 | 0x1000, False, pid)
+            if handle:
+                kernel.IsProcessInJob.argtypes = (wintypes.HANDLE, wintypes.HANDLE,
+                                                 ctypes.POINTER(wintypes.BOOL))
+                kernel.IsProcessInJob.restype = wintypes.BOOL
+                belongs = wintypes.BOOL()
+                if (not kernel.IsProcessInJob(handle, wintypes.HANDLE(self._job),
+                                               ctypes.byref(belongs)) or not belongs.value):
+                    kernel.CloseHandle(handle)
+                    kernel.TerminateJobObject(wintypes.HANDLE(self._job), 1)
+                    raise ProcessContainmentError("Windows job member identity changed")
+                self._members.append(int(handle))
+            elif ctypes.get_last_error() != 87:  # Already exited IDs may disappear.
+                kernel.TerminateJobObject(wintypes.HANDLE(self._job), 1)
+                raise ProcessContainmentError("Windows job member cannot be observed")
         if not self._kernel32.TerminateJobObject(wintypes.HANDLE(self._job), 1):
             raise ProcessContainmentError("Windows Job Object termination failed")
+
+    def wait_empty(self, *, deadline: float) -> None:
+        """Prove the Windows job has no active process before releasing it."""
+        if os.name != "nt":
+            return
+        if self._job is None:
+            raise ProcessContainmentError("Windows Job Object is unavailable")
+        class Accounting(ctypes.Structure):
+            _fields_ = [("times", ctypes.c_longlong * 4),
+                        ("faults", wintypes.DWORD), ("total", wintypes.DWORD),
+                        ("active", wintypes.DWORD), ("terminated", wintypes.DWORD)]
+        query = self._kernel32.QueryInformationJobObject
+        query.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                          wintypes.DWORD, ctypes.c_void_p)
+        query.restype = wintypes.BOOL
+        while True:
+            information = Accounting()
+            if not query(wintypes.HANDLE(self._job), 1, ctypes.byref(information),
+                         ctypes.sizeof(information), None):
+                raise ProcessContainmentError("Windows Job Object readback failed")
+            if information.active == 0:
+                wait = self._kernel32.WaitForSingleObject
+                wait.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+                wait.restype = wintypes.DWORD
+                for member in self._members:
+                    milliseconds = max(0, int((deadline - time.monotonic()) * 1000))
+                    if wait(wintypes.HANDLE(member), milliseconds) != 0:
+                        raise ProcessContainmentError("Windows job member exit incomplete")
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ProcessContainmentError("Windows Job Object remains active")
+            time.sleep(min(0.01, remaining))
 
     def close(self) -> None:
         if self._job is None or os.name != "nt":
             return
         handle, self._job = self._job, None
         assert self._kernel32 is not None
+        for member in self._members:
+            self._kernel32.CloseHandle(wintypes.HANDLE(member))
+        self._members.clear()
         if not self._kernel32.CloseHandle(wintypes.HANDLE(handle)):
             raise ProcessContainmentError("Windows Job Object close failed")
 
@@ -248,3 +321,5 @@ def _resume_only_thread(process_id: int) -> None:
         raise ProcessContainmentError("Windows primary thread resume was ambiguous")
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 03:32 UTC | END]]
