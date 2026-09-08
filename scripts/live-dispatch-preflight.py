@@ -170,7 +170,7 @@ def variables(problem: str) -> tuple[str, ...]:
     return ()
 
 
-def split(validate) -> list[str]:
+def validator_problems(validate) -> list[str]:
     """Run one validator and return its problems, one per entry."""
 
     try:
@@ -189,16 +189,16 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
     for name, attribute in TARGET_SWITCHES:
         if not getattr(settings, attribute):
             problems.append(("live dispatch switches", f"{name} must be enabled"))
-    # main.py runs these three before anything is constructed.
     target = replace(
         settings, **{attribute: True for _, attribute in TARGET_SWITCHES}
     )
+    # main.py runs these three before it constructs anything.
     for stage, validate in (
         ("workload policy", target.validate_workload_policy_configuration),
         ("langgraph shadow lane", target.validate_langgraph_configuration),
         ("langgraph primary", target.validate_langgraph_primary_configuration),
     ):
-        problems.extend((stage, item) for item in split(validate))
+        problems.extend((stage, item) for item in validator_problems(validate))
     # main.py then builds DefaultPrimaryActivation, which refuses paid runs
     # without live dispatch requested. Evaluated on the configured settings,
     # not the target: this one is about the deployment as it stands now.
@@ -220,7 +220,7 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
         ("parallel dispatch", target.validate_parallel_dispatch_configuration),
         ("langgraph runtime", target.validate_langgraph_runtime_configuration),
     ):
-        problems.extend((stage, item) for item in split(validate))
+        problems.extend((stage, item) for item in validator_problems(validate))
     profile = settings.execution_profile_readiness()
     for key, name in EXECUTION_PROFILE:
         if not profile[key]:
