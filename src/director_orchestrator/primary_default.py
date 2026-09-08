@@ -1392,6 +1392,18 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
         with self._provider_call_lock:
             return dict(self._provider_calls)
 
+    def has_ledger_double(self, provider: str) -> bool:
+        """Report whether a lane has a configured offline double.
+
+        The dispatcher checks this before invoking, so an unconfigured lane
+        settles as a known FAILED rather than raising. A raise here would reach
+        the ledger as AMBIGUOUS, which retains the concurrency slot and blocks
+        terminal lifecycle processing for a failure that is already known
+        before any execution begins.
+        """
+
+        return provider in self._provider_doubles
+
     def dispatch_ledger_double(
         self,
         *,
@@ -1566,6 +1578,17 @@ def build_offline_parallel_dispatcher(
         evidence.
         """
 
+        if not services.has_ledger_double(reservation.provider_id):
+            # Settled, not raised. This failure is known before any execution
+            # begins, and an exception would reach the ledger as AMBIGUOUS,
+            # retaining the concurrency slot and stopping the lifecycle from
+            # ever reaching a terminal state. Identity violations below still
+            # raise: those are unexpected and must not be downgraded.
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED,
+                None,
+                "offline_provider_double_missing",
+            )
         record = services._record(reservation.task_id)
         if record.plan is None:
             raise RuntimeError("parallel dispatch has no durable plan")

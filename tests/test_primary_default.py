@@ -66,6 +66,7 @@ from director_orchestrator.primary_effect_gateways import (
 )
 from director_orchestrator.primary_parallel import (
     ParallelAssignmentStatus,
+    ParallelReservation,
     ParallelDispatchError,
     ParallelDispatchOutcome,
     PostgresParallelDispatch,
@@ -2614,6 +2615,38 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         aggregate = coordinator.parallel_aggregate(pending.task_id)
         self.assertFalse(aggregate.succeeded, aggregate)
         self.assertNotEqual(TaskStatus.DONE, completed.status)
+
+    def test_unconfigured_lane_settles_failed_without_calling_a_double(self):
+        """An unconfigured lane must settle FAILED, never AMBIGUOUS.
+
+        Required by the independent review of #122/#126: raising here reaches
+        the ledger as AMBIGUOUS, which retains the concurrency slot and stops
+        the lifecycle from reaching a terminal state, for a failure that is
+        already known before any execution starts.
+        """
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings)
+        )
+        dispatch = build_offline_parallel_dispatcher(services, lambda: None)
+        outcome = dispatch(
+            ParallelReservation(
+                task_id="DIR-LG-UNCONFIGURED",
+                assignment_id="assignment-not-a-lane",
+                sequence=1,
+                provider_id="not-a-lane",
+                deployment_id="deployment-test",
+                reservation_digest=digest("reservation:not-a-lane"),
+            )
+        )
+
+        self.assertEqual(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertIsNone(outcome.result_digest)
+        self.assertEqual("offline_provider_double_missing", outcome.reason_code)
+        self.assertEqual(0, services.provider_calls, services.provider_call_counts)
 
 
 class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):
