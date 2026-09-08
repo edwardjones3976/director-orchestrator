@@ -77,6 +77,7 @@ from director_orchestrator.primary_parallel import (
     PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
 )
 from director_orchestrator.primary_default import (
+    _SIMULATION_LABEL,
     DefaultDryRunServices,
     DefaultOfflineSimulationServices,
     DefaultPrimaryActivation,
@@ -2647,6 +2648,60 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertIsNone(outcome.result_digest)
         self.assertEqual("offline_provider_double_missing", outcome.reason_code)
         self.assertEqual(0, services.provider_calls, services.provider_call_counts)
+
+    def test_malformed_double_digest_is_rejected_not_wrapped(self):
+        """A prefix-only check let "sha256:x" settle the ledger as SUCCEEDED.
+
+        The bad value was wrapped into a newly valid digest, so the graph could
+        report DONE while the double had violated its declared result contract.
+        """
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        lane = sorted(settings.langgraph_primary_required_providers)[0]
+        services = DefaultOfflineSimulationServices(
+            settings,
+            packet_router=packet_router(settings),
+            provider_doubles={
+                provider: (lambda _context: "sha256:x")
+                for provider in settings.langgraph_primary_required_providers
+            },
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "invalid digest"):
+            services.dispatch_ledger_double(
+                provider=lane,
+                context=SimpleNamespace(task_id="DIR-LG-MALFORMED"),
+                reservation_digest=digest("reservation:malformed"),
+            )
+
+    def test_simulated_outcomes_carry_the_charter_simulation_label(self):
+        """Charter: a projection that contacted no provider must be labelled.
+
+        These strings reach the human-visible TaskRecord projection, so without
+        the verbatim label a simulated wave reads like real provider evidence.
+        """
+
+        charter = (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "team-operating-charter.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(_SIMULATION_LABEL, charter)
+
+        _services, _coordinator, _application, _pending, completed = (
+            self._offline_ledger_application(
+                namespace="default-primary-offline-label-v1",
+                dispatch=True,
+                event_id="event-offline-label",
+            )
+        )
+
+        self.assertTrue(completed.assignment_outcomes)
+        for outcome in completed.assignment_outcomes:
+            self.assertIn(_SIMULATION_LABEL, outcome.result)
+            self.assertIn(_SIMULATION_LABEL, outcome.review_summary)
 
 
 class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):

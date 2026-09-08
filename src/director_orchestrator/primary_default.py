@@ -1353,6 +1353,14 @@ class DefaultDryRunServices:
         )
 
 
+# The charter requires this exact label, verbatim, for any test, projection or
+# replay that contacted no provider (docs/team-operating-charter.md).  The
+# offline dispatcher persists outcomes into the human-visible TaskRecord
+# projection, so the label has to travel with them.
+_SIMULATION_LABEL = "SIMULATION — NO PROVIDER INTERACTION"
+_OFFLINE_RESULT_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
 class DefaultOfflineSimulationServices(DefaultDryRunServices):
     """Full graph services backed only by deterministic, paid-off doubles."""
 
@@ -1429,9 +1437,13 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
         with self._provider_call_lock:
             self._provider_calls[provider] += 1
         result_digest = self._provider_doubles[provider](context)
-        if not isinstance(result_digest, str) or not result_digest.startswith(
-            "sha256:"
-        ):
+        # Validate the whole digest, not just its prefix. A malformed value such
+        # as "sha256:x" would otherwise be wrapped into a newly valid digest and
+        # settle the ledger assignment as SUCCEEDED, letting the graph report
+        # DONE while the double had violated its declared result contract.
+        if not isinstance(result_digest, str) or _OFFLINE_RESULT_DIGEST.fullmatch(
+            result_digest
+        ) is None:
             raise RuntimeError("offline provider double returned an invalid digest")
         return _digest(
             {
@@ -1626,8 +1638,10 @@ def build_offline_parallel_dispatcher(
                         assignment_sequence=assignment.sequence,
                         provider=assignment.agent,
                         run_id=f"offline-double:{reservation.reservation_digest}",
-                        result="offline_provider_double_completed",
-                        review_summary="offline_provider_double_completed",
+                        result=_SIMULATION_LABEL,
+                        review_summary=(
+                            f"{_SIMULATION_LABEL} - offline provider double"
+                        ),
                         provider_result_digest=result_digest.removeprefix("sha256:"),
                     )
                 )
