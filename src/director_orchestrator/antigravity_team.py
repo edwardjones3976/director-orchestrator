@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 02:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
@@ -522,10 +523,11 @@ class PrimaryMonetaryAdmissions:
 
     def admissions(self, provider, packet):
         with self.pool.connection() as connection,connection.transaction():
+            day = self.authority.entitlements._clock().astimezone(timezone.utc).date().isoformat()
             rows=connection.execute(f"""SELECT authority_digest FROM {self.authority.schema}.director_primary_provider_budget
                 WHERE document->>'task_id'=%s AND document->>'provider_id'=%s
-                AND document->>'project_id'=%s AND document->>'day'=CURRENT_DATE::text""",
-                (packet["task_id"],provider,packet["project"])).fetchall()
+                AND document->>'project_id'=%s AND document->>'day'=%s""",
+                (packet["task_id"],provider,packet["project"],day)).fetchall()
             if len(rows)!=1:
                 raise TeamAuthorizationError("selected provider lacks one authoritative daily task budget")
             return dict(budget_admission=ProviderBudgetAdmission(self.authority,rows[0]["authority_digest"]))
@@ -649,3 +651,4 @@ class TeamAttemptAdmission:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 02:52 UTC | END]]

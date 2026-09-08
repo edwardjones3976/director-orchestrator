@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 02:52 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 09:20 UTC | BEGIN]]
 """Real-PostgreSQL monetary admission for the paid launch campaign.
@@ -13,6 +14,7 @@ import secrets
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -43,8 +45,7 @@ from tests.test_provider_validation import CANDIDATE, KEY, OWNER, TREE, binding,
 PROJECT = "uppercut"
 CAMPAIGN = "paid-launch-2026-09"
 RESERVATION_MICROUSD = 60
-# The pinned instant is the current UTC day, so the persisted budget day and the
-# database CURRENT_DATE agree; one hour later is the next UTC day.
+# One hour after this pinned UTC instant is the next authoritative budget day.
 DAY_ONE = datetime.now(timezone.utc).replace(hour=23, minute=30, second=0, microsecond=0)
 DAY_TWO = DAY_ONE + timedelta(hours=1)
 
@@ -222,6 +223,44 @@ class PaidLaunchMonetaryPostgresTests(unittest.TestCase):
                         provider="claude", task_id="rollover-task-a", attempt_digest="sha256:" + "3" * 64)
         self.assertEqual(self.campaign_spend(), RESERVATION_MICROUSD)
 
+    def test_resolver_uses_authority_utc_day_in_non_utc_session_and_rechecks_rollover(self):
+        midnight = datetime(2030, 1, 2, 0, 30, tzinfo=timezone.utc)
+        previous = midnight - timedelta(hours=1)
+        yesterday = self.register(provider_budget("midnight-task", day=previous))
+        today = self.register(provider_budget("midnight-task", day=midnight))
+        self.register(provider_budget("stale-only-task", day=previous))
+        packet = {"task_id": "midnight-task", "project": PROJECT}
+        with self.pool.connection() as connection, connection.transaction():
+            connection.execute("SET LOCAL TIME ZONE 'America/Los_Angeles'")
+            local_day = connection.execute(
+                "SELECT (%s::timestamptz)::date AS day", (midnight,)
+            ).fetchone()["day"]
+            self.assertEqual(local_day, previous.date())
+            self.assertNotEqual(local_day, midnight.date())
+
+            class SessionPool:
+                @contextmanager
+                def connection(self):
+                    yield connection
+
+            resolver = PrimaryMonetaryAdmissions(self.budgets, pool=SessionPool())
+            with patch.object(self.store, "_clock", lambda: previous):
+                stale = resolver.admissions("claude", packet)["budget_admission"]
+                self.assertEqual(stale.authority_digest, yesterday.grant_digest)
+            # The authority clock may report a non-UTC offset for the same instant.
+            offset_midnight = midnight.astimezone(timezone(timedelta(hours=-8)))
+            with patch.object(self.store, "_clock", lambda: offset_midnight):
+                current = resolver.admissions("claude", packet)["budget_admission"]
+                self.assertEqual(current.authority_digest, today.grant_digest)
+                with self.assertRaisesRegex(TeamAuthorizationError, "one authoritative daily task budget"):
+                    resolver.admissions("claude", {"task_id": "stale-only-task", "project": PROJECT})
+                with self.assertRaisesRegex(TeamAuthorizationError, "binding expired or changed"):
+                    stale.admit(connection, task_id="midnight-task", provider="claude",
+                                attempt_digest="sha256:" + "7" * 64)
+                current.admit(connection, task_id="midnight-task", provider="claude",
+                              attempt_digest="sha256:" + "8" * 64)
+        self.assertEqual(self.campaign_spend(), RESERVATION_MICROUSD)
+
     def test_restart_after_ambiguity_retains_the_money_and_refuses_redispatch(self):
         budget = self.register(provider_budget("ambiguous-task"))
         identifier = self.generation(budget)
@@ -367,3 +406,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 09:20 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-07 | 09:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 02:52 UTC | END]]
