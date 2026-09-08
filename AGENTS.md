@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
@@ -70,6 +71,47 @@ this repository. Read `docs/project-leadership.md` before assigning work.
 - Rule 3 is unaffected: no agent merges its own pull request. A delegated merge requires the producer, the reviewer, and the acting agent to be three distinct identities, plus two concurring exact-SHA `ACCEPT` verdicts from different providers, neither of them a material author.
 - Absence of evidence is never consent. A provider that is out of quota, unauthenticated, silent, or absent has not approved anything, and its silence may not be counted, inferred, or waited out.
 
+## Approver carries the merge
+
+Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
+
+> If they approve it, they should merge it as well.
+
+Operative form. An eligible reviewer that returns an exact-SHA `ACCEPT` carries
+that candidate to a terminal result instead of handing it back to a queue. When
+two providers concur, the second concurring provider executes the merge: the
+producer is the first identity, the reserved rotating reviewer that supplied the
+first `ACCEPT` is the second, and the concurring provider that executes is the
+third. That satisfies the three-identity requirement rather than collapsing it.
+`docs/human-out-of-the-loop-operation.md` evidence-bar item 5 names the producer,
+the reviewer, and the agent executing the decision, and its item 4 names the
+second concurring provider separately from item 3's reviewer, so the executing
+approver fills the third slot and does not occupy the reviewer's.
+
+Rule 3 is untouched. An approving reviewer is by definition not the author: a
+material author may not review the candidate at all, so an approver can never be
+merging its own work. The no-self-merge bar never lifts, and nothing here makes
+an author eligible to review, accept, or merge.
+
+Scope is non-protected branches only. Merging into a protected branch remains
+tier 0, never delegable under any configuration, and owner-only for every lane.
+Tier 1 already enumerates "Executing an eligible merge of a pull request into a
+non-protected branch" as a delegable class, which is exactly the act assigned
+here. This adds no decision class, widens no tier, changes no two-verdict
+requirement, and gives merge authority to no lane that does not already hold it.
+
+An approver that cannot execute the merge says so on the pull request and names
+the blocker: an ineligible lane, an unbound or absent actor, a refusing gate, a
+missing second concurring verdict, a protected target, or a still-required owner
+decision. The failure being corrected is silence. Leaving an approved candidate
+open without stating why is a reporting failure, not a neutral outcome.
+
+This adds an obligation and removes no gate. Every deterministic check still
+runs: approving bypasses no trusted CI, security evidence, exact-SHA binding,
+concurring-verdict, budget, allowlist, actor-binding, or
+`OWNER_DECISION_REQUIRED` requirement, and deterministic code still performs the
+merge.
+
 ## Postgres-backed unit tests
 
 - `tests/test_langgraph_postgres.py` and the `tests/test_primary_*` modules listed in `.agents/skills/postgres-test-lane/SKILL.md` read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than skip without it.
@@ -140,3 +182,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | END]] -->
