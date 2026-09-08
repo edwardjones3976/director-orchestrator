@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 04:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -180,13 +181,16 @@ class HostProviderBridgeTests(unittest.TestCase):
                 authority = execution_authority(provider, billing_mode="owner-bounded-subscription",
                     max_turns=1, max_seconds=1, max_output_bytes=64)
                 command = (sys.executable, "gpt-5.4") if provider == "openai" else (sys.executable,)
-                executor = WindowsHostProviderExecutor({provider: command},
-                    cwd=Path.cwd(), writer_fence_verifier=_Verifier())
-                with patch("subprocess.run") as launch:
+                # Exercise authority refusal independently of host executable discovery.
+                with patch("director_orchestrator.native_codex_transport.NativeCodexPacketTransport") as native, \
+                        patch("director_orchestrator.bounded_process.run_bounded_process") as launch:
+                    executor = WindowsHostProviderExecutor({provider: command},
+                        cwd=Path.cwd(), writer_fence_verifier=_Verifier())
                     for text in ("", encoded_authority(authority)):
                         with self.assertRaises((HostProviderBridgeError, ValueError)):
                             executor.execute(replace(request(), provider=provider, execution_authority=text))
                     launch.assert_not_called()
+                    native.return_value.send.assert_not_called()
 
     def test_identity_mismatch_and_overflow_never_produce_capture(self):
         executor = WindowsHostProviderExecutor({"claude": (sys.executable,)}, cwd=Path.cwd(),
@@ -728,3 +732,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 04:00 UTC | END]]
