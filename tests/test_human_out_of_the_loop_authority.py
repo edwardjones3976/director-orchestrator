@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | BEGIN]]
@@ -182,7 +183,14 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("not equivalent to human judgment", limits)
         self.assertIn("correlated ways", limits)
         self.assertIn("untrusted material", limits)
-        self.assertIn("has not yet produced a verdict", limits)
+        # The original text claimed every delegation attempt failed on quota,
+        # authentication or availability. That was measured wrong on
+        # 2026-09-08: the failures were permission denials surfacing as
+        # cancelled sessions. The correction must survive, so this pins the
+        # measured cause rather than the retracted claim.
+        self.assertIn("cancelled session", limits)
+        self.assertIn("reported to the owner as empty", limits)
+        self.assertNotIn("has not yet produced a verdict", limits)
         # An agent wrote the rules that govern agents; the document must say so.
         self.assertIn("conflict of interest", limits)
         self.assertIn("drafted by an agent", limits)
@@ -295,3 +303,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]]

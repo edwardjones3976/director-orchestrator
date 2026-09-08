@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]] -->
@@ -247,6 +248,57 @@ its predecessor is accepted, and acceptance of one grants nothing to the next.
 | 4 | Enable tier-1 merge only, one repository, owner observing. | Yes |
 | 5 | Broaden tier-1 classes only after a clean shadow record and a clean live record. | Yes |
 
+## The evaluated form
+
+Phase 0 now has an executable form in `src/director_orchestrator/hotl_execution.py`,
+described in [`hotl-execution-predicate.md`](hotl-execution-predicate.md). It
+implements the rules above and adds none. Where the two disagree, this document
+wins and the code is wrong.
+
+An action runs without returning to the owner only when every term holds:
+
+```
+H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a)
+```
+
+authorization, gates, bounds, verification, independence, safe stopping. It is
+a conjunction, not a score; one unmet term is decisive.
+
+Two properties carry the weight, and both are pinned by tests that assert the
+negative:
+
+- **The tier check runs before the conjunction, and fails closed.** No
+  combination of satisfied terms can carry a tier-0 act. Evaluating the terms
+  first would let six green terms authorise a production deployment.
+- **A hold names its blocker and is never a permission question.** Missing
+  evidence routes to verification; a temporary failure routes to its authorised
+  recovery; only a blocker needing authority outside the standing grant reaches
+  a person. A system that renames an interruption has not removed one.
+
+The measure is the autonomous completion rate over a denominator fixed before
+execution, so blocked or failed work cannot leave it by later reclassification.
+An empty population reports no rate rather than a flattering one.
+
+## Provider activation evidence does not stop expiring at LIVE_OK
+
+There is no expiry-window constant. `expires_at` is supplied per record.
+
+`ProviderActivationRegistry._surface_readiness` scans **every** record in the
+five-stage chain and reports the surface not ready if any one has expired. Two
+consequences follow, and both differ from the intuitive reading:
+
+- Reaching `LIVE_OK` does not settle the question. The earliest record,
+  `INSTALLED`, keeps the surface live only while it is unexpired; when it
+  lapses, `live_ready` goes false and live dispatch stops however recent
+  `LIVE_OK` is. The condition is continuing, not a race to activation.
+- Letting the prior stage lapse mid-chain does not cost a retry. Advancing then
+  raises *the prior activation stage expired; use a new binding version*, which
+  discards the whole chain for that binding.
+
+So advances belong immediately before activation, and the expiry chosen at
+advance time must cover the lane's intended operating life rather than the gap
+to `Activate`.
+
 ## Known limitations
 
 These are stated plainly because a framework that hides them is worse than none.
@@ -258,9 +310,18 @@ These are stated plainly because a framework that hides them is worse than none.
 - Reviews read untrusted material. A diff, an issue, or a CI log can carry
   instructions aimed at the reviewer, and a delegated reviewer has no owner
   looking over its shoulder.
-- Delegation has not yet produced a verdict in this project. Every attempt so
-  far ended in quota, authentication, or availability failure, which is why
-  phases 3 and 4 exist before any broadening.
+- Delegation had not produced a verdict when this was written, and the failures
+  were attributed to quota, authentication, or availability. That diagnosis was
+  wrong for most of them. Provider CLIs read permissions from a shared settings
+  file with no `gh` rule, and a denied command surfaces as a cancelled session,
+  which reads exactly like a broken provider. Measured on 2026-09-08:
+  `git rev-parse` returned `end_turn`, `gh pr view` returned `cancelled`, and
+  the same prompt with `--allow 'Bash(gh pr view:*)'` returned the answer. Four
+  dispatches were abandoned on the misreading, and the delegation pool was
+  reported to the owner as empty on the strength of it. Cursor's CLI is
+  separately blocked by usage quota, which is a real availability failure.
+  Phases 3 and 4 still exist before any broadening; the reason is caution, not
+  this evidence.
 - This document was drafted by an agent. An agent writing the rules that govern
   agents is a conflict of interest, and the owner should read it as a proposal
   to be checked rather than as settled policy.
@@ -270,3 +331,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]] -->
