@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -11,10 +13,15 @@
 """Disposable fixture history is test data, never activation/bootstrap evidence."""
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import asyncio
+from contextlib import closing
 import os
+from pathlib import Path
+import sqlite3
+import tempfile
 import unittest
 import uuid
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from director_orchestrator.langgraph_postgres import (
     PostgresCheckpointConfigurationError, open_postgres_control_plane,
@@ -32,6 +39,76 @@ DIGEST = "sha256:" + "a" * 64
 # Last nineteen: six OpenAI, four Claude, four Cursor, three Antigravity,
 # one Grok and one Perplexity. The next OpenAI reaches its 35% hard ceiling.
 HISTORY = ["claude"] * 4 + ["cursor"] * 4 + ["antigravity"] * 3 + ["grok", "perplexity"] + ["openai"] * 6
+
+# Immutable test snapshot from e5145abd, before the owner's prospective role swap.
+PREVIOUS_ENGINEERING_TARGETS = {
+    "openai": 35, "claude": 30, "cursor": 15, "grok": 10, "antigravity": 10,
+    "perplexity": 0, "firecrawl": 0, "github-copilot": 0, "microsoft-365-copilot": 0,
+}
+
+
+def previous_engineering_digest():
+    from director_orchestrator.allocation_profiles import allocation_profile_digest
+    with patch("director_orchestrator.allocation_profiles.ALLOCATION_PROFILES",
+               {"engineering": PREVIOUS_ENGINEERING_TARGETS}):
+        return allocation_profile_digest("engineering")
+
+
+class AllocationCompatibilityTests(unittest.TestCase):
+    def test_prior_binding_holds_for_owner_without_rewriting_real_history(self):
+        from director_orchestrator.allocation_profiles import allocation_profile_digest
+        from director_orchestrator.config import Settings
+        from director_orchestrator.engine import OrchestrationEngine
+        from director_orchestrator.models import Assignment, AssignmentKind, ProviderName, SlackIntake, TaskRecord, TaskStatus
+        from director_orchestrator.store import TaskStore, WorkloadAttemptOutcome
+        from director_orchestrator.workload_policy import EnforcementMode, PRIMARY_PROVIDERS, Provider, WorkKind, WorkSize
+
+        old_digest = previous_engineering_digest()
+        self.assertNotEqual(old_digest, allocation_profile_digest("engineering"))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "allocation.sqlite"
+            store = TaskStore(path)
+            record = TaskRecord(task_id="DIR-OLD-ALLOCATION", plan_generation=1,
+                status=TaskStatus.RUNNING, owner_approved=True,
+                intake=SlackIntake(source_event_id="old-profile", channel_id="C1",
+                    thread_ts="1.1", user_id="U1", text="Bounded fixture work"))
+            store.create(record)
+            assignment = Assignment(sequence=1, agent=ProviderName.CLAUDE,
+                kind=AssignmentKind.IMPLEMENTATION, task="Bounded fixture work",
+                acceptance=["Verified result"], workload_size=WorkSize.SIMPLE, effort_points=1)
+            with patch("director_orchestrator.allocation_profiles.ALLOCATION_PROFILES",
+                       {"engineering": PREVIOUS_ENGINEERING_TARGETS}):
+                prior = store.reserve_workload_assignment(
+                    reservation_key=f"{record.task_id}:old-attempt", task_id=record.task_id,
+                    assignment_id=f"{record.task_id}:1:1", phase="dispatch", provider=Provider.CLAUDE,
+                    effort_units=1, kind=WorkKind.IMPLEMENTATION, size=WorkSize.SIMPLE,
+                    model_label=None, available_primary_providers=PRIMARY_PROVIDERS,
+                    mode=EnforcementMode.ENFORCED)
+                self.assertTrue(prior.decision.allowed)
+                store.finalize_workload_reservation(prior.reservation_key, WorkloadAttemptOutcome.INVOKED)
+            with closing(sqlite3.connect(path)) as connection:
+                before_binding = connection.execute("SELECT * FROM workload_profile_bindings").fetchall()
+                self.assertEqual(before_binding[0][2], old_digest)
+            store = TaskStore(path)
+            before_attempts = store.list_recent_workload_attempts()
+            engine = OrchestrationEngine(replace(Settings(), sqlite_path=str(path)), store)
+            engine._available_workload_primary_providers = Mock(return_value=PRIMARY_PROVIDERS)
+            # Isolate the allocation boundary from unrelated publication/effect fixtures.
+            engine._record_workload_pre_submit_stop = Mock()
+            engine._status_post = AsyncMock()
+            for attempt_key in ("old-attempt", "new-attempt"):
+                result = asyncio.run(engine._reserve_workload_dispatch(record, assignment,
+                    phase="dispatch", effect_key=attempt_key))
+                self.assertIsNone(result)
+                held = store.get(record.task_id)
+                self.assertEqual(held.status, TaskStatus.OWNER_DECISION_REQUIRED)
+                self.assertEqual(held.error,
+                    "WorkloadReservationConflict: workload allocation profile binding changed")
+                self.assertEqual(store.list_recent_workload_attempts(), before_attempts)
+            with closing(sqlite3.connect(path)) as connection:
+                self.assertEqual(connection.execute("SELECT * FROM workload_profile_bindings").fetchall(), before_binding)
+            self.assertEqual(len(before_attempts), 1)
+            self.assertEqual(store.list_recent_direct_production(), [])
 
 
 class AdmissionPolicyTests(unittest.TestCase):
@@ -207,6 +284,38 @@ class PostgresAdmissionTests(unittest.TestCase):
             self.assertEqual(read_admission_history(connection, schema=self.schema), tuple(lane for _, lane in sequence))
             self.assertEqual(self.count("director_primary_workload_assignment"), 4)
 
+    def test_previous_engineering_digest_holds_admission_and_preserves_history(self):
+        from director_orchestrator.primary_workload import read_admission_history
+        old_digest = previous_engineering_digest()
+        self.assertNotEqual(old_digest, POLICY_DIGEST)
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                (task_id,assignment_id,provider_lane,reservation_digest,fencing_generation,
+                 policy_version,policy_digest,allocation_profile)
+                VALUES ('old','old','openai',%s,1,%s,%s,'engineering')""",
+                (DIGEST, POLICY_VERSION, old_digest))
+            before = connection.execute(f"SELECT * FROM {self.schema}.director_primary_workload_assignment").fetchall()
+        self.handle.close()
+        self.handle = open_postgres_control_plane(self.dsn, schema=self.schema, allow_insecure_local_transport=True)
+        self.parallel = PostgresParallelDispatch(self.handle.claim_store)
+        with self.handle.pool.connection() as connection:
+            with self.assertRaises(WorkloadAdmissionHold) as read_hold:
+                read_admission_history(connection, schema=self.schema)
+            self.assertEqual(read_hold.exception.reason_code, "workload_history_invalid")
+            with self.assertRaises(WorkloadAdmissionHold) as replay_hold:
+                with connection.transaction():
+                    admit_assignment(connection, schema=self.schema, task_id="old", assignment_id="old",
+                        provider="openai", reservation_digest=DIGEST, fencing_generation=1)
+            self.assertEqual(replay_hold.exception.reason_code, "workload_admission_identity_changed")
+        task = self.task()
+        reservation = self.ready(task)
+        with self.assertRaises(WorkloadAdmissionHold) as new_hold:
+            self.attempt(reservation, task[1])
+        self.assertEqual(new_hold.exception.reason_code, "workload_history_invalid")
+        self.assertEqual(self.count("director_primary_provider_attempt"), 0)
+        with self.handle.pool.connection() as connection:
+            self.assertEqual(connection.execute(f"SELECT * FROM {self.schema}.director_primary_workload_assignment").fetchall(), before)
+
     def test_profile_authority_change_invalidates_registered_plan(self):
         task_id, writer = self.task()
         with patch("director_orchestrator.primary_parallel.allocation_profile_digest", return_value="sha256:" + "b" * 64):
@@ -364,3 +473,5 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

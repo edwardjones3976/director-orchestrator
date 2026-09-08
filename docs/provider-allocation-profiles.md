@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | BEGIN]] -->
@@ -49,6 +51,33 @@ Do not silently redistribute shares, relax ceilings, or change an approved
 provider after failure. Use an explicitly approved feasible fallback profile or
 return a concise owner decision identifying the unavailable capability.
 
+### Previously frozen allocation digests
+
+The 2026-09-08 share swap changes all four profile digests. An approval for the
+previous digest does not authorize the new weights. Preserve the old plan,
+prestage packet, admissions, outcomes, and their original digests as evidence.
+For unfinished work, prepare a new plan and canonical prestage packet under the
+current profile, then obtain fresh owner approval before dispatch; never edit an
+old digest in place or reset the rolling history to make a plan pass.
+
+The existing gates distinguish these persisted states:
+
+- SQLite rejects reuse of the old assignment binding with
+  `WorkloadReservationConflict: workload allocation profile binding changed`.
+  The engine records `OWNER_DECISION_REQUIRED` before provider I/O; an existing
+  approval or another attempt key does not authorize rebinding the assignment.
+- PostgreSQL rejects replay of an old admission with
+  `workload_admission_identity_changed`. Reading prior v3 history under a changed
+  digest, or admitting new work against that history, holds with
+  `workload_history_invalid`. The original rows remain intact and no provider
+  attempt is inserted.
+
+For the PostgreSQL history hold, keep affected dispatch held and record the old
+and current profile digests and affected assignment identities for an explicit,
+reviewed compatibility reconciliation approved by the owner. Fresh plan approval
+alone does not clear this hold. This change provides no migration or automatic
+digest rewrite; do not delete, reseed, relabel, or silently accept old history.
+
 ## Capacity, roles, and authority
 
 The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
@@ -58,9 +87,9 @@ subscription-backed execution when suitable and authenticated. Separately billed
 API execution requires its own known budget and gates. Unknown remaining quota,
 cost, or usage telemetry is unknown, never zero or assumed entitlement.
 
-Claude is the acting project Director; the deployed runtime remains OpenAI
-Responses until an explicitly enabled, validated replacement is selected. This
-leadership change does not activate providers or alter historical attribution.
+Claude is the acting project Director; the default legacy implementation remains
+OpenAI. This role change does not attest deployed provider execution or activate
+providers, and it does not alter historical attribution.
 OpenAI production is separately assigned and attributed; Director coordination,
 Moderator and Participant functions, acceptance supervision, and merge activity
 do not earn production credit. The materially authoring OpenAI lane cannot review
@@ -108,3 +137,5 @@ selecting a profile does not install an adapter or deploy LangGraph.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->

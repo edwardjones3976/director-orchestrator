@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
@@ -168,7 +170,7 @@ from .store import (
     WorkloadLedgerReservation,
     WorkloadReservationConflict,
 )
-from .team_charter import AdvisoryVote, tally_advisory_votes
+from .team_charter import AdvisoryVote, tally_advisory_votes, team_operating_charter
 from .workload_policy import (
     DirectProductionRecord,
     EnforcementMode as WorkloadEnforcementMode,
@@ -4732,12 +4734,16 @@ class OrchestrationEngine:
         valid_discussion_sequences = set(
             debate.position_assignments + debate.rebuttal_assignments
         )
+        seatable_members = set(
+            team_operating_charter()["committee"]["debate"]["seatable_members"]
+        )
+        # Advisory seats are independent of worker registration or dispatch
+        # authority. Only already verified, assigned contributions below vote.
         eligible_participants = {
-            ProviderName.CLAUDE,
-            ProviderName.CURSOR,
-            ProviderName.GROK,
-            ProviderName.GEMINI,
-        } - {self._director_provider(record)}
+            provider for provider in ProviderName
+            if self._committee_member(provider) in seatable_members
+            and provider != self._director_provider(record)
+        }
         latest_by_provider: dict[ProviderName, CollaborationTurn] = {}
         for turn in record.collaboration_turns:
             if turn.debate_role is not None or turn.phase not in {
@@ -6986,3 +6992,5 @@ class OrchestrationEngine:
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

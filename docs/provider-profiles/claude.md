@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]] -->
@@ -221,17 +223,19 @@ Separation of duties:
 
 | Transport | Kind | Runtime | Enum value | Observed kind | Status | Route status | Direction | Config (names) | Route |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `claude-native-director` | host_bridge | legacy_engine | `claude_native_host` | - | implemented_disabled_by_default | authorized | director_to_provider | `CLAUDE_DIRECTOR_ENABLED` | `windows-host-provider-bridge` |
+| `claude-native-director` | host_bridge | legacy_engine | `claude_native_host` | - | blocked_pending_evidence | proposed | director_to_provider | `CLAUDE_DIRECTOR_ENABLED` | `claude-director-injected-native-packet` |
 | `claude-routine-trigger` | http_api | legacy_engine | `claude_routine` | - | implemented | authorized | director_to_provider | `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN`, `CLAUDE_ROUTINE_BETA` | `claude-routine-dispatch-and-callback` |
 | `claude-callback` | callback | legacy_engine | `claude_callback` | - | implemented | authorized | provider_to_director | `CLAUDE_CALLBACK_SECRET` | `claude-routine-dispatch-and-callback` |
 | `windows-host-provider-bridge` | host_bridge | langgraph_primary | - | - | implemented_disabled_by_default | authorized | director_to_provider | `LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT`, `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET`, `DIRECTOR_HOST_PROVIDER_COMMANDS_JSON`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` | `windows-host-provider-bridge` |
 | `browser-provider-ui` | browser_ui | documented_only | - | - | implemented | authorized | director_to_provider | - | `browser-provider-ui` |
 | `claude-native-acceptance-issuer` | acceptance_issuer | documented_only | - | - | blocked_pending_evidence | proposed | provider_to_director | `LANGGRAPH_PRIMARY_ACCEPTANCE_MODE`, `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH`, `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256`, `LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH` | `claude-native-acceptance-issuer` |
 
-- `claude-native-director`: Structured Director calls use an explicitly injected native packet transport with a trusted work/context binder and authenticator. No CLI discovery or enrollment occurs; a missing dependency fails closed without an OpenAI fallback.
+- `claude-native-director`: This repository supplies the typed Director adapter only. A transport, trusted work/context binder, and authenticator must be supplied and qualified by the integrator. No existing host-bridge authorization or enrollment is inherited; a missing dependency fails closed without an OpenAI fallback.
   - native model, authority, writer, process bounds, budget, idempotency, and returned provenance must be verified by trusted application dependencies
   - one effect-free call; typed output is validated and malformed output fails closed
   - project leadership and native sign-in alone do not make this runtime callable
+  - the qualified transport must enforce the packet hard deadline and kill or reconcile its entire native process tree before returning; a Python thread timeout cannot provide process cleanup
+  - a timed-out or late result cannot become acceptance evidence; an ambiguous native attempt must be reconciled before any new dispatch
 - `claude-routine-trigger`: Carries the work packet to a Claude Code Routine. The session it starts holds only the packet's scope; nothing about the trigger grants review, merge, or external-action authority.
   - returns a session URL; completion is reported by callback or manual owner report
 - `claude-callback`: The only inbound provider-initiated HTTP route. Bearer-authenticated with constant-time comparison; it delivers completion evidence and cannot advance a gate, approve work, or override a stored decision.
@@ -257,6 +261,7 @@ Separation of duties:
 
 | Route | Kind | Direction | Initiation | Status | Default state | Authority carried | Enforced by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `claude-director-injected-native-packet` | mediated | director_to_provider | director | proposed | blocked | none | - |
 | `work-packet-dispatch` | mediated | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/packet_routing.py:DirectorPacketTaskRouter`, `src/director_orchestrator/policy.py` |
 | `result-packet-return` | mediated | provider_to_director | provider_response_to_dispatch | authorized | enabled | none | `src/director_orchestrator/packet_results.py`, `src/director_orchestrator/packet_contracts.py` |
 | `slack-collaboration-relay` | mediated | director_to_owner | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/slack_bot.py` |
@@ -307,3 +312,5 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->

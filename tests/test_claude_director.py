@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 """Offline adapter qualification; fixture authentication is not host enrollment."""
@@ -6,6 +8,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -19,7 +22,7 @@ from director_orchestrator.claude_director import (
 from director_orchestrator.config import Settings
 from director_orchestrator.director import OpenAIDirector, build_director
 from director_orchestrator.interactions import ProviderTransport
-from director_orchestrator.langgraph_runtime import ProviderAdapterContext
+from director_orchestrator.langgraph_runtime import ProviderAdapterContext, RuntimeDispatchTimeout
 from director_orchestrator.models import DirectorPlan, ProviderName, ReviewDecision, ReviewVerdict, SlackIntake, TaskRecord
 from director_orchestrator.packet_contracts import PacketContractError, document_digest
 
@@ -210,6 +213,57 @@ class ClaudeDirectorTransportTests(unittest.IsolatedAsyncioTestCase):
             await self.call()
         self.assertEqual(len(self.fixture.native.calls), 1)
 
+    async def test_stalled_native_transport_times_out_without_accepting_late_result(self):
+        release = threading.Event()
+        started = threading.Event()
+        exited = threading.Event()
+        original_send = self.fixture.native.send
+
+        def stall(work_packet_json, *, context):
+            started.set()
+            try:
+                # Bounded fixture guard plus unconditional release below prevents
+                # the regression test from leaving a hung worker behind.
+                if not release.wait(timeout=5):
+                    raise AssertionError("fixture transport was not released")
+                return original_send(work_packet_json, context=context)
+            finally:
+                exited.set()
+
+        def short_deadline(binding):
+            work = copy.deepcopy(binding.work_packet)
+            work["limits"]["timeout_seconds"] = 1
+            return ClaudeDirectorBinding(work, replace(binding.context,
+                timeout_seconds=1, work_packet_digest=document_digest(work)))
+
+        self.fixture.mutate_binding = short_deadline
+        self.fixture.native.send = stall
+        try:
+            with self.assertRaisesRegex(RuntimeDispatchTimeout, "UNKNOWN.*termination is unverified"):
+                await self.call()
+            self.assertTrue(started.is_set())
+            self.assertFalse(exited.is_set(), "timing out the wait must not claim the native worker stopped")
+            self.assertEqual(self.fixture.auth_calls, ["admission"])
+        finally:
+            release.set()
+            self.assertTrue(exited.wait(timeout=2), "fixture cleanup must release the daemon")
+        self.assertEqual(len(self.fixture.native.calls), 1)
+        self.assertEqual(self.fixture.auth_calls, ["admission"], "late result must never reach result authentication or acceptance")
+
+    async def test_late_result_is_rejected_even_when_the_queue_returns_it(self):
+        with patch("director_orchestrator.claude_director.monotonic", side_effect=[100.0, 160.0]):
+            with self.assertRaisesRegex(RuntimeDispatchTimeout, "arrived after"):
+                await self.call()
+        self.assertEqual(len(self.fixture.native.calls), 1)
+        self.assertEqual(self.fixture.auth_calls, ["admission"])
+
+    async def test_result_verification_cannot_return_acceptance_after_deadline(self):
+        with patch("director_orchestrator.claude_director.monotonic", side_effect=[100.0, 100.5, 160.0]):
+            with self.assertRaisesRegex(RuntimeDispatchTimeout, "verification exceeded"):
+                await self.call()
+        self.assertEqual(len(self.fixture.native.calls), 1)
+        self.assertEqual(self.fixture.auth_calls, ["admission", "result"])
+
     async def test_claude_plan_prompt_excludes_self_and_unregistered_openai_worker(self):
         captured = {}
         async def capture(input_text, model, name):
@@ -231,3 +285,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

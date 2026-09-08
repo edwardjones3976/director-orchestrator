@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 """Typed Claude Director over an explicitly enrolled native v1 packet boundary.
@@ -6,13 +8,19 @@ The binder and authenticator are trusted application dependencies, never model
 payloads. This module neither discovers a CLI nor enrolls/authenticates a host.
 An integration must verify current authority and native execution provenance,
 including process timeout/output/tool limits, before supplying these dependencies.
+Native enrollment must prove termination of the process tree at its deadline.
+The adapter bounds its wait and rejects late outcomes; it cannot kill an injected
+transport's thread or native child. A timeout leaves execution UNKNOWN, requires
+authenticated reconciliation, and never authorizes a retry or fallback.
 """
 from __future__ import annotations
 
 import asyncio
 import hmac
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Protocol
 
 from pydantic import BaseModel
@@ -20,7 +28,10 @@ from pydantic import BaseModel
 from .config import Settings
 from .director import OpenAIDirector, _strict_schema
 from .interactions import ProviderTransport
-from .langgraph_runtime import PacketBoundaryAdapter, ProviderAdapterContext, RawProviderTransport
+from .langgraph_runtime import (
+    LangGraphPacketRuntime, PacketBoundaryAdapter, ProviderAdapterContext,
+    RawProviderTransport, RuntimeDispatchTimeout,
+)
 from .models import ProviderName
 from .packet_contracts import PacketContractError, canonical_json_bytes, document_digest, validate_packet
 
@@ -45,6 +56,9 @@ class ClaudeDirectorAuthenticator(Protocol):
         writer generation, process bounds, budget admission and idempotency. With
         a result verify authenticated native provenance for this exact binding and
         expected model. A provider/model string in a payload is not proof.
+        Enrollment must prove native process-tree deadline/kill behavior; this
+        callback and the binder must themselves return within bounded local time.
+        A Python thread timeout is not evidence that native execution stopped.
         """
         ...
 
@@ -108,7 +122,22 @@ class ClaudeDirectorPacketTransport:
         binding = ClaudeDirectorBinding(work, context)
         # Trusted application enrollment must fail before any native invocation.
         self._authenticate(binding, model_name=self.model_name, result=None)
-        result = self._boundary.dispatch(work, context=context)
+        deadline = monotonic() + context.timeout_seconds
+        try:
+            # Reuse the existing packet runtime's bounded daemon wait. It holds
+            # no runtime/ledger instance and cannot authenticate or accept a late
+            # result. The caller records timeout as UNKNOWN, not completed.
+            result = LangGraphPacketRuntime._dispatch_with_timeout(
+                self._boundary, work, context=context,
+                submission_started=threading.Event(),
+            )
+        except RuntimeDispatchTimeout as exc:
+            raise RuntimeDispatchTimeout(
+                "Claude Director native deadline exceeded; execution remains UNKNOWN. "
+                "Native process termination is unverified; reconcile before any retry."
+            ) from exc
+        if monotonic() >= deadline:
+            raise RuntimeDispatchTimeout("Claude Director result arrived after its deadline; execution remains UNKNOWN")
         if result["status"] != "SUCCEEDED" or result["side_effects"]:
             raise PacketContractError("Claude Director did not return a successful effect-free result")
         if result["usage"].get("model") != self.model_name:
@@ -117,7 +146,10 @@ class ClaudeDirectorPacketTransport:
         if len(outcome.encode("utf-8")) > self.maximum_output_bytes:
             raise PacketContractError("Claude Director outcome exceeds the bounded output limit")
         self._authenticate(binding, model_name=self.model_name, result=result)
-        return model.model_validate_json(outcome)
+        typed = model.model_validate_json(outcome)
+        if monotonic() >= deadline:
+            raise RuntimeDispatchTimeout("Claude Director result verification exceeded its deadline; execution remains UNKNOWN")
+        return typed
 
 
 class ClaudeDirector(OpenAIDirector):
@@ -137,10 +169,12 @@ class ClaudeDirector(OpenAIDirector):
         super().__init__(settings)
 
     async def _structured(self, input_text: str, model: type[BaseModel], name: str):
-        # The qualified native transport enforces the context deadline. Cancelling
-        # a Python await alone is not a process kill or proof a dispatch stopped.
+        # structured() bounds the native wait using the authorized packet timeout;
+        # the enrolled native transport still owns process-tree termination.
         return await asyncio.to_thread(
             self._packet_transport.structured, self.instructions, input_text, model, name,
         )
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
@@ -55,6 +56,28 @@ endpoints:
     description: "Every provider lane at once; used only by the prohibited peer rule."
 
 routes:
+  - route_id: "claude-director-injected-native-packet"
+    name: "Claude Director injected native packet seam"
+    kind: "mediated"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "claude" }
+    providers_involved: [claude]
+    carries:
+      - "one typed, effect-free Director request bound to an authorized work packet"
+    withheld_context:
+      - "credentials, unrelated repository material, and external write authority"
+    authority: "none"
+    status: "proposed"
+    default_config_state: "blocked"
+    charter_basis:
+      - document: "docs/project-leadership.md"
+        anchor: "Selecting Claude with an unavailable transport must stop"
+    enforced_by: []
+    prohibition_quote: null
+    config: [CLAUDE_DIRECTOR_ENABLED]
+    notes: "Only the typed adapter is implemented. No production transport, binder, or authenticator is supplied or enrolled. Integrators must prove packet deadlines, native process-tree cleanup, identity, budget, and ambiguous-attempt reconciliation. This seam does not inherit the distinct LangGraph Windows host bridge's authorization, signed challenge, claim store, configuration, or readiness."
+
   # ------------------------------------------------------------------ mediated
   - route_id: "work-packet-dispatch"
     name: "Work packet dispatch"
@@ -988,3 +1011,4 @@ provider_to_provider_rule:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

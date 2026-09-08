@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]] -->
@@ -37,6 +39,7 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 
 | Route | Kind | Direction | Initiation | Status | Default state | Authority carried | Providers involved | Enforced by |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `claude-director-injected-native-packet` | mediated | director_to_provider | director | proposed | blocked | none | `claude` | - |
 | `work-packet-dispatch` | mediated | director_to_provider | director | authorized | enabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot`, `microsoft-365-copilot` | `src/director_orchestrator/packet_routing.py:DirectorPacketTaskRouter`, `src/director_orchestrator/policy.py` |
 | `result-packet-return` | mediated | provider_to_director | provider_response_to_dispatch | authorized | enabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot`, `microsoft-365-copilot` | `src/director_orchestrator/packet_results.py`, `src/director_orchestrator/packet_contracts.py` |
 | `slack-collaboration-relay` | mediated | director_to_owner | director | authorized | enabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot`, `microsoft-365-copilot` | `src/director_orchestrator/engine.py`, `src/director_orchestrator/slack_bot.py` |
@@ -98,6 +101,7 @@ Endpoints:
 
 | Route | `openai` | `claude` | `cursor` | `grok` | `antigravity` | `perplexity` | `firecrawl` | `github-copilot` | `microsoft-365-copilot` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `claude-director-injected-native-packet` |  | x |  |  |  |  |  |  |  |
 | `work-packet-dispatch` | x | x | x | x | x | x | x | x | x |
 | `result-packet-return` | x | x | x | x | x | x | x | x | x |
 | `slack-collaboration-relay` | x | x | x | x | x | x | x | x | x |
@@ -169,3 +173,5 @@ Endpoints:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->

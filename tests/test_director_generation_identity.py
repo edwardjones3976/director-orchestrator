@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 """Offline identity/replay tests; fake Directors perform no provider calls."""
@@ -17,11 +19,13 @@ from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.interactions import (
     CommunicationEvidenceFailure, DirectorIdentity, ProviderInteractionEvent,
-    ProviderInteractionState, ProviderTransport, director_evidence_matches,
-    project_interaction,
+    ProviderInteractionPhase, ProviderInteractionState, ProviderTransport,
+    acceptance_review_candidate_digest, canonical_content_digest,
+    director_evidence_matches, project_interaction,
 )
 from director_orchestrator.models import (
-    Assignment, DebateActorRole, ProviderName, SlackIntake, TaskRecord, TaskStatus,
+    Assignment, CollaborationTurn, DebateActorRole, DebateContribution, ProviderName,
+    ReviewDecision, ReviewVerdict, SlackIntake, TaskRecord, TaskStatus,
 )
 from director_orchestrator.policy import preview_plan
 from director_orchestrator.store import TaskStore
@@ -248,8 +252,94 @@ class DirectorGenerationIdentityTests(unittest.TestCase):
                 self.assertEqual(event.provider.value, provider)
                 self.assertEqual(event.director_identity, persisted.director_generations[1])
 
+    def test_claude_director_counts_verified_openai_peer_at_charter_weight_once(self):
+        from director_orchestrator.team_charter import tally_advisory_votes
+        from tests.test_slack_debate_bus import DebateDirector, debate_plan, seed_verified_interaction
+
+        engine = self.engine('claude')
+        plan = debate_plan()
+        for assignment in plan.assignments:
+            if assignment.agent == ProviderName.CLAUDE:
+                assignment.agent = ProviderName.OPENAI
+        record, _, _ = self.materialize(engine, plan=plan)
+        assignment = next(item for item in record.plan.assignments
+                          if item.agent == ProviderName.OPENAI and item.discussion_phase.value == 'rebuttal')
+        provider_result = 'Fixture OpenAI specialist result supports A.'
+        provider_interaction = 'fixture-openai-debate-rebuttal'
+        provider_event = seed_verified_interaction(
+            record, interaction_id=provider_interaction, provider=ProviderName.OPENAI,
+            phase=ProviderInteractionPhase.DISPATCH, result=provider_result,
+            assignment_sequence=assignment.sequence,
+        )
+        self.store.save(record)
+        record, effect_key = engine._reserve_director_effect(
+            record, phase='acceptance_review', identity={'fixture': 'accepted-openai-peer'},
+            estimated_cost_usd=0,
+        )
+        review_interaction = engine._begin_director_interaction(
+            record, phase='acceptance_review', effect_key=effect_key,
+            candidate_binding_digest=acceptance_review_candidate_digest(
+                task_id=record.task_id, plan_generation=record.plan_generation,
+                assignment_sequence=assignment.sequence, provider='openai',
+                provider_run_id='fixture-openai-run', provider_event_digest=provider_event.event_digest,
+                provider_result_digest=canonical_content_digest(provider_result),
+            ),
+        )
+        contribution = DebateContribution(
+            position='OpenAI supports A.', evidence=['Fixture exact source evidence'],
+            confidence=.8, vote_option='A',
+        )
+        decision = ReviewDecision(
+            verdict=ReviewVerdict.ACCEPT, summary='Fixture Claude accepted this peer contribution.',
+            evidence=['Exact result reviewed'], debate_contribution=contribution,
+        )
+        review_event = engine._complete_director_interaction(
+            record, interaction_id=review_interaction, result=decision,
+        )
+        record_task_effect_observation(
+            record, effect_key=effect_key, intent_kind='director_intent',
+            observation_kind='director_observation', phase='acceptance_review',
+            outcome='completed', run_id='fixture-claude-review',
+        )
+        record.collaboration_turns.append(CollaborationTurn(
+            assignment_sequence=assignment.sequence, provider=ProviderName.OPENAI,
+            phase='rebuttal', correlation_id='fixture-openai-correlation',
+            run_id='fixture-openai-run', position=contribution.position,
+            evidence=contribution.evidence, confidence=contribution.confidence, vote_option='A',
+            interaction_id=provider_interaction,
+            verified_interaction_event_digest=provider_event.event_digest,
+            provider_result_digest=canonical_content_digest(provider_result),
+            verified_debate_contribution=contribution, director_review=decision,
+            director_review_interaction_id=review_interaction,
+            verified_director_review_event_digest=review_event.event_digest,
+            director_review_result_digest=canonical_content_digest(engine._interaction_result_text(decision)),
+        ))
+        self.store.save(record)
+        engine.director = DebateDirector()
+        captured_votes = []
+
+        def capture_real_tally(votes, **kwargs):
+            captured_votes.extend(votes)
+            return tally_advisory_votes(votes, **kwargs)
+
+        # Recorded evidence exercises tallying only; no OpenAI worker is added.
+        self.assertNotIn(ProviderName.OPENAI, engine.providers)
+        with patch('director_orchestrator.engine.tally_advisory_votes', side_effect=capture_real_tally):
+            continued = asyncio.run(engine._finalize_debate(record, record.plan.assignments[-1]))
+        persisted = self.store.get(record.task_id)
+        self.assertTrue(continued, persisted.error)
+        self.assertEqual([vote.member for vote in captured_votes].count('openai'), 1)
+        self.assertEqual([vote.member for vote in captured_votes].count('claude'), 1)
+        self.assertEqual(persisted.debate_tally['option_weights'], {'A': 2.5, 'B': 2.0})
+        self.assertEqual(persisted.debate_tally['cast_weight_total'], 4.5)
+        self.assertEqual(persisted.debate_tally['configured_weight_total'], 8.5)
+        self.assertFalse(persisted.debate_tally['authorizes_external_action'])
+        self.assertNotIn(ProviderName.OPENAI, engine.providers)
+
 
 if __name__ == '__main__':
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
@@ -216,15 +217,17 @@ transports:
     runtime: "legacy_engine"
     enum_value: "claude_native_host"
     transport_kind_observed: null
-    status: "implemented_disabled_by_default"
+    status: "blocked_pending_evidence"
     direction: "director_to_provider"
     config: ["CLAUDE_DIRECTOR_ENABLED"]
-    authority_note: "Structured Director calls use an explicitly injected native packet transport with a trusted work/context binder and authenticator. No CLI discovery or enrollment occurs; a missing dependency fails closed without an OpenAI fallback."
+    authority_note: "This repository supplies the typed Director adapter only. A transport, trusted work/context binder, and authenticator must be supplied and qualified by the integrator. No existing host-bridge authorization or enrollment is inherited; a missing dependency fails closed without an OpenAI fallback."
     current_transport_constraints:
       - "native model, authority, writer, process bounds, budget, idempotency, and returned provenance must be verified by trusted application dependencies"
       - "one effect-free call; typed output is validated and malformed output fails closed"
       - "project leadership and native sign-in alone do not make this runtime callable"
-    route_id: "windows-host-provider-bridge"
+      - "the qualified transport must enforce the packet hard deadline and kill or reconcile its entire native process tree before returning; a Python thread timeout cannot provide process cleanup"
+      - "a timed-out or late result cannot become acceptance evidence; an ambiguous native attempt must be reconciled before any new dispatch"
+    route_id: "claude-director-injected-native-packet"
     browser_policy: null
   - transport_id: "claude-routine-trigger"
     kind: "http_api"
@@ -327,3 +330,4 @@ sources:
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]

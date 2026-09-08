@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | BEGIN]] -->
 # Current project leadership
@@ -15,6 +16,18 @@ and vice versa." The real native Claude provider accepted the handoff on
 identified Claude Opus 5; this was an actual provider response, not a predicted
 position or a renamed Codex task. Coordination creates no code authorship or
 independent candidate acceptance.
+
+The owner-visible handoff is recorded in Codex task
+`01a077dc-2e5c-7652-9ae7-1e5aa0e692e5`, evidence set
+`claude-role-transition`, native session
+`a2b16990-30d6-4470-b702-51ec0eedcee7`. Its local `receipt.json` SHA256 is
+`bfb2dd0fb4c5822b17df44c41a2a6467bcab2edb2b33631642e63222f32392c9`;
+the captured `stdout.jsonl` SHA256 is
+`080f619365f9b0f6620d0608fec1bda85e20feebf3e5ef73e7315604fd2aaa55`.
+The receipt records one completed native turn with the existing login, no
+observed tool use, and completed process cleanup. These are referenceable
+host observation artifacts for the coordination handoff, not a signed
+provider-v2 acceptance receipt or authority to activate a runtime.
 
 ## Responsibilities
 
@@ -86,3 +99,4 @@ project lead. Historical documents remain historical; current role and
 allocation sources must agree with this decision.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
@@ -70,6 +71,7 @@ SRC = ROOT / "src" / "director_orchestrator"
 LANES = tuple(PRIMARY_PROVIDER_LANES)
 COMMITTEE_LANES = ("antigravity", "claude", "cursor", "grok", "openai")
 PROPOSED_ROUTES = {
+    "claude-director-injected-native-packet",
     "grok-bot",
     "microsoft-365-copilot-work-iq",
     "claude-native-acceptance-issuer",
@@ -914,3 +916,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
