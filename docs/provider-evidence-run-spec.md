@@ -124,9 +124,19 @@ The agreement is enforced, not merely current.
 allowlists out of the script and asserts they equal the Python constants, so a
 future edit to one side alone fails the suite.
 
-As this item always said, launchability is not qualification. Nothing above
-demonstrates that the installed Cursor route produces a capture satisfying the
-strict checks, so cursor remains unqualified for evidence.
+The installed route also resolves and authenticates, which this item did not
+previously record. `_which(("cursor-agent.exe", "cursor-agent.cmd",
+"cursor-agent"))` finds `cursor-agent.cmd`; `_safe_cursor_agent_prefix` resolves
+it to a real pinned runtime; and `_cursor_agent_authenticated` returns **true**
+on this host. Every flag the lane pins at `primary_transports.py:1185` —
+`--print`, `--output-format`, `--mode`, `--sandbox`, `--workspace` — exists on
+the installed CLI, and `--output-format json` is a supported value. None of that
+required a provider call.
+
+As this item always said, launchability is not qualification. What remains for
+cursor is exactly one authenticated capture that satisfies the strict checks;
+those checks are now pinned executably (see below), so the answer is read off
+the envelope rather than rediscovered.
 
 **4. grok has direct CLI paths; the installed envelope is unproved.**
 The repository does contain finite, single-shot direct paths for grok:
@@ -141,8 +151,25 @@ envelope with a successful terminal status, a string session or conversation
 identifier, no `schema_version` key, and no tool or effect keys; the host bridge
 instead feeds raw stdin (`:449-458`) and demands terminal JSON (`:466-474`).
 Whether the *installed* Grok CLI emits an envelope that satisfies those checks
-has not been demonstrated. The exhausted native probe must not be repeated for
-this document; its existing owner retains any reviewed correction.
+is still not demonstrated, but the surrounding unknowns are now closed without
+contacting the provider. The CLI is installed and reports version 1.0.13, and
+every flag the lane pins — `--output-format`, `--max-turns`, `--permission-mode`,
+`--prompt-file`, `--session-id` — exists on it, with `json` a supported
+`--output-format` value and `plan` a supported `--permission-mode` value. Its
+`streaming-messages-json` format is documented as the Anthropic Messages API wire
+format, the same envelope family the second success branch above already accepts.
+So the pinned invocation is valid against the installed binary; only the emitted
+envelope remains open.
+
+The restriction on repeating work is narrower than "do not look", and reading it
+as a blanket prohibition stalled this lane. What must not be repeated is the
+**exhausted authenticated probe** — a paid dispatch whose outcome was ambiguous;
+its existing owner retains any reviewed correction. Capability inspection that
+makes no inference call and spends nothing is not that probe: it answers a
+different question and yields information the probe never recorded. The charter
+governs the paid case directly, permitting a further attempt only after relevant
+state changes, an ambiguous earlier result, or a named coverage gap, and only
+with the expected information gain recorded first.
 
 **5. antigravity has an installed CLI; its capture route is unbound.**
 It is not IDE-only. An Antigravity CLI is installed on this host, reports
@@ -161,11 +188,29 @@ absent, which is the state on this deployment.
 
 Taken together: the floor needs openai plus two of {claude, cursor, grok}. No
 lane is currently qualified. openai needs the native Codex route configured and
-qualified (2); cursor is launchable but still needs qualification (3); grok
-needs its installed envelope proved against the capture checks, without
-repeating the exhausted probe (4). claude is the closest, but
+qualified (2); cursor resolves, authenticates and is launchable, and needs one
+conforming capture (3); grok has a valid pinned invocation against its installed
+binary and needs the same, without repeating the exhausted paid probe (4). claude is the closest, but
 "unconfigured" is not the same as "ready": it too must be configured and then
 produce a real capture. Nothing here establishes that any lane will pass.
+
+## The remaining capture question is decidable without a provider call
+
+`normalize_capture` routes grok and cursor through the same generic branch as
+claude, so what an authenticated capture must satisfy is fixed and testable:
+a JSON object with no `schema_version` key; either `status == "SUCCESS"` or
+`type == "result"` with `subtype == "success"` and `is_error` false; a string
+`session_id` or `conversation_id`; and no truthy `tool_calls`, `tool_uses` or
+`side_effects`.
+
+`tests/test_provider_validation.py` now pins that contract for both lanes. It
+asserts both accepted success shapes normalize and produce a run reference, and
+that all seven disqualifying conditions raise. Previously only claude and
+antigravity were exercised there.
+
+The practical effect: when one authenticated capture is eventually taken for
+either lane, conformance is decided by reading the envelope against these cases
+instead of by another paid attempt.
 
 ## A topology problem the variable names hide
 

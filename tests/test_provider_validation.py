@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
@@ -73,6 +74,53 @@ class NativeCaptureTests(unittest.TestCase):
             raw=json.loads(raw_native());raw.update(changes)
             with self.assertRaises(ValidationError):
                 normalize_capture("claude",work_packet(),canonical_json_bytes(raw))
+
+    # The grok and cursor lanes reach normalize_capture through the same generic
+    # branch as claude, so their qualification question is decidable here without
+    # contacting a provider.  docs/provider-evidence-run-spec.md records the
+    # exhausted native probe for grok and forbids repeating it; these cases pin
+    # what an eventual authenticated capture must satisfy so the answer is read
+    # off the envelope rather than rediscovered by another paid attempt.
+    HOST_LANES = ("grok", "cursor")
+
+    def test_host_lane_capture_accepts_both_native_success_shapes(self):
+        shapes = (
+            # The claude-style terminal envelope.
+            {"type":"result","subtype":"success","is_error":False,
+             "session_id":"native-session","structured_output":{"status":"SUCCEEDED","outcome":"Canary analyzed"}},
+            # The status/conversation_id envelope the same branch also allows.
+            {"status":"SUCCESS","conversation_id":"native-conversation",
+             "structured_output":{"status":"SUCCEEDED","outcome":"Canary analyzed"}},
+        )
+        for provider in self.HOST_LANES:
+            for shape in shapes:
+                with self.subTest(provider=provider, shape=sorted(shape)[0]):
+                    result = normalize_capture(
+                        provider, work_packet(), canonical_json_bytes(shape)
+                    )
+                    self.assertEqual(result["provider"], provider)
+                    # conversation_id is promoted, so a run reference always exists.
+                    self.assertTrue(result["run_reference"])
+
+    def test_host_lane_capture_rejects_every_disqualifying_envelope(self):
+        disqualifying = (
+            ({"schema_version":"1.0"}, "a result packet is not a native capture"),
+            ({"subtype":"error"}, "terminal status must be successful"),
+            ({"is_error":True}, "an errored run cannot qualify"),
+            ({"session_id":None}, "a string session identifier is required"),
+            ({"tool_calls":[{}]}, "the canary must use no tools"),
+            ({"tool_uses":[{}]}, "the canary must use no tools"),
+            ({"side_effects":[{}]}, "the canary must produce no effects"),
+        )
+        for provider in self.HOST_LANES:
+            for changes, reason in disqualifying:
+                with self.subTest(provider=provider, reason=reason):
+                    raw = json.loads(raw_native())
+                    raw.update(changes)
+                    with self.assertRaises(ValidationError, msg=reason):
+                        normalize_capture(
+                            provider, work_packet(), canonical_json_bytes(raw)
+                        )
 
     def test_closed_request_rejects_caller_namespace_commands_and_cost(self):
         for field in ("commands","namespace","cost_units","work_packet"):
@@ -297,3 +345,4 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:55 UTC | END]]
