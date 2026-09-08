@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 12:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | BEGIN]]
@@ -15,6 +16,10 @@ from director_orchestrator.approvals import (
     record_task_effect_observation,
 )
 from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.policy import (
+    deterministic_approval_reasons,
+    enforce_plan,
+)
 from director_orchestrator.models import (
     Assignment,
     DirectorPlan,
@@ -220,6 +225,69 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeneratedPlanGateTests(unittest.TestCase):
+    """The deterministic floor must scan what the planner generated.
+
+    Regression for a P1 raised in independent review of PR #121: enforce_plan
+    received only ``record.intake.text``, so an approval-sensitive assignment
+    the model introduced -- one the owner never mentioned -- produced no
+    deterministic reason and could reach execution without
+    OWNER_DECISION_REQUIRED.
+    """
+
+    def _plan(self, task, acceptance=None):
+        return DirectorPlan(
+            project="demo",
+            normalized_outcome="add a version field",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            approval_reasons=[],
+            max_hops=2,
+            max_revisions=0,
+            final_acceptance=["Change is reviewed"],
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.CURSOR,
+                    task=task,
+                    acceptance=acceptance or ["Evidence exists"],
+                    repository="example/demo",
+                )
+            ],
+        )
+
+    def test_benign_intake_cannot_hide_a_generated_sensitive_action(self):
+        benign = "Add a build number to the status page."
+        self.assertEqual([], deterministic_approval_reasons(benign))
+
+        enforced = enforce_plan(
+            self._plan("Deploy the release to production"), benign, Settings()
+        )
+
+        self.assertTrue(enforced.approval_required)
+        self.assertTrue(enforced.approval_reasons, enforced.approval_reasons)
+
+    def test_acceptance_criteria_are_scanned_too(self):
+        enforced = enforce_plan(
+            self._plan(
+                "Update notes",
+                acceptance=["Deploy to production once green"],
+            ),
+            "Tidy the changelog.",
+            Settings(),
+        )
+        self.assertTrue(enforced.approval_required, enforced.approval_reasons)
+
+    def test_a_genuinely_benign_plan_is_not_escalated(self):
+        enforced = enforce_plan(
+            self._plan("Add a version field"), "Add a version field.", Settings()
+        )
+        self.assertEqual([], enforced.approval_reasons)
+        self.assertFalse(enforced.approval_required)
+
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 12:20 UTC | END]]

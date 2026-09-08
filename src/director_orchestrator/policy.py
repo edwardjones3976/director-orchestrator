@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 12:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
@@ -207,6 +208,26 @@ _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("UUID", re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)),
     ("Slack identifier", re.compile(r"\b[CUW](?=[A-Z0-9]{8,}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{8,}\b", re.I)),
 )
+
+def _generated_plan_gate_corpus(plan: DirectorPlan) -> str:
+    """Collect model-generated plan text the deterministic gate must also scan.
+
+    ``deterministic_approval_reasons`` historically saw only the owner's intake
+    text.  A planner that introduces a deployment, deletion or other sensitive
+    assignment the intake never mentioned therefore produced no deterministic
+    reason, and the plan could reach execution without OWNER_DECISION_REQUIRED.
+
+    This is escalation-only: its result is unioned with the intake reasons, so
+    it can add an approval requirement and can never remove one.
+    """
+
+    parts: list[str] = [plan.normalized_outcome]
+    for assignment in plan.assignments:
+        parts.append(assignment.task)
+        parts.extend(assignment.acceptance)
+        parts.append(assignment.repository or "")
+    return "\n".join(part for part in parts if part)
+
 
 def deterministic_approval_reasons(text: str) -> list[str]:
     return [label for label, pattern in _GATES if pattern.search(text)]
@@ -1104,6 +1125,9 @@ def enforce_plan(
 
     reasons = set(safe.approval_reasons)
     reasons.update(deterministic_approval_reasons(source_text))
+    # The floor must also see what the planner generated, not only what the
+    # owner wrote.  Union only: this never removes an approval requirement.
+    reasons.update(deterministic_approval_reasons(_generated_plan_gate_corpus(safe)))
     if safe.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
         reasons.add(f"{safe.risk_level.value}-risk plan")
     estimated_cost = estimated_plan_cost_usd(
@@ -1448,3 +1472,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 12:20 UTC | END]]
