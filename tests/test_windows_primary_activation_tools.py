@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:35 UTC | BEGIN]]
@@ -568,7 +569,9 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
     def test_claude_code_sessions_import_the_agent_operating_rules(self) -> None:
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         visible = [line.strip() for line in claude.splitlines() if line.strip() and "[[" not in line]
-        self.assertEqual(visible, ["@AGENTS.md"])
+        self.assertIn("@AGENTS.md", visible)
+        self.assertIn("acting Director-Orchestrator", claude)
+        self.assertIn("docs/project-leadership.md", claude)
 
 
 if __name__ == "__main__":
@@ -600,3 +603,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]

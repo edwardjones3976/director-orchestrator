@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -27,9 +29,9 @@ from director_orchestrator.primary_workload import (
 from director_orchestrator.langgraph_primary import PrimaryWorkflowRuntime
 
 DIGEST = "sha256:" + "a" * 64
-# Last nineteen: five OpenAI, five Claude, four Cursor, three Gemini, one Grok,
-# one Perplexity. The next OpenAI fits exactly at its 30% ceiling.
-HISTORY = ["claude"] * 3 + ["cursor"] * 4 + ["antigravity"] * 3 + ["grok", "perplexity"] + ["openai"] * 7
+# Last nineteen: six OpenAI, four Claude, four Cursor, three Antigravity,
+# one Grok and one Perplexity. The next OpenAI reaches its 35% hard ceiling.
+HISTORY = ["claude"] * 4 + ["cursor"] * 4 + ["antigravity"] * 3 + ["grok", "perplexity"] + ["openai"] * 6
 
 
 class AdmissionPolicyTests(unittest.TestCase):
@@ -100,7 +102,7 @@ class PostgresAdmissionTests(unittest.TestCase):
 
     def seed_test_history(self, target=None, *, capped=False):
         target = target or self
-        providers = (["openai"] * 8 + ["claude"] * 7 + ["cursor"] * 4) if capped else HISTORY
+        providers = (["openai"] * 7 + ["claude"] * 8 + ["cursor"] * 4) if capped else HISTORY
         with target.handle.claim_store._pool.connection() as connection:
             with connection.transaction():
                 for index, provider in enumerate(providers):
@@ -360,3 +362,5 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]

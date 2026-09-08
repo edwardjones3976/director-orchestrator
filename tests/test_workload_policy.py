@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:34 UTC | BEGIN]]
@@ -154,10 +156,10 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                Provider.CLAUDE: 30,
+                Provider.CLAUDE: 35,
                 Provider.CURSOR: 15,
                 Provider.GROK: 10,
-                Provider.OPENAI: 35,
+                Provider.OPENAI: 30,
                 Provider.GEMINI: 10,
                 Provider.PERPLEXITY: 0,
                 Provider.FIRECRAWL: 0, Provider.GITHUB_COPILOT: 0, Provider.MICROSOFT_365_COPILOT: 0,
@@ -173,31 +175,31 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                DirectProductionProvider.CLAUDE: 30,
+                DirectProductionProvider.CLAUDE: 35,
                 DirectProductionProvider.CURSOR: 15,
                 DirectProductionProvider.GROK: 10,
                 DirectProductionProvider.GEMINI: 10,
                 DirectProductionProvider.PERPLEXITY: 0,
                 DirectProductionProvider.FIRECRAWL: 0, DirectProductionProvider.GITHUB_COPILOT: 0, DirectProductionProvider.MICROSOFT_365_COPILOT: 0,
-                DirectProductionProvider.EXTERNAL_OPENAI: 35,
+                DirectProductionProvider.EXTERNAL_OPENAI: 30,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
         self.assertNotIn(DirectProductionProvider.EXTERNAL_OPENAI, Provider)
 
     def test_default_policy_exposes_machine_readable_targets(self):
-        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.CLAUDE), 30)
+        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.CLAUDE), 35)
         self.assertEqual(
             DEFAULT_POLICY.direct_production_target(
                 DirectProductionProvider.CLAUDE
             ),
-            30,
+            35,
         )
         self.assertEqual(
             DEFAULT_POLICY.direct_production_soft_band(
                 DirectProductionProvider.CLAUDE
             ),
-            (27, 33),
+            (32, 38),
         )
         self.assertEqual(DEFAULT_POLICY.overall_normal_band(Provider.PERPLEXITY), (0, 3))
         self.assertEqual(COPILOT_LITE_NORMAL_BAND, (0, 4))
@@ -287,7 +289,7 @@ class AssignmentRoutingTests(unittest.TestCase):
 
         self.assertTrue(result.allowed)
         self.assertIn("prospective_rolling_share:claude:9/20", result.advisories)
-        self.assertIn("total_effort_provider_above_normal_band:claude:33", result.advisories)
+        self.assertIn("total_effort_provider_above_normal_band:claude:38", result.advisories)
 
     def test_skewed_total_effort_history_blocks_new_overage(self):
         history = records(
@@ -519,12 +521,12 @@ class DirectProductionRoutingTests(unittest.TestCase):
     @staticmethod
     def _mature_corrective_history() -> tuple[DirectProductionRecord, ...]:
         providers = (
-            (DirectProductionProvider.CLAUDE, 7),
+            (DirectProductionProvider.CLAUDE, 8),
             (DirectProductionProvider.CURSOR, 3),
             (DirectProductionProvider.GROK, 1),
             (DirectProductionProvider.GEMINI, 3),
             (DirectProductionProvider.PERPLEXITY, 1),
-            (DirectProductionProvider.EXTERNAL_OPENAI, 4),
+            (DirectProductionProvider.EXTERNAL_OPENAI, 3),
         )
         return tuple(
             DirectProductionRecord(
@@ -624,12 +626,12 @@ class DirectProductionRoutingTests(unittest.TestCase):
 
         self.assertFalse(result.allowed)
         self.assertIn(
-            "direct_production_above_soft_band:claude:33",
+            "direct_production_above_soft_band:claude:38",
             result.advisories,
         )
         self.assertIn(
-            "direct_production_above_soft_band:claude:33",
-            result.advisories,
+            "direct_production_hard_cap_exceeded:claude:40",
+            result.violations,
         )
 
     def test_total_effort_guard_does_not_create_direct_production_credit(self):
@@ -1341,3 +1343,5 @@ class InputValidationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-06 | 01:26 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -867,13 +869,13 @@ class WorkloadLedgerTests(unittest.TestCase):
         self.assertFalse(replay.created)
 
     def test_failed_reservations_remain_in_profile_admission_window(self):
-        for index in range(7):
+        for index in range(8):
             item = self.reserve(f"retained-{index}", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
             self.assertTrue(item.decision.allowed, item.decision.violations)
             self.store.finalize_workload_reservation(item.reservation_key, WorkloadAttemptOutcome.FAILED_PRE_SUBMIT)
-        held = self.reserve("retained-eighth", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        held = self.reserve("retained-ninth", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertFalse(held.decision.allowed)
-        self.assertIn("allocation_admission_hard_cap_exceeded:claude:35", held.decision.violations)
+        self.assertIn("allocation_admission_hard_cap_exceeded:claude:40", held.decision.violations)
         self.assertEqual(self.store.list_recent_direct_production(), [])
 
     def test_research_profile_admits_perplexity_without_fabricated_history(self):
@@ -1049,7 +1051,7 @@ class WorkloadLedgerTests(unittest.TestCase):
 
     def test_direct_window_blocks_while_accepted_credit_is_unresolved(self) -> None:
         # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
-        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*7 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*5
         for index, provider in enumerate(providers):
             task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
@@ -1124,7 +1126,7 @@ class WorkloadLedgerTests(unittest.TestCase):
 
     def test_direct_unresolved_rollover_still_blocks_unsafe_sibling(self) -> None:
         # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
-        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*7 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*5
         for index, provider in enumerate(providers):
             task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
@@ -1211,7 +1213,7 @@ class WorkloadLedgerTests(unittest.TestCase):
 
     def test_direct_window_projects_invoked_terminal_task_awaiting_credit(self) -> None:
         # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
-        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*7 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*5
         for index, provider in enumerate(providers):
             task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
@@ -1233,7 +1235,7 @@ class WorkloadLedgerTests(unittest.TestCase):
         self._insert_raw_direct_credit(task_id="old-credit", assignment_id="old-credit:1:1",
             provider=Provider.CLAUDE, effort_units=1, recorded_at="2026-09-01T00:00:00+00:00")
         # Explicit historical accepted-credit fixtures; no live bootstrap bypass.
-        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*6 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*6
+        providers = [Provider.CURSOR]*4 + [Provider.CLAUDE]*7 + [Provider.GROK]*2 + [Provider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*5
         for index, provider in enumerate(providers):
             task_id = f"mature-{index}"
             self.store.create(self._minimal_done_task(task_id))
@@ -1242,7 +1244,7 @@ class WorkloadLedgerTests(unittest.TestCase):
                 recorded_at="2026-08-01T00:00:00+00:00")
         candidate = self.reserve("ordered", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertTrue(candidate.decision.allowed, candidate.decision.violations)
-        self.assertIn("prospective_direct_production_share:claude:7/20", candidate.decision.advisories)
+        self.assertIn("prospective_direct_production_share:claude:8/20", candidate.decision.advisories)
 
 
     def test_sqlite_cas_allows_one_cross_process_creator(self) -> None:
@@ -1289,3 +1291,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 # [[Codex | GPT-6 | 2026-09-06 | 01:26 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]

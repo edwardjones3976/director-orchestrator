@@ -2,6 +2,8 @@
 description: Require safe contribution attribution without changing structured formats or authority
 alwaysApply: true
 ---
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:35 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Contribution attribution
@@ -19,7 +21,7 @@ alwaysApply: true
   provider, grant authority, replace an exact SHA/digest, or satisfy approval,
   review, CI, security, budget, allowlist, merge, or deployment gates.
 - Work produced or materially authored by a provider remains attributed solely
-  to that provider or those providers. The Director/OpenAI does not inherit
+  to that provider or those providers. The acting Director/Claude does not inherit
   authorship through delegation, routing, coordination, QA, review, acceptance,
   relay, merge eligibility evaluation, or merge execution; those activities
   create no code authorship, and no tag may imply inherited authorship.
@@ -27,3 +29,5 @@ alwaysApply: true
   --base <base-sha> --head <head-sha>` on the committed candidate.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]] -->
