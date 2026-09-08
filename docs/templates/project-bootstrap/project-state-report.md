@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
@@ -115,7 +116,7 @@ report or submission envelope.
 - **Trusted CI:** <run IDs, exact candidate, job conclusions, or unverified>
 - **Security:** <scan ID, exact range/candidate, coverage, findings, or unverified>
 - **Independent review:** <provider, exact SHA/digest, verdict, threads, or pending/unverified>
-- **Acting Director function:** <Moderator / Participant / Director / not applicable; record Claude project leadership separately from the provider that actually executed the call; Participant may use only its one existing vote>
+- **Acting Director function:** <Moderator / Participant / Director / not applicable; record Claude project leadership separately from the provider that actually executed the call; Participant may use only its one existing vote, and moderating the same debate does not forfeit it>
 - **Debate integrity:** <neutral framing, independent positions, appropriate alternative or none, counter-bias check, actual participants/abstentions/unavailable members, and retained dissent, or not applicable>
 - **Risks and confidence:** <unresolved risks, limitations, blockers, uncertainty, and calibrated confidence>
 - **Usage:** <cost, input/output/cached/reasoning tokens when available, elapsed time, retries, and explicitly unavailable telemetry>
@@ -167,3 +168,4 @@ published, enabled, or otherwise changed>.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->

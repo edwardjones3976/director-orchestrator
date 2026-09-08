@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | BEGIN]] -->
@@ -89,8 +90,8 @@ Acting Director functions (kept separate; never collapsed):
 
 | Function | Votes | Vote count | Vote weight | Duties | Boundary |
 | --- | --- | --- | --- | --- | --- |
-| `moderator` | no | - | - | frame the question and bounded options neutrally; request positions without leading language; prevent premature cross-exposure; run the counter-bias pass against the favored view | Moderation does not cast a vote. |
-| `participant` | yes | 1 | 2.0 | record an independently formed initial position before specialist conclusions are exposed; cast the single existing Claude advisory vote during synthesis | Participant is the one authenticated Claude position and vote. It receives no additional vote for planning, moderation, synthesis, or acceptance. |
+| `moderator` | no | - | - | frame the question and bounded options neutrally; request positions without leading language; prevent premature cross-exposure; run the counter-bias pass against the favored view | Moderating never removes, reduces, or defers Claude's vote. The counter-bias pass is vote-free only so that it cannot pre-empt the single Participant vote cast later in synthesis. |
+| `participant` | yes | 1 | 2.0 | record an independently formed initial position before specialist conclusions are exposed; cast the single existing Claude advisory vote during synthesis | Participant is the one authenticated Claude position and vote, cast at full weight in every debate Claude joins, including every debate it moderates. Planning, moderation, synthesis, and acceptance earn no additional vote; that bars a second Claude vote and never the first. |
 | `director` | no | - | - | plan; decompose; route; coordinate; synthesize; acceptance_review; review_handoff; milestone_reporting | Director authority does not create a vote or a participation record that did not actually occur. |
 
 ## Capabilities
@@ -316,3 +317,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->

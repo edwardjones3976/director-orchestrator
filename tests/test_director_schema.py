@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -1009,8 +1010,11 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         self.assertIn("vote_count: 1", participant)
         self.assertIn("vote_weight: 2.0", participant)
         self.assertIn("votes: false", director)
-        self.assertIn("Moderation does not cast a vote.", moderator)
+        # Moderating relocates nothing about the vote: it stays one vote, booked
+        # under Participant, and the Moderator function cannot strip it.
+        self.assertIn("Moderating never removes, reduces, or defers", moderator)
         self.assertIn("no additional vote", participant)
+        self.assertIn("bars a second Claude vote and never the first", participant)
         self.assertIn("does not create a vote", director)
 
         # Coordination, planning, and acceptance survive only as nested duties.
@@ -1048,7 +1052,8 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, intake)
         self.assertIn("Only Participant votes", intake)
-        self.assertIn("Moderator and Director never vote", intake)
+        self.assertIn("Moderator and Director add no second vote", intake)
+        self.assertIn("including every\ndebate it moderates", intake)
         # The duty-bucket phrasing must not reappear as a function partition.
         self.assertNotIn(
             "coordination, planning, and acceptance-review functions distinct", intake
@@ -1266,3 +1271,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]]

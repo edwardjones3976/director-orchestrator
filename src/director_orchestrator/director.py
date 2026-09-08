@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -300,8 +301,10 @@ class OpenAIDirector:
                 "counterargument, identify disconfirming evidence, reconsider the configured "
                 "options and any designated alternative, assess independence from anchoring and "
                 "provider imitation, and state whether the provisional recommendation changed. "
-                "Do not cast a vote, choose a tie winner, authorize an action, or invent missing "
-                "participation. Return only the structured counter-bias result."
+                "Do not cast a vote in this pass, choose a tie winner, authorize an action, or "
+                "invent missing participation. Withholding the vote here only keeps this pass from "
+                f"pre-empting synthesis; the single {self.provider.value} vote is still cast in full "
+                "at synthesis. Return only the structured counter-bias result."
             ),
         }
         return await self._structured(
@@ -413,3 +416,4 @@ def build_director(settings: Settings, *, claude_transport=None):
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]]
