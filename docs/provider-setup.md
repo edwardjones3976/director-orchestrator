@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
@@ -99,6 +100,22 @@ lower means cheaper. The Director has no built-in provider order and fails close
 before the planning call when the setting is absent, malformed, or incomplete.
 Use current operator-verified comparable cost evidence rather than copying a
 sample ranking from documentation.
+
+The same setting must additionally cover every lane the primary roster can
+select. A lane bound in `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON`
+becomes a roster candidate as soon as an intake names a profile and capability
+that admit it, and the roster refuses to select *anyone* while any candidate is
+unranked. With `ALLOW_PAID_RUNS` and `WORKLOAD_POLICY_ENABLED` both true, the
+service therefore refuses to start and names the unranked lane and
+`TRUSTED_PROVIDER_COST_RANKS`. Two consequences are worth planning for:
+
+- An `antigravity` binding is satisfied by a `gemini` rank; the parser
+  normalizes the two names to one entry, so do not add a separate rank.
+- The requirement follows the activation bindings, not credentials. Removing a
+  lane from `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON` removes its
+  rank requirement, because an unbound lane is never observed ready and never
+  reaches a roster. Leaving a lane bound while omitting its rank is the
+  configuration that previously failed only at dispatch.
 
 ## Trusted OpenAI debate-turn accounting
 
@@ -429,3 +446,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]] -->
