@@ -50,7 +50,7 @@ from .langgraph_runtime import (
     ProviderAdapterContext,
     RawProviderTransport,
 )
-from .packet_contracts import canonical_json_bytes
+from .packet_contracts import canonical_json_bytes, result_contract_properties
 from .packet_routing import ANTIGRAVITY_DIRECTIVE_OBJECTIVE_PREFIX
 
 
@@ -820,28 +820,51 @@ def _structured_native_output(native: Mapping[str, Any]) -> dict[str, Any]:
     return dict(candidate) if isinstance(candidate, Mapping) else dict(native)
 
 
-_RESULT_USAGE_KEYS = ("model", "input_tokens", "output_tokens", "total_tokens", "cost_usd")
+def _project_onto_result_contract(field: str, value: Any) -> Any:
+    """Drop provider keys the result contract does not define for ``field``.
+
+    Several result fields close their objects with ``additionalProperties:
+    false``: ``usage``, ``artifacts``, ``checks``, ``acceptance`` and
+    ``side_effects``. Passing a native block straight through therefore rejects
+    the entire capture as soon as a provider reports one extra key -- grok ships
+    cache and reasoning token counts on ``usage``, which is how this surfaced,
+    but it is a general defect rather than a grok quirk.
+
+    Only undefined keys are dropped. Every property the contract does define is
+    preserved, so required evidence such as a side effect's kind, target, status
+    and idempotency key always survives; a genuinely incomplete item still fails
+    validation instead of being repaired here.
+    """
+
+    allowed = result_contract_properties().get(field)
+    if allowed is None:
+        return value
+    if isinstance(value, Mapping):
+        return {key: item for key, item in value.items() if key in allowed}
+    if isinstance(value, list):
+        return [
+            {key: entry for key, entry in item.items() if key in allowed}
+            if isinstance(item, Mapping)
+            else item
+            for item in value
+        ]
+    return value
 
 
 def _projected_native_usage(
     usage: Any, native: Mapping[str, Any]
 ) -> dict[str, Any] | None:
-    """Project a native usage block onto the result-packet usage contract.
+    """Project a native usage block, carrying cost under its contract name.
 
-    The packet schema sets ``additionalProperties: false`` on ``usage``, so
-    passing a provider's block through verbatim fails validation the moment that
-    provider reports anything extra; grok ships cache and reasoning token counts,
-    for example. Unknown keys are dropped rather than carried.
-
-    ``total_cost_usd`` is accepted as the cost field when a provider does not use
-    ``cost_usd``. Both name the same quantity, and dropping it would lose real
-    cost telemetry that budget accounting depends on. Nothing is estimated:
-    absent cost stays absent.
+    ``total_cost_usd`` is accepted when a provider does not use ``cost_usd``.
+    Both name the same quantity, and dropping it would lose real cost telemetry
+    that budget accounting depends on. Nothing is estimated: absent cost stays
+    absent.
     """
 
     if not isinstance(usage, Mapping):
         return None
-    projected = {key: usage[key] for key in _RESULT_USAGE_KEYS if key in usage}
+    projected = _project_onto_result_contract("usage", usage)
     if "cost_usd" not in projected:
         for source in (usage, native):
             candidate = source.get("total_cost_usd")
@@ -903,7 +926,9 @@ def normalize_native_provider_envelope(
         ]
     def list_value(name: str) -> list[Any]:
         value = structured.get(name, [])
-        return list(value) if isinstance(value, list) else []
+        return _project_onto_result_contract(
+            name, list(value) if isinstance(value, list) else []
+        )
     usage = _projected_native_usage(native.get("usage", structured.get("usage")), native)
     return {
         "schema_version": "1.0",
@@ -918,11 +943,11 @@ def normalize_native_provider_envelope(
         "outcome": outcome,
         "artifacts": list_value("artifacts"),
         "checks": list_value("checks"),
-        "acceptance": acceptance,
+        "acceptance": _project_onto_result_contract("acceptance", acceptance),
         "risks": list_value("risks"),
         "blockers": list_value("blockers"),
         "requested_decisions": list_value("requested_decisions"),
-        "side_effects": side_effects,
+        "side_effects": _project_onto_result_contract("side_effects", side_effects),
         "usage": usage,
         "revision_recommended": bool(structured.get("revision_recommended", False)),
     }

@@ -116,6 +116,65 @@ class NativeCaptureTests(unittest.TestCase):
         self.assertEqual(result["usage"]["cost_usd"], 0.0064991)
         self.assertEqual(result["usage"]["total_tokens"], 21249)
 
+    def test_every_closed_result_field_is_projected_not_passed_through(self):
+        """The usage defect was general, not a grok quirk.
+
+        ``usage``, ``artifacts``, ``checks``, ``acceptance`` and
+        ``side_effects`` all close their objects, so any provider reporting one
+        undefined key had its whole capture rejected.  Undefined keys are
+        dropped; every defined key, including the required evidence on a side
+        effect, is preserved.
+        """
+
+        from director_orchestrator.packet_contracts import result_contract_properties
+        from director_orchestrator.primary_transports import (
+            _project_onto_result_contract,
+        )
+
+        closed = result_contract_properties()
+        self.assertLessEqual(
+            {"usage", "artifacts", "checks", "acceptance", "side_effects"},
+            set(closed),
+        )
+
+        for field in ("artifacts", "checks", "acceptance", "side_effects"):
+            with self.subTest(field=field):
+                allowed = closed[field]
+                item = {name: "value" for name in allowed}
+                item["vendor_only_extra"] = "dropped"
+                projected = _project_onto_result_contract(field, [item])
+                self.assertEqual([{name: "value" for name in allowed}], projected)
+                self.assertNotIn("vendor_only_extra", projected[0])
+
+        # A field the contract does not close is returned untouched.
+        self.assertEqual(
+            [{"anything": 1}], _project_onto_result_contract("risks", [{"anything": 1}])
+        )
+
+    def test_native_envelope_with_vendor_extras_still_normalizes(self):
+        """End to end: extras no longer reject an otherwise valid capture."""
+
+        envelope = json.loads(raw_native())
+        envelope["structured_output"] = {
+            "status": "SUCCEEDED",
+            "outcome": "Canary analyzed",
+            "artifacts": [
+                {"kind": "log", "location": "run://1", "vendor_trace": "x"}
+            ],
+            "checks": [
+                {"command": "true", "result": "PASS", "vendor_duration_ms": 12}
+            ],
+        }
+
+        result = normalize_capture(
+            "grok", work_packet(), canonical_json_bytes(envelope)
+        )
+
+        self.assertEqual(
+            [{"kind": "log", "location": "run://1"}], result["artifacts"]
+        )
+        self.assertEqual([{"command": "true", "result": "PASS"}], result["checks"])
+
     def test_cursor_host_lane_fails_closed_where_its_sandbox_is_unavailable(self):
         """The lane pins --sandbox enabled, which only macOS and Linux support.
 
