@@ -223,10 +223,6 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(record.status, TaskStatus.OWNER_DECISION_REQUIRED)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GeneratedPlanGateTests(unittest.TestCase):
     """The deterministic floor must scan what the planner generated.
 
@@ -286,6 +282,84 @@ class GeneratedPlanGateTests(unittest.TestCase):
         )
         self.assertEqual([], enforced.approval_reasons)
         self.assertFalse(enforced.approval_required)
+
+    def test_final_acceptance_is_scanned(self):
+        """Raised P1: a gated action stated only in final_acceptance.
+
+        Those criteria reach the Director on the final assignment, and a
+        CHANGES_REQUIRED response can turn an unmet criterion into a revision
+        prompt dispatched without another deterministic scan.
+        """
+
+        plan = self._plan("Add a version field")
+        plan.final_acceptance = ["Deploy to production once checks pass"]
+
+        enforced = enforce_plan(plan, "Add a build number.", Settings())
+
+        self.assertTrue(enforced.approval_required, enforced.approval_reasons)
+
+    def test_repository_identifiers_do_not_trip_the_prose_gates(self):
+        """A repository slug is an identifier, not an action.
+
+        Repository access is governed by the allowlist; matching org/release or
+        org/admin-tools here escalated benign work on a name alone.
+        """
+
+        for repository in ("example/release", "example/identity", "example/admin-tools"):
+            with self.subTest(repository=repository):
+                plan = self._plan("Add a version field")
+                plan.assignments[0].repository = repository
+
+                enforced = enforce_plan(plan, "Add a build number.", Settings())
+
+                self.assertEqual([], enforced.approval_reasons)
+                self.assertFalse(enforced.approval_required)
+
+    def test_fields_are_scanned_independently_not_as_one_corpus(self):
+        """The external-representation gate spans 50 characters with re.S.
+
+        Joining fields let a verb in one match an audience noun in another,
+        escalating a plan that contains no external action.
+        """
+
+        plan = self._plan(
+            "Send events through the local queue",
+            acceptance=["Customer-facing layout remains unchanged"],
+        )
+
+        enforced = enforce_plan(plan, "Tidy the queue worker.", Settings())
+
+        self.assertEqual([], enforced.approval_reasons)
+        self.assertFalse(enforced.approval_required)
+
+    def test_a_verbose_planner_cannot_crowd_out_a_deterministic_label(self):
+        """approval_reasons is capped; the floor must survive the cap.
+
+        Otherwise the store rejects the persisted plan on its next read and an
+        approval-required task becomes unreadable.
+        """
+
+        from director_orchestrator.policy import _MAX_APPROVAL_REASONS
+
+        plan = self._plan("Deploy the release to production")
+        plan.approval_reasons = [
+            f"model reason {index}" for index in range(_MAX_APPROVAL_REASONS)
+        ]
+
+        enforced = enforce_plan(plan, "Add a build number.", Settings())
+
+        self.assertLessEqual(len(enforced.approval_reasons), _MAX_APPROVAL_REASONS)
+        self.assertIn(
+            "production deployment or public publishing", enforced.approval_reasons
+        )
+        # The result must still round-trip through the model that persists it.
+        DirectorPlan.model_validate(enforced.model_dump())
+
+
+# Kept last so a direct `python tests/test_approval_scope.py` run sees every
+# class defined above it; running it earlier silently omitted these cases.
+if __name__ == "__main__":
+    unittest.main()
 
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | END]]

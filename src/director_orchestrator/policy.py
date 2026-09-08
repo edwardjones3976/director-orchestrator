@@ -209,24 +209,54 @@ _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Slack identifier", re.compile(r"\b[CUW](?=[A-Z0-9]{8,}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{8,}\b", re.I)),
 )
 
-def _generated_plan_gate_corpus(plan: DirectorPlan) -> str:
-    """Collect model-generated plan text the deterministic gate must also scan.
+def _max_approval_reasons() -> int:
+    """Read the plan's own cap so this cannot drift away from the model."""
+
+    for constraint in DirectorPlan.model_fields["approval_reasons"].metadata:
+        limit = getattr(constraint, "max_length", None)
+        if isinstance(limit, int):
+            return limit
+    raise RuntimeError("DirectorPlan.approval_reasons has no declared maximum")
+
+
+_MAX_APPROVAL_REASONS = _max_approval_reasons()
+
+
+def _generated_plan_gate_strings(plan: DirectorPlan) -> list[str]:
+    """Model-generated, action-bearing plan text the deterministic gate must scan.
 
     ``deterministic_approval_reasons`` historically saw only the owner's intake
     text.  A planner that introduces a deployment, deletion or other sensitive
-    assignment the intake never mentioned therefore produced no deterministic
+    action the intake never mentioned therefore produced no deterministic
     reason, and the plan could reach execution without OWNER_DECISION_REQUIRED.
 
-    This is escalation-only: its result is unioned with the intake reasons, so
-    it can add an approval requirement and can never remove one.
+    Each string is returned separately and scanned on its own.  A joined corpus
+    creates matches that no single field supports: the external-representation
+    gate uses ``re.S`` with a fifty-character window, so a task reading "Send
+    events through the local queue" beside an acceptance criterion reading
+    "Customer-facing layout remains unchanged" would match across the boundary
+    even though neither asks to contact an outsider.
+
+    ``plan.final_acceptance`` is included.  Those criteria reach the Director on
+    the final assignment, and a CHANGES_REQUIRED response can turn an unmet
+    criterion into a revision prompt that is dispatched without another
+    deterministic scan, so a gated action stated only there would otherwise
+    reach a provider first.
+
+    ``assignment.repository`` is deliberately excluded.  It is an identifier,
+    not an action, and a slug such as ``org/release``, ``org/identity`` or
+    ``org/admin-tools`` matches these prose gates by name alone.  Repository
+    access is governed by the repository allowlist, not by this scanner.
+
+    This is escalation-only: results are unioned with the intake reasons, so it
+    can add an approval requirement and can never remove one.
     """
 
-    parts: list[str] = [plan.normalized_outcome]
+    parts: list[str] = [plan.normalized_outcome, *plan.final_acceptance]
     for assignment in plan.assignments:
         parts.append(assignment.task)
         parts.extend(assignment.acceptance)
-        parts.append(assignment.repository or "")
-    return "\n".join(part for part in parts if part)
+    return [part for part in parts if part]
 
 
 def deterministic_approval_reasons(text: str) -> list[str]:
@@ -1123,21 +1153,36 @@ def enforce_plan(
             }
         )
 
-    reasons = set(safe.approval_reasons)
-    reasons.update(deterministic_approval_reasons(source_text))
+    # Deterministic labels are the safety floor and are tracked apart from the
+    # model's own reasons so the cap below can never discard one of them.
+    deterministic = set(deterministic_approval_reasons(source_text))
     # The floor must also see what the planner generated, not only what the
     # owner wrote.  Union only: this never removes an approval requirement.
-    reasons.update(deterministic_approval_reasons(_generated_plan_gate_corpus(safe)))
+    for generated in _generated_plan_gate_strings(safe):
+        deterministic.update(deterministic_approval_reasons(generated))
     if safe.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
-        reasons.add(f"{safe.risk_level.value}-risk plan")
+        deterministic.add(f"{safe.risk_level.value}-risk plan")
     estimated_cost = estimated_plan_cost_usd(
         safe,
         openai_review_cost_usd=settings.openai_review_estimated_cost_usd,
     )
     if estimated_cost > settings.max_task_budget_usd:
-        reasons.add("estimated cost exceeds task budget")
+        deterministic.add("estimated cost exceeds task budget")
 
-    safe.approval_reasons = sorted(reasons)
+    reasons = deterministic | set(safe.approval_reasons)
+    if len(reasons) <= _MAX_APPROVAL_REASONS:
+        safe.approval_reasons = sorted(reasons)
+    else:
+        # DirectorPlan.approval_reasons is capped, and a verbose planner must
+        # not be able to crowd a deterministic label out of the persisted plan:
+        # the store would then reject the record on its next read, leaving an
+        # approval-required task unreadable.  Deterministic labels are kept
+        # first and model-supplied reasons take the remaining capacity.
+        kept = sorted(deterministic)[:_MAX_APPROVAL_REASONS]
+        spare = _MAX_APPROVAL_REASONS - len(kept)
+        if spare > 0:
+            kept.extend(sorted(set(safe.approval_reasons) - deterministic)[:spare])
+        safe.approval_reasons = sorted(kept)
     safe.approval_required = bool(reasons) or safe.approval_required
     if safe.approval_required:
         safe.assignments = [
