@@ -1,6 +1,17 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
@@ -18,6 +29,7 @@ param(
     [switch]$EnablePaidRuns,
     [switch]$SkipProviderChecks,
     [switch]$SeedProviderCredentialsFromPrimaryEnv,
+    [string]$ProviderCredentialSourceEnvPath = "",
     [int]$TimeoutSeconds = 900
 )
 
@@ -100,7 +112,8 @@ if ($unrestorableEmptyNames.Count -gt 0 -and -not $script:win32EnvironmentReady)
 }
 
 try {
-Set-Location (Split-Path -Parent $PSScriptRoot)
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $repoRoot
 
 $profiles = @{
     "project-uppercut" = [ordered]@{
@@ -142,7 +155,7 @@ $profiles = @{
         DIRECTOR_HOST_PORT = "38080"
         N8N_HOST_PORT = "35678"
         SQLITE_PATH = "/data/long-table.sqlite3"
-        PROJECT_ALLOWLIST = "long-table"
+        PROJECT_ALLOWLIST = "long-table-bid-whist"
         REPOSITORY_ALLOWLIST = "edwardjones3976/long-table-bid-whist"
         ALLOWED_STARTING_REFS = "main"
         MAX_AGENT_HOPS = "6"
@@ -154,6 +167,15 @@ $selected = $profiles[$ProfileName]
 $displayName = [string]$selected.DisplayName
 $profilePath = [string]$selected.ProfilePath
 $profileTemplate = [string]$selected.ProfileTemplate
+# The Compose project is a fixed identity of the selected profile, never a
+# value read back from the profile file. Deriving it here, before any fallible
+# profile staging or validation, lets the early stop below and every rollback
+# path address the correct stack. Compose resolves the orchestrator env_file
+# from DIRECTOR_ENV_FILE, so bind it to the isolated profile at the same point:
+# without it Compose falls back to the primary .env and cannot load the model
+# to stop anything. The finally block restores the original process value.
+$composeProject = [string]$selected.DIRECTOR_COMPOSE_PROJECT_NAME
+[Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")
 
 function New-RandomSecret {
     $bytes = New-Object byte[] 48
@@ -190,6 +212,29 @@ function Set-DotEnvValue {
         return [Regex]::Replace($Text, $pattern, "${Name}=${escapedValue}")
     }
     return $Text.TrimEnd() + [Environment]::NewLine + "${Name}=${Value}" + [Environment]::NewLine
+}
+
+function Copy-ProviderCredentialValues {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$SourceValues,
+        [Parameter(Mandatory = $true)][string]$ProfileText
+    )
+
+    # Only these named credential values are ever copied. Enable flags such as
+    # GROK_ENABLED and PERPLEXITY_ENABLED are neither copied from the source
+    # nor synthesized because a key exists: a seeded key stays inert until the
+    # target profile explicitly opts in and lists the provider in
+    # USAGE_CHECK_PROVIDERS.
+    $text = $ProfileText
+    foreach ($name in @(
+        "OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN",
+        "GEMINI_API_KEY", "PERPLEXITY_API_KEY", "XAI_API_KEY"
+    )) {
+        if ($SourceValues.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$SourceValues[$name])) {
+            $text = Set-DotEnvValue -Text $text -Name $name -Value ([string]$SourceValues[$name])
+        }
+    }
+    return $text
 }
 
 function Write-Utf8NoBom {
@@ -427,11 +472,75 @@ function Get-UsageProviderNames {
     return @($Values | ForEach-Object { [string]$_ })
 }
 
+function Get-ValidatedUsageCheckProviders {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Values,
+        [Parameter(Mandatory = $true)][string]$ProfileLabel
+    )
+
+    # Mirrors SUPPORTED_PROVIDERS in src/director_orchestrator/usage.py. OpenAI,
+    # Claude, and Cursor are mandatory check providers. An optional provider is
+    # scheduled only when it is listed here, explicitly enabled, and carries a
+    # configured credential; anything not listed is never dispatched. The
+    # returned set is the exact partition the usage-check endpoint must report.
+    $mandatory = @("openai", "claude", "cursor")
+    $known = @("openai", "claude", "cursor", "grok", "perplexity", "gemini")
+    if (-not $Values.ContainsKey("USAGE_CHECK_PROVIDERS") -or
+        [string]::IsNullOrWhiteSpace([string]$Values["USAGE_CHECK_PROVIDERS"])) {
+        throw "$ProfileLabel must declare USAGE_CHECK_PROVIDERS explicitly before paid provider checks."
+    }
+    $configured = @(([string]$Values["USAGE_CHECK_PROVIDERS"]).Split(",") | ForEach-Object { $_.Trim() })
+    if (@($configured | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS contains an empty provider entry."
+    }
+    $unknown = @($configured | Where-Object { $_ -cnotin $known })
+    if ($unknown.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS names unknown providers: $($unknown -join ', ')."
+    }
+    $duplicates = @($configured | Group-Object -CaseSensitive | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
+    if ($duplicates.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS contains duplicate providers: $($duplicates -join ', ')."
+    }
+    $missing = @($mandatory | Where-Object { $_ -cnotin $configured })
+    if ($missing.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS omits mandatory primary providers: $($missing -join ', ')."
+    }
+    foreach ($provider in $configured) {
+        $enabledName = $null
+        $credentialNames = @()
+        if ($provider -ceq "grok") {
+            $enabledName = "GROK_ENABLED"
+            $credentialNames = @("XAI_API_KEY")
+        }
+        elseif ($provider -ceq "perplexity") {
+            $enabledName = "PERPLEXITY_ENABLED"
+            $credentialNames = @("PERPLEXITY_API_KEY")
+        }
+        elseif ($provider -ceq "gemini") {
+            $credentialNames = @("GEMINI_API_KEY")
+        }
+        else {
+            continue
+        }
+        if ($null -ne $enabledName -and [string]$Values[$enabledName] -cne "true") {
+            throw "$ProfileLabel lists $provider in USAGE_CHECK_PROVIDERS but $enabledName is not exactly true."
+        }
+        foreach ($name in $credentialNames) {
+            if (-not $Values.ContainsKey($name) -or
+                [string]::IsNullOrWhiteSpace([string]$Values[$name]) -or
+                ([string]$Values[$name]).StartsWith("REPLACE_WITH_")) {
+                throw "$ProfileLabel lists $provider in USAGE_CHECK_PROVIDERS but $name is not configured. No values were printed."
+            }
+        }
+    }
+    return @($configured | Sort-Object)
+}
+
 function Assert-UsageProviderPartition {
     param(
         [Parameter(Mandatory = $true)]$ScheduledProviders,
         [Parameter(Mandatory = $true)]$CoolingDownProviders,
-        [string[]]$ExpectedPrimary = @("claude", "cursor", "openai")
+        [Parameter(Mandatory = $true)][string[]]$ExpectedPrimary
     )
 
     $scheduled = @(Get-UsageProviderNames -Values $ScheduledProviders)
@@ -615,6 +724,123 @@ function Assert-LongTableSnapshot {
         throw "The configured Long Table snapshot is not at the locally verified origin/main commit. No service was started."
     }
 }
+
+function Assert-N8nWorkflowPublishCapability {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$HelpOutput)
+
+    # The selected n8n image must expose both exact command names before any
+    # workflow mutation. The pinned CLI renders command headings with a trailing
+    # separator (for example, "publish:workflow:"). Anchor each name at the
+    # beginning of its own help line so unpublish cannot satisfy publish and a
+    # deprecation note cannot stand in for a missing command.
+    $ansi = "{0}\[[0-9;?]*[ -/]*[@-~]" -f [char]27
+    $lines = @(
+        $HelpOutput |
+            ForEach-Object { ([string]$_) -replace $ansi, "" } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    $missing = @(@("publish:workflow", "unpublish:workflow") | Where-Object {
+        $heading = "^\s*$([Regex]::Escape($_)):\s*(?:$|\S.*$)"
+        @($lines | Where-Object { [string]$_ -cmatch $heading }).Count -eq 0
+    })
+    if ($missing.Count -gt 0) {
+        throw "The selected n8n image does not expose the required workflow commands: $($missing -join ', '). No workflow was modified."
+    }
+}
+
+function Stop-PreviouslyRunningServices {
+    param(
+        [Parameter(Mandatory = $true)][string]$ComposeProject,
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
+        [Parameter(Mandatory = $true)][string[]]$Services
+    )
+
+    # Containers keep the environment they were created with, so closing the
+    # profile switches cannot reach a paid orchestrator or Slack intake that an
+    # earlier activation left running. Stop the named services, then prove that
+    # none of them is still live. A failed stop is never masked by the check and
+    # a live container fails closed before any preflight step can run.
+    $label = $Services -join " and "
+    docker compose --project-name $ComposeProject --env-file $ProfilePath stop $Services
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to stop the previously running $label services of Compose project $ComposeProject before preflight."
+    }
+    $live = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath ps --quiet --status running --status paused --status restarting $Services |
+            ForEach-Object { [string]$_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to verify that the $label services of Compose project $ComposeProject are stopped before preflight."
+    }
+    if ($live.Count -gt 0) {
+        throw "Compose project $ComposeProject still has $($live.Count) live $label container(s) after the stop. No preflight step was started."
+    }
+}
+
+function Initialize-N8nIntakeWorkflow {
+    param(
+        [Parameter(Mandatory = $true)][string]$ComposeProject,
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    $workflowId = "directorIntake"
+    $workflowPath = Join-Path $RepositoryRoot "n8n\workflows\director-intake.json"
+    if (-not (Test-Path -LiteralPath $workflowPath -PathType Leaf)) {
+        throw "The n8n intake workflow is missing. Full-stack readiness cannot be established."
+    }
+    try {
+        $workflowDefinition = Get-Content -LiteralPath $workflowPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "The n8n intake workflow is not valid JSON. Full-stack readiness cannot be established."
+    }
+    if ([string]$workflowDefinition.id -cne $workflowId) {
+        throw "The committed n8n intake workflow does not carry the required directorIntake identity."
+    }
+    $workflowMount = "${workflowPath}:/workflows/director-intake.json:ro"
+
+    # Capability preflight: prove the selected n8n image's CLI exposes the exact
+    # publish/unpublish commands in an ephemeral container before n8n is stopped,
+    # n8n-db is started, or any workflow is unpublished, imported, or published.
+    $helpOutput = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n --help |
+            ForEach-Object { [string]$_ }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to read the selected n8n image's command list. No workflow was modified." }
+    Assert-N8nWorkflowPublishCapability -HelpOutput $helpOutput
+
+    docker compose --project-name $ComposeProject --env-file $ProfilePath stop n8n
+    if ($LASTEXITCODE -ne 0) { throw "Unable to stop n8n before deterministic workflow import." }
+    docker compose --project-name $ComposeProject --env-file $ProfilePath up -d --wait --wait-timeout 120 n8n-db
+    if ($LASTEXITCODE -ne 0) { throw "Unable to start the isolated n8n database." }
+
+    $existingIds = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n list:workflow --onlyId |
+            Where-Object { [string]$_ -match '^[A-Za-z0-9_-]+$' }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to inspect isolated n8n workflows." }
+    if ($workflowId -in $existingIds) {
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n unpublish:workflow --id=$workflowId
+        if ($LASTEXITCODE -ne 0) { throw "Unable to unpublish the prior n8n intake workflow before replacement." }
+    }
+
+    docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T -v $workflowMount n8n import:workflow --input=/workflows/director-intake.json
+    if ($LASTEXITCODE -ne 0) { throw "Unable to import the n8n intake workflow." }
+    docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n publish:workflow --id=$workflowId
+    if ($LASTEXITCODE -ne 0) { throw "Unable to publish the n8n intake workflow." }
+
+    $activeIds = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n list:workflow --active=true --onlyId |
+            Where-Object { [string]$_ -match '^[A-Za-z0-9_-]+$' }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to verify active isolated n8n workflows." }
+    if (@($activeIds | Where-Object { [string]$_ -ceq $workflowId }).Count -ne 1) {
+        throw "The isolated n8n intake workflow is not uniquely active."
+    }
+    Write-Host "The isolated n8n intake workflow was imported, published, and verified active."
+}
 if ($ApiOnly -and $ProfileName -notin @("edge-oracle", "long-table")) {
     throw "-ApiOnly is limited to the Edge Oracle recovery and Long Table canary profiles."
 }
@@ -625,6 +851,16 @@ if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
     }
     Copy-Item -LiteralPath $profileTemplate -Destination $profilePath
 }
+
+# Every invocation stages the paid gate closed in the profile, but containers
+# started by an earlier activation keep their launch-time environment. Stop the
+# previously running orchestrator and Slack intake, and prove they are stopped,
+# before any profile validation, snapshot check, n8n mutation, image build,
+# store inspection, or provider prevalidation can fail and leave a paid service
+# live. They stay stopped until this script intentionally recreates the
+# validated service further down.
+Stop-PreviouslyRunningServices -ComposeProject $composeProject -ProfilePath $profilePath -Services @("orchestrator", "slackbot")
+Write-Host "Previously running $displayName orchestrator and Slack intake are stopped; they stay stopped until the validated service is recreated."
 
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 & icacls.exe $profilePath "/inheritance:r" "/grant:r" "${currentIdentity}:(F)" "*S-1-5-18:(F)" "*S-1-5-32-544:(F)" | Out-Null
@@ -640,17 +876,29 @@ foreach ($name in @("ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N
     }
 }
 
-if ($SeedProviderCredentialsFromPrimaryEnv) {
-    if (-not (Test-Path -LiteralPath ".env" -PathType Leaf)) {
-        throw "Cannot seed providers because the primary .env does not exist."
+if ($SeedProviderCredentialsFromPrimaryEnv -and
+    -not [string]::IsNullOrWhiteSpace($ProviderCredentialSourceEnvPath)) {
+    throw "Choose either -SeedProviderCredentialsFromPrimaryEnv or -ProviderCredentialSourceEnvPath, not both."
+}
+$providerCredentialSource = if ($SeedProviderCredentialsFromPrimaryEnv) {
+    ".env"
+}
+else {
+    $ProviderCredentialSourceEnvPath
+}
+if (-not [string]::IsNullOrWhiteSpace($providerCredentialSource)) {
+    if (-not (Test-Path -LiteralPath $providerCredentialSource -PathType Leaf)) {
+        throw "Cannot seed providers because the configured credential source does not exist."
     }
-    $primaryValues = Read-DotEnv -Path ".env"
-    foreach ($name in @("OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN")) {
-        if ($primaryValues.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$primaryValues[$name])) {
-            $profileText = Set-DotEnvValue -Text $profileText -Name $name -Value ([string]$primaryValues[$name])
-        }
+    $resolvedCredentialSource = (Resolve-Path -LiteralPath $providerCredentialSource).Path
+    $resolvedProfilePath = (Resolve-Path -LiteralPath $profilePath).Path
+    if ($resolvedCredentialSource -ceq $resolvedProfilePath) {
+        throw "The provider credential source must be different from the target profile."
     }
-    Write-Host "Provider credentials were copied locally from .env to $profilePath; values were not displayed."
+    $primaryValues = Read-DotEnv -Path $resolvedCredentialSource
+    # Credential values only; enable flags are never copied or synthesized here.
+    $profileText = Copy-ProviderCredentialValues -SourceValues $primaryValues -ProfileText $profileText
+    Write-Host "Provider credentials were copied locally from the configured source to $profilePath; values were not displayed."
 }
 
 $identity = [ordered]@{
@@ -666,7 +914,9 @@ $identity = [ordered]@{
     MAX_TASK_BUDGET_USD = [string]$selected.MAX_TASK_BUDGET_USD
     PRIMARY_TEAM = "openai,claude,cursor,grok"
     PRIMARY_WORKHORSE = "cheapest_capable"
-    USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"
+    # USAGE_CHECK_PROVIDERS is deliberately not forced here. The profile's
+    # explicit periodic-check membership is preserved and validated by
+    # Get-ValidatedUsageCheckProviders before any paid dispatch.
     USAGE_CHECK_INTERVAL_MINUTES = "360"
     ALLOW_PAID_RUNS = "false"
     USAGE_CHECK_ENABLED = "false"
@@ -734,7 +984,8 @@ if ($ProfileName -eq "long-table") {
     }
 }
 
-$composeProject = [string]$values["DIRECTOR_COMPOSE_PROJECT_NAME"]
+# Assert-ProfileIdentity already proved the profile names the selected Compose
+# project, so $composeProject keeps the value derived before validation.
 $hostPort = [int]$values["DIRECTOR_HOST_PORT"]
 [Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")
 Sync-ComposeEnvironment -Values $values
@@ -742,6 +993,13 @@ Sync-ComposeEnvironment -Values $values
 Write-Host "Using isolated $displayName profile $profilePath, Compose project $composeProject, and host port $hostPort."
 docker compose --project-name $composeProject --env-file $profilePath config --quiet
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose configuration validation failed." }
+
+if ($ProfileName -eq "long-table" -and -not $ApiOnly) {
+    Initialize-N8nIntakeWorkflow `
+        -ComposeProject $composeProject `
+        -ProfilePath $profilePath `
+        -RepositoryRoot $repoRoot
+}
 
 docker compose --project-name $composeProject --env-file $profilePath build orchestrator
 if ($LASTEXITCODE -ne 0) { throw "Unable to build the isolated $displayName Director image." }
@@ -780,6 +1038,15 @@ if (-not $EnablePaidRuns) {
     return
 }
 
+# Provider partition preflight. The paid gate, usage checks, and the manual
+# usage-check endpoint stay closed until the profile's explicit
+# USAGE_CHECK_PROVIDERS is valid: no duplicates or unknown names, every
+# mandatory primary provider present, and every listed optional provider
+# explicitly enabled with a configured credential. The endpoint response must
+# later partition exactly this validated set.
+$expectedUsageProviders = @(Get-ValidatedUsageCheckProviders -Values $values -ProfileLabel $profilePath)
+Write-Host "Validated usage-check providers before paid dispatch: $($expectedUsageProviders -join ', ')."
+
 # Provider probes require the paid gate, but the live writer and parallel gate
 # remain closed until that evidence succeeds.
 Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $false
@@ -801,7 +1068,8 @@ try {
     $runStatus = [string]$accepted.status
     $partition = Assert-UsageProviderPartition `
         -ScheduledProviders $accepted.scheduled_providers `
-        -CoolingDownProviders $accepted.cooling_down_providers
+        -CoolingDownProviders $accepted.cooling_down_providers `
+        -ExpectedPrimary $expectedUsageProviders
     $scheduledProviders = @($partition.ScheduledProviders)
     $coolingProviders = @($partition.CoolingDownProviders)
     $completionVerifiedProviders = @(
@@ -956,9 +1224,9 @@ catch {
             }
         }
         if ($null -ne $composeProject -and $composeProject) {
-            docker compose --project-name $composeProject --env-file $profilePath stop orchestrator slackbot | Out-Null
+            docker compose --project-name $composeProject --env-file $profilePath stop orchestrator slackbot n8n n8n-db | Out-Null
             if ($LASTEXITCODE -ne 0) {
-                $outerRollbackErrors.Add("the previously running Long Table writers could not be stopped")
+                $outerRollbackErrors.Add("the previously running Long Table services could not be stopped")
             }
         }
         if ($outerRollbackErrors.Count -gt 0) {
@@ -1004,6 +1272,17 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | END]]

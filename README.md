@@ -1,5 +1,7 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
@@ -18,8 +20,12 @@
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:31 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | BEGIN]] -->
@@ -340,6 +346,30 @@ and is reached only through an authenticated, exact-assignment Claude callback o
 local audit CLI rather than a public merge API. See
 [Edge Oracle operations](docs/edge-oracle-operations.md).
 
+The Long Table — Bid Whist uses the dedicated `.env.long-table` profile with
+project ID `long-table-bid-whist`, repository
+`edwardjones3976/long-table-bid-whist`, starting ref `main`, Director port
+`38080`, n8n port `35678`, a separate database/checkpoint namespace, and its
+project Slack channel. Run `scripts/windows-long-table-live-validation.ps1`
+for the complete isolated stack; add `-ApiOnly` only for an intentional
+orchestrator-only canary. Use `-ProviderCredentialSourceEnvPath` to seed only
+the named credential values `OPENAI_API_KEY`, `CURSOR_API_KEY`,
+`CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN`, `GEMINI_API_KEY`,
+`PERPLEXITY_API_KEY`, and `XAI_API_KEY` from another ignored local profile
+without printing their values. Enable flags are never copied or synthesized:
+Grok and Perplexity stay disabled unless the target profile explicitly sets
+`GROK_ENABLED=true` or `PERPLEXITY_ENABLED=true` and adds `grok` or
+`perplexity` to `USAGE_CHECK_PROVIDERS`. The template schedules exactly
+`openai,claude,cursor`; before the paid gate opens, the script validates the
+profile's explicit `USAGE_CHECK_PROVIDERS` (no duplicates or unknown names,
+OpenAI/Claude/Cursor mandatory, and any listed optional provider enabled with a
+configured credential) and requires the usage-check response to partition
+exactly that set. Full-stack startup first proves the pinned n8n image's CLI
+exposes `publish:workflow` and `unpublish:workflow`, then replaces the
+project-namespaced n8n intake workflow from the committed JSON, publishes it,
+and verifies that exact workflow ID is active before reporting readiness. Paid
+execution remains fail-closed until the script's fresh provider checks succeed.
+
 ## Local validation
 
 ```powershell
@@ -393,8 +423,12 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:02 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 13:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 04:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 02:44 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->
@@ -415,5 +449,7 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:15 UTC | END]] -->

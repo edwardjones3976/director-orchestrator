@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
@@ -155,6 +156,14 @@ FIXTURE_PROFILE_NAMES = (
     "TRUSTED_PROVIDER_COST_RANKS",
 )
 
+# The identity block no longer forces USAGE_CHECK_PROVIDERS; the profile owns
+# it and Get-ValidatedUsageCheckProviders validates it before any paid
+# dispatch. A synthetic placeholder is rejected there, so the fixture
+# declares the real mandatory set instead.
+FIXTURE_PROFILE_LITERALS = {
+    "USAGE_CHECK_PROVIDERS": "openai,claude,cursor",
+}
+
 # Docker, the ACL call and every HTTP request are replaced, so the whole script
 # can run end to end without a daemon, a network or a real deployment.
 FULL_LAUNCHER_PROBE_STUBS = """
@@ -233,6 +242,25 @@ WINDOWS_LAUNCHER_ONLY = unittest.skipUnless(
     "running the full launcher needs Windows: WindowsIdentity and kernel32 are "
     "unavailable to pwsh on a non-Windows host",
 )
+
+
+def _function_source(script: str, name: str) -> str:
+    """Return exactly one top-level PowerShell function definition from the script."""
+
+    start = script.index(f"function {name} {{")
+    end = script.find("\nfunction ", start + 1)
+    return script[start:] if end == -1 else script[start:end]
+
+def _scenario_results(output: str) -> dict[str, tuple[str, str]]:
+    """Parse ``name|outcome|detail`` probe lines into a lookup."""
+
+    results: dict[str, tuple[str, str]] = {}
+    for line in output.splitlines():
+        if line.count("|") < 2:
+            continue
+        name, outcome, detail = line.strip().split("|", 2)
+        results[name] = (outcome, detail)
+    return results
 
 
 class UppercutDeploymentContractTests(unittest.TestCase):
@@ -567,6 +595,10 @@ Write-Output ("threw|" + $threw)
             "".join(
                 f"{name}=synthetic-local-fixture-{name}\n"
                 for name in FIXTURE_PROFILE_NAMES
+            )
+            + "".join(
+                f"{name}={value}\n"
+                for name, value in FIXTURE_PROFILE_LITERALS.items()
             ),
             encoding="utf-8",
         )
@@ -1152,6 +1184,534 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             ROOT / "src" / "director_orchestrator" / "packet_transports.py"
         ).read_text(encoding="utf-8")
         self.assertIn('"-c", f"safe.directory={self.root}"', resolver)
+    def test_wrapper_defaults_to_full_stack_and_preserves_explicit_api_only_canary(self):
+        self.assertIn('ProfileName = "long-table"', self.wrapper)
+        self.assertIn("[switch]$ApiOnly", self.wrapper)
+        self.assertIn('[string]$ProviderCredentialSourceEnvPath = ""', self.wrapper)
+        self.assertIn("if ($ApiOnly) { $arguments.ApiOnly = $true }", self.wrapper)
+        self.assertIn(
+            "$arguments.ProviderCredentialSourceEnvPath = $ProviderCredentialSourceEnvPath",
+            self.wrapper,
+        )
+        self.assertNotRegex(self.wrapper, r"(?m)^\s*ApiOnly\s*=\s*\$true\s*$")
+        self.assertNotIn("docker compose", self.wrapper)
+    def test_provider_seed_source_is_explicit_and_never_prints_secret_values(self):
+        self.assertIn("ProviderCredentialSourceEnvPath", self.script)
+        self.assertIn("Resolve-Path -LiteralPath $providerCredentialSource", self.script)
+        self.assertIn("values were not displayed", self.script)
+        self.assertNotIn('Write-Host $primaryValues', self.script)
+        seed_block = self.script.split("$providerCredentialSource =", 1)[1].split(
+            "$identity =", 1
+        )[0]
+        self.assertNotIn('"GROK_CLI_EXECUTABLE"', seed_block)
+        self.assertNotIn('"GROK_CLI_REPOSITORY_MAP_JSON"', seed_block)
+        self.assertNotIn("GROK_CLI_ENABLED", seed_block)
+    def test_full_stack_bootstraps_and_verifies_the_n8n_intake_workflow(self):
+        initializer = self.script.split("function Initialize-N8nIntakeWorkflow", 1)[1]
+        self.assertIn('workflowId = "directorIntake"', initializer)
+        self.assertIn("ConvertFrom-Json", initializer)
+        self.assertIn("$workflowDefinition.id -cne $workflowId", initializer)
+        self.assertIn("up -d --wait --wait-timeout 120 n8n-db", initializer)
+        self.assertIn("n8n import:workflow --input=/workflows/director-intake.json", initializer)
+        self.assertIn("n8n publish:workflow --id=$workflowId", initializer)
+        self.assertIn("n8n list:workflow --active=true --onlyId", initializer)
+        self.assertIn(
+            'if ($ProfileName -eq "long-table" -and -not $ApiOnly)', self.script
+        )
+        self.assertIn("Initialize-N8nIntakeWorkflow", self.script)
+        self.assertIn("$repoRoot = Split-Path -Parent $PSScriptRoot", self.script)
+    def test_full_stack_profile_binds_slack_n8n_and_optional_bridge_to_project_channel(self):
+        for line in (
+            "SLACK_DIRECTOR_CHANNEL_ID=C0BSH9SPPUH",
+            "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake",
+            "CHATGPT_BRIDGE_CHANNEL_IDS=C0BSH9SPPUH",
+        ):
+            self.assertIn(line, self.profile)
+    def test_profile_declares_every_provider_credential_and_safety_boundary(self):
+        for line in (
+            "OPENAI_API_KEY=",
+            "CLAUDE_ROUTINE_URL=",
+            "CURSOR_API_KEY=",
+            "GEMINI_API_KEY=",
+            "XAI_API_KEY=",
+            "GROK_ENABLED=false",
+            "GROK_CODE_MODEL=grok-build-0.1",
+            "GROK_CLI_REPOSITORY_MAP_JSON={}",
+            "PERPLEXITY_API_KEY=",
+            "PERPLEXITY_ENABLED=false",
+            "PERPLEXITY_ALLOW_REPOSITORY_WRITE=false",
+            "PERPLEXITY_ALLOW_REVIEW_VERDICT=false",
+        ):
+            self.assertIn(line, self.profile)
+    def test_isolated_script_parses_without_syntax_errors(self):
+        script_path = str(ROOT / "scripts" / "windows-isolated-live-validation.ps1")
+        probe = (
+            "$tokens = $null\n"
+            "$scriptErrors = $null\n"
+            "$null = [System.Management.Automation.Language.Parser]::ParseFile("
+            f"'{script_path.replace(chr(39), chr(39) * 2)}', [ref]$tokens, [ref]$scriptErrors)\n"
+            "$brokenErrors = $null\n"
+            "$null = [System.Management.Automation.Language.Parser]::ParseInput("
+            "'if ($x { ', [ref]$tokens, [ref]$brokenErrors)\n"
+            'Write-Output ("script|" + @($scriptErrors).Count)\n'
+            'Write-Output ("broken|" + @($brokenErrors).Count)\n'
+        )
+        lines = [line.strip() for line in _run_powershell(probe).splitlines() if "|" in line]
+        counts = dict(line.split("|", 1) for line in lines)
+        # The parser must prove it reports errors before its clean result counts.
+        self.assertGreater(int(counts["broken"]), 0)
+        self.assertEqual(0, int(counts["script"]))
+    def test_identity_block_preserves_profile_usage_check_providers(self):
+        identity_block = self.script[
+            self.script.index("$identity = [ordered]@{") :
+            self.script.index("foreach ($entry in $identity.GetEnumerator())")
+        ]
+        self.assertNotRegex(identity_block, r"(?m)^\s*USAGE_CHECK_PROVIDERS\s*=")
+        self.assertNotIn('USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"', self.script)
+        self.assertRegex(self.profile, r"(?m)^USAGE_CHECK_PROVIDERS=openai,claude,cursor$")
+    def test_usage_provider_prevalidation_precedes_paid_switches_and_dispatch(self):
+        definition = self.script.index("function Get-ValidatedUsageCheckProviders")
+        prevalidation = self.script.index(
+            "$expectedUsageProviders = @(Get-ValidatedUsageCheckProviders "
+            "-Values $values -ProfileLabel $profilePath)"
+        )
+        opens = self.script.index(
+            "Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $false"
+        )
+        dispatch = self.script.index("/v1/usage-checks/run")
+        partition = self.script.index("-ExpectedPrimary $expectedUsageProviders")
+        self.assertLess(definition, prevalidation)
+        self.assertLess(prevalidation, opens)
+        self.assertLess(opens, dispatch)
+        self.assertLess(dispatch, partition)
+        # The validated values are the profile as written: no profile write sits
+        # between the last read and the prevalidation.
+        values_read = self.script.rindex("$values = Read-DotEnv -Path $profilePath", 0, prevalidation)
+        self.assertEqual(-1, self.script.find("Write-Utf8NoBom", values_read, prevalidation))
+        self.assertEqual(-1, self.script.find("Write-ProfileSwitches", values_read, prevalidation))
+        self.assertEqual(1, self.script.count("Assert-UsageProviderPartition `"))
+        self.assertIn("[Parameter(Mandatory = $true)][string[]]$ExpectedPrimary", self.script)
+        self.assertNotIn('$ExpectedPrimary = @("claude", "cursor", "openai")', self.script)
+        rules = _function_source(self.script, "Get-ValidatedUsageCheckProviders")
+        self.assertIn('$mandatory = @("openai", "claude", "cursor")', rules)
+        self.assertIn(
+            '$known = @("openai", "claude", "cursor", "grok", "perplexity", "gemini")', rules
+        )
+        for name in (
+            "GROK_ENABLED", "XAI_API_KEY", "PERPLEXITY_ENABLED", "PERPLEXITY_API_KEY",
+            "GEMINI_API_KEY",
+        ):
+            self.assertIn(f'"{name}"', rules)
+        self.assertIn('StartsWith("REPLACE_WITH_")', rules)
+        self.assertIn("Group-Object -CaseSensitive", rules)
+    def test_usage_provider_prevalidation_rules_are_deterministic(self):
+        probe = (
+            POWERSHELL_PRELUDE
+            + _function_source(self.script, "Get-ValidatedUsageCheckProviders")
+            + r"""
+$scenarios = [ordered]@{
+    "minimal" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor" }
+    "spaced" = @{ USAGE_CHECK_PROVIDERS = " cursor , openai , claude " }
+    "absent" = @{ OPENAI_API_KEY = "sk-test" }
+    "blank" = @{ USAGE_CHECK_PROVIDERS = "" }
+    "empty-entry" = @{ USAGE_CHECK_PROVIDERS = "openai,,claude,cursor" }
+    "duplicate" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,openai" }
+    "unknown" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,bard" }
+    "mixed-case" = @{ USAGE_CHECK_PROVIDERS = "OpenAI,claude,cursor" }
+    "missing-cursor" = @{ USAGE_CHECK_PROVIDERS = "openai,claude" }
+    "grok-disabled" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"; GROK_ENABLED = "false"; XAI_API_KEY = "xai-test" }
+    "grok-placeholder" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"; GROK_ENABLED = "true"; XAI_API_KEY = "REPLACE_WITH_XAI_API_KEY" }
+    "grok-ready" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"; GROK_ENABLED = "true"; XAI_API_KEY = "xai-test" }
+    "perplexity-disabled" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,perplexity"; PERPLEXITY_API_KEY = "pplx-test" }
+    "perplexity-ready" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,perplexity"; PERPLEXITY_ENABLED = "true"; PERPLEXITY_API_KEY = "pplx-test" }
+    "gemini-blank" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,gemini"; GEMINI_API_KEY = "" }
+    "gemini-ready" = @{ USAGE_CHECK_PROVIDERS = "openai,claude,cursor,gemini"; GEMINI_API_KEY = "gem-test" }
+}
+foreach ($entry in $scenarios.GetEnumerator()) {
+    try {
+        $result = @(Get-ValidatedUsageCheckProviders -Values $entry.Value -ProfileLabel "probe")
+        Write-Output ($entry.Key + "|ok|" + ($result -join ","))
+    }
+    catch {
+        Write-Output ($entry.Key + "|error|" + $_.Exception.Message)
+    }
+}
+"""
+        )
+        output = _run_powershell(probe)
+        results = _scenario_results(output)
+        self.assertEqual(("ok", "claude,cursor,openai"), results["minimal"])
+        self.assertEqual(("ok", "claude,cursor,openai"), results["spaced"])
+        self.assertEqual(("ok", "claude,cursor,grok,openai"), results["grok-ready"])
+        self.assertEqual(("ok", "claude,cursor,openai,perplexity"), results["perplexity-ready"])
+        self.assertEqual(("ok", "claude,cursor,gemini,openai"), results["gemini-ready"])
+        for name, fragment in (
+            ("absent", "must declare USAGE_CHECK_PROVIDERS explicitly"),
+            ("blank", "must declare USAGE_CHECK_PROVIDERS explicitly"),
+            ("empty-entry", "empty provider entry"),
+            ("duplicate", "duplicate providers: openai"),
+            ("unknown", "unknown providers: bard"),
+            ("mixed-case", "unknown providers: OpenAI"),
+            ("missing-cursor", "omits mandatory primary providers: cursor"),
+            ("grok-disabled", "GROK_ENABLED is not exactly true"),
+            ("grok-placeholder", "XAI_API_KEY is not configured"),
+            ("perplexity-disabled", "PERPLEXITY_ENABLED is not exactly true"),
+            ("gemini-blank", "GEMINI_API_KEY is not configured"),
+        ):
+            outcome, detail = results[name]
+            self.assertEqual("error", outcome, name)
+            self.assertIn(fragment, detail, name)
+        for secret in ("xai-test", "pplx-test", "gem-test", "sk-test"):
+            self.assertNotIn(secret, output)
+    def test_usage_partition_rejects_providers_outside_the_validated_set(self):
+        probe = (
+            POWERSHELL_PRELUDE
+            + _function_source(self.script, "Get-UsageProviderNames")
+            + "\n"
+            + _function_source(self.script, "Assert-UsageProviderPartition")
+            + r"""
+$scenarios = [ordered]@{
+    "primaries-only" = @{ Scheduled = @("openai"); Cooling = @("claude", "cursor"); Expected = @("claude", "cursor", "openai") }
+    "unlisted-grok" = @{ Scheduled = @("openai", "grok"); Cooling = @("claude", "cursor"); Expected = @("claude", "cursor", "openai") }
+    "listed-grok" = @{ Scheduled = @("openai", "grok"); Cooling = @("claude", "cursor"); Expected = @("claude", "cursor", "grok", "openai") }
+    "missing-listed-grok" = @{ Scheduled = @("openai"); Cooling = @("claude", "cursor"); Expected = @("claude", "cursor", "grok", "openai") }
+}
+foreach ($entry in $scenarios.GetEnumerator()) {
+    try {
+        $partition = Assert-UsageProviderPartition -ScheduledProviders $entry.Value.Scheduled -CoolingDownProviders $entry.Value.Cooling -ExpectedPrimary $entry.Value.Expected
+        Write-Output ($entry.Key + "|ok|" + ($partition.ScheduledProviders -join ",") + ";" + ($partition.CoolingDownProviders -join ","))
+    }
+    catch {
+        Write-Output ($entry.Key + "|error|" + $_.Exception.Message)
+    }
+}
+"""
+        )
+        results = _scenario_results(_run_powershell(probe))
+        self.assertEqual(("ok", "openai;claude,cursor"), results["primaries-only"])
+        self.assertEqual(("ok", "grok,openai;claude,cursor"), results["listed-grok"])
+        self.assertEqual("error", results["unlisted-grok"][0])
+        self.assertIn("Unknown providers in schedule response: grok", results["unlisted-grok"][1])
+        self.assertEqual("error", results["missing-listed-grok"][0])
+        self.assertIn("must partition expected primary providers", results["missing-listed-grok"][1])
+    def test_credential_seeding_copies_only_named_keys(self):
+        copier = _function_source(self.script, "Copy-ProviderCredentialValues")
+        self.assertEqual(
+            [
+                "OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN",
+                "GEMINI_API_KEY", "PERPLEXITY_API_KEY", "XAI_API_KEY",
+            ],
+            re.findall(r'"([A-Z0-9_]+)"', copier),
+        )
+        self.assertNotIn('-Value "true"', copier)
+        seed_block = self.script.split("$providerCredentialSource =", 1)[1].split(
+            "$identity =", 1
+        )[0]
+        self.assertIn(
+            "Copy-ProviderCredentialValues -SourceValues $primaryValues -ProfileText $profileText",
+            seed_block,
+        )
+        for forbidden in ("PERPLEXITY_ENABLED", "GROK_ENABLED", '-Value "true"'):
+            self.assertNotIn(forbidden, seed_block)
+    def test_credential_seeding_never_copies_or_synthesizes_enable_flags(self):
+        probe = (
+            POWERSHELL_PRELUDE
+            + _function_source(self.script, "Set-DotEnvValue")
+            + "\n"
+            + _function_source(self.script, "Copy-ProviderCredentialValues")
+            + r"""
+$source = @{
+    OPENAI_API_KEY = "sk-source"
+    CURSOR_API_KEY = "cur-source"
+    CLAUDE_ROUTINE_URL = "https://routine.example/source"
+    CLAUDE_ROUTINE_TOKEN = "routine-source"
+    GEMINI_API_KEY = "gem-source"
+    PERPLEXITY_API_KEY = "pplx-source"
+    XAI_API_KEY = "xai-source"
+    GROK_ENABLED = "true"
+    PERPLEXITY_ENABLED = "true"
+    GROK_CLI_ENABLED = "true"
+    USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok,perplexity"
+    ORCHESTRATOR_SHARED_SECRET = "shared-source"
+}
+$targetText = @(
+    "OPENAI_API_KEY=",
+    "XAI_API_KEY=",
+    "PERPLEXITY_API_KEY=",
+    "GEMINI_API_KEY=",
+    "GROK_ENABLED=false",
+    "PERPLEXITY_ENABLED=false",
+    "GROK_CLI_ENABLED=false",
+    "USAGE_CHECK_PROVIDERS=openai,claude,cursor",
+    "ORCHESTRATOR_SHARED_SECRET=target-secret"
+) -join "`n"
+$seeded = Copy-ProviderCredentialValues -SourceValues $source -ProfileText $targetText
+Write-Output "BEGIN-SEEDED"
+Write-Output $seeded
+Write-Output "END-SEEDED"
+"""
+        )
+        output = _run_powershell(probe)
+        seeded = output.split("BEGIN-SEEDED", 1)[1].split("END-SEEDED", 1)[0]
+        lines = [line.strip() for line in seeded.splitlines() if line.strip()]
+        for expected in (
+            "OPENAI_API_KEY=sk-source",
+            "CURSOR_API_KEY=cur-source",
+            "CLAUDE_ROUTINE_URL=https://routine.example/source",
+            "CLAUDE_ROUTINE_TOKEN=routine-source",
+            "GEMINI_API_KEY=gem-source",
+            "PERPLEXITY_API_KEY=pplx-source",
+            "XAI_API_KEY=xai-source",
+            "GROK_ENABLED=false",
+            "PERPLEXITY_ENABLED=false",
+            "GROK_CLI_ENABLED=false",
+            "USAGE_CHECK_PROVIDERS=openai,claude,cursor",
+            "ORCHESTRATOR_SHARED_SECRET=target-secret",
+        ):
+            self.assertIn(expected, lines)
+        for flag in ("GROK_ENABLED", "PERPLEXITY_ENABLED", "GROK_CLI_ENABLED"):
+            self.assertEqual(1, sum(1 for line in lines if line.startswith(f"{flag}=")), flag)
+            self.assertNotIn(f"{flag}=true", lines)
+        self.assertNotIn("shared-source", output)
+    def test_n8n_capability_preflight_precedes_every_workflow_mutation(self):
+        self.assertLess(
+            self.script.index("function Assert-N8nWorkflowPublishCapability"),
+            self.script.index("function Initialize-N8nIntakeWorkflow"),
+        )
+        initializer = self.script.split("function Initialize-N8nIntakeWorkflow", 1)[1]
+        preflight = initializer.index("run --rm --no-deps -T n8n --help")
+        exit_check = initializer.index("$LASTEXITCODE -ne 0", preflight)
+        capability = initializer.index("Assert-N8nWorkflowPublishCapability -HelpOutput $helpOutput")
+        stop = initializer.index("stop n8n")
+        database = initializer.index("up -d --wait --wait-timeout 120 n8n-db")
+        listing = initializer.index("list:workflow --onlyId")
+        unpublish = initializer.index("unpublish:workflow --id=$workflowId")
+        importing = initializer.index("import:workflow --input=/workflows/director-intake.json")
+        publish = initializer.index("n8n publish:workflow --id=$workflowId")
+        readback = initializer.index("list:workflow --active=true --onlyId")
+        self.assertLess(preflight, exit_check)
+        self.assertLess(exit_check, capability)
+        self.assertLess(capability, stop)
+        self.assertLess(stop, database)
+        self.assertLess(database, listing)
+        self.assertLess(listing, unpublish)
+        self.assertLess(unpublish, importing)
+        self.assertLess(importing, publish)
+        self.assertLess(publish, readback)
+        self.assertEqual(1, initializer.count("--help"))
+        capability_fn = _function_source(self.script, "Assert-N8nWorkflowPublishCapability")
+        self.assertIn('@("publish:workflow", "unpublish:workflow")', capability_fn)
+        self.assertIn("[Regex]::Escape($_)", capability_fn)
+        self.assertIn("-cmatch $heading", capability_fn)
+        self.assertNotIn("update:workflow", self.script)
+    def test_n8n_capability_preflight_requires_both_exact_commands(self):
+        probe = (
+            POWERSHELL_PRELUDE
+            + _function_source(self.script, "Assert-N8nWorkflowPublishCapability")
+            + r"""
+$esc = [char]27
+$scenarios = [ordered]@{
+    "pinned-help" = @("Available commands:", "  publish:workflow:", "    Publish a workflow", "  unpublish:workflow:", "    Unpublish a workflow", "  update:workflow:", "    [DEPRECATED]")
+    "colored" = @(("  " + $esc + "[1mpublish:workflow:" + $esc + "[0m"), ("  " + $esc + "[1munpublish:workflow:" + $esc + "[0m"))
+    "substring-only" = @("COMMANDS", "  unpublish:workflow:")
+    "publish-only" = @("COMMANDS", "  publish:workflow:")
+    "deprecated-only" = @("COMMANDS", "  update:workflow:", "    [DEPRECATED]")
+    "glued" = @("COMMANDS", "  publish:workflow:unpublish:workflow:")
+    "bare-tokens" = @("COMMANDS", "  publish:workflow", "  unpublish:workflow")
+    "empty" = @()
+}
+foreach ($entry in $scenarios.GetEnumerator()) {
+    try {
+        Assert-N8nWorkflowPublishCapability -HelpOutput ([string[]]$entry.Value)
+        Write-Output ($entry.Key + "|ok|")
+    }
+    catch {
+        Write-Output ($entry.Key + "|error|" + $_.Exception.Message)
+    }
+}
+"""
+        )
+        results = _scenario_results(_run_powershell(probe))
+        self.assertEqual(("ok", ""), results["pinned-help"])
+        self.assertEqual(("ok", ""), results["colored"])
+        for name, fragment in (
+            ("substring-only", "commands: publish:workflow."),
+            ("publish-only", "commands: unpublish:workflow."),
+            ("deprecated-only", "commands: publish:workflow, unpublish:workflow."),
+            ("glued", "commands: unpublish:workflow."),
+            ("bare-tokens", "commands: publish:workflow, unpublish:workflow."),
+            ("empty", "commands: publish:workflow, unpublish:workflow."),
+        ):
+            outcome, detail = results[name]
+            self.assertEqual("error", outcome, name)
+            self.assertIn(fragment, detail, name)
+            self.assertIn("No workflow was modified", detail, name)
+    def test_compose_project_is_known_before_any_fallible_profile_validation(self):
+        derivation = self.script.index(
+            "$composeProject = [string]$selected.DIRECTOR_COMPOSE_PROJECT_NAME"
+        )
+        env_binding = self.script.index(
+            '[Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")'
+        )
+        self.assertIn("$composeProject = $null", self.script)
+        self.assertLess(self.script.index("$selected = $profiles[$ProfileName]"), derivation)
+        self.assertLess(derivation, env_binding)
+        for fallible in (
+            "-SkipProviderChecks cannot be combined with -EnablePaidRuns",
+            "Missing $profileTemplate",
+            "& icacls.exe",
+            "$profileText = Get-Content",
+            "Assert-ProfileIdentity -Values $values",
+            "Assert-LongTableSnapshot -Values $values",
+            "Assert-NoProfileCollisions -TargetValues $values",
+            "Assert-Configured -Values $values -Names $requiredConfiguration",
+        ):
+            self.assertLess(env_binding, self.script.index(fallible), fallible)
+        # Inverse: the project is never re-derived from the profile after
+        # validation, so rollback can never observe a null project name.
+        self.assertNotIn('$composeProject = [string]$values[', self.script)
+        self.assertEqual(1, self.script.count("$composeProject = [string]"))
+        outer_catch = self.script[
+            self.script.index("catch {\n    $outerFailure = $_") :
+            self.script.rindex("finally {")
+        ]
+        self.assertIn(
+            "docker compose --project-name $composeProject --env-file $profilePath "
+            "stop orchestrator slackbot n8n n8n-db | Out-Null",
+            outer_catch,
+        )
+    def test_previous_activation_is_stopped_and_verified_before_every_preflight_step(self):
+        call = (
+            "Stop-PreviouslyRunningServices -ComposeProject $composeProject "
+            '-ProfilePath $profilePath -Services @("orchestrator", "slackbot")'
+        )
+        self.assertEqual(1, self.script.count(call))
+        stop = self.script.index(call)
+        self.assertLess(self.script.index("function Stop-PreviouslyRunningServices"), stop)
+        # The profile exists before Compose is asked to load it, and nothing
+        # fallible about the profile itself runs before the stop.
+        self.assertLess(
+            self.script.index("Copy-Item -LiteralPath $profileTemplate -Destination $profilePath"),
+            stop,
+        )
+        preflight = {
+            "acl": "& icacls.exe",
+            "profile read": "$profileText = Get-Content",
+            "identity": "Assert-ProfileIdentity -Values $values",
+            "snapshot validation": "Assert-LongTableSnapshot -Values $values",
+            "collisions": "Assert-NoProfileCollisions -TargetValues $values",
+            "configuration": "Assert-Configured -Values $values -Names $requiredConfiguration",
+            "compose config": "config --quiet",
+            "n8n mutation": "Initialize-N8nIntakeWorkflow `",
+            "image build": "$profilePath build orchestrator",
+            "store inspection": "list_recoverable()",
+            "provider prevalidation": "$expectedUsageProviders = @(Get-ValidatedUsageCheckProviders",
+            "paid switches": (
+                "Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $false"
+            ),
+        }
+        for name, marker in preflight.items():
+            self.assertLess(stop, self.script.index(marker), name)
+        # Inverse: nothing between the stop and the intentional paid-closed
+        # start brings the orchestrator or Slack intake back.
+        closed_start = self.script.index("if (-not $EnablePaidRuns) {", stop)
+        held = self.script[stop + len(call) : closed_start]
+        for line in held.splitlines():
+            if "docker compose" in line:
+                self.assertIsNone(re.search(r"\b(up|start|restart|unpause)\b", line), line)
+        # The only container start inside the n8n initializer is its database.
+        # The initializer is the script's last function, so bound it by the
+        # statement that follows it rather than by the next definition.
+        initializer = self.script[
+            self.script.index("function Initialize-N8nIntakeWorkflow") :
+            self.script.index('if ($ApiOnly -and $ProfileName -notin @("edge-oracle", "long-table"))')
+        ]
+        self.assertEqual(
+            ["up -d --wait --wait-timeout 120 n8n-db"],
+            re.findall(r"up -d[^\n]*", initializer),
+        )
+        # Inverse: the paid path recreates the validated service only after
+        # provider prevalidation and the paid-check switches, with no other
+        # start in between.
+        prevalidation = self.script.index(preflight["provider prevalidation"])
+        paid_switches = self.script.index(preflight["paid switches"])
+        paid_start = self.script.index("up -d --build --force-recreate orchestrator")
+        self.assertLess(prevalidation, paid_switches)
+        self.assertLess(paid_switches, paid_start)
+        self.assertEqual(0, self.script.count(" up -d", prevalidation, paid_start))
+        self.assertIn("stop slackbot", self.script[paid_switches:paid_start])
+    def test_previous_activation_stop_fails_closed_and_verifies_after_stopping(self):
+        probe = (
+            POWERSHELL_PRELUDE
+            + _function_source(self.script, "Stop-PreviouslyRunningServices")
+            + r"""
+$global:mode = ""
+$global:calls = New-Object System.Collections.Generic.List[string]
+function docker {
+    $call = @($args | ForEach-Object { [string]$_ }) -join " "
+    $global:calls.Add($call)
+    if ($call -match " stop ") {
+        $global:LASTEXITCODE = $(if ($global:mode -eq "stop-fails") { 1 } else { 0 })
+        return
+    }
+    if ($call -match " ps ") {
+        if ($global:mode -eq "verify-fails") { $global:LASTEXITCODE = 1; return }
+        $global:LASTEXITCODE = 0
+        if ($global:mode -eq "still-live") { Write-Output "0123456789ab"; Write-Output "" }
+        if ($global:mode -eq "blank-lines") { Write-Output ""; Write-Output "   " }
+        return
+    }
+    throw "unexpected docker call: $call"
+}
+foreach ($scenario in @("clean", "blank-lines", "stop-fails", "still-live", "verify-fails")) {
+    $global:mode = $scenario
+    $global:calls.Clear()
+    try {
+        Stop-PreviouslyRunningServices -ComposeProject "probe-project" -ProfilePath "probe.env" -Services @("orchestrator", "slackbot")
+        Write-Output ($scenario + "|ok|")
+    }
+    catch {
+        Write-Output ($scenario + "|error|" + $_.Exception.Message)
+    }
+    Write-Output ($scenario + "-calls|" + $global:calls.Count + "|" + ($global:calls -join ";"))
+}
+"""
+        )
+        results = _scenario_results(_run_powershell(probe))
+        stop_call = (
+            "compose --project-name probe-project --env-file probe.env stop orchestrator slackbot"
+        )
+        verify_call = (
+            "compose --project-name probe-project --env-file probe.env ps --quiet "
+            "--status running --status paused --status restarting orchestrator slackbot"
+        )
+        self.assertEqual(("ok", ""), results["clean"])
+        self.assertEqual(("2", f"{stop_call};{verify_call}"), results["clean-calls"])
+        self.assertEqual(("ok", ""), results["blank-lines"])
+        outcome, detail = results["stop-fails"]
+        self.assertEqual("error", outcome)
+        self.assertIn(
+            "Unable to stop the previously running orchestrator and slackbot services "
+            "of Compose project probe-project",
+            detail,
+        )
+        # Inverse: a failed stop is reported as such; verification never runs
+        # afterwards to mask it.
+        self.assertEqual(("1", stop_call), results["stop-fails-calls"])
+        outcome, detail = results["still-live"]
+        self.assertEqual("error", outcome)
+        self.assertIn("still has 1 live orchestrator and slackbot container(s)", detail)
+        self.assertIn("No preflight step was started", detail)
+        self.assertEqual(("2", f"{stop_call};{verify_call}"), results["still-live-calls"])
+        outcome, detail = results["verify-fails"]
+        self.assertEqual("error", outcome)
+        self.assertIn(
+            "Unable to verify that the orchestrator and slackbot services of Compose "
+            "project probe-project are stopped",
+            detail,
+        )
+        self.assertEqual(("2", f"{stop_call};{verify_call}"), results["verify-fails-calls"])
+
 
 
 if __name__ == "__main__":
@@ -1170,3 +1730,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 01:54 UTC | END]]
