@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 """Phase 1 of human-out-of-the-loop operation: grant schema and readiness only.
 
@@ -16,7 +17,8 @@ document relies on for safety.
 
 Everything defaults off. A deployment is ``ATTENDED`` unless a grant is present
 and valid, and it returns to ``ATTENDED`` whenever configuration is absent,
-invalid, expired, or unreadable.
+invalid, expired, or unreadable. The state reported here is the one the owner
+has configured; it is never a grant of authority to act unattended.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Mapping
 
@@ -38,13 +40,23 @@ _MAX_PROVIDERS = 16
 _MAX_EXERCISES = 1_000
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9._:@+-]{1,128}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9._-]{1,64}/[A-Za-z0-9._-]{1,64}$")
-# One trailing "*" only.  A general glob would let a branch pattern widen by
-# accident, and the document requires a grant to be bounded on every axis.
-_BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,128}\*?$")
+# One trailing "*" only, and it must follow a path separator, so a pattern
+# means "this segment prefix and below".  A raw substring prefix would let a
+# grant widen by accident -- "main*" would swallow the sibling branch
+# "maintenance" -- and the document requires a grant to be bounded on every
+# axis and states grants never extend by analogy.
+_BRANCH_PATTERN = re.compile(
+    r"^[A-Za-z0-9._/-]{1,127}(?<=/)\*$|^[A-Za-z0-9._/-]{1,128}$"
+)
 
 
 class DelegationState(StrEnum):
-    """Exactly one state is in force per deployment profile at any time."""
+    """The three states the document names, one in force per deployment.
+
+    A member names what the owner has **configured**, not what any code here
+    may do: phase 1 executes no decision, so ``DELEGATED`` is never permission
+    to act.
+    """
 
     ATTENDED = "ATTENDED"
     DELEGATED = "DELEGATED"
@@ -137,6 +149,9 @@ class DelegationGrant:
         if decision not in self.classes or repository != self.repository:
             return False
         if self.branch_pattern.endswith("*"):
+            # Validation requires the retained prefix to end at a path
+            # separator, so this is "that segment prefix and below" and can
+            # never swallow a sibling branch name.
             return branch.startswith(self.branch_pattern[:-1])
         return branch == self.branch_pattern
 
@@ -181,6 +196,12 @@ def parse_grant(document: str | None) -> DelegationGrant | None:
         # would be worse than refusing the grant.
         raise DelegationConfigurationError("delegation grant fields are not exact")
 
+    for field in ("schema_version", "grant_id", "repository", "branch_pattern"):
+        # Coercing with str() would turn a JSON number, list or object into
+        # text that then passes the bounding regexes.  A non-string is refused.
+        if not isinstance(payload[field], str):
+            raise DelegationConfigurationError(f"{field} must be a string")
+
     raw_classes = payload["classes"]
     if not isinstance(raw_classes, list) or not raw_classes:
         raise DelegationConfigurationError("classes must be a non-empty list")
@@ -193,8 +214,10 @@ def parse_grant(document: str | None) -> DelegationGrant | None:
         raise DelegationConfigurationError("classes name a non tier-1 decision") from exc
 
     raw_providers = payload["providers"]
-    if not isinstance(raw_providers, list):
-        raise DelegationConfigurationError("providers must be a list")
+    if not isinstance(raw_providers, list) or any(
+        not isinstance(item, str) for item in raw_providers
+    ):
+        raise DelegationConfigurationError("providers must be a list of strings")
 
     expires_raw = payload["expires_at"]
     if not isinstance(expires_raw, str):
@@ -204,37 +227,46 @@ def parse_grant(document: str | None) -> DelegationGrant | None:
     except ValueError as exc:
         raise DelegationConfigurationError("expires_at is not ISO-8601") from exc
     if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        # Not repaired to UTC: that invents an offset the owner did not write,
+        # and a grant meant to expire at 17:00 local would stay live for hours.
+        raise DelegationConfigurationError("expires_at must be timezone aware")
 
     revoked = payload["revoked"]
     if not isinstance(revoked, bool):
         raise DelegationConfigurationError("revoked must be a boolean")
 
     return DelegationGrant(
-        schema_version=str(payload["schema_version"]),
-        grant_id=str(payload["grant_id"]),
-        repository=str(payload["repository"]),
-        branch_pattern=str(payload["branch_pattern"]),
+        schema_version=payload["schema_version"],
+        grant_id=payload["grant_id"],
+        repository=payload["repository"],
+        branch_pattern=payload["branch_pattern"],
         classes=classes,
-        providers=frozenset(str(item) for item in raw_providers),
+        providers=frozenset(raw_providers),
         expires_at=expires_at,
         max_exercises=payload["max_exercises"],
         revoked=revoked,
     )
 
 
-def resolve_state(
+def configured_state(
     grant: DelegationGrant | None,
     *,
     enabled: bool,
     suspended: bool,
     moment: datetime,
 ) -> DelegationState:
-    """Resolve the operating state. ``ATTENDED`` unless everything holds.
+    """Report the state the owner has **configured**, not authority to act.
 
-    ``SUSPENDED`` wins over everything: the document states there is no path
-    from ``SUSPENDED`` to ``DELEGATED`` that does not pass through an explicit
-    owner action, so it is checked first and never inferred away.
+    A ``DELEGATED`` result means "the owner configured a live grant", never
+    "this deployment may act unattended". No phase that resolves a decision
+    exists yet: the evidence bar, the audit ledger and the decision path are
+    later phases, so a caller must not branch on this value to take an action,
+    and every ``OWNER_DECISION_REQUIRED`` still waits for the owner.
+
+    ``ATTENDED`` unless everything holds. ``SUSPENDED`` wins over everything:
+    the document states there is no path from ``SUSPENDED`` to ``DELEGATED``
+    that does not pass through an explicit owner action, so it is checked first
+    and never inferred away.
     """
 
     if suspended:
@@ -257,9 +289,10 @@ def delegation_readiness(
     ``/health`` returns readiness booleans only and never secret or allowlist
     values, and a grant names real repositories and providers.
 
-    ``executes_decisions`` is reported explicitly and is always false. An
-    operator reading this endpoint should be able to see that phase 1 resolves
-    nothing, rather than inferring it from the absence of a field.
+    ``configured_state`` is what the owner has configured, not a grant of
+    authority. ``executes_decisions`` is reported beside it and is always
+    false, so an operator reading this endpoint can see that phase 1 resolves
+    nothing rather than inferring it from the absence of a field.
     """
 
     try:
@@ -268,13 +301,13 @@ def delegation_readiness(
     except DelegationConfigurationError:
         grant, malformed = None, True
 
-    state = resolve_state(
+    state = configured_state(
         grant, enabled=enabled, suspended=suspended, moment=moment
     )
     return {
         "phase": 1,
         "executes_decisions": False,
-        "state": state.value,
+        "configured_state": state.value,
         "enabled_requested": bool(enabled),
         "suspended": bool(suspended),
         "grant_configured": grant is not None,
@@ -286,3 +319,4 @@ def delegation_readiness(
         "eligible_provider_count": len(grant.providers) if grant is not None else 0,
     }
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | END]]

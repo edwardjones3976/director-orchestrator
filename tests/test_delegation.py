@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 """Phase 1 of human-out-of-the-loop operation: schema, validation, readiness.
 
@@ -20,9 +21,9 @@ from director_orchestrator.delegation import (
     DelegationGrant,
     DelegationState,
     Tier1Class,
+    configured_state,
     delegation_readiness,
     parse_grant,
-    resolve_state,
 )
 
 NOW = datetime(2026, 9, 8, 16, 0, tzinfo=timezone.utc)
@@ -114,6 +115,28 @@ class GrantSchemaTests(unittest.TestCase):
                 with self.assertRaises(DelegationConfigurationError):
                     parse_grant(grant_document(**{field: value}))
 
+    def test_a_naive_expiry_is_rejected_rather_than_repaired(self):
+        """Stamping UTC onto a naive value invents an offset the owner did not
+        write, and a grant meant to expire at 17:00 local would stay live."""
+
+        with self.assertRaises(DelegationConfigurationError):
+            parse_grant(grant_document(expires_at="2026-09-09T04:00:00"))
+
+    def test_non_string_fields_are_refused_rather_than_coerced(self):
+        """str() would turn a JSON number, list or object into text that then
+        passes the bounding regexes."""
+
+        for field, value in (
+            ("schema_version", 1),
+            ("grant_id", 123),
+            ("repository", ["edwardjones3976", "director-orchestrator"]),
+            ("branch_pattern", {"claude/": True}),
+            ("providers", ["openai", 123]),
+        ):
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(DelegationConfigurationError):
+                    parse_grant(grant_document(**{field: value}))
+
     def test_oversized_and_non_object_documents_are_refused(self):
         with self.assertRaises(DelegationConfigurationError):
             parse_grant(json.dumps({"padding": "x" * 20_000}))
@@ -163,6 +186,32 @@ class GrantScopeTests(unittest.TestCase):
             )
         )
 
+    def test_a_branch_pattern_cannot_widen_past_its_segment(self):
+        """A trailing "*" means this segment prefix and below. "main*" would
+        swallow the sibling branch "maintenance", so a widening pattern is
+        refused at configuration rather than narrowed at match time."""
+
+        for pattern in ("main*", "claude/hotl*", "*"):
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(DelegationConfigurationError):
+                    parse_grant(grant_document(branch_pattern=pattern))
+
+        grant = self.grant(branch_pattern="main/*")
+        for branch, covered in (
+            ("main/topic", True),
+            ("maintenance", False),
+            ("main", False),
+        ):
+            with self.subTest(branch=branch):
+                self.assertEqual(
+                    covered,
+                    grant.covers(
+                        Tier1Class.MARK_PULL_REQUEST_READY,
+                        repository="edwardjones3976/director-orchestrator",
+                        branch=branch,
+                    ),
+                )
+
     def test_expired_and_revoked_grants_are_not_live(self):
         self.assertFalse(self.grant(expires_at=NOW.isoformat()).live_at(NOW))
         self.assertFalse(self.grant(revoked=True).live_at(NOW))
@@ -193,7 +242,7 @@ class OperatingStateTests(unittest.TestCase):
         ):
             with self.subTest(label):
                 self.assertEqual(
-                    DelegationState.ATTENDED, resolve_state(moment=NOW, **kwargs)
+                    DelegationState.ATTENDED, configured_state(moment=NOW, **kwargs)
                 )
 
     def test_suspended_outranks_a_live_grant(self):
@@ -202,7 +251,7 @@ class OperatingStateTests(unittest.TestCase):
 
         self.assertEqual(
             DelegationState.SUSPENDED,
-            resolve_state(
+            configured_state(
                 parse_grant(grant_document()),
                 enabled=True,
                 suspended=True,
@@ -213,7 +262,7 @@ class OperatingStateTests(unittest.TestCase):
     def test_delegated_requires_everything_at_once(self):
         self.assertEqual(
             DelegationState.DELEGATED,
-            resolve_state(
+            configured_state(
                 parse_grant(grant_document()),
                 enabled=True,
                 suspended=False,
@@ -225,7 +274,7 @@ class OperatingStateTests(unittest.TestCase):
 class ReadinessTests(unittest.TestCase):
     def test_shipped_default_is_attended_with_nothing_configured(self):
         readiness = Settings().delegation_readiness()
-        self.assertEqual("ATTENDED", readiness["state"])
+        self.assertEqual("ATTENDED", readiness["configured_state"])
         self.assertFalse(readiness["enabled_requested"])
         self.assertFalse(readiness["grant_configured"])
         self.assertFalse(readiness["grant_malformed"])
@@ -236,7 +285,7 @@ class ReadinessTests(unittest.TestCase):
         readiness = delegation_readiness(
             enabled=True, suspended=False, grant_document="{not json", moment=NOW
         )
-        self.assertEqual("ATTENDED", readiness["state"])
+        self.assertEqual("ATTENDED", readiness["configured_state"])
         self.assertTrue(readiness["grant_malformed"])
         self.assertFalse(readiness["grant_live"])
 
@@ -263,6 +312,22 @@ class ReadinessTests(unittest.TestCase):
             ["mark_pull_request_ready_for_review"], readiness["classes_configured"]
         )
 
+    def test_the_reported_state_is_configuration_not_authority(self):
+        """Phase 4 is the first phase that resolves a decision, so a live grant
+        reports what the owner configured and never permission to act."""
+
+        readiness = delegation_readiness(
+            enabled=True, suspended=False, grant_document=grant_document(), moment=NOW
+        )
+        self.assertEqual("DELEGATED", readiness["configured_state"])
+        self.assertFalse(readiness["executes_decisions"])
+        # No bare "state" a future caller could read as "this may act".
+        self.assertNotIn("state", readiness)
+
+        from director_orchestrator import delegation
+
+        self.assertFalse(hasattr(delegation, "resolve_state"))
+
     def test_phase_one_exposes_no_decision_entry_point(self):
         """Phase 4 is the first phase that resolves a decision. Phase 1 must not
         ship one early, so the module surface is asserted directly."""
@@ -282,3 +347,4 @@ if __name__ == "__main__":
     unittest.main()
 
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | END]]
