@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 04:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
@@ -67,6 +68,10 @@ class NativeCodexPacketTransport:
         from .antigravity_team import ProviderExecutionAuthority
         if not isinstance(authority, ProviderExecutionAuthority) or authority.provider_id != "openai":
             raise ValueError("native Codex execution authority is missing or invalid")
+        # This route forces ChatGPT account authentication. An API-metered budget
+        # cannot stand in for subscription authority or its qualification gate.
+        if authority.billing_mode != "owner-bounded-subscription":
+            raise ValueError("native Codex ChatGPT route requires subscription execution authority")
         authority.require_supported_execution()
         if not work_packet_json or len(work_packet_json) > MAX_BYTES:
             raise RuntimeError("Codex packet exceeds its input bound")
@@ -186,3 +191,4 @@ def normalize_codex_jsonl(work: Mapping[str, Any], stdout: bytes, *, requested_m
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 04:20 UTC | END]]

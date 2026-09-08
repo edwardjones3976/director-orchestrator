@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 04:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
@@ -15,6 +16,7 @@ from director_orchestrator.native_codex_transport import (
 from director_orchestrator.primary_transports import discover_local_primary_command_transports
 from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
 from tests.test_host_provider_bridge import execution_authority
+from director_orchestrator.antigravity_team import ProviderExecutionAuthority, TeamAuthorizationError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,12 +42,35 @@ def encode(rows):
 
 
 class NativeCodexTests(unittest.TestCase):
-    def test_auth_and_execution_share_deadline_and_overflow_never_captures(self):
+    def test_both_billing_modes_reject_before_authentication_or_execution(self):
+        native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
+        for mode, error, message in (
+            ('vendor-metered-usd', ValueError, 'requires subscription'),
+            ('owner-bounded-subscription', TeamAuthorizationError, 'hard-turn enforcement is unavailable'),
+        ):
+            authority = execution_authority('openai', execution_task_id=work()['task_id'])
+            if mode == 'owner-bounded-subscription':
+                authority = authority.model_copy(update=dict(billing_mode=mode,
+                    max_turns=1, max_seconds=5, max_output_bytes=1048576))
+            with self.subTest(mode=mode), patch.object(native, 'authenticated') as auth, \
+                    patch.object(native, '_run') as run:
+                with self.assertRaisesRegex(error, message):
+                    native.send(json.dumps(work()).encode(),
+                        context=SimpleNamespace(execution_authority=authority))
+                auth.assert_not_called()
+                run.assert_not_called()
+
+    # Only these transport mechanics tests simulate a future qualified supervisor.
+    # The real qualification gate remains exercised above, without a mock.
+    @patch.object(ProviderExecutionAuthority, 'require_supported_execution', return_value=None)
+    def test_auth_and_execution_share_deadline_and_overflow_never_captures(self, _qualified):
         native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
         observer = unittest.mock.Mock()
         context = SimpleNamespace(fencing_generation=1,max_hops=1,timeout_seconds=5,
             allowed_external_effects=(),execution_observer=observer,
-            execution_authority=execution_authority("openai",execution_task_id=work()["task_id"]))
+            execution_authority=execution_authority("openai",execution_task_id=work()["task_id"],
+                billing_mode='owner-bounded-subscription', max_turns=1, max_seconds=5,
+                max_output_bytes=1048576))
         with patch('director_orchestrator.bounded_process.run_bounded_process', side_effect=[
                 (0,False,False,b'Logged in using ChatGPT',b''),
                 (0,False,True,encode(events()),b'overflow')]) as bounded:
@@ -93,10 +118,13 @@ class NativeCodexTests(unittest.TestCase):
         with patch('director_orchestrator.native_codex_transport.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=b'Logged in using an API key')):
             self.assertFalse(native.authenticated())
 
-    def test_isolated_prompt_only_flags_and_no_retry(self):
+    @patch.object(ProviderExecutionAuthority, 'require_supported_execution', return_value=None)
+    def test_isolated_prompt_only_flags_and_no_retry(self, _qualified):
         native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
         context = SimpleNamespace(fencing_generation=1, max_hops=1, timeout_seconds=5, allowed_external_effects=(),
-            execution_authority=execution_authority("openai", execution_task_id=work()["task_id"]))
+            execution_authority=execution_authority("openai", execution_task_id=work()["task_id"],
+                billing_mode='owner-bounded-subscription', max_turns=1, max_seconds=5,
+                max_output_bytes=1048576))
         with patch.object(native, 'authenticated', return_value=True), patch.object(native, '_run', return_value=encode(events())) as run:
             native.send(json.dumps(work()).encode(), context=context)
         argv, prompt, cwd, timeout = run.call_args.args
@@ -152,3 +180,4 @@ class NativeCodexTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 03:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 04:20 UTC | END]]
