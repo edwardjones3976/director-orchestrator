@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -571,7 +572,10 @@ class Settings:
     oracle_automerge_repository: str = os.getenv(
         "ORACLE_AUTOMERGE_REPOSITORY", "edwardjones3976/edge_engine"
     )
-    oracle_automerge_base_ref: str = os.getenv("ORACLE_AUTOMERGE_BASE_REF", "main")
+    # Tier 0 forbids merging into a protected branch and this runtime holds no
+    # branch-protection registry, so an unset value refuses at the merge gate
+    # instead of falling back to a shared trunk name.
+    oracle_automerge_base_ref: str = os.getenv("ORACLE_AUTOMERGE_BASE_REF", "").strip()
     oracle_automerge_branch_prefix: str = os.getenv(
         "ORACLE_AUTOMERGE_BRANCH_PREFIX", "oracle/"
     )
@@ -1891,6 +1895,7 @@ class Settings:
             "required_checks_configured": bool(self.oracle_automerge_required_checks),
             "required_check_app_configured": bool(self.oracle_automerge_required_check_app),
             "allowed_paths_configured": bool(self.oracle_automerge_allowed_paths),
+            "base_ref_configured": bool(self.oracle_automerge_base_ref),
             "provider_actor_bindings_configured": bool(
                 self.oracle_automerge_claude_actors
                 and self.oracle_automerge_cursor_actors
@@ -2069,3 +2074,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]

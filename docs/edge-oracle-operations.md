@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 # Edge Oracle isolated operations
 
@@ -70,6 +71,12 @@ The committed profile keeps both controls closed:
 ORACLE_AUTOMERGE_ENABLED=false
 ORACLE_AUTOMERGE_KILL_SWITCH=true
 ```
+
+`ORACLE_AUTOMERGE_BASE_REF` has no default and must name this project's own base
+ref. An unset variable refuses, and the shared trunk names refuse outright,
+because tier 0 never permits merging into a protected branch and no
+branch-protection registry exists in this runtime to tell the difference.
+`/health` reports `oracle_merge.base_ref_configured` as a boolean only.
 
 Use a GitHub App installed only on `edwardjones3976/edge_engine`. Grant exactly:
 
@@ -290,3 +297,4 @@ not overridable by a model. Existing Director rules still prohibit an agent from
 its own PR; production deployment, credential installation, permission expansion, and
 live merge activation require their separately recorded owner gate.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]] -->

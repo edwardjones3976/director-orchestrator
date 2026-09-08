@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | BEGIN]]
 from __future__ import annotations
@@ -127,7 +128,7 @@ class OracleMergeGateTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -147,7 +148,7 @@ class OracleMergeGateTests(unittest.TestCase):
             "project": "edge-oracle",
             "repository": "edwardjones3976/edge_engine",
             "pull_number": 101,
-            "base_ref": "main",
+            "base_ref": "edge-oracle/base",
             "base_sha": BASE_SHA,
             "head_ref": "oracle/revival-phase-1",
             "head_sha": SHA,
@@ -180,7 +181,7 @@ class OracleMergeGateTests(unittest.TestCase):
             "draft": False,
             "mergeable": True,
             "merged": False,
-            "base_ref": "main",
+            "base_ref": "edge-oracle/base",
             "base_sha": BASE_SHA,
             "head_ref": "oracle/revival-phase-1",
             "head_sha": SHA,
@@ -425,7 +426,7 @@ class OracleMergeGateTests(unittest.TestCase):
                         task="Implement the bounded Oracle change.",
                         acceptance=["Create the isolated implementation."],
                         repository="edwardjones3976/edge_engine",
-                        starting_ref="main",
+                        starting_ref="edge-oracle/base",
                     ),
                     Assignment(
                         sequence=2,
@@ -433,7 +434,7 @@ class OracleMergeGateTests(unittest.TestCase):
                         task=review_context,
                         acceptance=acceptance,
                         repository="edwardjones3976/edge_engine",
-                        starting_ref="main",
+                        starting_ref="edge-oracle/base",
                         depends_on=[1],
                     ),
                 ],
@@ -1001,6 +1002,71 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(result.status, OracleMergeStatus.ELIGIBLE)
         self.assertEqual(result.reasons, [])
         self.assertEqual(result.serious_safety_reasons, [])
+
+    def test_base_ref_must_be_a_configured_per_project_ref(self):
+        """Tier 0 forbids merging into a protected branch and nothing in this
+        runtime can tell that a ref is protected, so the shared trunk names and
+        an unset variable both refuse instead of defaulting to one."""
+
+        accepted = OracleMergePolicy(self.settings).evaluate(
+            self.artifact(), self.snapshot()
+        )
+        self.assertEqual(accepted.status, OracleMergeStatus.ELIGIBLE)
+
+        for value, reason in (
+            ("", OracleMergePolicy.UNCONFIGURED_BASE_REF_REASON),
+            ("main", OracleMergePolicy.PROTECTED_BASE_REF_REASON),
+            ("master", OracleMergePolicy.PROTECTED_BASE_REF_REASON),
+            ("refs/heads/Main", OracleMergePolicy.PROTECTED_BASE_REF_REASON),
+        ):
+            with self.subTest(base_ref=value):
+                settings = replace(self.settings, oracle_automerge_base_ref=value)
+                ref = value or "main"
+                result = OracleMergePolicy(settings).evaluate(
+                    self.artifact(base_ref=ref), self.snapshot(base_ref=ref)
+                )
+                self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+                self.assertIn(reason, result.reasons)
+
+    def test_reviewer_identity_is_compared_as_a_canonical_lane(self):
+        """`gemini` is the wire name of the Antigravity allocation lane, so the
+        gate resolves the alias instead of treating it as an unknown literal.
+        Whether that lane may review at all is the allowlist's separate call;
+        the alias and the lane name must reach the same verdict either way."""
+
+        alias = OracleMergePolicy(self.settings).evaluate(
+            self.artifact(reviewer_provider="gemini"), self.snapshot()
+        )
+        lane = OracleMergePolicy(self.settings).evaluate(
+            self.artifact(reviewer_provider="antigravity"), self.snapshot()
+        )
+        self.assertEqual(alias.reasons, lane.reasons)
+
+    def test_alias_cannot_review_its_own_lane_implementation(self):
+        """Raw-string equality would let `gemini` accept `antigravity`'s own
+        work. Canonicalizing both sides keeps the no-self-review bar closed."""
+
+        result = OracleMergePolicy(self.settings).evaluate(
+            self.artifact(
+                implementation_provider="antigravity",
+                implementation_actor="gemini-agent",
+                reviewer_provider="gemini",
+            ),
+            self.snapshot(author_login="gemini-agent"),
+        )
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn(
+            "the implementation author cannot accept its own work", result.reasons
+        )
+
+    def test_unknown_reviewer_string_still_fails_closed(self):
+        result = OracleMergePolicy(self.settings).evaluate(
+            self.artifact(reviewer_provider="not-a-provider"), self.snapshot()
+        )
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn(
+            "the exact-SHA reviewer must be Claude, Cursor, or Grok", result.reasons
+        )
 
     def test_implementation_author_cannot_self_accept(self):
         self.assert_rejected(
@@ -1947,3 +2013,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]

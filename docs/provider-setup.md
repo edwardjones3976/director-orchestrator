@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
@@ -283,6 +284,24 @@ continue a discussion. Its configured advisory weight remains advisory, and a
 debate seat grants no review, acceptance, merge, deployment, publication,
 external-write, access, or methodology authority.
 
+## Oracle merge base ref is per project
+
+`ORACLE_AUTOMERGE_BASE_REF` has no default. When it is unset the Oracle merge
+gate refuses, and it also refuses the shared trunk names outright, naming tier 0
+and the variable. Tier 0 never permits merging into a protected branch, and this
+runtime holds no branch-protection registry, so each project configures its own
+base ref rather than inheriting one. `/health` reports
+`oracle_merge.base_ref_configured` as a boolean; it never reports the value.
+`ORACLE_AUTOMERGE_ENABLED` and `ORACLE_AUTOMERGE_KILL_SWITCH` are unchanged and
+stay closed.
+
+The gate compares provider identities as canonical allocation lanes on both
+sides, so a lane alias resolves to its lane before the reviewer allowlist, the
+no-self-review comparison, and the `ORACLE_AUTOMERGE_*_ACTORS` lookups. An alias
+therefore cannot reach a different verdict than its lane, and cannot review its
+own lane's implementation. Admitting a lane to the reviewer allowlist remains a
+separate decision.
+
 ## Gemini Interactions API contract
 
 The Gemini adapter uses the REST Interactions API; it does not call the legacy
@@ -429,3 +448,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]] -->
