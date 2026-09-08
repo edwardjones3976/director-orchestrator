@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
@@ -35,6 +36,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from .delegation_ledger import (
+    DelegationAuditError,
+    DelegationAuditRecord,
+    parse_record,
+)
 from .interactions import (
     CommunicationEvidenceFailure,
     InteractionProvider,
@@ -108,6 +114,24 @@ class SlackIntakeReplayConflict(RuntimeError):
 
 class WorkloadReservationConflict(RuntimeError):
     """A workload idempotency key was reused with different assignment identity."""
+
+
+class DelegationAuditConflict(RuntimeError):
+    """An identical delegation audit record was already appended.
+
+    The ledger is append-only, so a repeat is refused rather than replacing the
+    row that is already there. A genuinely new observation differs in at least
+    its timestamp and therefore in its digest.
+    """
+
+
+class DelegationAuditLedgerCorrupt(RuntimeError):
+    """A stored delegation audit row no longer matches its own digest.
+
+    Raised on read, not repaired. A ledger that cannot be verified is not
+    evidence, and ``docs/human-out-of-the-loop-operation.md`` treats an
+    unwritable audit ledger as a trip condition for exactly this reason.
+    """
 
 
 class WorkloadAttemptOutcome(str, Enum):
@@ -740,6 +764,50 @@ class TaskStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_usage_checks_provider_time ON usage_checks(provider, checked_at DESC)"
+            )
+            # Human-out-of-the-loop phase 2: the audit ledger.  Nothing writes
+            # here yet; phase 3 shadow recording is the first caller.  The
+            # record itself is validated in delegation_ledger.py, so the table
+            # keeps only the digest that identifies it, the canonical bytes it
+            # was written from, and the time it was written.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS delegated_decision_audit (
+                    ledger_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_digest TEXT NOT NULL UNIQUE,
+                    record_json TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL
+                )
+                """
+            )
+            # Append-only in the storage engine, not merely by convention.  The
+            # document calls the record immutable and lists an unwritable ledger
+            # as a trip condition, so a correction has to be a new row and a
+            # mutation has to fail even when it comes from outside this class.
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS delegated_decision_audit_no_replace
+                BEFORE INSERT ON delegated_decision_audit
+                WHEN EXISTS (
+                    SELECT 1 FROM delegated_decision_audit existing
+                    WHERE existing.record_digest = NEW.record_digest
+                )
+                BEGIN SELECT RAISE(ABORT, 'delegation audit records are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS delegated_decision_audit_no_update
+                BEFORE UPDATE ON delegated_decision_audit
+                BEGIN SELECT RAISE(ABORT, 'delegation audit records are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS delegated_decision_audit_no_delete
+                BEFORE DELETE ON delegated_decision_audit
+                BEGIN SELECT RAISE(ABORT, 'delegation audit records are append-only'); END
+                """
             )
         self._attempt_privacy_cleanup()
 
@@ -3819,6 +3887,67 @@ class TaskStore:
             record.error = error
         return self.save(record)
 
+    def append_delegation_audit_record(self, record: DelegationAuditRecord) -> str:
+        """Append one immutable delegation audit record and return its digest.
+
+        This is the whole write surface for the ledger. There is deliberately no
+        update and no delete counterpart anywhere on this class: the record is
+        immutable, and a correction is a new record.
+
+        Appending executes no decision. It writes evidence about one, which
+        ``docs/human-out-of-the-loop-operation.md`` requires to happen before the
+        action rather than after it.
+        """
+
+        if not isinstance(record, DelegationAuditRecord):
+            raise TypeError("delegation audit ledger accepts validated records only")
+        digest = record.digest
+        try:
+            with self._lock, self._connect() as connection:
+                connection.execute(
+                    """INSERT INTO delegated_decision_audit(
+                        record_digest, record_json, recorded_at
+                    ) VALUES (?, ?, ?)""",
+                    (digest, record.canonical_json(), record.recorded_at.isoformat()),
+                )
+        except sqlite3.IntegrityError as exc:
+            # Both the UNIQUE constraint and the no-replace trigger surface
+            # here.  Neither is worked around: an identical record is refused.
+            raise DelegationAuditConflict(digest) from exc
+        return digest
+
+    def delegation_audit_records(
+        self, *, limit: int = 100
+    ) -> list[DelegationAuditRecord]:
+        """Read the ledger back in append order, verifying each row.
+
+        Every row is re-parsed and its digest recomputed rather than trusted.
+        A record is meant to be independently checkable by a reader who was not
+        present when it was written, and that property is worth nothing if the
+        reader that ships with the writer skips the check.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError("limit must be an integer")
+        if not 1 <= limit <= 1_000:
+            raise ValueError("limit is out of bounds")
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """SELECT record_digest, record_json
+                FROM delegated_decision_audit ORDER BY ledger_id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        records: list[DelegationAuditRecord] = []
+        for row in rows:
+            try:
+                record = parse_record(row["record_json"])
+            except DelegationAuditError as exc:
+                raise DelegationAuditLedgerCorrupt(str(row["record_digest"])) from exc
+            if not hmac.compare_digest(record.digest, str(row["record_digest"])):
+                raise DelegationAuditLedgerCorrupt(str(row["record_digest"]))
+            records.append(record)
+        return records
+
     def add_usage_check(self, record: UsageCheckRecord) -> UsageCheckRecord:
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -3907,3 +4036,4 @@ class TaskStore:
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
