@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 20:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
@@ -531,6 +534,33 @@ def _primary_approval_payload(response, *, actor_id: str, event_id: str) -> dict
     ).model_dump(mode="json")
 
 
+def _intake_receipt_task_id(body: object) -> str:
+    """Require one unambiguous canonical task ID from supported receipts."""
+
+    if isinstance(body, list):
+        if len(body) != 1:
+            raise ValueError("Intake receipt must contain exactly one item")
+        body = body[0]
+    if not isinstance(body, dict):
+        raise ValueError("Intake receipt must be an object")
+
+    task_ids = [body["task_id"]] if "task_id" in body else []
+    if "data" in body:
+        if not isinstance(body["data"], dict):
+            raise ValueError("Intake receipt data must be an object")
+        if "task_id" in body["data"]:
+            task_ids.append(body["data"]["task_id"])
+    if not task_ids or any(
+        not isinstance(task_id, str)
+        or re.fullmatch(r"DIR-(?:LG-)?[A-F0-9]+", task_id) is None
+        for task_id in task_ids
+    ):
+        raise ValueError("Intake receipt has no valid task ID")
+    if len(set(task_ids)) != 1:
+        raise ValueError("Intake receipt contains conflicting task IDs")
+    return task_ids[0]
+
+
 def _forward(event: dict, client, *, require_prefix: bool) -> None:
     if event.get("bot_id") or event.get("subtype") in {"bot_message", "message_changed", "message_deleted"}:
         return
@@ -574,14 +604,20 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
             timeout=20,
         )
         response.raise_for_status()
-        body = response.json()
-        if isinstance(body, list) and body:
-            body = body[0]
-        task_id = body.get("task_id") or body.get("data", {}).get("task_id") or "queued"
-        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=_tag(f"*{task_id} — QUEUED*\nThe Director accepted this work order in dry-run or live mode according to the configured safety switch."))
+        if response.status_code != 202:
+            raise ValueError("Intake receipt did not return HTTP 202")
+        task_id = _intake_receipt_task_id(response.json())
+        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=_tag(f"*{task_id} — ACCEPTED*\nThe Director returned a valid intake receipt. Execution remains subject to the configured safety gates."))
     except Exception as exc:
-        _log_boundary_failure("Failed to forward Director event", exc)
-        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=_tag(f"*DIRECTOR — BLOCKED*\nThe local orchestrator could not accept this request: `{type(exc).__name__}`."))
+        _log_boundary_failure("Director intake acceptance could not be confirmed", exc)
+        client.chat_postMessage(
+            channel=event["channel"],
+            thread_ts=thread_ts,
+            text=_tag(
+                "*DIRECTOR — BLOCKED*\nAcceptance could not be confirmed. "
+                "The request state must be reconciled before retrying."
+            ),
+        )
 
 
 @app.event("app_mention")
@@ -607,7 +643,9 @@ def message_handler(event, client):
 @app.command("/director")
 def command_handler(ack, command, client, respond):
     ack()
-    if command.get("channel_id") != settings.slack_channel_id or command.get("user_id") != settings.slack_owner_user_id:
+    if command.get("channel_id") != settings.slack_channel_id:
+        return
+    if command.get("user_id") != settings.slack_owner_user_id:
         respond(_tag("Aesop Director only accepts owner commands in the configured private channel."), response_type="ephemeral")
         return
     text = command.get("text", "").strip()
@@ -773,3 +811,6 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 20:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | END]]

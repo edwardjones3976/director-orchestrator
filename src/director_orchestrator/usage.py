@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
@@ -9,6 +12,7 @@ import math
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -27,6 +31,7 @@ from .providers import (
     GeminiAdapter,
     ProviderAdapter,
     ProviderDailySpendLedger,
+    ProviderError,
     provider_registry,
 )
 from .store import TaskStore
@@ -330,6 +335,26 @@ class UsageMonitor:
                 reason=None,
             )
 
+    @staticmethod
+    def _openai_usage_retry_delay(response: httpx.Response) -> float | None:
+        """Return a bounded delay for one unambiguously rejected request."""
+        retry_after = response.headers.get("Retry-After")
+        if retry_after is None:
+            return 2.0
+        try:
+            delay = float(retry_after)
+        except (TypeError, ValueError):
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                return None
+        if not math.isfinite(delay) or not 0 <= delay <= 60:
+            return None
+        return delay
+
     async def _openai_usage_check(self) -> ProviderRun:
         headers = {
             "Authorization": f"Bearer {self.settings.openai_api_key}",
@@ -342,20 +367,54 @@ class UsageMonitor:
             "store": False,
         }
         async with httpx.AsyncClient(timeout=180) as client:
-            response = await client.post(
-                "https://api.openai.com/v1/responses",
-                headers=headers,
-                json=body,
-            )
-            response.raise_for_status()
-        payload = response.json()
-        return ProviderRun(
-            provider=ProviderName.OPENAI,
-            run_id=payload["id"],
-            status=payload.get("status", "completed"),
-            result=_output_text(payload),
-            raw=payload,
-        )
+            for attempt_count in range(1, 3):
+                try:
+                    response = await client.post(
+                        "https://api.openai.com/v1/responses",
+                        headers=headers,
+                        json=body,
+                    )
+                except httpx.HTTPError as exc:
+                    raise ProviderError(
+                        "OpenAI usage check encountered a transport failure",
+                        code="transport_error",
+                        attempt_count=attempt_count,
+                    ) from exc
+                if response.status_code == 429:
+                    retry_delay = self._openai_usage_retry_delay(response)
+                    if attempt_count == 2 or retry_delay is None:
+                        raise ProviderError(
+                            "OpenAI usage check received HTTP 429 without a safe recovery window",
+                            code="http_429",
+                            attempt_count=attempt_count,
+                        )
+                    await asyncio.sleep(retry_delay)
+                    continue
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    raise ProviderError(
+                        f"OpenAI usage check returned HTTP {response.status_code}",
+                        code=f"http_{response.status_code}",
+                        attempt_count=attempt_count,
+                    ) from exc
+                try:
+                    payload = response.json()
+                    return ProviderRun(
+                        provider=ProviderName.OPENAI,
+                        run_id=payload["id"],
+                        status=payload.get("status", "completed"),
+                        result=_output_text(payload),
+                        raw=payload,
+                        attempt_count=attempt_count,
+                    )
+                except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                    raise ProviderError(
+                        "OpenAI usage check returned an invalid response",
+                        code="invalid_response",
+                        attempt_count=attempt_count,
+                    ) from exc
+        raise AssertionError("OpenAI usage recovery loop exited unexpectedly")
 
     async def _wait(self, adapter: ProviderAdapter, run: ProviderRun) -> ProviderRun:
         if run.status in TERMINAL_STATUSES:
@@ -637,3 +696,6 @@ class UsageMonitor:
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
