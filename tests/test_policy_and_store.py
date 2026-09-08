@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | BEGIN]]
@@ -275,17 +276,44 @@ class PolicyTests(unittest.TestCase):
         orphaned = self.antigravity_plan()
         orphaned.assignments = orphaned.assignments[:1]
         self.assertIn(
-            "assignment 1: Antigravity output requires a later Claude, Cursor, or Grok "
+            "assignment 1: Antigravity output requires a later OpenAI, Claude, Cursor, or Grok "
             "integration assignment with a direct dependency",
             execution_policy_errors(orphaned, settings),
         )
 
         unverified = self.antigravity_plan(task="Use the Antigravity artifact as-is")
         self.assertIn(
-            "assignment 1: Antigravity output requires a later Claude, Cursor, or Grok "
+            "assignment 1: Antigravity output requires a later OpenAI, Claude, Cursor, or Grok "
             "implementation assignment that explicitly independently verifies and "
             "integrates or rejects the artifact",
             execution_policy_errors(unverified, settings),
+        )
+
+    def test_openai_is_an_eligible_antigravity_integrator(self):
+        """Owner decision, 2026-09-08 UTC: the verifier set gains OpenAI."""
+        settings = replace(
+            Settings(),
+            project_allowlist=("demo",),
+            repository_allowlist=("example/demo",),
+            allowed_starting_refs=("main",),
+        )
+        # The Antigravity verification gate no longer objects to an OpenAI
+        # integrator. OpenAI's own separate role restriction still applies, so the
+        # plan is refused for that reason and not for a missing verifier.
+        self.assertEqual(
+            execution_policy_errors(
+                self.antigravity_plan(agent=ProviderName.OPENAI), settings
+            ),
+            ["assignment 2: OpenAI production requires an explicit work or review role"],
+        )
+
+        # Antigravity still cannot be its own downstream verifier.
+        self.assertIn(
+            "assignment 1: Antigravity output requires a later OpenAI, Claude, Cursor, or Grok "
+            "integration assignment with a direct dependency",
+            execution_policy_errors(
+                self.antigravity_plan(agent=ProviderName.GEMINI), settings
+            ),
         )
 
     def test_enforce_plan_binds_the_integration_wording_deterministically(self):
@@ -953,3 +981,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 08:10 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:03 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

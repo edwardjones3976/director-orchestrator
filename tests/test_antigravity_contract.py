@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:22 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -774,6 +775,14 @@ class TypedAuthorityTests(unittest.TestCase):
             antigravity_contract_labels(work_assignment(antigravity_directive=None)),
         )
 
+    def test_merge_and_branch_selection_stay_denied_on_the_wire(self):
+        """The owner grant is a non-protected-branch merge; a flat string list
+        cannot express that scope, so `merge` stays denied here."""
+        self.assertIn("merge", DENIED_AUTHORITIES)
+        self.assertIn("branch_selection", DENIED_AUTHORITIES)
+        self.assertNotIn("review_verdict", DENIED_AUTHORITIES)
+        self.assertNotIn("acceptance_verdict", DENIED_AUTHORITIES)
+
     def test_the_wire_model_refuses_hand_assembled_payloads(self):
         base = antigravity_request_for(work_assignment()).model_dump(mode="json")
         for field, value in (
@@ -1090,3 +1099,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

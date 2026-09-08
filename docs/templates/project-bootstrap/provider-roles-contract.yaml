@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
@@ -181,15 +182,13 @@ providers:
       - "the bounded sandbox execution those need"
     artifact_status: "non_authoritative_evidence"
     cannot_perform:
-      - "exact-SHA review"
-      - "final acceptance"
-      - "deterministic merge"
       - "defining research-contract or methodology truth"
+      - "merging into a protected branch"
     # Sandbox output is never complete on its own.
     mandatory_downstream_verification:
       required: true
-      assignee: "claude_cursor_or_grok"
-      rule: "Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+      assignee: "openai_claude_cursor_or_grok"
+      rule: "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
       planner_rule: "A plan that routes work to Antigravity without that later verifying assignment is incomplete."
     outbound_work_packet:
       permitted_value_kinds:
@@ -206,8 +205,11 @@ providers:
     # src/director_orchestrator/antigravity.py. Every request denies all of
     # these regardless of its capability. A drift test asserts equality with the
     # runtime constant, so a broad paraphrase cannot replace the typed boundary.
+    # `merge` stays denied here because DENIED_AUTHORITIES is a flat list of
+    # strings with no way to say "non-protected branch only". Lifting it outright
+    # would grant protected-branch merge at the wire level, which is tier 0 in
+    # docs/human-out-of-the-loop-operation.md and never delegable.
     denied_authorities:
-      - "acceptance_verdict"
       - "billing_or_spend"
       - "branch_selection"
       - "contract_or_methodology_definition"
@@ -217,7 +219,6 @@ providers:
       - "permission_or_credential_change"
       - "repository_access"
       - "repository_write"
-      - "review_verdict"
     # Mirrored exactly from WITHHELD_CONTEXT in the same module: stated on the
     # wire so the receiving agent cannot mistake absence for oversight.
     withheld_context:
@@ -369,3 +370,4 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

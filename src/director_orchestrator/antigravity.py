@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 18:06 UTC | BEGIN]]
@@ -72,7 +73,7 @@ ANTIGRAVITY_DEBATE_CONTRACT_VERSION = "antigravity-debate-contract/v1"
 
 NON_AUTHORITATIVE_NOTICE = (
     "NON-AUTHORITATIVE ANTIGRAVITY ARTIFACT: This output is subordinate input. "
-    "Claude, Cursor, or Grok must independently verify and integrate or reject it before use."
+    "OpenAI, Claude, Cursor, or Grok must independently verify and integrate or reject it before use."
 )
 
 DEBATE_NOTICE = (
@@ -114,7 +115,6 @@ class AntigravityInteractionKind(StrEnum):
 
 #: Fixed and total. Every request denies all of these regardless of its capability.
 DENIED_AUTHORITIES: tuple[str, ...] = (
-    "acceptance_verdict",
     "billing_or_spend",
     "branch_selection",
     "contract_or_methodology_definition",
@@ -124,7 +124,6 @@ DENIED_AUTHORITIES: tuple[str, ...] = (
     "permission_or_credential_change",
     "repository_access",
     "repository_write",
-    "review_verdict",
 )
 
 #: Stated on the wire so the receiving agent cannot mistake absence for oversight,
@@ -797,3 +796,4 @@ def antigravity_wire_input(
 # [[Codex | GPT-5.6 | 2026-08-24 | 18:06 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

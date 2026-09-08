@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -6,7 +7,7 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
 import unittest
-from director_orchestrator.primary_roster import PrimaryRosterHold, core_inventory_ready, select_primary_roster
+from director_orchestrator.primary_roster import PRIMARY_TEAM, PrimaryRosterHold, core_inventory_ready, select_primary_roster
 from director_orchestrator.primary_workload import admission_reason
 
 class PrimaryRosterTests(unittest.TestCase):
@@ -91,7 +92,15 @@ class PrimaryRosterTests(unittest.TestCase):
             required_capabilities=("bounded_scaffolding",),
             trusted_cost_ranks={"openai": 3, "claude": 2, "grok": 4, "antigravity": 0})
         self.assertEqual(roster.producer, "antigravity")
-        self.assertIn(roster.reviewer, {"claude", "cursor", "grok"})
+        self.assertIn(roster.reviewer, PRIMARY_TEAM)
+        self.assertNotEqual(roster.reviewer, "antigravity")
+
+    def test_antigravity_reviews_outside_team_mode_but_never_its_own_work(self):
+        """Owner decision, 2026-09-08 UTC: review authority is not team-mode gated."""
+        roster = self.select(available=("openai", "claude", "grok", "antigravity"),
+            required_capabilities=("bounded_scaffolding",),
+            trusted_cost_ranks={"openai": 0, "claude": 3, "grok": 4, "antigravity": 1})
+        self.assertEqual((roster.producer, roster.reviewer), ("openai", "antigravity"))
 
     def test_explicit_team_mode_plans_engineering_without_scaffolding_permission(self):
         roster=self.select(available=("openai","claude","grok","antigravity"),team_mode=True,
@@ -123,3 +132,4 @@ class PrimaryRosterTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

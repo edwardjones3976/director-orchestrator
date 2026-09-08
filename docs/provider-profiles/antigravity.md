@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | BEGIN]] -->
@@ -80,7 +81,7 @@ The sections below mirror the preserved restricted mode. Their no-repository-con
 | --- | --- |
 | Team | supplemental |
 | Lane class | subordinate_specialist |
-| Summary | Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
+| Summary | Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
 | Charter workload lane | `bounded_subordinate_specialist` |
 | Strategy key | `gemini` |
 | Strategy priority | `subordinate_boilerplate_and_alternate_ideation` |
@@ -122,11 +123,11 @@ Elevated work:
 Non-substitution rules:
 
 - Antigravity is never a primary-team substitute.
-- Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it.
+- Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it.
 
 ## Capabilities
 
-- Bounded artifacts from a closed fixture-lane vocabulary plus one invited debate seat. Artifacts are non-authoritative evidence: no exact-SHA review, final acceptance, deterministic merge, or definition of research-contract or methodology truth.
+- Bounded artifacts from a closed fixture-lane vocabulary plus one invited debate seat. Every artifact still feeds a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it, and no artifact defines research-contract or methodology truth or merges into a protected branch.
 
 Strengths:
 
@@ -221,10 +222,10 @@ Strengths:
 | Field | Value |
 | --- | --- |
 | Universal prohibited actions | `MERGE_PULL_REQUEST`, `DEPLOY`, `PUBLISH`, `DELETE_PROTECTED_REF` |
-| Denied authorities | `acceptance_verdict`, `billing_or_spend`, `branch_selection`, `contract_or_methodology_definition`, `deployment_or_publication`, `external_write`, `merge`, `permission_or_credential_change`, `repository_access`, `repository_write`, `review_verdict` |
+| Denied authorities | `billing_or_spend`, `branch_selection`, `contract_or_methodology_definition`, `deployment_or_publication`, `external_write`, `merge`, `permission_or_credential_change`, `repository_access`, `repository_write` |
 | Withheld context | `acceptance_criteria`, `assignment_task_text`, `dependency_outcomes`, `owner_objective`, `owner_or_slack_identifiers`, `primary_team_handoff_context`, `private_project_data`, `repository_paths_diffs_or_source`, `reviewer_revision_text`, `run_session_or_task_identifiers` |
-| Charter prohibited | `exact-SHA review`, `final acceptance`, `deterministic merge`, `defining research-contract or methodology truth` |
-| Review requirement | Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
+| Charter prohibited | `defining research-contract or methodology truth`, `merging into a protected branch` |
+| Review requirement | Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
 | Production authority permitted | yes |
 | External effects that may be granted | - |
 | Public research lane rejects all effects | no |
@@ -237,7 +238,7 @@ Strengths:
 Strategy constraints:
 
 - supplemental only; never a primary-team substitute
-- work assignments must feed a later Claude, Cursor, or Grok integration assignment
+- work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment
 - cannot issue review, acceptance, or merge verdicts
 - cannot define contract or methodology truth
 - cannot initiate, self-route, widen, or autonomously continue a conversation
@@ -284,7 +285,7 @@ Separation of duties:
 
 - Relay rule: provider_messages_relay_through_director.
 - Direct provider-to-provider channels exist: no.
-- Antigravity receives no dependency outcomes, task prose, or repository context on its work route; its artifact reaches Claude, Cursor, or Grok only as a Director-declared dependency of the later verifying assignment.
+- Antigravity receives no dependency outcomes, task prose, or repository context on its work route; its artifact reaches OpenAI, Claude, Cursor, or Grok only as a Director-declared dependency of the later verifying assignment.
 - The debate seat is the one prose-bearing envelope, admitted only by a persisted Director invitation.
 - Antigravity never posts to the Slack thread; the Director relays a concise summary.
 
@@ -346,3 +347,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]] -->

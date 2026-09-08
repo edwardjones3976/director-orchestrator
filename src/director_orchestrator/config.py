@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -595,6 +596,9 @@ class Settings:
     )
     oracle_automerge_gemini_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_GEMINI_ACTORS", ""
+    )
+    oracle_automerge_openai_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_OPENAI_ACTORS", ""
     )
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
@@ -1903,6 +1907,7 @@ class Settings:
             "cursor": frozenset(item.lower() for item in self.oracle_automerge_cursor_actors),
             "grok": frozenset(item.lower() for item in self.oracle_automerge_grok_actors),
             "gemini": frozenset(item.lower() for item in self.oracle_automerge_gemini_actors),
+            "openai": frozenset(item.lower() for item in self.oracle_automerge_openai_actors),
         }
 
     def oracle_github_credential_configured(self) -> bool:
@@ -1971,7 +1976,7 @@ class Settings:
                 ],
                 "constraints": [
                     "supplemental only; never a primary-team substitute",
-                    "work assignments must feed a later Claude, Cursor, or Grok integration assignment",
+                    "work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment",
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
                     "cannot initiate, self-route, widen, or autonomously continue a conversation",
@@ -2069,3 +2074,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

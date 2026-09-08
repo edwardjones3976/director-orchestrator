@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | BEGIN]]
 from __future__ import annotations
@@ -706,6 +707,74 @@ class OracleMergeGateTests(unittest.TestCase):
         result = self.service(FakeGitHub(snapshot)).process(artifact)
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
+
+    def test_openai_can_independently_accept_cursor_implementation(self):
+        """Owner decision, 2026-09-08 UTC: the exact-SHA reviewer set gains OpenAI."""
+        settings = replace(self.settings, oracle_automerge_openai_actors=("openai-agent",))
+        artifact = self.artifact(
+            implementation_provider="cursor",
+            implementation_actor="cursor-agent",
+            reviewer_provider="openai",
+            review_run_id="openai-review-1",
+        )
+        snapshot = self.snapshot(author_login="cursor-agent")
+
+        result = self.service(FakeGitHub(snapshot), settings).process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+
+    def test_openai_still_cannot_accept_its_own_implementation(self):
+        settings = replace(self.settings, oracle_automerge_openai_actors=("openai-agent",))
+        artifact = self.artifact(
+            implementation_provider="openai",
+            implementation_actor="openai-agent",
+            reviewer_provider="openai",
+            review_run_id="openai-review-2",
+        )
+        github = FakeGitHub(self.snapshot(author_login="openai-agent"))
+
+        result = self.service(github, settings).process(artifact)
+
+        self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertIn(
+            "the implementation author cannot accept its own work", result.reasons
+        )
+
+    def test_antigravity_is_not_an_exact_sha_reviewer_on_this_gate(self):
+        artifact = self.artifact(
+            implementation_provider="cursor",
+            implementation_actor="cursor-agent",
+            reviewer_provider="gemini",
+            review_run_id="gemini-review-1",
+        )
+        github = FakeGitHub(self.snapshot(author_login="cursor-agent"))
+
+        result = self.service(github).process(artifact)
+
+        self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertIn(
+            "the exact-SHA reviewer must be OpenAI, Claude, Cursor, or Grok", result.reasons
+        )
+
+    def test_unbound_reviewer_actor_still_fails_closed(self):
+        """Admitting a lane is not a GitHub actor binding; the binding gate stands."""
+        artifact = self.artifact(
+            implementation_provider="cursor",
+            implementation_actor="cursor-agent",
+            reviewer_provider="openai",
+            review_run_id="openai-review-3",
+        )
+        github = FakeGitHub(self.snapshot(author_login="cursor-agent"))
+
+        result = self.service(github).process(artifact)
+
+        self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertIn(
+            "review provider has no trusted GitHub actor binding", result.reasons
+        )
 
     def test_duplicate_delivery_returns_recorded_result_without_second_merge(self):
         github = FakeGitHub(self.snapshot())
@@ -1947,3 +2016,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

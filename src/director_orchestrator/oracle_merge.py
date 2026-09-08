@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
@@ -560,8 +561,8 @@ class OracleMergePolicy:
             serious.append("reviewer returned SERIOUS_SAFETY_STOP")
         elif artifact.verdict != OracleReviewVerdict.ACCEPT:
             errors.append("reviewer did not accept the reviewed commit")
-        if artifact.reviewer_provider.lower() not in {"claude", "cursor", "grok"}:
-            errors.append("the exact-SHA reviewer must be Claude, Cursor, or Grok")
+        if artifact.reviewer_provider.lower() not in {"openai", "claude", "cursor", "grok"}:
+            errors.append("the exact-SHA reviewer must be OpenAI, Claude, Cursor, or Grok")
         if artifact.reviewer_provider.lower() == artifact.implementation_provider.lower():
             errors.append("the implementation author cannot accept its own work")
         producer_actors = self.provider_actor_map.get(
@@ -2776,3 +2777,4 @@ class GitHubOracleGateway:
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

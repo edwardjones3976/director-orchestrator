@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
@@ -270,6 +271,13 @@ def _antigravity_work_sequences(plan: DirectorPlan) -> set[int]:
         if item.agent == ProviderName.GEMINI
         and item.discussion_phase == DiscussionPhase.WORK
     }
+
+
+#: Owner decision, 2026-09-08 UTC: the lanes that may independently verify and
+#: integrate or reject an Antigravity artifact. Widened from Claude/Cursor/Grok.
+ANTIGRAVITY_CONSUMER_PROVIDERS = frozenset(
+    {ProviderName.OPENAI, ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK}
+)
 
 
 def _is_antigravity_consumer(assignment: Assignment) -> bool:
@@ -874,23 +882,19 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 later
                 for later in plan.assignments
                 if later.sequence > assignment.sequence
-                and later.agent in {
-                    ProviderName.CLAUDE,
-                    ProviderName.CURSOR,
-                    ProviderName.GROK,
-                }
+                and later.agent in ANTIGRAVITY_CONSUMER_PROVIDERS
                 and later.discussion_phase == DiscussionPhase.WORK
                 and assignment.sequence in later.depends_on
             ]
             if not consumers:
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
-                    "Claude, Cursor, or Grok integration assignment with a direct dependency"
+                    "OpenAI, Claude, Cursor, or Grok integration assignment with a direct dependency"
                 )
             elif not any(_is_antigravity_consumer(item) for item in consumers):
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
-                    "Claude, Cursor, or Grok implementation assignment that explicitly independently "
+                    "OpenAI, Claude, Cursor, or Grok implementation assignment that explicitly independently "
                     "verifies and integrates or rejects the artifact"
                 )
         if (
@@ -1448,3 +1452,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]

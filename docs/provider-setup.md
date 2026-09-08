@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
@@ -256,7 +257,7 @@ Deterministic policy admits an Antigravity work assignment only when its
 `abstract_ideation`, its task names that subordinate scope explicitly, it
 requests no review, acceptance, merge, contract, or methodology authority, and
 it does not create a draft pull request. Every admitted work assignment also
-requires a later Claude, Cursor, or Grok assignment that directly depends on it and
+requires a later OpenAI, Claude, Cursor, or Grok assignment that directly depends on it and
 carries the runtime-bound wording to independently reproduce the artifact and
 integrate only the verified portions or reject it.
 
@@ -429,3 +430,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]] -->

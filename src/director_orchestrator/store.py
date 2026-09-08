@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
@@ -1322,12 +1323,13 @@ class TaskStore:
         """Return durable downstream integration evidence, or defer the credit.
 
         Antigravity may produce a useful artifact, but the artifact earns no
-        accepted-production credit until a later Claude, Cursor, or Grok
-        implementation with a direct dependency has itself earned an
+        accepted-production credit until a later OpenAI, Claude, Cursor, or
+        Grok implementation with a direct dependency has itself earned an
         authenticated accepted-production credit.
         """
 
         eligible_providers = {
+            Provider.OPENAI,
             Provider.CLAUDE,
             Provider.CURSOR,
             Provider.GROK,
@@ -3907,3 +3909,4 @@ class TaskStore:
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
