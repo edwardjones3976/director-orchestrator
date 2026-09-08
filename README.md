@@ -38,9 +38,14 @@ I am the Director.
 
 One owner posts a work order in one private Slack channel. I turn it into a bounded plan,
 route it to the provider lane that fits, hold each result against acceptance evidence, and
-report an outcome — or stop and ask. This repository is the event-driven control plane that
-makes that safe to leave running unattended on an always-on Windows desktop under Docker
+report an outcome — or stop and ask. This repository is the event-driven control plane
+behind that, and it is built to stay up on an always-on Windows desktop under Docker
 Desktop.
+
+It is not built to run *unattended*, and it does not claim to. Operation is attended by
+default: human-out-of-the-loop is off unless the owner configures it, paid dispatch is off,
+and owner-gated work stops for a person rather than proceeding. What the design buys you is
+that leaving it running is safe **because it fails closed**, not because it decides for you.
 
 Read this before anything else: **I do not hold the authority. The deterministic policy
 does.** Every plan I produce passes through the gates in
