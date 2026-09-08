@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
@@ -107,15 +108,25 @@ ChatGPT login) and then qualified against the strict capture checks. Neither
 configuration nor an authenticated host is qualification, and dispatch working
 over the Responses API is not evidence that the native capture path works.
 
-**3. The bridge contradicts itself about cursor.**
-`host_provider_bridge.py:41-44` allowlists `cursor` in `SUPPORTED_HOST_LANES`.
-`scripts/windows-host-provider-bridge.ps1:65-67` throws
-*"cursor cannot be enabled through the Windows host bridge"* if the command map
-contains it, and its allowlist omits the lane. The Python half admits the lane
-the PowerShell launcher refuses to start. Both checks have to agree, and the
-parity correction is assigned to a separate worktree; it is not made here.
-Resolving the contradiction in either direction only makes the lane launchable —
-it does not qualify the installed route.
+**3. The cursor launcher/bridge parity is resolved; qualification is not.**
+This item previously recorded a contradiction: the Python half allowlisted
+`cursor` while the PowerShell launcher threw *"cursor cannot be enabled through
+the Windows host bridge"* and omitted the lane. That was corrected in `eb2d1b7`
+("Fix primary rollback simulation state and Cursor launcher parity"). The
+refusal string no longer exists anywhere in `scripts/` or `src/`, and the two
+sides now agree exactly: `host_provider_bridge.py:41-44` and
+`scripts/windows-host-provider-bridge.ps1:72` both carry `openai`, `claude`,
+`cursor`, `grok`, `antigravity` and `github-copilot`, while
+`UNSUPPORTED_HOST_LANES` and `:66` both carry only `microsoft-365-copilot`.
+
+The agreement is enforced, not merely current.
+`tests/test_windows_cutover_regressions.py:126-134` parses both PowerShell
+allowlists out of the script and asserts they equal the Python constants, so a
+future edit to one side alone fails the suite.
+
+As this item always said, launchability is not qualification. Nothing above
+demonstrates that the installed Cursor route produces a capture satisfying the
+strict checks, so cursor remains unqualified for evidence.
 
 **4. grok has direct CLI paths; the installed envelope is unproved.**
 The repository does contain finite, single-shot direct paths for grok:
@@ -150,9 +161,9 @@ absent, which is the state on this deployment.
 
 Taken together: the floor needs openai plus two of {claude, cursor, grok}. No
 lane is currently qualified. openai needs the native Codex route configured and
-qualified (2); cursor needs the launcher/bridge parity resolved and then
-qualified (3); grok needs its installed envelope proved against the capture
-checks, without repeating the exhausted probe (4). claude is the closest, but
+qualified (2); cursor is launchable but still needs qualification (3); grok
+needs its installed envelope proved against the capture checks, without
+repeating the exhausted probe (4). claude is the closest, but
 "unconfigured" is not the same as "ready": it too must be configured and then
 produce a real capture. Nothing here establishes that any lane will pass.
 
@@ -313,3 +324,4 @@ written.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:20 UTC | END]] -->
