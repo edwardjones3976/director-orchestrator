@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-08 | 06:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -46,6 +47,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 
 from .config import Settings
@@ -1394,6 +1396,61 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
     def provider_calls(self) -> int:
         return sum(self.provider_call_counts.values())
 
+    def parallel_dispatcher(
+        self,
+    ) -> Callable[[ParallelReservation], ParallelDispatchOutcome]:
+        """Answer each durable parallel reservation with the lane's offline double.
+
+        The Default lifecycle dispatches only through the Postgres parallel
+        ledger and keeps the graph's own provider edge as an approval interrupt,
+        so without a ledger dispatcher an offline (Stage A) task parks at its
+        interrupt forever. This dispatcher lets the paid-off plane run its wave:
+        no provider is contacted, nothing is billed, and every result is a
+        digest computed in-process. A double receives a reservation-scoped
+        context carrying ``task_id``, ``scheduled_producer_id``,
+        ``provider_attempt_digest``, and ``work_packet_digest``.
+        """
+
+        def dispatch(reservation: ParallelReservation) -> ParallelDispatchOutcome:
+            double = self._provider_doubles.get(reservation.provider_id)
+            if double is None:
+                return ParallelDispatchOutcome(
+                    ParallelAssignmentStatus.FAILED,
+                    None,
+                    "offline_provider_double_missing",
+                )
+            with self._provider_call_lock:
+                self._provider_calls[reservation.provider_id] += 1
+            result_digest = double(
+                SimpleNamespace(
+                    task_id=reservation.task_id,
+                    scheduled_producer_id=reservation.provider_id,
+                    provider_attempt_digest=reservation.reservation_digest,
+                    work_packet_digest=None,
+                )
+            )
+            if not isinstance(result_digest, str) or not result_digest.startswith(
+                "sha256:"
+            ):
+                raise RuntimeError("offline provider double returned an invalid digest")
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                _digest(
+                    {
+                        "task_id": reservation.task_id,
+                        "assignment_id": reservation.assignment_id,
+                        "sequence": reservation.sequence,
+                        "provider": reservation.provider_id,
+                        "reservation_digest": reservation.reservation_digest,
+                        "provider_result": result_digest,
+                        "mode": "offline-provider-double",
+                    }
+                ),
+                "offline_provider_double_completed",
+            )
+
+        return dispatch
+
     def provider_subgraph(self, context: HandlerContext) -> ProviderSubgraphResult:
         if context.provider_attempt_digest is None or context.scheduled_producer_id is None:
             raise RuntimeError("offline provider attempt is not durably bound")
@@ -2498,7 +2555,14 @@ class DefaultPrimaryActivation:
                     else DefaultDryRunServices(settings)
                 )
                 handlers = services.handlers()
-                parallel_dispatcher = None
+                # Offline simulation answers the ledger's provider wave with
+                # in-process doubles; the plain dry run keeps no dispatcher and
+                # therefore stops at the execution approval interrupt.
+                parallel_dispatcher = (
+                    services.parallel_dispatcher()
+                    if isinstance(services, DefaultOfflineSimulationServices)
+                    else None
+                )
             coordinator = PrimaryTaskCoordinator(
                 handle,
                 handlers,
@@ -2700,3 +2764,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-08 | 06:35 UTC | END]]

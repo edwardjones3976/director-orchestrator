@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-08 | 06:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -64,6 +65,7 @@ from director_orchestrator.primary_effect_gateways import (
     SLACK_POST_MESSAGE,
 )
 from director_orchestrator.primary_parallel import (
+    ParallelReservation,
     ParallelAssignmentStatus,
     ParallelDispatchError,
     ParallelDispatchOutcome,
@@ -1091,6 +1093,61 @@ class DefaultPrimaryPinnedAuthorityTests(unittest.TestCase):
             )
 
 
+class OfflineParallelDispatcherTests(unittest.TestCase):
+    """The offline services must answer ledger reservations without a database."""
+
+    def setUp(self) -> None:
+        self.settings = replace(
+            Settings(),
+            langgraph_primary_offline_simulation_enabled=True,
+            project_allowlist=("default",),
+            repository_allowlist=("owner/director-orchestrator",),
+            allowed_starting_refs=("main",),
+        )
+        self.services = DefaultOfflineSimulationServices(
+            self.settings, packet_router=packet_router(self.settings)
+        )
+        self.dispatch = self.services.parallel_dispatcher()
+
+    def reservation(self, provider: str) -> ParallelReservation:
+        return ParallelReservation(
+            task_id="DIR-LG-OFFLINE",
+            assignment_id=f"assignment-{provider}",
+            sequence=1,
+            provider_id=provider,
+            deployment_id="deployment-test",
+            reservation_digest=digest(f"reservation:{provider}"),
+        )
+
+    def test_known_lane_completes_with_a_digest_and_counts_the_call(self):
+        outcome = self.dispatch(self.reservation("claude"))
+
+        self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, outcome.status)
+        self.assertEqual("offline_provider_double_completed", outcome.reason_code)
+        self.assertTrue(str(outcome.result_digest).startswith("sha256:"))
+        self.assertEqual(1, self.services.provider_call_counts["claude"])
+        self.assertEqual(outcome, self.dispatch(self.reservation("claude")))
+        self.assertEqual(2, self.services.provider_call_counts["claude"])
+
+    def test_unknown_lane_fails_closed_without_a_call(self):
+        outcome = self.dispatch(self.reservation("not-a-lane"))
+
+        self.assertEqual(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertIsNone(outcome.result_digest)
+        self.assertEqual("offline_provider_double_missing", outcome.reason_code)
+        self.assertEqual(0, self.services.provider_calls)
+
+    def test_plain_dry_run_services_have_no_ledger_dispatcher(self):
+        self.assertFalse(
+            hasattr(
+                DefaultDryRunServices(
+                    self.settings, packet_router=packet_router(self.settings)
+                ),
+                "parallel_dispatcher",
+            )
+        )
+
+
 class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1504,6 +1561,42 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 decision=ApprovalDecision.APPROVE,
             )
         )
+
+    def test_offline_simulation_dispatcher_runs_the_ledger_wave_to_completion(self):
+        # Production composition wires DefaultOfflineSimulationServices'
+        # own dispatcher into the parallel ledger; without one, a Stage A task
+        # parks at its execution approval interrupt forever (task
+        # DIR-LG-EF9A9D4FF1 on the main stack, 2026-09-08).
+        self.use_parallel_graph_completion_services(
+            lambda reservation: self.services.parallel_dispatcher()(reservation)
+        )
+        pending = self.application.create_intake(
+            self.intake().model_copy(
+                update={"source_event_id": "event-default-offline-ledger"}
+            ),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, pending.status)
+        self.assertEqual(0, self.services.provider_calls)
+
+        finished = self.approve(self.application, self.coordinator, pending.task_id)
+
+        aggregate = self.coordinator.parallel_aggregate(pending.task_id)
+        self.assertTrue(aggregate.terminal)
+        self.assertEqual(
+            {ParallelAssignmentStatus.SUCCEEDED.value},
+            set(aggregate.statuses.values()),
+        )
+        assert pending.plan is not None
+        planned_lanes = {
+            item.primary_provider_lane or item.agent.value
+            for item in pending.plan.assignments
+        }
+        self.assertEqual(
+            planned_lanes,
+            {lane for lane, calls in self.services.provider_call_counts.items() if calls},
+        )
+        self.assertNotEqual(TaskStatus.OWNER_DECISION_REQUIRED, finished.status)
 
     def use_parallel_graph_completion_services(self, dispatcher):
         settings = replace(
@@ -2724,3 +2817,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-08 | 06:35 UTC | END]]
