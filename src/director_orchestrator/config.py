@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -217,6 +218,12 @@ class Settings:
     orchestrator_base_url: str = os.getenv("ORCHESTRATOR_BASE_URL", "http://orchestrator:8080")
     shared_secret: str = os.getenv("ORCHESTRATOR_SHARED_SECRET", "")
     allow_paid_runs: bool = _bool("ALLOW_PAID_RUNS", False)
+    # Human-out-of-the-loop, phase 1 only: schema, validation and readiness.
+    # Nothing here resolves a decision.  All three default to the ATTENDED
+    # state, and an absent, malformed, expired or revoked grant stays ATTENDED.
+    delegation_enabled: bool = _bool("DELEGATION_ENABLED", False)
+    delegation_suspended: bool = _bool("DELEGATION_SUSPENDED", False)
+    delegation_grant_json: str = os.getenv("DELEGATION_GRANT_JSON", "")
     max_agent_hops: int = _int("MAX_AGENT_HOPS", 6)
     max_revisions: int = _int("MAX_REVISIONS", 2)
     max_task_budget_usd: float = _float("MAX_TASK_BUDGET_USD", 2.0)
@@ -946,6 +953,27 @@ class Settings:
             "grok": readiness["grok"],
             "perplexity": readiness["perplexity"],
         }
+
+    def delegation_readiness(self, *, moment=None) -> dict:
+        """Report the human-out-of-the-loop state as readiness booleans.
+
+        Phase 1 only. This reports configuration; it resolves nothing, and the
+        payload says so explicitly so an operator does not have to infer it.
+        Grant contents are never reported: /health returns readiness booleans
+        and never secret or allowlist values, and a grant names real
+        repositories and providers.
+        """
+
+        from datetime import datetime, timezone
+
+        from .delegation import delegation_readiness
+
+        return delegation_readiness(
+            enabled=self.delegation_enabled,
+            suspended=self.delegation_suspended,
+            grant_document=self.delegation_grant_json,
+            moment=moment or datetime.now(timezone.utc),
+        )
 
     def workload_policy_readiness(
         self, *, effective_mode: str | None = None
@@ -2069,3 +2097,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
