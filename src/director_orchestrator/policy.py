@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
@@ -850,7 +851,22 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
     }
     allowed_refs = set(settings.allowed_starting_refs)
     for assignment in plan.assignments:
-        if assignment.agent == ProviderName.OPENAI and assignment.kind not in {AssignmentKind.GENERAL, AssignmentKind.INDEPENDENT_REVIEW}:
+        # IMPLEMENTATION is admitted so OpenAI can hold the integrator role the
+        # Antigravity consumer gate requires (owner decision, 2026-09-08 UTC:
+        # every Antigravity output is proofread by OpenAI, Claude, Cursor, or
+        # Grok, and `_is_antigravity_consumer` types that assignment
+        # IMPLEMENTATION). This gate is the residue of a blanket "OpenAI is the
+        # Director runtime and cannot be an assignment target" ban, already
+        # relaxed once when OpenAI became an allocated primary lane; it is a
+        # role-typing rule, not the no-self-review bar. Self-review stays barred
+        # by `_independent_review_binding_errors`, the roster's non-author
+        # reviewer rule, and `productive_work._INDEPENDENT_REVIEWERS`, none of
+        # which this touches.
+        if assignment.agent == ProviderName.OPENAI and assignment.kind not in {
+            AssignmentKind.GENERAL,
+            AssignmentKind.IMPLEMENTATION,
+            AssignmentKind.INDEPENDENT_REVIEW,
+        }:
             errors.add(f"assignment {assignment.sequence}: OpenAI production requires an explicit work or review role")
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
@@ -1453,3 +1469,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]

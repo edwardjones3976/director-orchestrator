@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
@@ -599,6 +600,9 @@ class Settings:
     )
     oracle_automerge_openai_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_OPENAI_ACTORS", ""
+    )
+    oracle_automerge_antigravity_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_ANTIGRAVITY_ACTORS", ""
     )
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
@@ -1908,6 +1912,11 @@ class Settings:
             "grok": frozenset(item.lower() for item in self.oracle_automerge_grok_actors),
             "gemini": frozenset(item.lower() for item in self.oracle_automerge_gemini_actors),
             "openai": frozenset(item.lower() for item in self.oracle_automerge_openai_actors),
+            # Empty by default: the exact-SHA grant is admissible, but the actor
+            # gate still fails closed until the owner binds a real GitHub actor.
+            "antigravity": frozenset(
+                item.lower() for item in self.oracle_automerge_antigravity_actors
+            ),
         }
 
     def oracle_github_credential_configured(self) -> bool:
@@ -2075,3 +2084,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]

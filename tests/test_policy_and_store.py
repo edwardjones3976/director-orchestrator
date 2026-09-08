@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | BEGIN]]
@@ -297,14 +298,27 @@ class PolicyTests(unittest.TestCase):
             repository_allowlist=("example/demo",),
             allowed_starting_refs=("main",),
         )
-        # The Antigravity verification gate no longer objects to an OpenAI
-        # integrator. OpenAI's own separate role restriction still applies, so the
-        # plan is refused for that reason and not for a missing verifier.
+        # Both gates now admit it: the Antigravity verification gate accepts an
+        # OpenAI verifier, and OpenAI's own role gate accepts the IMPLEMENTATION
+        # kind that `_is_antigravity_consumer` requires. The owner's "proofread by
+        # OpenAI" is reachable end to end.
         self.assertEqual(
             execution_policy_errors(
                 self.antigravity_plan(agent=ProviderName.OPENAI), settings
             ),
-            ["assignment 2: OpenAI production requires an explicit work or review role"],
+            [],
+        )
+
+        # Widened for the integrator role only. A kind outside the admitted set is
+        # still refused, so this stays a role-typing gate rather than an opening.
+        self.assertIn(
+            "assignment 2: OpenAI production requires an explicit work or review role",
+            execution_policy_errors(
+                self.antigravity_plan(
+                    agent=ProviderName.OPENAI, kind=AssignmentKind.RESEARCH
+                ),
+                settings,
+            ),
         )
 
         # Antigravity still cannot be its own downstream verifier.
@@ -982,3 +996,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:03 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]

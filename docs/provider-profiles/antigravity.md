@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
@@ -222,7 +223,7 @@ Strengths:
 | Field | Value |
 | --- | --- |
 | Universal prohibited actions | `MERGE_PULL_REQUEST`, `DEPLOY`, `PUBLISH`, `DELETE_PROTECTED_REF` |
-| Denied authorities | `billing_or_spend`, `branch_selection`, `contract_or_methodology_definition`, `deployment_or_publication`, `external_write`, `merge`, `permission_or_credential_change`, `repository_access`, `repository_write` |
+| Denied authorities | `billing_or_spend`, `branch_selection`, `contract_or_methodology_definition`, `deployment_or_publication`, `external_write`, `merge.non_protected`, `merge.protected`, `permission_or_credential_change`, `repository_access`, `repository_write` |
 | Withheld context | `acceptance_criteria`, `assignment_task_text`, `dependency_outcomes`, `owner_objective`, `owner_or_slack_identifiers`, `primary_team_handoff_context`, `private_project_data`, `repository_paths_diffs_or_source`, `reviewer_revision_text`, `run_session_or_task_identifiers` |
 | Charter prohibited | `defining research-contract or methodology truth`, `merging into a protected branch` |
 | Review requirement | Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
@@ -348,3 +349,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | BEGIN]]
@@ -741,7 +742,65 @@ class OracleMergeGateTests(unittest.TestCase):
             "the implementation author cannot accept its own work", result.reasons
         )
 
-    def test_antigravity_is_not_an_exact_sha_reviewer_on_this_gate(self):
+    def test_antigravity_can_independently_accept_cursor_implementation(self):
+        """Owner decision, 2026-09-08 UTC: Antigravity may perform exact-SHA review."""
+        settings = replace(
+            self.settings, oracle_automerge_antigravity_actors=("antigravity-agent",)
+        )
+        artifact = self.artifact(
+            implementation_provider="cursor",
+            implementation_actor="cursor-agent",
+            reviewer_provider="antigravity",
+            review_run_id="antigravity-review-1",
+        )
+        snapshot = self.snapshot(author_login="cursor-agent")
+
+        result = self.service(FakeGitHub(snapshot), settings).process(artifact)
+
+        self.assertEqual(result.status, OracleMergeStatus.MERGED)
+
+    def test_antigravity_still_cannot_accept_its_own_implementation(self):
+        """The grant admits the lane; it never lifts the no-self-review bar."""
+        settings = replace(
+            self.settings, oracle_automerge_antigravity_actors=("antigravity-agent",)
+        )
+        artifact = self.artifact(
+            implementation_provider="antigravity",
+            implementation_actor="antigravity-agent",
+            reviewer_provider="antigravity",
+            review_run_id="antigravity-review-2",
+        )
+        github = FakeGitHub(self.snapshot(author_login="antigravity-agent"))
+
+        result = self.service(github, settings).process(artifact)
+
+        self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertIn(
+            "the implementation author cannot accept its own work", result.reasons
+        )
+
+    def test_unbound_antigravity_reviewer_actor_still_fails_closed(self):
+        """Admitting the lane is not a GitHub actor binding; the default is empty."""
+        artifact = self.artifact(
+            implementation_provider="cursor",
+            implementation_actor="cursor-agent",
+            reviewer_provider="antigravity",
+            review_run_id="antigravity-review-3",
+        )
+        github = FakeGitHub(self.snapshot(author_login="cursor-agent"))
+
+        result = self.service(github).process(artifact)
+
+        self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertIn(
+            "review provider has no trusted GitHub actor binding", result.reasons
+        )
+
+    def test_the_reviewer_gate_admits_the_lane_name_and_not_an_alias(self):
+        """`gemini` shares the Antigravity lane in the charter, but this gate is an
+        exact-string allowlist keyed on the lane name, so an alias fails closed."""
         artifact = self.artifact(
             implementation_provider="cursor",
             implementation_actor="cursor-agent",
@@ -755,7 +814,8 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.merge_calls, 0)
         self.assertIn(
-            "the exact-SHA reviewer must be OpenAI, Claude, Cursor, or Grok", result.reasons
+            "the exact-SHA reviewer must be OpenAI, Claude, Cursor, Grok, or Antigravity",
+            result.reasons,
         )
 
     def test_unbound_reviewer_actor_still_fails_closed(self):
@@ -2017,3 +2077,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]

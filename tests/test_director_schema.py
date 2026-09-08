@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
@@ -926,7 +927,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
             if line.strip().startswith('- "')
         )
         self.assertEqual(mirrored, DENIED_AUTHORITIES)
-        self.assertEqual(len(mirrored), 9)
+        self.assertEqual(len(mirrored), 10)
 
         tail = contract.split("withheld_context:", 1)[1].split("\n    debate:", 1)[0]
         withheld = tuple(
@@ -1266,3 +1267,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]

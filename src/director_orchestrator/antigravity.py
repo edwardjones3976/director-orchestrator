@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -113,14 +114,60 @@ class AntigravityInteractionKind(StrEnum):
     DEBATE_REVISION = "debate_revision"
 
 
+class MergeAuthorityScope(StrEnum):
+    """Closed scope vocabulary for a merge authority.
+
+    The owner's 2026-09-08 UTC decision made Antigravity's output authoritative
+    for deterministic merge, but only into a **non-protected** branch. A bare
+    ``"merge"`` string cannot express that boundary, so the scope is part of the
+    authority's identity here, exactly as ``repository.write.non_protected`` does
+    it in ``entitlement_contracts``. There is deliberately no unscoped member:
+    an authority that names no scope is not in the vocabulary at all, so the
+    default is refusal rather than a grant someone has to remember to narrow.
+    """
+
+    NON_PROTECTED = "merge.non_protected"
+    PROTECTED = "merge.protected"
+
+
+def merge_authority_error(authority: str) -> str | None:
+    """Return why *authority* is not an admissible merge grant, or ``None``.
+
+    Only the non-protected scope is admissible. Merging into a protected branch
+    is a tier-0 class in ``docs/human-out-of-the-loop-operation.md``, never
+    delegable under any configuration and for any lane, and an unscoped
+    ``"merge"`` claims a boundary it never states.
+
+    This check is **lexical, and that is the whole of what it claims.** The
+    outbound contract carries no repository, ref, or branch -- ``branch_selection``
+    and ``repository_access`` are themselves denied below, and
+    ``WITHHELD_CONTEXT`` withholds repository paths -- so nothing at this layer
+    can resolve whether a concrete ref is protected. Deciding that about a real
+    ref belongs to the merge gate, which sees a base ref and compares it against
+    operator-configured policy. Verifying the scope token is a boundary this
+    layer can actually keep; asserting a live branch-protection fact is not.
+    """
+    if authority == MergeAuthorityScope.NON_PROTECTED:
+        return None
+    if authority == MergeAuthorityScope.PROTECTED:
+        return "merging into a protected branch is never delegable"
+    return "a merge authority must name the non-protected scope"
+
+
 #: Fixed and total. Every request denies all of these regardless of its capability.
+#:
+#: Both merge scopes are denied. The charter's non-protected-merge grant is a
+#: lane-level authority exercised at the merge gate against a real base ref; this
+#: is a sandboxed work packet with no repository, so it carries neither scope.
+#: Naming both makes that explicit instead of leaving the narrower one implied.
 DENIED_AUTHORITIES: tuple[str, ...] = (
     "billing_or_spend",
     "branch_selection",
     "contract_or_methodology_definition",
     "deployment_or_publication",
     "external_write",
-    "merge",
+    MergeAuthorityScope.NON_PROTECTED.value,
+    MergeAuthorityScope.PROTECTED.value,
     "permission_or_credential_change",
     "repository_access",
     "repository_write",
@@ -797,3 +844,4 @@ def antigravity_wire_input(
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
