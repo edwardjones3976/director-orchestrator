@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -950,7 +951,30 @@ class Settings:
     def workload_policy_readiness(
         self, *, effective_mode: str | None = None
     ) -> dict[str, bool]:
-        """Expose only non-sensitive workload-enforcement readiness booleans."""
+        """Expose only non-sensitive workload-enforcement readiness booleans.
+
+        ``credentialed_specialist_ranks_complete`` answers one narrow question:
+        do the specialist lanes this class holds an API credential for all carry
+        a cost rank. It is deliberately not a statement about the roster, and the
+        earlier name ``ready_provider_ranks_complete`` claimed one it never made.
+
+        Rank coverage for the lanes a roster can actually select is the separate
+        question ``unranked_selectable_primary_lanes`` asks over the
+        activation-bound pool. That is the right axis for the lanes missing here:
+        ``github-copilot``, ``microsoft-365-copilot``, ``firecrawl`` and
+        ``antigravity`` reach a roster through
+        ``primary_provider_activation_bindings`` and have no credential in
+        ``readiness`` to report at all, and ``openai`` is the roster's mandatory
+        floor rather than a credentialed specialist -- ``core_inventory_ready``
+        already refuses a pool without it.
+
+        The two checks are not nested and neither subsumes the other. A
+        credentialed specialist that is not activation-bound must carry a rank
+        here and is out of scope there. ``gemini`` is exactly that: the roster
+        knows the lane only as ``antigravity``, so a deployment holding a Gemini
+        credential without that binding is asked for a rank here and nowhere
+        else. Collapsing the two into either one alone would drop a requirement.
+        """
 
         if effective_mode is not None and effective_mode not in {"enforced", "shadow"}:
             raise ValueError("effective workload mode must be enforced or shadow")
@@ -959,10 +983,15 @@ class Settings:
             cost_ranks = self.trusted_provider_cost_ranks()
         except ValueError:
             cost_ranks = {}
-        ready_specialists = {
+        provider_readiness = self.readiness()
+        # Indexed rather than ``.get(provider, False)``: a specialist listed here
+        # with no matching ``readiness`` key is a coverage hole, and defaulting it
+        # to False silently reports the lane as un-credentialed and therefore
+        # exempt. Fail loudly at startup instead.
+        credentialed_specialists = {
             provider
             for provider in ("claude", "cursor", "gemini", "grok", "perplexity")
-            if self.readiness().get(provider, False)
+            if provider_readiness[provider]
         }
         return {
             "enabled": self.workload_policy_enabled,
@@ -978,8 +1007,8 @@ class Settings:
             "shadow_sample_valid": self.workload_policy_shadow_assignments == 5,
             "selector_mode_valid": self.primary_workhorse == "cheapest_capable",
             "cost_ranks_valid": bool(cost_ranks),
-            "ready_provider_ranks_complete": bool(ready_specialists)
-            and ready_specialists.issubset(cost_ranks),
+            "credentialed_specialist_ranks_complete": bool(credentialed_specialists)
+            and credentialed_specialists.issubset(cost_ranks),
         }
 
     def trusted_provider_cost_ranks(self) -> dict[str, int]:
@@ -1072,7 +1101,7 @@ class Settings:
             if not readiness["cost_ranks_valid"]:
                 # Re-run the parser to preserve the precise structural error.
                 self.trusted_provider_cost_ranks()
-            if not readiness["ready_provider_ranks_complete"]:
+            if not readiness["credentialed_specialist_ranks_complete"]:
                 raise ValueError(
                     "TRUSTED_PROVIDER_COST_RANKS must cover every configured ready specialist"
                 )
@@ -2069,3 +2098,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]

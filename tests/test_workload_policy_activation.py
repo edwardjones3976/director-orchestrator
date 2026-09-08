@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
@@ -145,7 +146,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                 "shadow_sample_valid": True,
                 "selector_mode_valid": True,
                 "cost_ranks_valid": False,
-                "ready_provider_ranks_complete": False,
+                "credentialed_specialist_ranks_complete": False,
             },
         )
 
@@ -228,6 +229,104 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
         self.assertEqual(
             settings.trusted_provider_cost_ranks(), {"claude": 2, "cursor": 1}
         )
+
+    def test_specialist_rank_boolean_names_the_credential_axis_it_measures(self) -> None:
+        settings = replace(
+            Settings(),
+            allow_paid_runs=True,
+            workload_policy_enabled=True,
+            primary_workhorse="cheapest_capable",
+            trusted_provider_cost_ranks_json='{"claude": 2, "cursor": 1}',
+            claude_routine_url="https://example.invalid/claude",
+            claude_routine_token="token",
+            cursor_api_key="cursor-secret",
+            gemini_api_key="",
+            grok_api_key="",
+            perplexity_api_key="",
+        )
+
+        readiness = settings.workload_policy_readiness()
+        self.assertTrue(readiness["credentialed_specialist_ranks_complete"])
+        # The retired name asserted coverage of every ready provider while only
+        # ever measuring five hardcoded credentialed specialists. /health must
+        # not keep publishing that claim under either name.
+        self.assertNotIn("ready_provider_ranks_complete", readiness)
+
+    def test_specialist_without_a_readiness_key_fails_loudly(self) -> None:
+        """A listed specialist with no readiness key is a hole, not an exemption.
+
+        ``.get(provider, False)`` reported such a lane as un-credentialed and so
+        exempt from needing a rank, which is how ``github-copilot`` and
+        ``firecrawl`` would have been silently waved through had anyone added
+        them to the tuple. Indexing turns that into a startup failure.
+        """
+
+        settings = replace(
+            Settings(),
+            allow_paid_runs=True,
+            workload_policy_enabled=True,
+            primary_workhorse="cheapest_capable",
+            trusted_provider_cost_ranks_json='{"claude": 1}',
+            claude_routine_url="https://example.invalid/claude",
+            claude_routine_token="token",
+            cursor_api_key="",
+            gemini_api_key="",
+            grok_api_key="",
+            perplexity_api_key="",
+        )
+        without_perplexity = {
+            key: value
+            for key, value in settings.readiness().items()
+            if key != "perplexity"
+        }
+
+        with patch.object(Settings, "readiness", return_value=without_perplexity):
+            with self.assertRaises(KeyError):
+                settings.workload_policy_readiness()
+
+    def test_credentialed_specialist_outside_activation_pool_still_requires_rank(
+        self,
+    ) -> None:
+        """AGENTS.md rule 4: this requirement exists nowhere else.
+
+        ``gemini`` is absent from ``primary_roster.KNOWN_LANES``, so it can never
+        be activation-bound and ``unranked_selectable_primary_lanes`` can never
+        ask for its rank. Only this check does, which is why the two are not
+        nested and why retiring this one in favour of the activation-derived
+        derivation would have removed an approval requirement.
+        """
+
+        from director_orchestrator.primary_roster import KNOWN_LANES
+
+        self.assertNotIn("gemini", KNOWN_LANES)
+
+        unranked_gemini = replace(
+            Settings(),
+            allow_paid_runs=True,
+            workload_policy_enabled=True,
+            primary_workhorse="cheapest_capable",
+            trusted_provider_cost_ranks_json='{"claude": 2, "cursor": 1}',
+            claude_routine_url="https://example.invalid/claude",
+            claude_routine_token="token",
+            cursor_api_key="cursor-secret",
+            gemini_api_key="gemini-secret",
+            grok_api_key="",
+            perplexity_api_key="",
+        )
+
+        self.assertTrue(unranked_gemini.readiness()["gemini"])
+        self.assertFalse(
+            unranked_gemini.workload_policy_readiness()[
+                "credentialed_specialist_ranks_complete"
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "every configured ready specialist"):
+            unranked_gemini.validate_workload_policy_configuration()
+
+        replace(
+            unranked_gemini,
+            trusted_provider_cost_ranks_json='{"claude": 2, "cursor": 1, "gemini": 3}',
+        ).validate_workload_policy_configuration()
 
     def test_shadow_mode_is_observe_only_but_remains_valid(self) -> None:
         with patch.dict(
@@ -915,3 +1014,4 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]
