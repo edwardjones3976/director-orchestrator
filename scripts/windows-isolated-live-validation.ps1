@@ -85,6 +85,29 @@ foreach ($name in $composeEnvironmentNames) {
     }
 }
 
+# An inherited empty value is a real override, and only the native entry point
+# can put one back. Without it this run would still rebind every managed name,
+# then hand the caller back whatever it wrote last: an inherited empty
+# ALLOW_PAID_RUNS would return as true and leave the caller's next Compose run
+# paid-open. Refuse here instead, before the first mutation and before any
+# Compose command, while the caller's environment is exactly as it arrived.
+# Only the names that actually need the native restore are considered, so a
+# session without an empty override keeps working when the helper is missing.
+$unrestorableEmptyNames = @(
+    $composeEnvironmentNames | Where-Object {
+        $captured = $originalProcessEnvironment[$_]
+        ($captured.Present -or $null -ne $captured.Value) -and
+        [string]::IsNullOrEmpty([string]$captured.Value)
+    }
+)
+if ($unrestorableEmptyNames.Count -gt 0 -and -not $script:win32EnvironmentReady) {
+    throw ("The native environment helper is unavailable in this session, so " +
+        "these inherited empty overrides could not be restored afterwards: " +
+        ($unrestorableEmptyNames -join ", ") + ". Nothing was changed and no " +
+        "service was started. Clear or set those names, or run where the " +
+        "helper can compile, then retry.")
+}
+
 try {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot

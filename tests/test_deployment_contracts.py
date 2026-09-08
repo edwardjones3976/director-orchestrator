@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | BEGIN]]
@@ -146,6 +147,35 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertEqual(request_node["parameters"]["url"], "http://orchestrator:8080/v1/intake")
         self.assertNotIn("ORCHESTRATOR_SHARED_SECRET", json.dumps(workflow))
 
+    def test_n8n_intake_limits_completed_execution_retention(self):
+        workflow = json.loads(
+            (ROOT / "n8n" / "workflows" / "director-intake.json").read_text(encoding="utf-8")
+        )
+        # n8n can persist incoming headers/body initially and defer physical
+        # pruning. These settings control completion cleanup, not zero storage.
+        settings = workflow["settings"]
+        self.assertEqual(settings["saveDataErrorExecution"], "none")
+        self.assertEqual(settings["saveDataSuccessExecution"], "none")
+        self.assertIs(settings["saveManualExecutions"], False)
+        self.assertIs(settings["saveExecutionProgress"], False)
+
+    def test_n8n_preserves_intake_body_and_stops_on_ambiguous_delivery(self):
+        workflow = json.loads(
+            (ROOT / "n8n" / "workflows" / "director-intake.json").read_text(encoding="utf-8")
+        )
+        request = next(node for node in workflow["nodes"] if node["name"] == "Create Director Task")
+        self.assertEqual(request["parameters"]["method"], "POST")
+        self.assertEqual(
+            request["parameters"]["body"], "={{ JSON.stringify($json.body ?? $json) }}"
+        )
+        self.assertFalse(request.get("retryOnFail", False))
+        self.assertFalse(request.get("continueOnFail", False))
+        self.assertEqual(request.get("onError", "stopWorkflow"), "stopWorkflow")
+        self.assertEqual(request["parameters"]["options"]["timeout"], 30000)
+        accepted = next(node for node in workflow["nodes"] if node["name"] == "Accepted")
+        self.assertEqual(accepted["parameters"]["options"]["responseCode"], 202)
+        self.assertEqual(accepted["parameters"]["responseBody"], "={{ JSON.stringify($json) }}")
+
     def test_compose_does_not_expose_the_orchestrator_secret_to_n8n(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         n8n_section = compose.split("  n8n:\n", 1)[1].split("\nvolumes:", 1)[0]
@@ -224,3 +254,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:06 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | END]]

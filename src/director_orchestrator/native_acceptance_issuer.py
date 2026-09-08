@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -48,8 +50,14 @@ MAX_RESPONSE = 2 * MAX_DOCUMENT         # base64 document plus worker provenance
 # Native enrollment is checked by the protected consumer, not a static denylist.
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 ROLE_PROVIDER = {"security": "claude", "independent_review": "cursor"}
-ROLE_PROVIDERS = {"security": frozenset({"claude", "openai", "gemini"}),
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
+# Grok holds the existing security-review responsibility in docs/provider-setup.md
+# and is eligible for the security role only. Eligibility is not qualification:
+# the Grok capture lane still fails closed until its native terminal, session and
+# served-model observations exist and its protected host is qualified.
+ROLE_PROVIDERS = {"security": frozenset({"claude", "openai", "gemini", "grok"}),
                   "independent_review": frozenset({"cursor", "gemini"})}
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 
@@ -340,6 +348,13 @@ class Config:
             for native_path in (cfg.native_home, cfg.native_deny_hook):
                 contained_native_path(native_path, cfg.runtime_roots)
             # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
+        # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
+        if cfg.provider == "grok" and cfg.entrypoint:
+            # The installed Build CLI is one pinned executable. An interpreter
+            # plus a caller-selected script would move the pin off the reviewed
+            # program, so that shape is refused rather than partially checked.
+            raise IssuerError("Grok Build CLI is a single pinned native executable")
+        # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
         for sid in (cfg.worker_sid, cfg.broker_sid):
             if re.fullmatch(r"S-1-5-21-(?:\d+-){3}\d+", sid) is None:
                 raise IssuerError("dedicated local principal required")
@@ -501,3 +516,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | END]]

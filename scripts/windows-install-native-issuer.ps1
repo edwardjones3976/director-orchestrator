@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 04:55 UTC | BEGIN]]
 # [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
@@ -12,7 +14,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('security','independent_review')][string]$Role,
-    [ValidateSet('claude','cursor','openai','gemini','antigravity')][string]$Provider,
+    [ValidateSet('claude','cursor','openai','gemini','antigravity','grok')][string]$Provider,
     [string]$NativeHome,
     [string]$NativeProject,
     [string]$NativeDenyHook,
@@ -36,7 +38,11 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Provider -eq 'antigravity') { $Provider = 'gemini' }
 if (-not $Provider) { $Provider = if ($Role -eq 'security') {'claude'} else {'cursor'} }
-if (($Role -eq 'security' -and $Provider -notin @('claude','openai','gemini')) -or ($Role -eq 'independent_review' -and $Provider -notin @('cursor','gemini'))) { throw 'Provider is not eligible for this issuer role.' }
+if (($Role -eq 'security' -and $Provider -notin @('claude','openai','gemini','grok')) -or ($Role -eq 'independent_review' -and $Provider -notin @('cursor','gemini'))) { throw 'Provider is not eligible for this issuer role.' }
+# Grok holds the existing exact-SHA security-review responsibility and installs
+# only into its own protected directory. Its capture lane still fails closed
+# until the native terminal/session observation and host qualification exist.
+if ($Provider -eq 'grok' -and $NativeEntrypoint) { throw 'Grok Build CLI is a single pinned native executable; no separate entrypoint is installed.' }
 if ($Provider -eq 'gemini' -and (-not $NativeHome -or -not $NativeProject -or -not $NativeDenyHook)) { throw 'AGY requires separately qualified protected native home, project and deny-all hook.' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -283,3 +289,6 @@ Write-Output 'No key generated and no native login or dispatch occurred. Follow 
 # [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | END]]
 
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 04:55 UTC | END]]
+
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | END]]
