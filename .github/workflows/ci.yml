@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 05:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
@@ -122,6 +123,43 @@ jobs:
           "DIRECTOR_PRIMARY_CI_PGDATA=$data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python -m pip check
+      - name: Prepare Windows Compose CLI
+        if: runner.os == 'Windows'
+        timeout-minutes: 2
+        shell: python {0}
+        run: |
+          import os
+          from pathlib import Path
+          import shutil
+          import time
+          from director_orchestrator.bounded_process import run_bounded_process
+
+          docker = shutil.which("docker")
+          if docker is None:
+              raise SystemExit("Docker CLI is required for Windows Compose rendering")
+          root = Path.cwd()
+          environment = dict(os.environ, DIRECTOR_ENV_FILE=str(root / ".env.example"))
+          started = time.monotonic()
+          deadline = started + 90
+          # Initialize the CLI/plugin once, without a daemon request or containers.
+          # The rendering test retains its separate 30-second timeout and assertions.
+          commands = (
+              ("Docker version", (docker, "--version")),
+              ("Compose version", (docker, "compose", "version", "--short")),
+              ("Compose render", (docker, "compose", "--env-file", str(root / ".env.example"), "config", "--quiet")),
+          )
+          for label, argv in commands:
+              code, expired, overflow, stdout, _stderr = run_bounded_process(
+                  argv, cwd=root, environment=environment, timeout_seconds=90,
+                  deadline=deadline, output_limit_bytes=65536, cleanup_timeout_seconds=5,
+              )
+              elapsed = time.monotonic() - started
+              if code != 0 or expired or overflow:
+                  raise SystemExit(f"{label} failed: exit={code}, timeout={expired}, overflow={overflow}, elapsed={elapsed:.3f}s")
+              # Never print rendered environment or stderr containing interpolated data.
+              if label.endswith("version"):
+                  print(f"{label}: {stdout.decode('utf-8', errors='replace').strip()}", flush=True)
+              print(f"{label} completed; elapsed={elapsed:.3f}s", flush=True)
       - run: python -m unittest discover -s tests -v
         env:
           SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
@@ -235,3 +273,4 @@ jobs:
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-08 | 05:24 UTC | END]]
