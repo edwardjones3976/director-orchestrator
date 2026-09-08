@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -78,6 +79,7 @@ from director_orchestrator.primary_default import (
     DefaultDryRunServices,
     DefaultOfflineSimulationServices,
     DefaultPrimaryActivation,
+    build_offline_parallel_dispatcher,
     DefaultPrimaryApplication,
     DefaultPrimaryAuthority,
     _assignment_provider_lane,
@@ -2508,6 +2510,111 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             all(value == 1 for value in services.provider_call_counts.values())
         )
 
+    def _offline_ledger_application(self, *, namespace, dispatch, event_id):
+        """Build the Default production wiring: ledger-only provider dispatch."""
+
+        settings = replace(
+            self.settings,
+            langgraph_primary_offline_simulation_enabled=True,
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings)
+        )
+        coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace=namespace,
+            # Production wiring: the graph's single-item provider edge is an
+            # approval interrupt, never a second transport owner.
+            auto_execute_provider=False,
+            application_projection_provider=services.application_projection,
+        )
+        coordinator.adopt_or_activate_new_intake()
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator,
+            services,
+            DefaultPrimaryAuthority(
+                starting_sha=SHA, authority_snapshot_digest=digest("authority")
+            ),
+            parallel_dispatcher=(
+                build_offline_parallel_dispatcher(services, lambda: coordinator)
+                if dispatch
+                else None
+            ),
+        )
+        pending = application.create_intake(
+            self.intake().model_copy(update={"source_event_id": event_id}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        projection = coordinator.get_projection(pending.task_id)
+        assert projection is not None
+        approval = projection.projection["pending_approval"]
+        completed = application.resume_approval(
+            ApprovalResume(
+                task_id=pending.task_id,
+                kind=ApprovalKind(approval["kind"]),
+                request_digest=approval["request_digest"],
+                approval_event_id=f"approve-{event_id}",
+                decision=ApprovalDecision.APPROVE,
+            )
+        )
+        return services, coordinator, application, pending, completed
+
+    def test_offline_doubles_execute_through_the_parallel_ledger(self):
+        """The offline wave must run under the production ledger-only wiring."""
+
+        services, coordinator, _application, pending, completed = (
+            self._offline_ledger_application(
+                namespace="default-primary-offline-ledger-v1",
+                dispatch=True,
+                event_id="event-offline-ledger",
+            )
+        )
+
+        aggregate = coordinator.parallel_aggregate(pending.task_id)
+        self.assertTrue(aggregate.terminal, aggregate)
+        self.assertTrue(aggregate.succeeded, aggregate)
+        self.assertEqual(0, aggregate.ambiguous_slot_count)
+        self.assertTrue(
+            aggregate.statuses
+            and all(
+                status == ParallelAssignmentStatus.SUCCEEDED
+                for status in aggregate.statuses.values()
+            ),
+            aggregate.statuses,
+        )
+        # Every dispatched lane ran its double exactly once, through the ledger.
+        self.assertTrue(services.provider_calls > 0, services.provider_call_counts)
+        self.assertTrue(
+            all(value <= 1 for value in services.provider_call_counts.values()),
+            services.provider_call_counts,
+        )
+        self.assertEqual(TaskStatus.DONE, completed.status)
+        self.assertTrue(completed.assignment_outcomes)
+
+    def test_offline_ledger_without_a_dispatcher_executes_no_provider(self):
+        """Regression guard for the Stage A M0 finding.
+
+        With auto_execute_provider=False and no ledger dispatcher, approval
+        succeeded but the provider wave never ran. Ownership and approval are
+        not execution, so this configuration must not report a finished task.
+        """
+
+        services, coordinator, _application, pending, completed = (
+            self._offline_ledger_application(
+                namespace="default-primary-offline-nodispatch-v1",
+                dispatch=False,
+                event_id="event-offline-nodispatch",
+            )
+        )
+
+        self.assertEqual(0, services.provider_calls, services.provider_call_counts)
+        aggregate = coordinator.parallel_aggregate(pending.task_id)
+        self.assertFalse(aggregate.succeeded, aggregate)
+        self.assertNotEqual(TaskStatus.DONE, completed.status)
+
 
 class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):
     @classmethod
@@ -2724,3 +2831,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
