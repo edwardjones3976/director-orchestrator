@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
@@ -53,6 +54,123 @@ Before enabling live execution, configure an exact deployment profile:
 - `CLAUDE_CALLBACK_SECRET`: a dedicated callback bearer secret, stored only by the orchestrator and trusted callback sender.
 
 An absent project allowlist blocks every live plan. Cursor cannot use an implicit dashboard repository, and model output or owner approval cannot widen these target lists.
+
+## Live dispatch preflight
+
+The prerequisites for paid, live provider dispatch are spread across several
+validators that each raise on the first problem they reach, so configuring them
+by starting the process reveals them one process death at a time. Read them all
+at once instead:
+
+```
+PYTHONPATH=src python scripts/live-dispatch-preflight.py
+```
+
+It reports and does nothing else: it sets no variable, writes no file, opens no
+socket, touches no database, and calls no provider. Every verdict it prints is
+the deterministic validator's own, reported verbatim; it removes, relaxes, and
+defaults nothing. It prints variable names and booleans only, never a value —
+the same rule `/health` follows. Exit status is 0 when nothing is outstanding
+and 1 when anything is. A clean exit is a configuration statement only: it is
+not acceptance, not provider activation evidence, and not owner approval.
+
+The script evaluates the rest of the configuration as though the four coupled
+switches were already set, which is what lets one pass name every remaining
+prerequisite.
+
+### The ordered prerequisite list
+
+Reported in the order startup reaches them.
+
+1. **The coupled switches.** `ALLOW_PAID_RUNS`, `LANGGRAPH_PRIMARY_ENABLED`,
+   `LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED`, and
+   `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED`. Any primary execution
+   switch requires `LANGGRAPH_PRIMARY_ENABLED`; live dispatch additionally
+   requires `ALLOW_PAID_RUNS`; primary enabled without new intake answers every
+   intake with HTTP 503 rather than falling back to the legacy engine.
+2. **Workload policy.** Always: `WORKLOAD_POLICY_MODE`,
+   `WORKLOAD_POLICY_WINDOW_ASSIGNMENTS`, `WORKLOAD_POLICY_SHADOW_ASSIGNMENTS`.
+   Then, while `WORKLOAD_POLICY_ENABLED` is on and paid runs are on:
+   `PRIMARY_WORKHORSE`, then `TRUSTED_PROVIDER_COST_RANKS`, which must be
+   configured, unique, a total order, and must cover every ready specialist.
+   At least one specialist must be ready; an empty ready set fails this check.
+   This validator raises one problem at a time, in that order, so the preflight
+   can only surface the first outstanding one of them per pass.
+3. **Shadow lane isolation**, when `LANGGRAPH_SHADOW_ENABLED` or
+   `LANGGRAPH_APPROVAL_RESUME_ENABLED` is on: `LANGGRAPH_CHECKPOINT_PATH`,
+   `LANGGRAPH_CHECKPOINT_NAMESPACE`, and isolation from `SQLITE_PATH`.
+4. **Primary configuration.** `LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES`;
+   `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS`;
+   `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON`;
+   `LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET`;
+   the three distinct completion-authority evidence secrets
+   (`LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET`,
+   `LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET`,
+   `LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET`);
+   `LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON`;
+   `LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET`;
+   `LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT` with
+   `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET`, configured together or not at all;
+   pairwise-distinct ingress secrets; `LANGGRAPH_PRIMARY_POSTGRES_DSN`;
+   `LANGGRAPH_PRIMARY_POSTGRES_SCHEMA`;
+   `LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE`, distinct from the shadow and
+   runtime namespaces; `LANGGRAPH_PRIMARY_OWNER_TOKEN`;
+   `REPOSITORY_SNAPSHOT_ROOT`; exactly one `REPOSITORY_ALLOWLIST` entry;
+   exactly one `ALLOWED_STARTING_REFS` entry; and
+   `LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` with
+   `LANGGRAPH_PRIMARY_PINNED_TREE_SHA`, supplied together or not at all.
+   A binding for `microsoft-365-copilot` additionally requires
+   `MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE`,
+   `MICROSOFT_365_COPILOT_TENANT_ID`,
+   `MICROSOFT_365_COPILOT_EXPECTED_SUBJECT`, and
+   `MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID`.
+5. **The paid/live coupling**, checked next, at the point where startup builds
+   the primary activation. See below.
+6. **Parallel dispatch**, when `LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED`
+   is on: `LANGGRAPH_PARALLEL_INITIAL_MAX_CONCURRENCY`,
+   `LANGGRAPH_PARALLEL_AUTO_SCALE_MAX_CONCURRENCY`,
+   `LANGGRAPH_PARALLEL_CLEAN_BATCHES_TO_SCALE`,
+   `LANGGRAPH_PARALLEL_RECOVERY_CLEAN_BATCHES`, and the per-provider caps. The
+   fixed values are not tunable and a different one is a startup refusal.
+7. **Runtime lane**, when `LANGGRAPH_RUNTIME_ENABLED` is on:
+   `LANGGRAPH_RUNTIME_CHECKPOINT_PATH`, `LANGGRAPH_RUNTIME_LEDGER_PATH`,
+   `LANGGRAPH_RUNTIME_CHECKPOINT_NAMESPACE`,
+   `LANGGRAPH_RUNTIME_WRITER_OWNER_ID`, `LANGGRAPH_RUNTIME_WRITER_SECRET`,
+   `LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED`, and distinct store files.
+8. **Execution profile**, which fails closed before any provider call:
+   `PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`, and
+   `CLAUDE_CALLBACK_SECRET`, as listed above.
+
+### Mutual exclusions and pairings
+
+- `LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED` and
+  `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` are **mutually
+  exclusive**. Leaving offline simulation on while requesting live dispatch is
+  a startup refusal, not a precedence rule.
+- `LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT` and
+  `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET` must be present together or absent
+  together.
+- `LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` and
+  `LANGGRAPH_PRIMARY_PINNED_TREE_SHA` must be supplied together.
+- `LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED` must be on whenever
+  `LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED` is on.
+
+### The paid/live coupling
+
+`ALLOW_PAID_RUNS` and `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` are
+coupled in **both** directions, and the two must move as one unit:
+
+- Live dispatch without paid runs is rejected by the primary configuration
+  validator.
+- Paid runs without live dispatch requested, on a deployment where
+  `LANGGRAPH_PRIMARY_ENABLED` is on, is rejected when startup builds the
+  primary activation. **The process does not start.** Turning paid runs on by
+  itself takes the deployment down rather than enabling anything.
+
+The preflight reports that second state explicitly, against the configuration
+as it stands rather than the target, because it is the trap: a deployment can
+be one variable away from not booting while every other prerequisite reads as
+satisfied.
 
 ## Owner account and routing context
 
@@ -429,3 +547,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | END]] -->
