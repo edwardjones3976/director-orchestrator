@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -189,29 +190,26 @@ independence, safety, and deterministic gates always outrank cost.
 - **Gemini/Antigravity — Specialist and Backup Programmer:** subordinate supplemental specialist, never a primary-team
   substitute. Work assignments are limited to explicit boilerplate,
   scaffolding, low-level mechanical implementation, and alternate/abstract
-  ideation, including the bounded sandbox execution those need. On that default
-  path its ideas and artifacts are non-authoritative evidence: it cannot perform
-  exact-SHA review, final acceptance, deterministic merge, or define
-  research-contract or methodology truth, and every work assignment must feed a
-  later Claude, Cursor, or Grok assignment that independently verifies and
-  integrates or rejects it. The one exception is the default-off team mode
-  described below, which is the only path on which Antigravity is admissible as
-  a reviewer at all; final acceptance and deterministic merge stay outside what
-  any mode grants it.
+  ideation, including the bounded sandbox execution those need. Its output is
+  authoritative under the owner authority decision recorded immediately below:
+  it may perform exact-SHA review, final acceptance, and deterministic merge
+  into a non-protected branch. It still may not define research-contract or
+  methodology truth, and every Antigravity output must feed a later OpenAI,
+  Claude, Cursor, or Grok assignment that independently verifies and integrates
+  or rejects it.
   A rights-ledger mechanism exists to record a `review_verdict` grant to
   Antigravity against an exact verified build, and any such grant is not
   self-service: it requires the configuration flag, a recorded grant, an
   owner notice raised at the moment of grant, and is revocable at any time — a
   revocation that no later rebuild undoes. See `docs/entitlement-control-plane.md`.
   Today that mechanism has no runtime consumer: no authorization gate reads a
-  granted `review_verdict` right, so no exception to the review restriction
-  above is currently live. Any future exception requires a separate,
-  owner-gated implementation — including live build-bound rights checking and
-  whatever admission or wire changes that requires — not merely a ledger
-  entry. Final acceptance, exact-SHA review, and deterministic merge remain
-  outside what any ledger entry can widen, and a provisioned verdict does not
-  enlarge the work kinds above: `CAPABILITY_BY_KIND` still admits only the
-  four subordinate kinds.
+  granted `review_verdict` right. The authority above comes from the owner's
+  charter decision, never from a ledger entry; a ledger entry widens nothing on
+  its own, and a provisioned verdict does not enlarge the work kinds above:
+  `CAPABILITY_BY_KIND` still admits only the four subordinate kinds. Carrying
+  the owner's grant into the runtime requires a separate, owner-gated
+  implementation — including live build-bound rights checking and whatever
+  admission or wire changes that requires — not merely a ledger entry.
   Antigravity may hold a debate seat, but only one the Director gave it: it
   cannot initiate, self-route, widen, or autonomously continue a conversation,
   and a seat grants it no review, acceptance, merge, deployment, publication,
@@ -219,6 +217,53 @@ independence, safety, and deterministic gates always outrank cost.
   weight is cast only for an invited turn and stays advisory inside the immutable
   denominator. Keep credentials and external-write paths out of disposable
   sandboxes unless a later work order explicitly and safely provides them.
+- **Antigravity review and acceptance authority — owner decision, 2026-09-08 UTC.**
+  The owner decided that Antigravity's output is authoritative: it may perform
+  exact-SHA review, final acceptance, and deterministic merge. This supersedes
+  the earlier charter wording that made Antigravity's output non-authoritative
+  outside team mode, and it is not conditioned on team mode. The owner holds
+  authority over this charter; the grant is recorded as decided.
+
+  *Scope boundary — protected branches.* The granted deterministic merge reaches
+  a **non-protected branch only**. Merging into a protected branch is a tier-0
+  class in `docs/human-out-of-the-loop-operation.md`, never delegable under any
+  configuration, and AGENTS.md rule 4 forbids model output from removing an
+  approval requirement. Protected-branch merge stays owner-only for every lane,
+  Antigravity included. This bounds the grant; it does not qualify it.
+
+  *Rules that already bind every lane, restated so this grant reads as no
+  exception.* AGENTS.md rule 3: no agent merges a pull request it produced or
+  materially authored, so merge authority never lets Antigravity merge its own
+  work. And a delegated merge requires the producer, the reviewer, and the
+  acting agent to be three distinct identities, plus two concurring exact-SHA
+  `ACCEPT` verdicts from different providers, neither of them a material author.
+  Antigravity satisfies these on the same terms as OpenAI, Claude, Cursor, and
+  Grok — neither more nor less.
+
+  *Mandatory independent proofread.* Every Antigravity output — work it produces
+  **and** any review, acceptance, or merge verdict it issues — is followed by an
+  independent assignment from OpenAI, Claude, Cursor, or Grok that verifies or
+  rejects it. This adds a requirement rather than removing one, so it lands
+  cleanly under rule 4. The owner's list **widens** the verifier set:
+  `src/director_orchestrator/primary_roster.py` currently constrains an
+  antigravity producer's reviewer to `lane in {"claude", "cursor", "grok"}`, and
+  the owner's decision adds `openai`. The proofreading assignment may not be
+  Antigravity and may not be a material author of what it checks.
+
+  *Authority granted; lane still not qualified and not live.* This decision
+  changes what Antigravity is **permitted** to do. It does not change whether
+  Antigravity runs, and nobody may read it as an activation.
+  `docs/provider-profiles/antigravity.yaml` still records
+  `operational_status: not_qualified_not_live`, and the profile schema still
+  freezes `execution_modes` as a constant. The runtime has not yet caught up
+  either: the closed default-path wire contract in
+  `src/director_orchestrator/antigravity.py` still lists `review_verdict`,
+  `acceptance_verdict`, and `merge` in `DENIED_AUTHORITIES`, and the primary
+  roster still admits Antigravity as a reviewer only under team mode. Those code
+  paths, and the mirrored profile and contract fields that must track them,
+  change only through a separate owner-gated assignment. Until that lands, this
+  section is the charter's authority record and not a description of live
+  behavior.
 - **Antigravity outbound contract (default path).** Ordinary Antigravity *work* is sent no
   model-authored prose of any kind. `src/director_orchestrator/antigravity.py`
   composes that request from three sources only: fixed strings that live in that
@@ -264,9 +309,11 @@ independence, safety, and deterministic gates always outrank cost.
   owner-signed manifest, base64-encoded into the worker prompt. It is granted
   `writable_paths`, and a validated proposal becomes real Git blob, tree, and
   commit objects held by a private `refs/director/team/` retention anchor. It is
-  also the only path on which the primary roster will plan Antigravity for
-  independent review: the lane is admitted as a reviewer when, and only when,
-  team mode is on. Documenting this route does not authorize it.
+  today the only path on which the primary roster will plan Antigravity for
+  independent review: the roster code admits the lane as a reviewer when, and
+  only when, team mode is on. That is a description of the current runtime, not
+  a ceiling on the owner grant recorded above, which the roster has not yet been
+  changed to reflect. Documenting this route does not authorize it.
 
   The route is off unless `LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` is true,
   and the closed subordinate contract stays the default in every other case.
@@ -281,9 +328,9 @@ independence, safety, and deterministic gates always outrank cost.
   every time; a monetary reservation through the shared signed budget authority;
   and fresh, challenge-bound signed worker containment evidence produced before
   any packet or source byte is exported. A grant signature never substitutes for
-  the live query. Antigravity still may not self-accept, merge, deploy, or
-  publish in this mode, and review remains restricted to an exact target it did
-  not materially author.
+  the live query. Antigravity still may not self-accept, merge into a protected
+  branch, deploy, or publish in this mode, and review and acceptance remain
+  restricted to an exact target it did not materially author.
 
   No production assembly exists today. `PrimaryTeamRouting` is constructed
   nowhere in this repository — not in the service and not in the test suite — so
@@ -815,3 +862,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]] -->
