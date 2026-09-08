@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 06:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
@@ -31,9 +32,27 @@
 
 <!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=b8bb72f1449359bb6969dd424234dce09ab47ca05ec8dbb54577bbd3971aa5ac -->
 
-A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution is enabled by default.
+I am the Director.
 
-## What is included
+One owner posts a work order in one private Slack channel. I turn it into a bounded plan,
+delegate it across the provider lanes, hold each of them to acceptance evidence, and report
+a result — or stop and ask. This repository is the event-driven control plane that makes
+that safe to leave running unattended. The first deployment target is an always-on Windows
+desktop under Docker Desktop.
+
+Understand this before anything else: **I do not hold the authority. The policy engine does.**
+Every plan I produce passes through the deterministic gates in
+[`src/director_orchestrator/policy.py`](src/director_orchestrator/policy.py). My output can
+*add* an approval requirement. It can never remove one. Paid execution ships closed —
+`ALLOW_PAID_RUNS=false` in both `.env.example` and the `docker-compose.yml` default — and
+stays closed until the owner opens it. When a plan touches deployment, publication, merge,
+deletion, purchases, credentials, or expanded access, I halt in `OWNER_DECISION_REQUIRED`
+and hand it back.
+
+That is the design, not a limitation I am working around. Provider identity never grants
+authority, and no model approves its own work — including me.
+
+## What I am built from
 
 - A Slack Socket Mode gateway, so the desktop does not need a public inbound port.
 - A persistent Slack collaboration bus for bounded delegation, building, research,
@@ -61,7 +80,7 @@ Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-se
 `docs/cloud-hosting-later.md`, `docs/project-uppercut-reiteration.md`, and
 `docs/edge-oracle-operations.md`.
 
-## Architecture
+## How a work order reaches me
 
 1. Aesop posts `DIRECTOR` in the private Slack channel.
 2. The Slack gateway accepts only the configured owner and channel, ignores bot messages, and forwards a stable Slack event ID.
@@ -246,7 +265,7 @@ tool, repository, delegation, merge, deployment, or purchasing authority. See
 [the ChatGPT Slack alias bridge runbook](docs/chatgpt-slack-alias-bridge.md).
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:31 UTC | END]]**
 
-## Safe smoke test
+## Prove I am safe before you pay me
 
 Keep `ALLOW_PAID_RUNS=false`, then post:
 
@@ -257,9 +276,9 @@ Outcome: Produce a dry-run plan for adding a /version health field.
 Constraints: Do not edit GitHub and do not call paid providers.
 ```
 
-The expected result is a task ID, a preview plan, and `OWNER_DECISION_REQUIRED` because live execution is disabled. No provider should run.
+Expect a task ID, a preview plan, and `OWNER_DECISION_REQUIRED` because live execution is disabled. No provider should run. If one does, that is a bug in the gate — stop and report it.
 
-## Enabling live execution
+## Turning on spending
 
 Add credentials one provider at a time. Verify each adapter independently before setting `ALLOW_PAID_RUNS=true`.
 
@@ -273,7 +292,7 @@ Add credentials one provider at a time. Verify each adapter independently before
 
 OpenAI Pro 20x, Claude Max 5x, Cursor, Gemini, and Perplexity subscriptions do not necessarily include API usage. Claude Code Routine triggers are the exception represented here: they use the routine-specific URL and token supplied by Claude's routine UI.
 
-## Periodic provider usage checks
+## Watching the meter
 
 Periodic prompts are opt-in. After provider-side spend limits are configured, set `USAGE_CHECK_ENABLED=true` to schedule a short availability prompt that instructs the provider not to use tools or perform project work. The default list is the primary team: OpenAI, Claude, and Cursor. Gemini and Perplexity can be added explicitly when their supplemental lanes should also be monitored. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; either switch being false prevents every monitor-initiated model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously and an unbypassable 15-minute per-provider minimum.
 
@@ -401,3 +420,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 06:52 UTC | END]] -->
