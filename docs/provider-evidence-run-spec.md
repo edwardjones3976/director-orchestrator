@@ -158,8 +158,9 @@ every flag the lane pins — `--output-format`, `--max-turns`, `--permission-mod
 `--output-format` value and `plan` a supported `--permission-mode` value. Its
 `streaming-messages-json` format is documented as the Anthropic Messages API wire
 format, the same envelope family the second success branch above already accepts.
-So the pinned invocation is valid against the installed binary; only the emitted
-envelope remains open.
+So the pinned invocation is valid against the installed binary. The envelope
+itself has since been observed under owner authorization; see the canary results
+below.
 
 The restriction on repeating work is narrower than "do not look", and reading it
 as a blanket prohibition stalled this lane. What must not be repeated is the
@@ -211,6 +212,43 @@ antigravity were exercised there.
 The practical effect: when one authenticated capture is eventually taken for
 either lane, conformance is decided by reading the envelope against these cases
 instead of by another paid attempt.
+
+## Canary results, 2026-09-08
+
+Two canaries were run under owner authorization, one attempt each, using the
+exact pinned invocations. Neither is repeated here.
+
+**cursor — blocked before any model call, no spend.** The lane pins
+`--sandbox enabled` (`primary_transports.py:1185`). The installed CLI rejects it:
+*"Sandbox mode is enabled but not available on this system. Sandbox requires
+macOS or Linux."* The only other accepted value is `disabled`, which drops the
+operating-system containment the lane deliberately requires, and which the
+harness notes metadata cannot substitute for. **As pinned, this lane cannot
+execute on the Windows deployment target at all.** Resolving it is an owner
+decision between a non-Windows host for this lane, an approved change to the
+pinned containment, or a different containment mechanism. Note also that the
+first attempt hit a workspace-trust prompt; any automated capture must expect it.
+
+**grok — ran, and answered the open question. Cost USD 0.0065.** The pinned
+invocation executed cleanly and returned an authenticated envelope. It is **not**
+capture-conformant, for three concrete reasons rather than an ambiguous failure:
+
+| Capture rule | Observed |
+| --- | --- |
+| JSON object, no `schema_version` | passes |
+| no truthy `tool_calls`/`tool_uses`/`side_effects` | passes |
+| `status == "SUCCESS"` or `type`/`subtype`/`is_error` | fails — grok emits `stopReason: "end_turn"` |
+| string `session_id` or `conversation_id` | fails — grok emits `sessionId` |
+| (then) an `outcome` via `_structured_native_output` | would fail — the answer is in `text`, with no `structured_output` or `result` |
+
+`normalize_capture("grok", ...)` rejects it with *"native unique successful
+terminal/session is missing"*. The observed shape is pinned in
+`tests/test_provider_validation.py` so this does not have to be repurchased.
+
+This supersedes the exhausted probe: the question is now answered, and the
+remaining work is a decision about the normalizer, not another attempt.
+Accepting grok's envelope means teaching a security-relevant validator a third
+native shape, which should be reviewed by someone who did not produce it.
 
 ## A topology problem the variable names hide
 

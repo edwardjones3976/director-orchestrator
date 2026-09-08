@@ -102,6 +102,50 @@ class NativeCaptureTests(unittest.TestCase):
                     # conversation_id is promoted, so a run reference always exists.
                     self.assertTrue(result["run_reference"])
 
+    # Recorded from ONE authenticated grok canary on 2026-09-08 using the exact
+    # pinned invocation (--output-format json --max-turns 1 --permission-mode
+    # plan --prompt-file), cost USD 0.0065.  Keys unrelated to the capture
+    # contract are trimmed; the shape is verbatim.  This answers the question
+    # docs/provider-evidence-run-spec.md left open, so no further paid probe is
+    # needed to establish it.
+    GROK_OBSERVED_ENVELOPE = {
+        "text": "OK",
+        "stopReason": "end_turn",
+        "sessionId": "01a081e6-a616-7fd3-9908-dd63513227ba",
+        "requestId": "59fef4a5-1492-4891-899e-fbefeb147dfa",
+        "num_turns": 1,
+    }
+
+    def test_observed_grok_envelope_is_not_yet_capture_conformant(self):
+        """Pin the real gap so it is not rediscovered by another paid probe.
+
+        The observed envelope satisfies two of the four capture rules: it is a
+        JSON object without ``schema_version`` and carries no tool or effect
+        keys.  It fails the other two, and would fail outcome extraction after
+        them, because grok names things differently:
+
+          * terminal status is ``stopReason == "end_turn"``, not ``status ==
+            "SUCCESS"`` nor ``type``/``subtype``/``is_error``;
+          * the session identifier is ``sessionId``, not ``session_id`` or
+            ``conversation_id``;
+          * the answer is in ``text``, so ``_structured_native_output`` finds
+            neither ``structured_output`` nor ``result`` and no ``outcome``.
+
+        Closing this is a change to a security-relevant normalizer and is left
+        to an independent reviewer rather than made here.
+        """
+
+        env = dict(self.GROK_OBSERVED_ENVELOPE)
+        self.assertNotIn("schema_version", env)
+        self.assertFalse(any(env.get(k) for k in ("tool_calls", "tool_uses", "side_effects")))
+        self.assertIsNone(env.get("status"))
+        self.assertIsNone(env.get("type"))
+        self.assertNotIn("session_id", env)
+        self.assertNotIn("conversation_id", env)
+
+        with self.assertRaisesRegex(ValidationError, "terminal/session"):
+            normalize_capture("grok", work_packet(), canonical_json_bytes(env))
+
     def test_host_lane_capture_rejects_every_disqualifying_envelope(self):
         disqualifying = (
             ({"schema_version":"1.0"}, "a result packet is not a native capture"),
