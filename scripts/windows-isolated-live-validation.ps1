@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | BEGIN]]
@@ -91,6 +92,8 @@ catch {
 }
 
 $originalProcessEnvironment = @{}
+# Preserve the interpolation source before staging rebinds managed names.
+$composeInterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process")
 foreach ($name in $composeEnvironmentNames) {
     $originalProcessEnvironment[$name] = [pscustomobject]@{
         Present = Test-Path -LiteralPath "Env:${name}"
@@ -196,11 +199,24 @@ function New-RandomSecret {
 }
 
 function Read-DotEnv {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$ResolveForComparison,
+        [System.Collections.IDictionary]$InterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process")
+    )
 
-    $values = @{}
+    $values = if ($ResolveForComparison) { [hashtable]::new([StringComparer]::Ordinal) } else { @{} }
     foreach ($line in Get-Content -LiteralPath $Path) {
         if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith("#")) { continue }
+        if ($ResolveForComparison) {
+            # Compose resolves each line against the shell and previously read
+            # lines, not later definitions. Keep credential-copy reads raw.
+            $assignment = [Regex]::Match($line, '^\s*(?:export\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*(?<raw>.*)$')
+            if (-not $assignment.Success) { throw "Unsupported env-file syntax; ownership is unproved. No values were printed." }
+            $key = $assignment.Groups['name'].Value
+            $values[$key] = ConvertTo-ComposeValue -Raw $assignment.Groups['raw'].Value -FileValues $values -InterpolationEnvironment $InterpolationEnvironment
+            continue
+        }
         $separator = $line.IndexOf("=")
         if ($separator -lt 1) { continue }
         # The raw text, exactly as written. This function also feeds the
@@ -223,19 +239,39 @@ function ConvertTo-ComposeValue {
       Never use this on a value that will be written back or handed to a
       service. It is deliberately lossy: it answers "which project does this
       name?", not "what did the operator write?".
+
+      Sources for this launcher's explicit --env-file: process environment
+      first (including present empty values), then earlier resolved entries in
+      that env file. No ambient .env is merged into an explicit --env-file.
+      Verified 2026-09-09 against Docker's interpolation documentation:
+      https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/
+      and compose-go dotenv/parser.go and dotenv/godotenv.go (expandVariables).
+      ${VAR}, ${VAR:-d}, ${VAR-d} and $VAR use these sources. Colon-minus
+      defaults on unset OR empty; minus defaults only on unset. Single quotes
+      remain literal. Unsupported syntax refuses ownership, never guesses.
     #>
-    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Raw)
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Raw,
+        [hashtable]$FileValues = @{},
+        [System.Collections.IDictionary]$InterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process")
+    )
 
     $value = $Raw.Trim()
     $quoted = $false
     if ($value.Length -ge 2) {
         foreach ($quote in @('"', "'")) {
             if ($value.StartsWith($quote)) {
+                # Escapes/multiline values need the complete Compose parser.
+                # Refuse instead of silently comparing a different identity.
+                if ($value.Contains('\')) { throw "Unsupported quoted escape; ownership is unproved. No values were printed." }
                 # A closing quote ends the value; anything after it is a
                 # comment. `NAME="project" # sibling` resolves to `project`,
                 # and matching only start-and-end let exactly that spelling
                 # through the ownership check.
                 $close = $value.IndexOf($quote, 1)
+                if ($close -lt 1 -or $value.Substring($close + 1).Trim() -notmatch '^(#.*)?$') {
+                    throw "Unsupported quoted env value; ownership is unproved. No values were printed."
+                }
                 if ($close -gt 0) {
                     $value = $value.Substring(1, $close - 1)
                     # Compose keeps single-quoted values literal, but resolves
@@ -255,12 +291,26 @@ function ConvertTo-ComposeValue {
         $tab = $value.IndexOf("`t#")
         if ($tab -ge 0) { $value = $value.Substring(0, $tab).Trim() }
     }
-    # ${VAR:-default} and ${VAR-default} resolve to the default when VAR is
-    # unset, which is how a sibling can name a project without writing it
-    # literally. The undefined-variable case is the one that matters here.
-    $interpolated = [Regex]::Match($value, '^\$\{[A-Za-z_][A-Za-z0-9_]*:?-(?<default>[^}]*)\}$')
-    if ($interpolated.Success) { return $interpolated.Groups["default"].Value }
-    return $value
+    $pattern = '\$\$|\$(?:\{(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?<operator>:-|-)(?<default>[^${}]*))?\}|(?<name>[A-Za-z_][A-Za-z0-9_]*))|\$'
+    return [Regex]::Replace($value, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        if ($match.Value -ceq '$$') { return '$' }
+        if ($match.Value -ceq '$') { throw "Unsupported interpolation; ownership is unproved. No values were printed." }
+        $name = $match.Groups['name'].Value
+        $present = $InterpolationEnvironment.Contains($name)
+        $resolved = ''
+        if ($present) { $resolved = [string]$InterpolationEnvironment[$name] }
+        elseif ($FileValues.ContainsKey($name)) {
+            $present = $true
+            $resolved = [string]$FileValues[$name]
+        }
+        $operator = $match.Groups['operator'].Value
+        if (($operator -ceq ':-' -and (-not $present -or $resolved -ceq '')) -or
+            ($operator -ceq '-' -and -not $present)) {
+            return $match.Groups['default'].Value
+        }
+        return $resolved
+    })
 }
 
 function Set-DotEnvValue {
@@ -480,7 +530,8 @@ function Assert-ProfileIdentity {
 function Assert-NoProfileCollisions {
     param(
         [Parameter(Mandatory = $true)][hashtable]$TargetValues,
-        [string[]]$Names = @()
+        [string[]]$Names = @(),
+        [System.Collections.IDictionary]$InterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process")
     )
 
     $identityNames = @(
@@ -494,7 +545,7 @@ function Assert-NoProfileCollisions {
     if ($Names.Count -gt 0) { $identityNames = @($identityNames | Where-Object { $Names -contains $_ }) }
     foreach ($otherPath in @(".env", ".env.uppercut", ".env.edge-oracle", ".env.long-table")) {
         if ($otherPath -eq $profilePath -or -not (Test-Path -LiteralPath $otherPath -PathType Leaf)) { continue }
-        $other = Read-DotEnv -Path $otherPath
+        $other = Read-DotEnv -Path $otherPath -ResolveForComparison -InterpolationEnvironment $InterpolationEnvironment
         foreach ($name in $identityNames) {
             if (-not $other.ContainsKey($name)) { continue }
             # Compare what Compose resolves, not what was typed. A sibling that
@@ -502,7 +553,9 @@ function Assert-NoProfileCollisions {
             # interpolation default still names the same project, and a raw
             # string comparison let each of those spellings through the check
             # that exists to stop this launcher touching that deployment.
-            $theirs = ConvertTo-ComposeValue -Raw ([string]$other[$name])
+            # Already resolved in file order. Interpolating twice would expand
+            # literal dollars from single quotes or from a substituted value.
+            $theirs = [string]$other[$name]
             $ours = ConvertTo-ComposeValue -Raw ([string]$TargetValues[$name])
             if (-not [string]::IsNullOrWhiteSpace($theirs) -and $theirs -ceq $ours) {
                 throw "$profilePath collides with $otherPath on $name. No service was started."
@@ -1053,7 +1106,7 @@ $selectedIdentity = @{
 }
 Assert-NoProfileCollisions -TargetValues $selectedIdentity -Names @(
     "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT", "N8N_HOST_PORT", "SQLITE_PATH"
-)
+) -InterpolationEnvironment $composeInterpolationEnvironment
 # Only now may anything address this Compose project. Every later teardown,
 # including the outer catch, reads this rather than assuming the name was ever
 # validated: the rollback stopped a foreign project after the check rejected it.
@@ -1157,7 +1210,7 @@ $profileText = $null
 $values = Read-DotEnv -Path $profilePath
 Assert-ProfileIdentity -Values $values
 Assert-LongTableSnapshot -Values $values
-Assert-NoProfileCollisions -TargetValues $values
+Assert-NoProfileCollisions -TargetValues $values -InterpolationEnvironment $composeInterpolationEnvironment
 $requiredConfiguration = @(
     "ORCHESTRATOR_SHARED_SECRET", "OPENAI_API_KEY", "CLAUDE_ROUTINE_URL",
     "CLAUDE_ROUTINE_TOKEN", "CLAUDE_CALLBACK_SECRET", "CURSOR_API_KEY",
@@ -1520,3 +1573,4 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]

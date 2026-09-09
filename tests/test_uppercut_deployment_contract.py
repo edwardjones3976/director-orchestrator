@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | BEGIN]]
@@ -799,10 +800,10 @@ if (-not [Pr116Probe.Seed]::SetEnvironmentVariableW('ALLOW_PAID_RUNS', '')) {
         self.assertIn("name: ${DIRECTOR_COMPOSE_PROJECT_NAME:-director-orchestrator}", self.compose)
         self.assertIn("${DIRECTOR_HOST_PORT:-8080}:8080", self.compose)
         self.assertIn("${N8N_HOST_PORT:-5678}:5678", self.compose)
-        self.assertIn("DIRECTOR_COMPOSE_PROJECT_NAME=project-uppercut-director", self.profile)
-        self.assertIn("DIRECTOR_HOST_PORT=18080", self.profile)
-        self.assertIn("N8N_HOST_PORT=15678", self.profile)
-        self.assertIn("SQLITE_PATH=/data/project-uppercut.sqlite3", self.profile)
+        self.assertIn("DIRECTOR_COMPOSE_PROJECT_NAME=project-uppercut-director", self.profile.splitlines())
+        self.assertIn("DIRECTOR_HOST_PORT=18080", self.profile.splitlines())
+        self.assertIn("N8N_HOST_PORT=15678", self.profile.splitlines())
+        self.assertIn("SQLITE_PATH=/data/project-uppercut.sqlite3", self.profile.splitlines())
 
     def test_paid_gate_starts_closed_and_checks_store_before_opening(self):
         closed = self.script.index('ALLOW_PAID_RUNS = "false"', self.script.index("$identity"))
@@ -1122,6 +1123,70 @@ foreach ($raw in @(
         resolved = _run_powershell(probe).split()
         self.assertEqual(resolved, ["project-uppercut-director"] * 7)
 
+    def test_set_variable_collision_and_compose_source_precedence(self):
+        """Resolve shell overrides and prior lines in the explicit sibling file."""
+
+        probe = SOURCE_HELPER + r"""
+$root = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $root | Out-Null
+Push-Location $root
+try {
+    $profilePath = '.env.long-table'
+    $target = @{ DIRECTOR_COMPOSE_PROJECT_NAME = 'long-table-director' }
+    # An explicit --env-file replaces .env; this decoy must never win.
+    Set-Content .env 'R5_NAME=wrong-default-file'
+    foreach ($shell in @($true, $false)) {
+        if ($shell) { $env:R5_NAME = 'long-table-director' }
+        else { Remove-Item Env:R5_NAME -ErrorAction SilentlyContinue }
+        foreach ($expression in @('${R5_NAME}', '${R5_NAME:-dummy}', '${R5_NAME-dummy}', '"${R5_NAME:-dummy}" # sibling')) {
+            $fileValue = if ($shell) { 'wrong-file-value' } else { 'long-table-director' }
+            Set-Content .env.uppercut @("R5_NAME=$fileValue", "DIRECTOR_COMPOSE_PROJECT_NAME=$expression")
+            try {
+                Assert-NoProfileCollisions -TargetValues $target -Names @('DIRECTOR_COMPOSE_PROJECT_NAME')
+                'ACCEPTED'
+            } catch { $_.Exception.Message }
+        }
+    }
+} finally {
+    Remove-Item Env:R5_NAME -ErrorAction SilentlyContinue
+    Pop-Location
+    Remove-Item -LiteralPath $root -Recurse -Force
+}
+"""
+        self.assertEqual(_run_powershell(probe).splitlines(), [
+            '.env.long-table collides with .env.uppercut on '
+            'DIRECTOR_COMPOSE_PROJECT_NAME. No service was started.'
+        ] * 8)
+
+    def test_compose_empty_unset_and_literal_interpolation(self):
+        """Empty is present: only colon-minus substitutes its default."""
+
+        probe = SOURCE_HELPER + r"""
+$environment = @{}
+foreach ($present in @($false, $true)) {
+    if ($present) { $environment['R5_EMPTY'] = '' }
+    foreach ($raw in @('${R5_EMPTY}', '${R5_EMPTY:-default}', '${R5_EMPTY-default}')) {
+        '[' + (ConvertTo-ComposeValue -Raw $raw -InterpolationEnvironment $environment) + ']'
+    }
+}
+ConvertTo-ComposeValue -Raw "'`${R5_LITERAL}'" -InterpolationEnvironment @{}
+ConvertTo-ComposeValue -Raw '${R5_EMPTY:-default}' -FileValues @{R5_EMPTY='file'} -InterpolationEnvironment @{R5_EMPTY=''}
+ConvertTo-ComposeValue -Raw '${R5_EMPTY-default}' -FileValues @{R5_EMPTY=''} -InterpolationEnvironment @{} | ForEach-Object { '[' + $_ + ']' }
+"""
+        self.assertEqual(_run_powershell(probe).splitlines(), [
+            '[]', '[default]', '[default]', '[]', '[default]', '[]', '${R5_LITERAL}',
+            'default', '[]',
+        ])
+
+    def test_unsupported_compose_syntax_refuses_ownership(self):
+        probe = SOURCE_HELPER + r"""
+foreach ($raw in @('${R5_NAME:+long-table-director}', '${R5_NAME:-${OTHER}}', '"unterminated', '"escaped\nname"')) {
+    try { ConvertTo-ComposeValue -Raw $raw | Out-Null; 'ACCEPTED' }
+    catch { 'REFUSED' }
+}
+"""
+        self.assertEqual(_run_powershell(probe).splitlines(), ['REFUSED'] * 4)
+
     def test_reading_a_profile_never_rewrites_a_credential(self):
         """Read-DotEnv also feeds the credential copy, so it must not normalise.
 
@@ -1331,19 +1396,19 @@ class EdgeOracleDeploymentContractTests(unittest.TestCase):
             "ALLOWED_STARTING_REFS=main",
         )
         for line in expected:
-            self.assertIn(line, self.profile)
+            self.assertIn(line, self.profile.splitlines())
 
     def test_oracle_stages_paid_usage_and_merge_gates_closed(self):
-        self.assertIn("ALLOW_PAID_RUNS=false", self.profile)
-        self.assertIn("USAGE_CHECK_ENABLED=false", self.profile)
-        self.assertIn("ORACLE_AUTOMERGE_ENABLED=false", self.profile)
-        self.assertIn("ORACLE_AUTOMERGE_KILL_SWITCH=true", self.profile)
-        self.assertIn("ORACLE_AUTOMERGE_REQUIRED_CHECK_APP=github-actions", self.profile)
-        self.assertIn("ORACLE_AUTOMERGE_PROJECT=edge-oracle", self.profile)
-        self.assertIn("ORACLE_AUTOMERGE_REPOSITORY=edwardjones3976/edge_engine", self.profile)
-        self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_ID=", self.profile)
-        self.assertIn("ORACLE_AUTOMERGE_GITHUB_INSTALLATION_ID=", self.profile)
-        self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64=", self.profile)
+        self.assertIn("ALLOW_PAID_RUNS=false", self.profile.splitlines())
+        self.assertIn("USAGE_CHECK_ENABLED=false", self.profile.splitlines())
+        self.assertIn("ORACLE_AUTOMERGE_ENABLED=false", self.profile.splitlines())
+        self.assertIn("ORACLE_AUTOMERGE_KILL_SWITCH=true", self.profile.splitlines())
+        self.assertIn("ORACLE_AUTOMERGE_REQUIRED_CHECK_APP=github-actions", self.profile.splitlines())
+        self.assertIn("ORACLE_AUTOMERGE_PROJECT=edge-oracle", self.profile.splitlines())
+        self.assertIn("ORACLE_AUTOMERGE_REPOSITORY=edwardjones3976/edge_engine", self.profile.splitlines())
+        self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_ID=", self.profile.splitlines())
+        self.assertIn("ORACLE_AUTOMERGE_GITHUB_INSTALLATION_ID=", self.profile.splitlines())
+        self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64=", self.profile.splitlines())
 
     def test_oracle_uses_dedicated_secret_placeholders(self):
         for name in (
@@ -1353,7 +1418,7 @@ class EdgeOracleDeploymentContractTests(unittest.TestCase):
             "N8N_POSTGRES_PASSWORD",
             "ORACLE_AUTOMERGE_REVIEW_SECRET",
         ):
-            self.assertIn(f"{name}=REPLACE_WITH_RANDOM_SECRET", self.profile)
+            self.assertIn(f"{name}=REPLACE_WITH_RANDOM_SECRET", self.profile.splitlines())
         self.assertIn("No values were printed", self.script)
 
 
@@ -1369,11 +1434,6 @@ class LongTableDeploymentContractTests(unittest.TestCase):
         cls.profile = (ROOT / ".env.long-table.example").read_text(encoding="utf-8")
         cls.dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    def test_wrapper_selects_api_only_long_table_canary(self):
-        self.assertIn('ProfileName = "long-table"', self.wrapper)
-        self.assertIn("ApiOnly = $true", self.wrapper)
-        self.assertNotIn("docker compose", self.wrapper)
-
     def test_identity_ports_repository_and_stores_are_isolated(self):
         expected = (
             "APP_ENV=long-table",
@@ -1381,7 +1441,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "DIRECTOR_HOST_PORT=38080",
             "N8N_HOST_PORT=35678",
             "SQLITE_PATH=/data/long-table.sqlite3",
-            "PROJECT_ALLOWLIST=long-table",
+            "PROJECT_ALLOWLIST=long-table-bid-whist",
             "REPOSITORY_ALLOWLIST=edwardjones3976/long-table-bid-whist",
             "ALLOWED_STARTING_REFS=main",
             "LANGGRAPH_CHECKPOINT_PATH=/data/long-table-langgraph-shadow.sqlite3",
@@ -1392,7 +1452,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "REPOSITORY_SNAPSHOT_ROOT=/repository",
         )
         for line in expected:
-            self.assertIn(line, self.profile)
+            self.assertIn(line, self.profile.splitlines())
 
     def test_canary_budget_and_all_activation_switches_start_closed(self):
         for line in (
@@ -1407,7 +1467,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED=false",
             "LANGGRAPH_PARALLEL_KILL_SWITCH=true",
         ):
-            self.assertIn(line, self.profile)
+            self.assertIn(line, self.profile.splitlines())
 
     def test_long_table_is_the_only_paid_api_only_canary(self):
         self.assertIn(
@@ -1524,16 +1584,21 @@ class LongTableDeploymentContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('"-c", f"safe.directory={self.root}"', resolver)
     def test_wrapper_defaults_to_full_stack_and_preserves_explicit_api_only_canary(self):
-        self.assertIn('ProfileName = "long-table"', self.wrapper)
-        self.assertIn("[switch]$ApiOnly", self.wrapper)
-        self.assertIn('[string]$ProviderCredentialSourceEnvPath = ""', self.wrapper)
-        self.assertIn("if ($ApiOnly) { $arguments.ApiOnly = $true }", self.wrapper)
-        self.assertIn(
-            "$arguments.ProviderCredentialSourceEnvPath = $ProviderCredentialSourceEnvPath",
-            self.wrapper,
-        )
-        self.assertNotRegex(self.wrapper, r"(?m)^\s*ApiOnly\s*=\s*\$true\s*$")
-        self.assertNotIn("docker compose", self.wrapper)
+        """Execute the shipped wrapper with a capture-only sibling launcher."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            scripts = Path(raw)
+            wrapper = scripts / 'wrapper.ps1'
+            wrapper.write_text(self.wrapper, encoding='utf-8')
+            (scripts / 'windows-isolated-live-validation.ps1').write_text(
+                "param([string]$ProfileName, [switch]$ApiOnly, [int]$TimeoutSeconds)\n"
+                "\"$ProfileName|$([bool]$ApiOnly)|$TimeoutSeconds\"", encoding='utf-8',
+            )
+            probe = f"& {_ps_literal(str(wrapper))}\n& {_ps_literal(str(wrapper))} -ApiOnly -TimeoutSeconds 17"
+            self.assertEqual(_run_powershell(probe).splitlines(), [
+                'long-table|False|900', 'long-table|True|17',
+            ])
+
     def test_provider_seed_source_is_explicit_and_never_prints_secret_values(self):
         self.assertIn("ProviderCredentialSourceEnvPath", self.script)
         self.assertIn("Resolve-Path -LiteralPath $providerCredentialSource", self.script)
@@ -1565,7 +1630,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake",
             "CHATGPT_BRIDGE_CHANNEL_IDS=C0BSH9SPPUH",
         ):
-            self.assertIn(line, self.profile)
+            self.assertIn(line, self.profile.splitlines())
     def test_profile_declares_every_provider_credential_and_safety_boundary(self):
         for line in (
             "OPENAI_API_KEY=",
@@ -1581,7 +1646,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "PERPLEXITY_ALLOW_REPOSITORY_WRITE=false",
             "PERPLEXITY_ALLOW_REVIEW_VERDICT=false",
         ):
-            self.assertIn(line, self.profile)
+            self.assertIn(line, self.profile.splitlines())
     def test_isolated_script_parses_without_syntax_errors(self):
         script_path = str(ROOT / "scripts" / "windows-isolated-live-validation.ps1")
         probe = (
@@ -2077,3 +2142,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
