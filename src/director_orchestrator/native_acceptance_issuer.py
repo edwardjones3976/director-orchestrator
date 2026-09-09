@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
@@ -300,8 +301,12 @@ ConvertTo-Json -InputObject $rows -Depth 6 -Compress
            "PSModulePath": str(Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "Modules"),
            "DIRECTOR_FULL_AUDIT": "1" if full else "0",
            "DIRECTOR_CONSUMED": json.dumps(list(consumed)), "DIRECTOR_RUNTIME_ROOTS": json.dumps(list(runtime_roots))}
+    # A hang guard, not a latency budget. The inspection takes under a second
+    # on a developer host, but a contended GitHub-hosted windows runner has
+    # exceeded 60s twice (runs 34294918099 and 34295743451), failing the whole
+    # suite on runner load rather than on anything this checks.
     result = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-Command", script], env=env,
-                            capture_output=True, timeout=60)
+                            capture_output=True, timeout=300)
     if result.returncode or len(result.stdout) > 32_000_000:
         raise IssuerError("Windows ACL inspection failed")
     validate_acl_rows(json.loads(result.stdout), broker_sid=broker_sid, worker_sid=worker_sid)
@@ -518,3 +523,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | END]]

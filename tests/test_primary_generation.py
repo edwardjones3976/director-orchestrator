@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 from dataclasses import asdict, replace
@@ -33,7 +34,9 @@ class PrimaryGenerationTests(unittest.TestCase):
             LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED="false", LANGGRAPH_PARALLEL_KILL_SWITCH="true")
         def render():
             result = subprocess.run(["docker", "compose", "--project-name", "staging-render-test", "--env-file", str(environment_file), "config", "--format", "json"],
-                cwd=project, env=environment, capture_output=True, text=True, timeout=30)
+                # Hang guard, not a latency budget: docker compose config took
+                # over 30s on a loaded windows runner (run 34295743451).
+                cwd=project, env=environment, capture_output=True, text=True, timeout=180)
             self.assertEqual(result.returncode, 0, "Compose configuration-only rendering failed")
             return resolved_deployment_digest(json.loads(result.stdout), image)
         original = render()
@@ -181,3 +184,4 @@ class PrimaryGenerationTests(unittest.TestCase):
         self.assertEqual(before, self.journal.read_bytes())
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | END]]
