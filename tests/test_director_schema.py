@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
@@ -35,17 +36,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from director_orchestrator.config import Settings
 from director_orchestrator.director import OpenAIDirector, _strict_schema
+from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.interactions import ProviderTransport
 from director_orchestrator.models import (
     Assignment,
     AssignmentOutcome,
     DebatePlan,
     DirectorPlan,
+    IntakeAuthentication,
     ProviderName,
     ReviewDecision,
     ReviewVerdict,
@@ -54,6 +60,7 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
+from director_orchestrator.store import TaskStore
 from director_orchestrator.antigravity import (
     DENIED_AUTHORITIES,
     WITHHELD_CONTEXT,
@@ -69,6 +76,11 @@ from director_orchestrator.team_charter import (
     tally_advisory_votes,
     team_charter_manifest,
     team_operating_charter,
+)
+from tests.test_slack_debate_bus import (
+    CompletingAdapter,
+    RecordingNotifier,
+    debate_plan,
 )
 
 
@@ -810,6 +822,130 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(material.authorizes_external_action)
 
 
+class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_claude_vote_and_abstention_survive_moderated_debate(self):
+        # Exercise the real prompts, typed review admission, ledger, and tally.
+        # Only provider responses and Slack delivery are offline fixtures.
+        class FixtureDirector(OpenAIDirector):
+            async def _structured(self, prompt, model, schema_name):
+                request = json.loads(prompt)
+                self.requests[schema_name] = request
+                if schema_name == "director_plan":
+                    payload = self.fixture_plan.model_dump(mode="json")
+                elif schema_name == "review_decision":
+                    is_claude = request["current_assignment"]["agent"] == "claude"
+                    abstain = is_claude and self.claude_abstains
+                    payload = {
+                        "verdict": "accept", "summary": "Fixture evidence accepted.",
+                        "debate_contribution": {
+                            "position": "Abstain pending evidence." if abstain else "Support the evidence-backed option.",
+                            "rationale": "The bounded fixture supports this position.",
+                            "evidence": ["Offline fixture evidence"], "contradictions": [],
+                            "assumptions": ["The fixture is representative"], "material_risks": [],
+                            "unknowns": ["Live behavior is unverified"],
+                            "conditions_to_change": ["Contrary evidence is verified"],
+                            "confidence": 0.7, "abstain": abstain,
+                            "vote_option": None if abstain else ("A" if is_claude else "B"),
+                        },
+                    }
+                elif schema_name == "debate_counter_bias":
+                    payload = {
+                        "strongest_counterargument": "The fixture may be unrepresentative.",
+                        "challenged_assumptions": ["The fixture is representative"],
+                        "disconfirming_evidence": [], "alternatives_reconsidered": ["A", "B"],
+                        "independence_assessment": "Independent positions precede this pass.",
+                        "recommendation_changed": False, "confidence": 0.7,
+                    }
+                elif schema_name == "debate_synthesis":
+                    is_claude = self.provider == ProviderName.CLAUDE
+                    abstain = is_claude and self.claude_abstains
+                    payload = {
+                        "decision": "Record the advisory result.",
+                        "rationale": "Preserve the bounded evidence and dissent.",
+                        "next_action": "Return the result for review.", "confidence": 0.7,
+                        "openai_abstains": abstain,
+                        "openai_vote_option": None if abstain else ("A" if is_claude else "B"),
+                    }
+                else:
+                    raise AssertionError(f"Unexpected provider call: {schema_name}")
+                # Validate serialized responses, including the generic
+                # DebateContribution vote-or-abstain contract inside reviews.
+                return model.model_validate_json(json.dumps(payload))
+
+        for moderator in (ProviderName.OPENAI, ProviderName.CLAUDE):
+            for abstain in (False, True):
+                with self.subTest(moderator=moderator, abstain=abstain), tempfile.TemporaryDirectory() as directory:
+                    settings = replace(
+                        Settings(), workload_policy_enabled=False, allow_paid_runs=True,
+                        openai_api_key="test-openai", claude_routine_url="https://claude.invalid/fire",
+                        claude_routine_token="test-claude", cursor_api_key="test-cursor",
+                        grok_enabled=True, grok_api_key="test-grok", project_allowlist=("demo",),
+                        repository_allowlist=("example/demo",), allowed_starting_refs=("main",),
+                        max_agent_hops=4, sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                    )
+                    FixtureDirector.provider = moderator
+                    FixtureDirector.transport = (
+                        ProviderTransport.CLAUDE_NATIVE_HOST if moderator == ProviderName.CLAUDE
+                        else ProviderTransport.OPENAI_RESPONSES_API
+                    )
+                    director = FixtureDirector(settings)
+                    director.requests = {}
+                    director.claude_abstains = abstain
+                    director.fixture_plan = debate_plan()
+                    if moderator == ProviderName.CLAUDE:
+                        # The executing Director votes at synthesis; specialists
+                        # occupy separate seats, so Claude cannot vote twice.
+                        for assignment in director.fixture_plan.assignments:
+                            if assignment.agent == ProviderName.CLAUDE:
+                                assignment.agent = ProviderName.GROK
+                    store = TaskStore(settings.sqlite_path)
+                    task = TaskRecord(
+                        task_id="DIR-MODERATOR-VOTE", status=TaskStatus.QUEUED,
+                        intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                        intake=SlackIntake(
+                            source_event_id="evt-moderator-vote", channel_id="C-TEST",
+                            thread_ts="fixture-thread", user_id="U-TEST",
+                            text="DIRECTOR Project: demo Outcome: compare bounded options",
+                        ),
+                    )
+                    store.create(task)
+                    with patch("director_orchestrator.engine.build_director", return_value=director):
+                        engine = OrchestrationEngine(settings, store, providers={
+                            provider: CompletingAdapter(provider)
+                            for provider in {item.agent for item in director.fixture_plan.assignments}
+                        })
+                    engine.notifier = RecordingNotifier()
+
+                    await engine.run(task.task_id)
+
+                    completed = store.get(task.task_id)
+                    self.assertEqual(completed.status, TaskStatus.DONE, completed.error or completed.message)
+                    self.assertIsNotNone(completed.debate_counter_bias)
+                    self.assertTrue(any(
+                        turn.phase == "moderator" and turn.provider == moderator
+                        for turn in completed.collaboration_turns
+                    ))
+                    tally = completed.debate_tally
+                    self.assertEqual(tally["option_weights"].get("A", 0.0), 0.0 if abstain else 2.0)
+                    self.assertEqual("claude" in tally["abstaining"], abstain)
+                    self.assertEqual(tally["configured_weight_total"], 8.5)
+                    self.assertFalse(tally["authorizes_external_action"])
+                    if moderator == ProviderName.OPENAI:
+                        contributions = [
+                            turn.verified_debate_contribution for turn in completed.collaboration_turns
+                            if turn.provider == ProviderName.CLAUDE and turn.phase in {"position", "rebuttal"}
+                        ]
+                        self.assertEqual(len(contributions), 2)
+                        for contribution in contributions:
+                            self.assertEqual(contribution.abstain, abstain)
+                            self.assertEqual(contribution.vote_option, None if abstain else "A")
+                    self.assertIn("or records an explicit abstention", director.instructions)
+                    self.assertIn(
+                        "at synthesis unless you explicitly abstain",
+                        director.requests["debate_counter_bias"]["instruction"],
+                    )
+
+
 class ProjectProviderRolesContractTests(unittest.TestCase):
     """Drift tests for the project-local provider roles contract template."""
 
@@ -1272,3 +1408,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:11 UTC | END]]
