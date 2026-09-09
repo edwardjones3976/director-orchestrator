@@ -1,4 +1,5 @@
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | BEGIN]]
@@ -64,7 +65,7 @@ TASK_DENY_RULES: dict[str, tuple[str, ...]] = {
     "merge": (),
 }
 
-# How each CLI takes a prompt, an allow rule, and a turn bound. Cursor is absent
+# How each CLI takes a prompt, a deny rule, and a turn bound. Cursor is absent
 # on purpose: its CLI refuses to run on Windows without disabling its sandbox,
 # and a sandbox is not something a dispatcher may switch off.
 PROVIDERS: dict[str, dict[str, object]] = {
@@ -83,9 +84,6 @@ PROVIDERS: dict[str, dict[str, object]] = {
     },
     "codex": {
         "executable": "codex",
-        # read-only refuses gh authentication, so reviews run in the default
-        # sandbox; the prompt is passed as an argument because codex exec takes
-        # it positionally rather than on stdin.
         # codex exec exposes no per-rule flag, so it cannot carry the deny list.
         # Its sandbox supplies the same gate by construction: measured, a codex
         # session running `gh` gets "Unable to determine: HTTP 401
@@ -220,4 +218,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]

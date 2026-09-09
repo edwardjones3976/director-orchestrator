@@ -1,9 +1,10 @@
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | BEGIN]]
-"""The dispatcher must grant the least privilege a task needs, and no more."""
+"""A task runs at full capability; only what would let it alter its subject goes."""
 
 from __future__ import annotations
 
@@ -264,4 +265,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
